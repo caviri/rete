@@ -54,12 +54,16 @@ Outputs land under `/work/dev/recard/` (git-ignored): `survey/`, `out/`,
 
 ## Why a re-card is not a one-liner
 
-* `rete repyramid old.rete -o new.rete --card` **re-derives the whole card from
-  the `.rete` itself** — no source RDF needed. That is the primitive.
-* But `--card` takes the **curated** half only from flags or `--card-file`. A
-  bare `--card` silently drops the publisher's `title`/`source`/`license`. So the
-  old card must be read first and handed back in — `card_tools.py curated` does
-  exactly that, and `verify` fails the run if any curated field went missing.
+* `rete recard old.rete -o new.rete` **re-derives the whole card from the
+  `.rete` itself** — no source RDF needed — by streaming its sorted sections,
+  and rewrites only the card and the build record. That is the primitive
+  (`repyramid --card` is the older one, which also rebuilds every section).
+* But the **curated** half comes only from `--card-file` (or, in one step,
+  `--keep-curated`). A bare `repyramid --card` silently drops the publisher's
+  `title`/`source`/`license`; `recard` refuses instead. The script reads the old
+  card first and hands it back in — `card_tools.py curated` does exactly that,
+  so `--enrich` can lay new fields over it, and `verify` fails the run if any
+  curated field went missing.
 * The card sits at byte 1024 and is **inside the blake3 content hash**, so there
   is no in-place byte swap. Every re-card rewrites the file, which is why the
   data has to be proven unchanged afterwards rather than assumed.
@@ -163,7 +167,22 @@ remains for the templates that are honestly undecidable from the card.
 
 ---
 
-## Which rebuild engine, and the RAM ceiling
+## Which engine, and the RAM ceiling
+
+**`--mode recard` (the default since 0.4.0) has no ceiling in the statement
+count.** `rete recard` derives the card by streaming the file's own sorted
+sections — the `rdf:type` range of POS for classes, SPO for out-degrees and
+namespaces, OSP for in-degrees and literal objects — keeping every tally per
+vocabulary term and one class code (a byte, below 255 classes) per subject id.
+It then copies every section but the card and the build record **byte for
+byte**, so the data proof is byte identity (`card_tools.py sections-equal`,
+sha256 per section, one read of each file) rather than two full N-Quads
+exports, and nothing a rebuild could lose — a text index, an embedded PMTiles
+section, the pyramid the file was built with — is at risk. Measured on an
+OpenCitations Meta part (26.5 GB, 2.9 B statements): 19 min 27 s at a 1.78 GiB peak RSS in a 4 GiB container (derive 8 min 49 s, copy and re-hash 7 min 9 s, `--verify` the rest), against ~3 h and 15 GB for a rebuild.
+
+The rebuild modes below remain for when more than the card has to change (a
+new pyramid, a new text index); `--rebuild` restores their size-based choice.
 
 `repyramid` loads the file, decodes it, and materializes **every quad as owned
 strings** before re-assembling. Measured peak RSS (VmHWM, one process, inside
@@ -264,15 +283,12 @@ path.
 
 ### The honest boundary
 
-**The big ones need engine work.** Past ~80 M statements `repyramid` is out, and
-past ~150 M so is the staged-N-Quads path (and its disk bill goes with it). The
-missing piece is small and specific: the
-two-pass assembler already accepts *any* re-readable quad source, and a
-lazily-opened `.rete` **is** re-readable (`dump_each` streams it). A
-`repyramid --stream` that feeds `assemble_dataset_streaming_algo` straight from
-the source `.rete` would remove the text detour and the 10× disk bill, and would
-be the same order of RAM as `build` from `.nq` — but it is engine code, and it is
-deliberately **not** in these scripts.
+**For a card, there is none any more** — that was the engine work, and it is
+`rete recard`. For a *rebuild*, past ~80 M statements `repyramid` is out, and
+past ~150 M so is the staged-N-Quads path (and its disk bill goes with it). A
+`repyramid --stream` that fed `assemble_dataset_streaming_algo` straight from
+the source `.rete` would remove the text detour, but nothing in this pipeline
+needs it now: a re-card never has to rebuild.
 
 ---
 

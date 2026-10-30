@@ -5,7 +5,313 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The memory-bounded build no longer grows with the dataset.**
+  `rete build --memory-budget-mb` kept every chunk's id remap table resident
+  from the dictionary merge to the end of the remap: 4 B per chunk-local term,
+  8 B for one that is both subject and object in its chunk. On half of
+  OpenCitations Meta (1.73 B chunk-local terms) the build peaked at 15.0 GB at
+  a budget of 12,000 MiB, so the whole graph (3.4 B) could not be one file.
+  The merge now appends each table to `--tmp-dir` as it reaches each local id
+  (a chunk's local ids come out in order, so every write is an append), and
+  the remap loads one chunk's table at a time. Two smaller parts that grew with
+  the data went to disk too: a dictionary section's restart offsets (8 B per 16
+  terms) and its chunk directory. The merge's per-chunk read and write buffers
+  now shrink as the chunk count grows, within an eighth and a sixteenth of the
+  budget. Peak RAM is the larger of one chunk's working set and one sort run,
+  both set by the budget. On eight renamed copies of the OpenCitations sample
+  (151 M statements, 186 chunks at 400 MiB) the peak fell from 1,084 MiB to
+  391 MiB, and the merge's own from 1,083 MiB to 101 MiB; a merge over 3.4 B
+  chunk-local terms would have held 14.7–16.2 GB of tables (4.3–4.8 B per
+  term) and now holds one chunk's. The output is byte-identical; the spill
+  grows by the remap tables while the merge runs (+4% on the OpenCitations
+  sample). A dictionary class of more than 2³¹ terms is now refused; the old
+  encoding wrapped silently past 2³⁰.
+- **`--label-index` no longer adds to the memory-bounded build's spill.** The
+  label pass collected string candidates while the chunks were sealed and
+  sorted them before the dictionary merge, so its records sat on disk beside
+  every chunk's files at the spill's peak. On the data-only OpenCitations
+  sample that was +20% (310 MiB against 258 MiB). It now tees 12-byte id
+  records during the remap and, once the file is written, resolves their
+  strings through the file's own dictionary, as the in-memory build does; the
+  section is byte-identical. The merge also deletes each chunk's term files as
+  soon as it has read them, and the spilled sections go once the file is
+  written. Peak spill on that sample: 243 MiB with or without labels. The
+  label pass's sort buffer (an eighth of the budget) also leaves the chunk
+  phase.
+- **`--text-index` writes the same bytes in-RAM and memory-bounded at any
+  size.** 0.4.0 compressed the token table in one shot in RAM and streamed it
+  in the memory-bounded build. The two agree only up to the zstd window (4 MiB
+  at level 9), so on the OpenCitations sample the memory-bounded table came out
+  3,852 B larger. Both builds now use the streaming encoder. An in-RAM build
+  whose token table is over 4 MiB writes a slightly different table than 0.4.0
+  did (3,852 B larger on that sample), so its content hash changes. Smaller
+  tables, and every memory-bounded build, keep their 0.4.0 bytes.
+
+## [0.4.0] - 2026-10-30
+
+0.4.0 is about large graphs: it builds them in less memory, stores labels and
+named graphs compactly, and reads them with fewer round trips. One `v0.4.0` tag
+publishes it everywhere: crates.io, PyPI and npm, the GitHub release (archives,
+browser bundle, Blender add-on, Claude Desktop extension, Pyodide wheels), the
+GHCR images and the File Explorer installers. The file format stays `0x05`;
+everything new in it is optional:
+
+| addition | holds | in the content hash | a 0.3.x reader |
+|---|---|---|---|
+| kind 8 | the label index (`--label-index`) | no, own digest | ignores it |
+| kind 9 | the schema (every build) | no, own digest | ignores it |
+| kind 10, flag bit 3, a seal | the quad index (`--named-graphs quad`) | through the seal in the index | refuses the file; `info` and `verify` work |
+| kind 11 | a text index over some predicates | no, own digest | ignores it; `CONTAINS` scans |
+| flag bit 4 | the text index covers named graphs | header | ignores it |
+
+A new section kind never makes an older `verify` call a valid file corrupt:
+0.3.7's `verify` passes on all of them ([compatibility](https://caviri.github.io/rete/compatibility.html)).
+
+Before publishing files written by 0.4.0:
+
+- Keep the default `--named-graphs per-graph` until every reader (playground,
+  clients, Pyodide wheels, HF Space) runs 0.4.0.
+- Build with `--label-index` (`--pyramid-algo types --label-index --card`):
+  without it there is no label index, and a 0.3.x reader finds no labels,
+  schema or planner statistics in any 0.4.0 file.
+- Rebuilt files get new content hashes: the zstd frames changed, and an
+  N-Triples or N-Quads `"x"^^xsd:string` is now stored as `"x"`.
+
 ### Added
+
+- **Label index** (kind 8, `--label-index`; A2, #347): every labelled subject,
+  with no 8,192 cap, also in `--no-pyramid` and memory-bounded builds; people
+  with only given and family names get "family, given". A remote prefix search
+  reads one block in 5 requests. `repyramid --label-index` adds one and `merge`
+  keeps its inputs'.
+- **Schema section** (kind 9; A3, #347): the class hierarchy, rollups,
+  coherence axioms, the planner's `query_stats` and characteristic sets,
+  computed without the community pyramid, so `--no-pyramid` and memory-bounded
+  files have them too.
+- **Quad index** (kind 10, `--named-graphs quad`, opt-in; A1, #349): named
+  graphs as a fourth column in shared tiles behind a sorted graph directory,
+  with the same answers as the per-graph layout. One entity's provenance over
+  HTTP on the OpenCitations sample: 414 MB → 3.7 MB. The memory-bounded build,
+  `repyramid` and `merge` support it, `Rete::named_graph_quad_count` reads its
+  directory, and `dump_batch` jumps between sparse subjects
+  ([benchmark](https://caviri.github.io/rete/BENCHMARK.html)).
+- **Full-text index in the memory-bounded build, with scopes** (B1, B2, #348):
+  `--memory-budget-mb` with `--text-index` writes the in-RAM build's bytes.
+  `--text-index-graphs all` also indexes the named graphs (header bit 4);
+  `--text-index-include` and `--text-index-exclude` choose predicates (kind 11).
+  Leaving out OpenCitations' provenance prose and stored SPARQL updates
+  shrinks its index by 65%. The
+  scope is stored in the section and the build record; rete-core gains
+  `TextIndexScope`.
+- **`rete recard`** (B3, #346): a new Dataset Card without a rebuild, derived by
+  streaming the file, every other section copied byte for byte; curated fields
+  come from `--card-file` or `--keep-curated`. A 2.9-billion-statement file
+  took 19 minutes at a 1.78 GiB peak.
+- **`rete card-audit` audits the curated `example_queries` too** (D1, #346).
+- **The build record says how a file was made** (#353): every carded build,
+  `repyramid` and `recard` records in build-info (kind 7, outside the hash)
+  every effective flag, the engine (version, git commit, target, features),
+  each input by file name with its BLAKE3, the statement counts, and the run:
+  per-phase times, peak RSS, memory limit and the memory-bounded build's spill.
+  `rete card` shows it, `--format jsonld` maps it to PROV-O, and
+  `RETE_BUILD_RECORD=reproducible` leaves out the volatile facts
+  ([cards](https://caviri.github.io/rete/dataset-cards.html)).
+- **SPARQL 1.2 triple terms** (C7, #345): `<<( s p o )>>` in patterns, `VALUES`,
+  `BIND` and templates; under `VERSION "1.2"`, `<< s p o >>` is a reified
+  triple, and without it RDF-star as before.
+- **Writer knobs** (A4, #350): `--tile-kib`, `--dict-chunk-kib`, `--zstd-level`
+  and `--frequent-objects`, or their `RETE_*` variables, change the bytes and
+  never the answers; `--frequent-objects 64` made the OpenCitations samples up
+  to 6.5% smaller ([cli](https://caviri.github.io/rete/cli.html#compression-knobs)).
+- **`rete-bench --build-mem`** profiles the card and text-index phases (D5, #344).
+
+### Changed
+
+- **Single-segment zstd frames** (A4, #350): each tile and chunk records its
+  size, so zstd uses its small-input settings; the OpenCitations sample is 7%
+  smaller at the same level. The released 0.3.5 and 0.3.7 read them, and
+  `RETE_ZSTD_FRAME=stream` writes the old frames.
+- **`rete build` keeps labels and the schema out of the pyramid-meta** (A2, A3,
+  #347), so a build without `--label-index` has no label index. The schema's
+  representative class is the subject's type with the smallest id, and
+  `query_stats` counts deduplicated statements.
+- **A local file is read whole only when it is small next to the free memory**
+  (C1, #344): the limit is a sixteenth of what the process can still allocate,
+  container limits included. A one-row query on a 1.07 GB file in a 4 GiB
+  container went from killed to 0.035 s.
+- **`rete serve` answers from the file until the first update** (C1, #344),
+  and refuses with `503` an update that would not fit in memory.
+- **Remote reads go out in parallel over kept-alive connections** (C2, #344):
+  up to 16 in flight, nearby ranges in one request, transient failures retried,
+  and the engine batches more reads. At 80 ms latency a 26-query run took 25%
+  less time (`RETE_HTTP_CONCURRENCY`, `RETE_HTTP_COALESCE_KB`,
+  `RETE_HTTP_RETRIES`, `RETE_HTTP_TRACE`).
+- **`REGEX`, `REPLACE` and `sh:pattern` are Unicode-aware** (C4, #345) in native
+  builds, the npm package and the Claude Desktop extension; the browser
+  playground keeps ASCII-only classes for its size.
+- **`"x"` and `"x"^^xsd:string` are one term** (C8, #345): ingest stores the
+  plain spelling, and existing files match either spelling.
+- **Starter queries are bounded** (B4, #346): past 2 M statements a template
+  ships a `LIMIT`ed or lookup-sized form, or nothing when the card answers it,
+  so those datasets' starter sets change. The build measures them within
+  64 MiB, and `top-dangling` uses `OPTIONAL … !BOUND`. On the OpenCitations
+  sample every starter reads at most 4 MB (up to 992 MB before).
+- **The card's `extra` bag allows three levels** (was two; D4, #346).
+- **The playground sends each federated pattern to every source that can
+  answer it** (E2, #343), and sharded datasets fan out to all their shards: the
+  Crossref title join returns rows instead of none.
+- **The wasm build downloads nothing** (E3, #343): the dev image pins the
+  wasm-bindgen CLI, the output is reproducible, and each package is stamped
+  with its engine source.
+
+### Fixed
+
+- **Hosts that hide `Content-Range` or ignore `Range`** (E1, #343): a whole-file
+  `200` up to 256 MiB is kept and served, and Zenodo-hosted files open.
+- **`rete stats` printed every statement as default-graph triples** (D3, #344);
+  it now reports the default and named graphs apart.
+- **`--entail` answers each entailed triple once** (C5, #345): counting
+  OpenCitations works gave 508,044 where there are 258,268. Domain and range
+  axioms now gate only the classes they concern (C6).
+- **`FILTER(CONTAINS(…))` inside `GRAPH` returned no rows** on a text-indexed
+  file (C3, #345, #348): the pushdown runs only where the index covers the
+  active graph and predicate, decided from the header. Sub-`SELECT`s and
+  `DESCRIBE … FROM` read the active graph too.
+- **Planner** (C9, #345): a literal start no longer materializes a whole
+  predicate, a small outside side probes per row, the size gates count rows
+  (so the zstd level no longer changes plans), and `rete cost` no longer reads
+  the whole file. A work's provenance history: 1.45 GiB → 19 MB.
+- **The auto `temporal_extent` no longer reads ORCIDs, page numbers and titles
+  as years** (D2, #346).
+
+## [0.3.7] - 2026-10-28
+
+**Where 0.3.7 is published: every channel, from the one `v0.3.7` tag.**
+crates.io (`rete-core`, `rete-graph`, `rete-cli`, `rete-wasm`), PyPI and npm
+(`rete-graph`), the GitHub release with its native archives, browser bundle,
+Blender add-on, the Claude Desktop extension (`rete-0.3.7.mcpb`, and
+`rete.mcpb` behind the `releases/latest/download/rete.mcpb` link) and the
+Pyodide wheels, the container images on GHCR (`rete-cli`, `rete-relay`,
+`rete-dev`), and the desktop File Explorer installers. It is the first release
+cut the new way: no `py-v*` / `js-v*` tags, no follow-up PR, no manual upload.
+
+What 0.3.7 changes on top of 0.3.6:
+
+- **Behaviour change: SPARQL comparisons go by datatype, not by what a string
+  looks like.** `=`, `!=`, `IN`, `<`…`>=`, `ORDER BY`, `MIN`/`MAX` and the
+  arithmetic follow SPARQL 1.1 §17.3 and §15.1: `"01" = "1"` is false,
+  `FILTER(?year > 2000)` over string years returns nothing (cast it:
+  `xsd:integer(?year) > 2000`), and `ORDER BY` is a total order. The query
+  warnings name the new cases. Details under Fixed.
+- **The Claude Desktop extension no longer times out on long queries.** Every
+  query runs as a job on a worker thread: a call answers within 40 s with the
+  rows or a `job_id`, and `query_status`, `query_result` (every row, by cursor
+  or saved to a CSV/TSV/JSON file) and `cancel_query` follow it. With
+  `partition_by` a long extraction runs as chunks checkpointed on disk, and
+  the same call resumes after a cancel, a crash or a restart; `keys_job` runs
+  it for the entities an earlier job listed — the works citing a paper,
+  listed in `crossref-citations`, then their details from `crossref` —
+  without copying them into the query. The extension also queries RDF shared
+  in the chat (`load_rdf`), and its instructions now say what a query costs
+  and when and how to split one.
+- **Node reads batched ranges in parallel** (npm `rete-graph`, and the
+  extension that bundles it): listing the 4,758 works citing one paper on
+  the 60 GB Crossref graph took 3.5–4.9 s instead of 23–35 s.
+- **Split a query by one variable**, from the engine:
+  `rete_core::partition_plan` / `eval_query_partitioned`, and in JS
+  `Graph.partitionPlan()` and `queryRaw(q, { partition })`. The keys come
+  from a `VALUES` list on the variable, else its cheapest constant pattern.
+  `SparqlError` gains a `Partition` variant.
+- **`--query-file <path>`** (or `-` for standard input) on every CLI command
+  that takes a query, for queries past the OS argument limit.
+- **Security:** `zstd` 0.14.3 / `zstd-safe` 8.2.0 / `zstd-sys` 2.1.2
+  (RUSTSEC-2026-0391, -0395 to -0406, -0410), PyO3 0.30.1 in the Python
+  client (RUSTSEC-2025-0020, RUSTSEC-2026-0177), `tokio` 1.54.1 in the File
+  Explorer (RUSTSEC-2026-0386), and in the extension the MCP SDK 1.32.1,
+  `body-parser` 2.4.0 and `zod` 4.6.7. Every lockfile is now audited in CI
+  and nightly against one exception list.
+
+### Added
+
+- **The Claude Desktop extension runs queries as jobs, so a long one no
+  longer times out or blocks everything else.** Claude gives up on a tool
+  call after 60 s, and the engine's range reads are synchronous: a query on
+  the extension's own thread froze it until the query ended, a client that
+  had given up could not cancel it, and every later call — even a trivial
+  one — queued behind it and timed out too. Asking for title, venue and year
+  of the ~4,800 works citing one paper on the 60 GB Crossref graph did
+  exactly this. Every query now runs on a worker thread (up to three at
+  once). `sparql_query` waits up to 40 s and otherwise answers with a
+  `job_id` while the query keeps running; new tools `start_query` (do not
+  wait), `query_status` (wait up to 45 s; reads, bytes, elapsed; the first
+  rows once done), `query_result` and `cancel_query`. The 200-row answer
+  page now carries `next_cursor`: `query_result` pages through every row
+  (up to 1000 a page) or writes all of them to a `.csv` / `.tsv` / `.json` /
+  `.jsonl` / `.nt` file in a granted folder, never over an existing file —
+  agents had been folding rows into one `GROUP_CONCAT` string to get past
+  the cap. A client that cancels a `sparql_query` call stops its query.
+- **The extension tells the model what a query costs.** Its instructions now
+  explain that a published graph costs one network round trip per separate
+  place a query touches — so per-entity details for thousands of scattered
+  entities are expensive while a COUNT is cheap — how to follow a job, and
+  how to split a large extraction into a cheap key list plus `VALUES`
+  batches; they also ask the model to check in `dataset_schema` that the
+  relation it needs is in the graph it is querying. `list_datasets` returns
+  whole descriptions when a filter narrows it to three graphs or fewer: the
+  caveat that matters most for a large graph ("keep queries selective") sat
+  past the 320-character cut.
+- **The Claude Desktop extension queries RDF shared in the chat.** Claude
+  Desktop does not hand chat attachments to an extension, so a `.ttl` the
+  user attached could not be queried at all — and the path the model sees for
+  an upload (`/mnt/user-data/uploads/…`) is in Claude's own sandbox, not on
+  the user's machine. The new `load_rdf` tool takes the file's text (Turtle,
+  TriG, N-Triples, N-Quads; syntax from the file's extension), builds it into
+  a graph held in memory, and every tool then takes it as dataset
+  `chat:<name>` — with no folder granted. A file too long for one call goes
+  in parts (`append`; a part that does not parse is refused and the graph
+  keeps the parts before it); `path` reads an RDF file the user saved in a
+  granted folder instead; `save_as` keeps the graph as a `.rete` there. The
+  instructions tell the model to convert CSV / JSON / RDF/XML / JSON-LD to
+  Turtle first, and to ask for a granted folder or a URL for a `.rete`, which
+  is binary and cannot travel through the chat.
+- **A long query can run as resumable chunks, split by one variable.** A job
+  that ran for many minutes was lost when Claude Desktop restarted or the
+  query was cancelled, and an agent splitting the work by hand into `VALUES`
+  batches had to keep track of the batches itself. The engine now plans the
+  split: `rete_core::partition_plan(rete, query, var)` refuses one that would
+  change the answer, saying why — ASK or DESCRIBE, ORDER BY, an aggregate not
+  grouped by the variable, a variable some solution may leave unbound — and
+  writes the keys query from the one constant pattern on the variable with
+  the smallest tiles (read off the tile directory). `eval_query_partitioned`
+  runs one chunk, its keys seeded as `VALUES` where the pushdown turns each
+  into an index lookup. Both are on the wasm graphs (`partition_plan`,
+  `query_partition`) and in the JS client (`Graph.partitionPlan()`,
+  `queryRaw(q, { partition: { var, keys } })`). The Claude Desktop extension
+  drives them with `partition_by` on `sparql_query` / `start_query`: keys
+  first, then chunks two at a time, each sized to take about 15 s, every
+  finished chunk written to disk. Sending the same call again after a cancel,
+  a crash or a restart carries on from the last finished chunk (a checkpoint
+  made on other bytes is discarded); an identical call joins a running one.
+  The instructions now say when to split and how to choose the variable.
+  `SparqlError` gains a `Partition` variant for the refusals.
+- **A split takes its keys from a `VALUES` list, or from an earlier job.**
+  The citations of the Crossref graph moved to `crossref-citations.rete`, so
+  "title and year of every work citing a paper" lists the works in one graph
+  and asks the other for their details. With the works in a `VALUES ?work`
+  list, the plan now lists the keys from that list as it stands (`keys_from:
+  "values"`, no read) instead of evaluating the whole query once, and each
+  chunk cuts the list down to its own keys. In the Claude Desktop extension,
+  `keys_job: "<job_id>"` beside `partition_by` takes the keys from an earlier
+  job's rows — the listing on the other graph — so the model never copies
+  thousands of IRIs into a query. The plan's `keys_from_where` flag becomes
+  `keys_from` (`"values"`, `"pattern"` or `"where"`).
+- **`mcpb-test.yml`: the extension's stdio suites run on pull requests.**
+  They ran only in the release workflow, so a change to `clients/mcpb`
+  reached a tag unchecked. The new workflow builds the engine, the JS client
+  and the bundle, runs the suites on Node 22 and on the Node 18 floor, and
+  validates the manifest.
 
 - **`--query-file <path>` on every CLI command that takes a query**, with
   `-` reading standard input: `sparql`, `sparql-url`, `federate` (in place of
@@ -20,6 +326,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Security
 
+- **The 2026-10 zstd, tokio, zod and body-parser advisories are cleared.**
+  `zstd` is 0.14.3 (was 0.13.3; the workspace requirement moves from `0.13` to
+  `0.14`, no source change), with `zstd-safe` 8.2.0 (was 7.2.4) and `zstd-sys`
+  2.1.2 (was 2.0.16), fixing RUSTSEC-2026-0391, RUSTSEC-2026-0395 to
+  RUSTSEC-2026-0406 and RUSTSEC-2026-0410 in the workspace, Python, R, desktop
+  explorer and fuzz lockfiles. `tokio` is 1.54.1 (was 1.53.1) in the desktop
+  explorer, fixing RUSTSEC-2026-0386. The Claude Desktop extension resolves
+  `body-parser` 2.4.0 (was 2.3.0, GHSA-27r3-jxmh-p828) and `zod` 4.6.7 (was
+  4.4.3, GHSA-mrhx-c7xc-m3w5). No exceptions were added.
 - **PyO3 0.30.1 in the Python client** (was 0.23.5), fixing RUSTSEC-2025-0020
   (possible buffer overflow in `PyString::from_object`) and RUSTSEC-2026-0177
   (missing `Sync` bound on `PyCFunction::new_closure` closures) in the PyPI
@@ -57,6 +372,23 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **Remote and local queries in Node fetch batched reads in parallel.** The
+  engine asks for some reads as a batch — the dictionary terms a result
+  decodes, the tiles a join is about to probe — and offers a hook,
+  `globalThis.reteReadMany`, to fetch such a batch concurrently. The
+  playground has always installed one; the Node client did not, so under
+  Node every range of a batch was its own blocking round trip. Its sync-fetch
+  bridge now installs the hook: up to 16 ranges in flight, one wait for the
+  whole batch, and the engine plans for that fan-out. On `crossref.rete`
+  (60 GB) over a residential link, listing the 4,758 works citing one paper
+  took 3.5–4.9 s instead of 23–35 s, and title/venue/year for 100 of them
+  19–25 s instead of 46–65 s (two cold runs), with identical rows. This
+  reaches the npm package and the Claude
+  Desktop extension, which bundles it. A batch with any range that is not a
+  206 at the requested offset comes back `null` and the engine re-reads it
+  sequentially, as before. The hook is installed only with the bridge's own
+  XHR (never over a caller-supplied one), and
+  `globalThis.reteReadMany = null` before the first `open()` opts out.
 - **One `vX.Y.Z` tag releases every channel.** The same tag that builds the
   GitHub release and publishes the crates now also publishes `rete-graph` to
   PyPI (`python-client-publish.yml`) and npm (`js-client-publish.yml`) and the

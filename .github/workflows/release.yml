@@ -137,6 +137,7 @@ jobs:
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target \
+            -e RETE_SOURCE_REVISION="$GITHUB_SHA" \
             -v "$PWD:/work" -w /work rete-dev-release \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/package_release.sh "${{ needs.meta.outputs.tag }}" "${{ matrix.target }}"'
       - name: Install the pinned native Rust toolchain
@@ -212,7 +213,7 @@ jobs:
             -v "$PWD:/work" -w /work rete-dev-release \
             sh -lc 'git config --global --add safe.directory /work &&
                     wasm-pack build crates/rete-wasm --target web --no-opt \
-                      --out-dir /work/clients/js/vendor/pkg'
+                      --out-dir /work/clients/js/vendor/pkg -- --features unicode-regex'
       - uses: actions/setup-node@v6
         with:
           node-version: 22

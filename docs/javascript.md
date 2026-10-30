@@ -28,7 +28,7 @@ p5.js-style: one self-contained file (engine embedded), full and minified,
 served by any npm CDN:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/rete-graph@0.3.6/dist/rete-graph.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/rete-graph@0.4.0/dist/rete-graph.min.js"></script>
 <script>
   (async () => {
     const bytes = new Uint8Array(await (await fetch("mydata.rete")).arrayBuffer());
@@ -54,6 +54,18 @@ the engine stay simple and synchronous):
 On a main thread, either fetch the bytes yourself (small files) or run the
 graph in a worker — the pattern the playground uses. Hosts must send CORS
 headers and honor `Range` ([Hosting your .rete](hosting.md)).
+
+In Node the bridge also serves the engine's **batched reads** in parallel:
+when a query needs a set of ranges at once — the dictionary terms a result
+decodes, the index tiles a join is about to probe — they are fetched
+concurrently (16 in flight) instead of one round trip each. A synchronous
+read is still a round trip, so this matters most over a slow link to a large
+file: on `crossref.rete` (60 GB) from a residential connection, listing the
+4,758 works that cite one paper took 3.5–4.9 s instead of 23–35 s, and title,
+venue and year for 100 of them 19–25 s instead of 46–65 s (two runs, cold
+cache). Results are identical. To keep reads
+strictly sequential, set `globalThis.reteReadMany = null` before the first
+`open()`.
 
 ## Query results
 
@@ -95,6 +107,26 @@ graph, and is `[]` when there is nothing to report. It works for every result
 form, including ASK's boolean, and the row array is the same as before. The
 raw envelope carries the same list as `warnings` when it is non-empty. An
 empty result can also come with a case-sensitivity hint (`severity: "hint"`).
+
+### A long query in chunks: `partitionPlan()`
+
+Per-entity details for thousands of entities on a remote graph can run as
+many short queries, split by the values of one variable, each retried or
+resumed on its own ([the rule](sparql.md#partition)):
+
+```js
+const plan = g.partitionPlan(q, "?work");   // throws, saying why, if the split would change the answer
+const keys = g.queryRaw(plan.keys_query).rows.map((r) => r[plan.var]);
+let rows = [];
+for (let i = 0; i < keys.length; i += 200) {
+  const part = g.queryRaw(q, { partition: { var: plan.var, keys: keys.slice(i, i + 200) } });
+  rows.push(...part.rows);                  // CONSTRUCT: part.triples
+}
+// dedupe if plan.dedupe, then apply plan.offset / plan.limit — the chunks drop them
+```
+
+Each chunk's rows are term tokens, as in `queryRaw`. The Claude Desktop
+extension's `partition_by` does this with checkpoints on disk.
 
 ### RDF 1.2 and quoted triples
 

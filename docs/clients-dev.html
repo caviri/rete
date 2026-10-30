@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -793,6 +793,20 @@ tests: anything the blocked main thread must <em>itself</em> serve deadlocks —
 test Range server runs in its own worker; and the IIFE's <code>var rete</code> only
 becomes a global under classic-script semantics, so the bundle test loads
 it via <code>vm.runInThisContext</code>, not <code>import</code>.</li>
+<li><strong>Batched reads on Node.</strong> The same module installs
+<code>globalThis.reteReadMany</code>, the engine's parallel-read hook (the playground
+installs its own over a worker pool): one call carries a whole batch of
+ranges, the fetch worker reads them concurrently (16 in flight, the fan-out
+the reader then reports to the planner) into one <code>SharedArrayBuffer</code>, and the
+caller blocks once. Any range that is not a 206 starting at the requested
+offset fails the batch and the hook returns <code>null</code>, which sends the engine
+back to its sequential, validated reads. It is installed only alongside the
+bridge's own XHR — a caller-supplied XHR may carry auth the hook's fetch
+would bypass — and <code>globalThis.reteReadMany = null</code> before the first
+<code>open()</code> opts out. <code>test/parallel-reads.test.mjs</code> needs a fixture whose
+needed reads are far apart: the engine merges reads within 64 KiB
+(dictionary) / 4 KiB (tiles), and a batch of one range never reaches the
+hook.</li>
 <li>CI: <code>js-test.yml</code> (paths-filtered: clients/js + rete-wasm + rete-core) and
 <code>js-client-publish.yml</code> (the <code>v*</code> release tag only; see below).</li>
 <li>Parity backlog vs Python: Dataset Card + embedded examples (needs a

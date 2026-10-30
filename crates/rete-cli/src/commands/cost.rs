@@ -357,17 +357,42 @@ fn measure_summary(source: &str) -> anyhow::Result<SummaryCost> {
     })
 }
 
+/// The eager query open's budget — [`Rete::open_ranged`] reads the header, then
+/// the dictionary, the index, and the pyramid-meta, text-index and
+/// named-graph sections when present, one range request each — computed
+/// from the header rather than by performing it. Performing it held the whole
+/// file in memory to report its size: `rete cost` was killed at 2 GB on a
+/// 26 GB file. The figure is the same either way.
 fn measure_full(source: &str) -> anyhow::Result<FullCost> {
-    let reader = CountingReader::new(RangedSourceReader::open(source)?);
+    let reader = RangedSourceReader::open(source)?;
     let file_bytes = reader.len();
-    let _rete = Rete::open_ranged(&reader)?;
+    let head = reader.read_at(0, HEADER_LEN_U64)?;
+    let header = Header::from_bytes(&head)?;
+    let (bytes, requests) = full_open_budget(&header);
     Ok(FullCost {
         available: true,
         file_bytes,
-        bytes: reader.bytes_read(),
-        requests: reader.requests(),
+        bytes,
+        requests,
         reads_index: true,
     })
+}
+
+/// `(bytes, requests)` of [`Rete::open_ranged`] on a file with this header.
+fn full_open_budget(header: &Header) -> (u64, u64) {
+    let mut bytes = HEADER_LEN_U64 + header.dictionary_len + header.root_dir_len;
+    let mut requests = 3;
+    for len in [
+        header.pyramid_meta_len,
+        header.text_index_len,
+        header.named_graphs_len,
+    ] {
+        if len > 0 {
+            bytes += len;
+            requests += 1;
+        }
+    }
+    (bytes, requests)
 }
 
 /// The lazy SPARQL open budget (what `sparql-url` actually pays up front on a
@@ -686,4 +711,36 @@ fn predicate_list(view: &SummaryView) -> Vec<String> {
 
 fn predicate_count(view: &SummaryView) -> usize {
     view.predicate_totals().len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rete_core::SliceReader;
+
+    /// The eager-open figure is computed from the header now; it must still
+    /// be exactly what performing that open reads, section for section.
+    #[test]
+    fn full_open_budget_is_what_the_eager_open_reads() {
+        let nq = "<http://ex/s> <http://ex/p> \"o\" .\n\
+                  <http://ex/s> <http://ex/p> <http://ex/o> <http://ex/g> .\n";
+        let quads = rete_core::ingest::parse_quads(nq).unwrap();
+        for (pyramid, text) in [(false, false), (true, true)] {
+            let (bytes, _) = rete_core::ingest::assemble_dataset_with_opts(
+                quads.clone(),
+                pyramid,
+                text,
+                None,
+                |_, _| Vec::new(),
+            );
+            let header = Header::from_bytes(&bytes[..HEADER_LEN]).unwrap();
+            let reader = CountingReader::new(SliceReader::new(&bytes));
+            Rete::open_ranged(&reader).unwrap();
+            assert_eq!(
+                full_open_budget(&header),
+                (reader.bytes_read(), reader.requests()),
+                "pyramid {pyramid}, text index {text}"
+            );
+        }
+    }
 }

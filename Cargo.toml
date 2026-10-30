@@ -18,7 +18,7 @@ members = [
 exclude = ["fuzz", "clients/python", "clients/r/src/rust", "clients/java/ffi", "clients/tauri/src-tauri"]
 
 [workspace.package]
-version = "0.3.6"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/caviri/rete"
@@ -54,7 +54,7 @@ serde_json = "1"
 # Range reads from S3/GCS/HTTP and content hashing / compression.
 object_store = "0.11"
 blake3 = "1"
-zstd = "0.13"
+zstd = "0.14"
 # Errors + CLI.
 anyhow = "1"
 thiserror = "2"

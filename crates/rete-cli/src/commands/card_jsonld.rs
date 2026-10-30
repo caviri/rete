@@ -356,25 +356,147 @@ pub(crate) fn to_jsonld(
     put(&mut d, "prov:wasDerivedFrom", Value::Array(derived));
     put(&mut d, "rete:sourceDate", opt(&card.source_date));
     if let Some(b) = build {
-        let mut act = Map::new();
-        act.insert("@type".into(), json!("prov:Activity"));
-        if let Some(t) = &b.built_at {
-            act.insert("prov:endedAtTime".into(), json!(t));
+        let activity = build_activity(b, &mut d);
+        d.insert("prov:wasGeneratedBy".into(), activity);
+    }
+
+    Value::Object(d)
+}
+
+/// The IANA media type of an input format the build record names.
+fn media_type(format: &str) -> Option<&'static str> {
+    Some(match format {
+        "nt" => "application/n-triples",
+        "nq" => "application/n-quads",
+        "ttl" => "text/turtle",
+        "trig" => "application/trig",
+        "rdfxml" => "application/rdf+xml",
+        "rete" => "application/x-rete",
+        _ => return None,
+    })
+}
+
+/// The build record as a PROV-O activity — only where PROV-O means what the
+/// record says: `prov:startedAtTime` / `prov:endedAtTime` for the run,
+/// `prov:used` for each input (a `prov:Entity`, by file name and digest — a
+/// file has no IRI of its own to point at), and `prov:wasAssociatedWith` for
+/// the engine (a `schema:SoftwareApplication`). The rest of the record — the
+/// flags, the counts, the timings, the spill, a re-card — has no standard term,
+/// so it travels under `rete:` as JSON literals (`@json`, like the `extra`
+/// bag): the values are all there, and no meaning is borrowed for them.
+fn build_activity(b: &BuildInfo, doc: &mut Map<String, Value>) -> Value {
+    let ctx = doc
+        .get_mut("@context")
+        .and_then(Value::as_object_mut)
+        .expect("context inserted first");
+    ctx.insert(
+        "prov:startedAtTime".into(),
+        json!({ "@type": "xsd:dateTime" }),
+    );
+    for term in [
+        "rete:params",
+        "rete:counts",
+        "rete:run",
+        "rete:spill",
+        "rete:recarded",
+        "rete:host",
+    ] {
+        ctx.insert(term.into(), json!({ "@type": "@json" }));
+    }
+
+    let mut act = Map::new();
+    act.insert("@type".into(), json!("prov:Activity"));
+    if let Some(t) = &b.started_at {
+        act.insert("prov:startedAtTime".into(), json!(t));
+    }
+    if let Some(t) = &b.built_at {
+        act.insert("prov:endedAtTime".into(), json!(t));
+    }
+    let mut agent = Map::new();
+    agent.insert("@type".into(), json!("SoftwareApplication"));
+    match (&b.engine, &b.builder) {
+        (Some(e), _) => {
+            agent.insert("name".into(), json!(e.name));
+            agent.insert("softwareVersion".into(), json!(e.version));
+            agent.insert("rete:gitCommit".into(), json!(e.commit));
+            agent.insert("rete:target".into(), json!(e.target));
+            agent.insert("rete:profile".into(), json!(e.profile));
+            put(
+                &mut agent,
+                "rete:features",
+                Value::Array(e.features.iter().map(|f| json!(f)).collect()),
+            );
         }
-        if let Some(builder) = &b.builder {
+        (None, Some(builder)) => {
             let (name, version) = builder.split_once(' ').unwrap_or((builder.as_str(), ""));
-            let mut agent = Map::new();
-            agent.insert("@type".into(), json!("SoftwareApplication"));
             agent.insert("name".into(), json!(name));
             if !version.is_empty() {
                 agent.insert("softwareVersion".into(), json!(version));
             }
-            act.insert("prov:wasAssociatedWith".into(), Value::Object(agent));
         }
-        d.insert("prov:wasGeneratedBy".into(), Value::Object(act));
+        (None, None) => {}
     }
+    if agent.len() > 1 {
+        act.insert("prov:wasAssociatedWith".into(), Value::Object(agent));
+    }
+    let mut used: Vec<Value> = b
+        .inputs
+        .iter()
+        .map(|i| {
+            let mut e = Map::new();
+            e.insert("@type".into(), json!("prov:Entity"));
+            e.insert("name".into(), json!(i.name));
+            if let Some(m) = media_type(&i.format) {
+                e.insert("encodingFormat".into(), json!(m));
+            }
+            if let Some(c) = &i.compression {
+                e.insert("rete:compression".into(), json!(c));
+            }
+            if let Some(n) = i.bytes {
+                e.insert("rete:bytes".into(), json!(n));
+            }
+            if let Some(h) = &i.blake3 {
+                e.insert("rete:blake3".into(), json!(h));
+            }
+            Value::Object(e)
+        })
+        .collect();
+    if let Some(c) = &b.params.card_file {
+        used.push(json!({
+            "@type": "prov:Entity",
+            "name": c.name,
+            "encodingFormat": "application/json",
+            "rete:role": "card-file",
+            "rete:bytes": c.bytes,
+            "rete:blake3": c.blake3,
+        }));
+    }
+    put(&mut act, "prov:used", Value::Array(used));
+    if b.inputs_omitted > 0 {
+        act.insert("rete:inputsOmitted".into(), json!(b.inputs_omitted));
+    }
+    if let Some(h) = &b.host {
+        act.insert("rete:host".into(), as_json(h));
+    }
+    act.insert("rete:params".into(), as_json(&b.params));
+    if let Some(c) = &b.counts {
+        act.insert("rete:counts".into(), as_json(c));
+    }
+    if let Some(r) = &b.run {
+        act.insert("rete:run".into(), as_json(r));
+    }
+    if let Some(s) = &b.spill {
+        act.insert("rete:spill".into(), as_json(s));
+    }
+    if let Some(r) = &b.recarded {
+        act.insert("rete:recarded".into(), as_json(r));
+    }
+    Value::Object(act)
+}
 
-    Value::Object(d)
+/// A build-record part as a JSON value, for an `@json` literal.
+fn as_json<T: serde::Serialize>(v: &T) -> Value {
+    serde_json::to_value(v).expect("build record serializes")
 }
 
 /// Project the **honestly-mappable Croissant subset**: descriptive header,

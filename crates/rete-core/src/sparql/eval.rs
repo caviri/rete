@@ -170,6 +170,13 @@ fn collect_plan_slots(plan: &Plan, slots: &mut Slots) {
             }
             collect_plan_slots(inner, slots);
         }
+        // Only the output variables: a source's anonymous variables are never
+        // bound, so they need no slot.
+        Plan::DistinctUnion { vars, .. } => {
+            for v in vars {
+                slots.add(v);
+            }
+        }
     }
 }
 
@@ -305,6 +312,11 @@ fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             }
             mark_certain(ctx, inner, m);
         }
+        Plan::DistinctUnion { vars, .. } => {
+            for v in vars {
+                mark_var(v, m);
+            }
+        }
     }
 }
 
@@ -374,7 +386,7 @@ fn mark_possible(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             mark_possible(ctx, r, m);
         }
         Plan::Minus(l, _) => mark_possible(ctx, l, m),
-        Plan::Service { vars, .. } => {
+        Plan::Service { vars, .. } | Plan::DistinctUnion { vars, .. } => {
             for v in vars {
                 mark_var(v, m);
             }
@@ -489,14 +501,15 @@ fn active_index<'a>(
 ) -> &'a GraphIndex {
     match &sel.from[..] {
         [] if sel.union_default => {
-            let names = rete.graph_names();
-            if names.is_empty() {
+            // Counted, not listed: listing resolves every graph name.
+            let named = rete.named_graph_count();
+            if named == 0 {
                 return rete.default_index(); // no named graphs — union is the default graph
             }
             // Emptiness read off the SPO tile *directory* (already resident on
             // a lazy open) — no tile fetch, no materialization.
-            if names.len() == 1 && rete.default_index().tile_sections()[0].is_empty() {
-                if let Some(gi) = rete.graph_index(names[0]) {
+            if named == 1 && rete.default_index().tile_sections()[0].is_empty() {
+                if let Some((_, gi)) = rete.named_graph_at(0) {
                     return gi;
                 }
             }
@@ -537,14 +550,41 @@ fn merge_union_default(rete: &Rete) -> GraphIndex {
     for t in rete.default_index().match_pattern((None, None, None)) {
         b.push(t);
     }
-    for g in rete.graph_names() {
-        if let Some(gi) = rete.graph_index(g) {
-            for t in gi.match_pattern((None, None, None)) {
-                b.push(t);
-            }
+    // By ordinal, a small quad-index graph through a dropped view: the merge
+    // already holds every triple, it need not hold an index per graph too.
+    for i in 0..rete.named_graph_count() {
+        let owned = rete.named_graph_transient(i);
+        let gi = match &owned {
+            Some(view) => view,
+            None => match rete.named_graph_at(i) {
+                Some((_, gi)) => gi,
+                None => continue,
+            },
+        };
+        for t in gi.match_pattern((None, None, None)) {
+            b.push(t);
         }
     }
     b.build()
+}
+
+/// How many bytes of tiles a one-block query (`sel.plan` a single BGP) would
+/// at least scan on its active graph, from the tile directory alone (see
+/// [`crate::bgp::bgp_min_scan_bytes`]) — 0 when a constant is not in the file,
+/// so nothing can match. `None` when there is no estimate to give: the plan is
+/// not one BGP, or the dataset is a merge of several `FROM` graphs, which is
+/// not built just to estimate.
+pub(super) fn scan_estimate(rete: &Rete, sel: &Select) -> Option<u64> {
+    let Plan::Bgp(patterns) = &sel.plan else {
+        return None;
+    };
+    let index = match &sel.from[..] {
+        [] => rete.default_index(),
+        [g] => rete.graph_index(g)?,
+        _ => return None,
+    };
+    let ctx = query_ctx(rete, sel);
+    Some(crate::bgp::bgp_min_scan_bytes(&ctx, index, patterns).unwrap_or(0))
 }
 
 /// Instantiate a CONSTRUCT template against solutions (triples with any unbound
@@ -618,7 +658,19 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
 /// query directly — dictionary ids stay ids — instead of resolving every
 /// value to a string and canonicalizing it back.
 fn select_rows(ctx: &Ctx, sel: &Select) -> Vec<Row> {
-    let rete = ctx.rete;
+    let mut merged = None;
+    let active = active_index(ctx.rete, sel, &mut merged);
+    select_rows_on(ctx, sel, active, sel.from_named.as_deref())
+}
+
+/// [`select_rows`] against a given active graph: the query's own dataset for a
+/// top-level SELECT, and the **enclosing** active graph for a subquery. A
+/// subquery has no dataset clause of its own (the grammar allows none), so it
+/// sees whatever graph the surrounding pattern sees: inside `GRAPH <g> { … }`
+/// that is `<g>`, under `FROM` the merge, under the union-default toggle the
+/// union. Evaluating it on the file's default graph instead made
+/// `GRAPH <g> { { SELECT … } }` read the wrong graph.
+fn select_rows_on(ctx: &Ctx, sel: &Select, active: &GraphIndex, nf: Option<&[String]>) -> Vec<Row> {
     // A pure LIMIT/OFFSET (no ORDER BY/DISTINCT/aggregate/HAVING, which all
     // consume their input fully) bounds how many rows the pipeline will pull â€”
     // joins below may switch to index probing. BIND only adds columns.
@@ -635,9 +687,6 @@ fn select_rows(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     // guess.
     ctx.exhaustive
         .set(sel.limit.is_none() || sel.group.is_some() || !sel.order.is_empty());
-    let mut merged = None;
-    let active = active_index(rete, sel, &mut merged);
-    let nf = sel.from_named.as_deref();
     let source = eval_plan_iter(ctx, active, nf, &sel.plan);
     finish_select_rows(ctx, active, sel, source)
 }
@@ -1228,7 +1277,7 @@ pub(crate) fn eval_plan_iter<'q>(
         // held every subject IRI as a string to do that.
         Plan::Subquery(sub) => {
             let sub_ctx = query_ctx(ctx.rete, sub);
-            let raw = select_rows(&sub_ctx, sub);
+            let raw = select_rows_on(&sub_ctx, sub, index, named_filter);
             let map: Vec<(usize, usize)> = if sub.project.is_empty() {
                 (0..sub_ctx.slots.len())
                     .filter_map(|i| Some((i, ctx.slots.slot(sub_ctx.slots.name(i))?)))
@@ -1305,6 +1354,9 @@ pub(crate) fn eval_plan_iter<'q>(
             )),
         ),
         Plan::Minus(l, r) => minus_iter(ctx, index, named_filter, l, r),
+        Plan::DistinctUnion { vars, sources } => {
+            super::distinct_union::iter(ctx, index, vars, sources)
+        }
         Plan::Join(l, r) => {
             // VALUES-driven pushdown: substitute few ground rows into the BGP
             // scan instead of scanning the whole pattern and hash-joining.
@@ -1338,26 +1390,43 @@ pub(crate) fn eval_plan_iter<'q>(
             // section in bulk chunks instead of hundreds of incremental
             // reads. Read per pull (a Cell): EXISTS sub-evaluations flip the
             // guarantee mid-iterator.
+            //
+            // A small graph of a quad-index file is evaluated through an
+            // owned view and dropped once its rows are out, so a walk over
+            // millions of graphs holds one view at a time rather than one per
+            // graph (`Rete::named_graph_transient`).
             let graphs = (0..ctx.rete.named_graph_count()).filter_map(move |i| {
                 let exhaustive = named_filter.is_none() && ctx.exhaustive.get();
                 let name = ctx.rete.named_graph_name_at_demand(i, exhaustive)?;
                 if !visible(name) {
                     return None;
                 }
-                ctx.rete.named_graph_at_demand(i, exhaustive)
+                Some((i, name, exhaustive))
             });
-            Box::new(graphs.flat_map(move |(name, gi)| {
-                let gval = ctx.resolver.canon_term(name);
-                eval_plan_iter(ctx, gi, named_filter, inner).filter_map(move |mut sol| {
-                    match &sol[slot] {
+            Box::new(graphs.flat_map(
+                move |(i, name, exhaustive)| -> Box<dyn Iterator<Item = Row> + 'q> {
+                    let gval = ctx.resolver.canon_term(name);
+                    let bind = move |mut sol: Row| match &sol[slot] {
                         Some(existing) if *existing != gval => None,
                         _ => {
                             sol[slot] = Some(gval.clone());
                             Some(sol)
                         }
+                    };
+                    if let Some(view) = ctx.rete.named_graph_transient(i) {
+                        let rows: Vec<Row> = eval_plan_iter(ctx, &view, named_filter, inner)
+                            .filter_map(bind)
+                            .collect();
+                        return Box::new(rows.into_iter());
                     }
-                })
-            }))
+                    match ctx.rete.named_graph_at_demand(i, exhaustive) {
+                        Some((_, gi)) => {
+                            Box::new(eval_plan_iter(ctx, gi, named_filter, inner).filter_map(bind))
+                        }
+                        None => Box::new(std::iter::empty()),
+                    }
+                },
+            ))
         }
     }
 }
@@ -1475,7 +1544,14 @@ fn text_contains_pushdown(
     inner: &Plan,
 ) -> Option<Vec<Row>> {
     use std::collections::BTreeSet;
+    // Decided from the header, before anything faults the token table.
+    if !text_index_covers(ctx, index) {
+        return None;
+    }
     let ti = ctx.rete.text_index()?;
+    // The predicates it covers come from its scope block, in the token table
+    // the pushdown reads anyway.
+    let scope = ti.scope();
     let mut needles: Vec<(String, String)> = Vec::new();
     required_contains(expr, &mut needles);
 
@@ -1484,9 +1560,15 @@ fn text_contains_pushdown(
     // constraints only ever come back through the re-verifying filter).
     let mut seed: Option<(String, BTreeSet<u32>)> = None;
     for (cv, needle) in &needles {
-        let Some(sv) = contains_subject_var(inner, cv) else {
+        let Some((sv, pred)) = contains_subject_var(inner, cv) else {
             continue;
         };
+        // ...and over the predicates it covers: an include/exclude index never
+        // saw the literals of the predicates it left out, and a variable
+        // predicate can bind exactly those.
+        if !scope.covers_pattern_predicate(pred.as_deref()) {
+            continue;
+        }
         let pieces: Vec<String> = crate::text_index::tokenize(needle).collect();
         if pieces.is_empty() {
             continue; // nothing indexable in the needle — no pruning power
@@ -1558,6 +1640,25 @@ fn text_contains_pushdown(
     Some(out)
 }
 
+/// May the TEXT_INDEX bound a scan of `index`? Its candidate subjects are a
+/// sound over-approximation only over the literals it indexed. Every index
+/// covers the file's **default graph**; the named graphs only when it was built
+/// with `--text-index-graphs all`, which the header says
+/// ([`crate::header::FLAG_TEXT_INDEX_NAMED_GRAPHS`]). Inside `GRAPH <g> { … }`,
+/// under `FROM <g>`, or over the union default graph, a default-scope index
+/// leaves out every subject whose literal lives in a named graph, and seeding
+/// the scan with its candidates silently returns nothing (`FILTER(CONTAINS(…))`
+/// inside `GRAPH` answered 0 rows while `BIND(CONTAINS(…))` found them). The
+/// active index is the file's default index exactly when the active graph is
+/// the default graph (a `FROM`/union merge, or a named graph, is a different
+/// object). Decided from the header alone, so a declined pushdown never faults
+/// the token table; the predicates the scope covers are checked per pattern,
+/// by the caller.
+fn text_index_covers(ctx: &Ctx, index: &GraphIndex) -> bool {
+    std::ptr::eq(index, ctx.rete.default_index())
+        || ctx.rete.header().text_index_covers_named_graphs()
+}
+
 /// The required-spine `Bgp` that [`inject_contains_seed`] will wrap — same
 /// traversal, exposed so the pushdown can prefetch that BGP's probe tiles.
 fn find_seed_bgp<'p>(plan: &'p Plan, sv: &str) -> Option<&'p [TriplePattern]> {
@@ -1573,14 +1674,21 @@ fn find_seed_bgp<'p>(plan: &'p Plan, sv: &str) -> Option<&'p [TriplePattern]> {
     }
 }
 
-/// The subject variable of a pattern binding `cv` as its object, searched over
-/// the plan's REQUIRED spine only: both `Join` sides, a `LeftJoin`'s left, a
-/// nested `Filter`'s inner, and `Bgp` leaves. (A pattern inside an OPTIONAL's
-/// right side never *requires* the binding, so seeding there is left alone.)
-fn contains_subject_var(plan: &Plan, cv: &str) -> Option<String> {
+/// The subject variable of a pattern binding `cv` as its object — with the
+/// pattern's predicate when it is a constant — searched over the plan's
+/// REQUIRED spine only: both `Join` sides, a `LeftJoin`'s left, a nested
+/// `Filter`'s inner, and `Bgp` leaves. (A pattern inside an OPTIONAL's right
+/// side never *requires* the binding, so seeding there is left alone.)
+fn contains_subject_var(plan: &Plan, cv: &str) -> Option<(String, Option<String>)> {
     match plan {
         Plan::Bgp(patterns) => patterns.iter().find_map(|p| match (&p.s, &p.o) {
-            (PatternTerm::Var(s), PatternTerm::Var(o)) if o == cv => Some(s.clone()),
+            (PatternTerm::Var(s), PatternTerm::Var(o)) if o == cv => Some((
+                s.clone(),
+                match &p.p {
+                    PatternTerm::Const(c) => Some(c.clone()),
+                    PatternTerm::Var(_) => None,
+                },
+            )),
             _ => None,
         }),
         Plan::Join(l, r) => contains_subject_var(l, cv).or_else(|| contains_subject_var(r, cv)),
@@ -1899,13 +2007,47 @@ fn join_iter<'q>(
     //     memory — on a big remote graph that is the 32-bit wasm OOM behind
     //     `OPTIONAL { ?x schema:description ?d }` over 185M triples — whereas
     //     the probe faults only the rows the left side actually asks about.
+    //  3. when the left side turns out to be far smaller than the right BGP:
+    //     its rows are pulled first, up to the number that may still probe the
+    //     BGP's cheapest pattern profitably (the rule a BGP applies between its
+    //     own patterns), and if the left side ends within that budget it
+    //     probes. `<work> frbr:partOf+ ?j . ?j a :Journal ; :title ?t ; …`
+    //     finds three containers, yet hash-joined against every journal of a
+    //     2.9 B-triple file and took 40 s and 3.2 GB; the three probe instead.
+    //     Past the budget the rows already pulled feed the hash join.
+    let mut left_pulled: Option<RowIter<'q>> = None;
     if let Plan::Bgp(patterns) = r {
         if !patterns.is_empty() {
             let lcert = certain_bound(ctx, l, ctx.slots.len());
-            let probe = inlj_hint(ctx).is_some()
-                || (shares_certain_var(ctx, patterns, &lcert)
-                    && crate::bgp::bgp_min_scan_bytes(ctx, index, patterns)
-                        .is_none_or(|n| n >= crate::bgp::FAT_SCAN_BYTES));
+            let shares = shares_certain_var(ctx, patterns, &lcert);
+            let mut probe = inlj_hint(ctx).is_some()
+                || (shares
+                    && crate::bgp::bgp_min_estimate(ctx, index, patterns)
+                        .is_none_or(|n| n >= crate::bgp::FAT_SCAN_ROWS));
+            let mut small_left: Option<Vec<Row>> = None;
+            if !probe && shares {
+                let budget = crate::bgp::bgp_min_estimate(ctx, index, patterns)
+                    .and_then(crate::bgp::probe_row_budget);
+                if let Some(budget) = budget {
+                    let mut it = eval_plan_iter(ctx, index, nf, l);
+                    let mut head: Vec<Row> = Vec::new();
+                    let exhausted = loop {
+                        if head.len() > budget {
+                            break false;
+                        }
+                        match it.next() {
+                            Some(row) => head.push(row),
+                            None => break true,
+                        }
+                    };
+                    if exhausted {
+                        probe = true;
+                        small_left = Some(head);
+                    } else {
+                        left_pulled = Some(Box::new(head.into_iter().chain(it)));
+                    }
+                }
+            }
             if probe {
                 return match ProbePlan::new(ctx, index, patterns, &lcert) {
                     Some(plan) => {
@@ -1915,7 +2057,10 @@ fn join_iter<'q>(
                         // coalesced reads instead of one blocking round trip
                         // per row. The demand-bound path stays fully lazy
                         // (materializing would defeat its early exit).
-                        let left: RowIter<'q> = if inlj_hint(ctx).is_none() {
+                        let left: RowIter<'q> = if let Some(rows) = small_left {
+                            crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
+                            Box::new(rows.into_iter())
+                        } else if inlj_hint(ctx).is_none() {
                             let rows: Vec<Row> = eval_plan_iter(ctx, index, nf, l).collect();
                             crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
                             Box::new(rows.into_iter())
@@ -1934,10 +2079,38 @@ fn join_iter<'q>(
                         })
                     }
                     // An unknown constant empties the right side for every row.
-                    None if optional => eval_plan_iter(ctx, index, nf, l),
+                    None if optional => match small_left {
+                        Some(rows) => Box::new(rows.into_iter()),
+                        None => eval_plan_iter(ctx, index, nf, l),
+                    },
                     None => Box::new(std::iter::empty()),
                 };
             }
+        }
+    }
+    // An entailed atom (OWL 2 QL) joined with a side that certainly binds all
+    // of its variables is a semi-join: each left row checks the atom's sources
+    // with its values substituted — a few point lookups — instead of the right
+    // side enumerating every member of a class. Taken under a small demand
+    // bound, or when enumerating would scan a fat extent. Same rows as the
+    // hash join: the right side yields each binding once, and a left row that
+    // already binds every variable merges with it exactly when it matches.
+    if let Plan::DistinctUnion { vars, sources } = r {
+        let lcert = certain_bound(ctx, l, ctx.slots.len());
+        let all_bound = vars
+            .iter()
+            .all(|v| ctx.slots.slot(v).is_some_and(|s| lcert[s]));
+        if all_bound
+            && (inlj_hint(ctx).is_some()
+                || super::distinct_union::scan_rows(ctx, index, vars, sources)
+                    >= crate::bgp::FAT_SCAN_ROWS)
+        {
+            let mut cache = ExistsCache::new();
+            return Box::new(eval_plan_iter(ctx, index, nf, l).filter(move |row| {
+                optional
+                    || (super::distinct_union::matches(ctx, index, vars, sources, row)
+                        && cond.is_none_or(|f| f.boolean(ctx, index, row, &mut cache)))
+            }));
         }
     }
     // A property path joined with a side that already binds one of its
@@ -1963,9 +2136,10 @@ fn join_iter<'q>(
     // Build the right side first: an empty build side short-circuits without
     // ever constructing (or scanning) the left side.
     let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
+    let left = move || left_pulled.unwrap_or_else(|| eval_plan_iter(ctx, index, nf, l));
     if right.is_empty() {
         return if optional {
-            eval_plan_iter(ctx, index, nf, l)
+            left()
         } else {
             Box::new(std::iter::empty())
         };
@@ -1995,7 +2169,7 @@ fn join_iter<'q>(
     Box::new(JoinIter {
         ctx,
         index,
-        left: eval_plan_iter(ctx, index, nf, l),
+        left: left(),
         right,
         buckets,
         partial,

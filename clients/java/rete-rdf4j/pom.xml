@@ -7,7 +7,7 @@
   <parent>
     <groupId>io.github.caviri</groupId>
     <artifactId>rete-parent</artifactId>
-    <version>0.3.6</version>
+    <version>0.4.0</version>
   </parent>
 
   <artifactId>rete-rdf4j</artifactId>

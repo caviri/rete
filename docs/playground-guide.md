@@ -322,9 +322,12 @@ A `<key>` names a dataset in the catalog. To open a `.rete` that isn't in it —
 one you published yourself — give the address instead:
 `playground.html#url=<https://…/yours.rete>&mode=sparql`. It is read the same
 lazy way, over HTTP range requests, so the link works against a file of any size
-as long as its host sends `Accept-Ranges: bytes` and permits cross-origin reads
-(`Access-Control-Allow-Origin`, exposing `Content-Range`). Connecting by hand
-and pressing **Share** produces exactly this form of link.
+as long as its host answers range requests and permits cross-origin reads
+(`Access-Control-Allow-Origin`, and `Range` allowed in the preflight). The host
+does not have to expose `Content-Range`: the length is read from the file's own
+header, so a Zenodo file API URL (`…/api/records/<id>/files/<name>/content`)
+works as it is. Connecting by hand and pressing **Share** produces exactly this
+form of link.
 
 ### What the link carries {#sharing-view-state}
 

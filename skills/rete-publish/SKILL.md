@@ -99,8 +99,9 @@ check that its gitignored source file is staged under `web/` before rebuilding.
 - Run `uv run python scripts/check_dataset_catalog.py --all`. It checks exact
   URLs (no redirects), `206`, Range/CORS response headers, stable format byte,
   file size, content hash, and `web/datasets.lock.json`.
-- Verify R2 CORS in a browser. `Content-Range` must be in
-  `Access-Control-Expose-Headers`; curl alone cannot prove that contract.
+- Verify R2 CORS in a browser. The catalog contract keeps `Content-Range` in
+  `Access-Control-Expose-Headers` (it saves the open's footer read); curl alone
+  cannot prove that contract.
 
 ## 6. Back it up — R2 is not a backup
 
@@ -131,10 +132,10 @@ two of them:
 - **R2 serves.** `https://data.graphplaza.com/<key>` answers an HTTP Range
   request **directly** — `206` with `Content-Range`, no redirect — which is the
   only thing the playground's default synchronous-XHR worker reader can consume,
-  and it benchmarks ~3.5× faster than the HF Space. The CORS policy **must** put
-  `Content-Range` in `ExposeHeaders`: the open probe fetches `Range: bytes=0-0`
-  and reads the file length out of that header, so without it every remote open
-  fails before the first query.
+  and it benchmarks ~3.5× faster than the HF Space. The CORS policy puts
+  `Content-Range` in `ExposeHeaders` so the open probe can confirm the length
+  the file's header derives without a second request; without it the reader
+  still opens the file (one 4-byte footer read more), as it does on Zenodo.
 - **An HF bucket cannot serve rete's reader at all.** It is Xet
   content-addressed chunk storage. The public resolve URL
   `huggingface.co/buckets/<ns>/<bucket>/resolve/<file>` (no revision segment)

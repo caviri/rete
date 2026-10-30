@@ -90,6 +90,152 @@ Which set a file carries is visible without downloading it: `rete info`, `rete
 stats` and the Dataset Card's `signals.permutations` all report it, derived from
 the header byte rather than stored — see [dataset-cards.md](dataset-cards.md).
 
+### LABEL_INDEX and SCHEMA (kinds 8, 9): optional sections older readers skip
+
+Since 0.4.0 `rete build` writes the labels and the schema in sections of their
+own (SPEC §6.4, §7.5), and its pyramid-meta carries only the community summary.
+The file is still format `0x05`: the two kinds are new directory entries, laid out
+after every other section, which is exactly the extension the 1 KiB directory was
+designed for.
+
+| | file built by ≤ 0.3.x | file built by 0.4.0 |
+|---|---|---|
+| **reader ≤ 0.3.x** | unchanged | opens, queries and verifies it. Kinds 8 and 9 are unknown entries: kept verbatim, shifted on every header rewrite, never read. Same rows for every query; but `rete search <prefix>`, `rete summary`'s schema levels and the planner's measured selectivities come back empty, because the pyramid-meta no longer holds them |
+| **reader 0.4.0** | reads the labels and schema from the pyramid-meta, as before | reads them from kinds 8 and 9 |
+
+Both sections are **outside the content hash**. That is what keeps an older
+`rete verify` passing: it hashes the kinds it knows, and a hashed kind 8 or 9 would
+make it call every new file corrupt. Each section starts with its own 16-byte
+BLAKE3 digest instead, which the current `verify` checks too. The content hash is
+therefore the same for a file with and without them — two builds of the same data
+that differ only in `--label-index` share one identity (and one playground session
+cache key), and answer every SPARQL query identically.
+
+Verified against the released 0.3.7 binary (`ghcr.io/caviri/rete-cli:0.3.7`) on
+files with both sections: `info`, `verify`, `stats`, `sparql`, `export` and
+`search` all succeed (the last finds nothing, as the table says). Rebuild the
+bundled engines before publishing files written by 0.4.0, as for every writer
+change.
+
+### A text index of some predicates: a section older readers do not see
+
+`rete build --text-index --text-index-include/--text-index-exclude <IRI>`
+(0.4.0) indexes the literals of some predicates only. Readers older than 0.4.0
+use any text index they find to prune `FILTER(CONTAINS(…))`, as if it covered
+every literal of the default graph; with an index that left a predicate out,
+they would drop that predicate's matching rows without a word. So such an index
+is written as section kind **11** rather than 6, with the same payload behind a
+16-byte self-digest
+([SPEC §6.3](SPEC.md#63-full-text-index-text_index-section-optional)). An older
+reader keeps the unknown entry and never opens it: the file reads normally,
+`CONTAINS` scans and returns every row, and `rete search --contains` reports
+that the file has no text index. A current reader opens either kind and prunes
+only where the index covers the query.
+
+Kind 11 is **outside the content hash**, like kinds 8 and 9, and its digest is
+what a current `verify` checks. An older `verify` hashes only the kinds it
+knows, so a hashed kind 11 would make it report every such file as corrupt.
+Verified against the released 0.3.7 binary (`ghcr.io/caviri/rete-cli:0.3.7`) on
+a `--text-index-exclude` file: `verify` says "content hash matches", and `info`,
+`sparql` and `search` work (the last finds no text index, as above). The rule
+for 0.4.0: a new section kind never makes an older `verify` call a valid file
+corrupt.
+
+The other scope change stays kind 6. `--text-index-graphs all` adds the named
+graphs' literals, so the index covers everything an older reader assumes it
+covers, plus more. Its extra candidates are re-checked by the filter and fall
+away. It also sets header flag bit 4, which tells a current reader, from the
+header alone, that a `CONTAINS` inside `GRAPH` or under `FROM` may use the
+index; older readers ignore the bit. A default-scope index (no scope flags) is
+the same bytes as before 0.4.0.
+
+### Named graphs in the quad index
+
+`rete build --named-graphs quad` (0.4.0) stores the named graphs in the **quad
+index** ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional),
+section kind 10) instead of one container per graph (kind 5). It is still format
+`0x05`, and it is refused by every Rete before 0.4.0 — on purpose.
+
+The hazard it is built against: a reader that predates kind 10 keeps it as an
+unknown section and ignores it, and ignores header flag bit 3 too (no released
+reader checks flag bits). On its own, such a file would open in an old reader
+as a file **without named graphs**: `GRAPH` queries would return nothing and
+`export` would drop every named-graph quad, without an error. So the writer
+also appends a **seal** section to the default-graph index container, and every
+released reader checks that container's section count before it reads a single
+payload — the same check that refuses a `--permutations 3` file:
+
+```
+$ rete sparql quad.rete 'SELECT * { GRAPH ?g { ?s ?p ?o } } LIMIT 1'   # rete 0.3.7
+Error: malformed container: index container section count does not match the header permutation mask
+$ rete sparql-url http://…/quad.rete '…'                               # rete 0.3.7
+Error: malformed container: unexpected container section count
+```
+
+| Reader | `info`, `verify`, `card-url` | every query, `export`, `stats`, lazy or remote open |
+|---|---|---|
+| 0.3.0 – 0.3.3 (expect exactly 6 sections) | work; `verify` says OK | refused: 7 or 4 sections |
+| 0.3.4 – 0.3.7 (expect the mask's 3 or 6) | work; `verify` says OK | refused: 7 or 4 sections |
+| 0.4.0 | work; `verify` also checks the quad index | read |
+
+Checked with the 0.3.7 and 0.3.5 binaries and with 0.3.0 built from its tag, on
+the OpenCitations sample: none of them returned a row or a quad from any
+command; 0.3.0 says `malformed container: expected 6 permutation sections`.
+
+- Why not a new format byte: the refusal comes from a check every `0x05` reader
+  already performs, it leaves the header-only tools (`info`, `card-url`, the
+  catalog survey) working on these files, and it does not spend a generation
+  number on one feature — a generation break is meant to batch several
+  ([#206](https://github.com/caviri/rete/issues/206)).
+- Why the old `verify` stays truthful: the content hash keeps its part list; the
+  seal, inside the hashed container, carries the quad section's digest. An old
+  reader verifies everything it can read; a new one also checks the quad index
+  against the seal. So the quad index is hashed by reference: unlike the
+  self-digested kinds 8, 9 and 11, it stays part of the file's content hash.
+- The quad index is written only with three or six permutations (`perms + 1`
+  is then 4 or 7, never what an old reader wants).
+- A file **without** named graphs is byte-identical whichever layout was asked
+  for, so the flag is harmless on triple-only inputs.
+
+Like `--permutations 3`, this is not forward compatibility: publish a
+quad-index file only where every reader is 0.4.0 or later (the playground, the
+explorer pages and the clients are rebuilt in the release that reads it). Files
+already published with the per-graph layout keep working with every reader.
+
+### 0.4 writer changes that every `0x05` reader reads
+
+Four writer choices moved or became flags in 0.4 ([cli.md](cli.md#compression-knobs),
+measurements in [BENCHMARK.md](BENCHMARK.md#compression-04)). None of them changes the
+layout, so unlike `--permutations 3` they need no reader update:
+
+- **Single-segment zstd frames (the new default).** Each tile and chunk now records
+  its content size, which lets zstd pick its small-input parameters: at the same
+  level the four measured datasets came out 0.7–7.0% smaller. Older writers' streaming frames still
+  read, and `RETE_ZSTD_FRAME=stream` reproduces a 0.3 file byte for byte.
+- **`--tile-kib` / `--dict-chunk-kib`.** Tiles and chunks are routed by their
+  directories, so any size reads.
+- **`--zstd-level`.** Any level decodes with the same decoders.
+- **`--frequent-objects N`** (off by default) puts frequent object-only terms in
+  the shared dictionary section ([SPEC §5](SPEC.md#5-dictionary)); readers have
+  always looked terms up there first.
+
+Verified by reading files written with the new defaults and with
+`--frequent-objects 64` with the released 0.3.5 and 0.3.7 binaries: `verify`
+passes and the 12-query OpenCitations set returns the same rows as the new reader,
+over the lazy local open. The browser reader decodes the new frames with the same
+`ruzstd` it ships.
+
+### The 0.4 build record
+
+The build-info section (kind 7) carries much more in 0.4.0 — engine, inputs,
+counts, timings ([Dataset Cards](dataset-cards.md#build-conditions-the-build-info-section))
+— all as new optional JSON fields, and the JSON may be followed by spaces up to
+the section's length (the record is reserved before the build ends and filled
+in place). Both are invisible to older readers: verified with the released
+0.3.7 binary on the OpenCitations development sample built both ways, `card`
+prints its known subset with no warning and `verify` passes (the section is
+outside the content hash).
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query
@@ -143,6 +289,7 @@ each:
 | N-Triples / N-Quads **in** | yes | yes (always — that reader is rete's own) |
 | Turtle / TriG **in** | `rete build --quoted-triple-syntax rdf-star` (**default**) | `--quoted-triple-syntax rdf12` |
 | N-Quads / Turtle / TriG **out** | `rete export --quoted-triple-syntax rdf-star` | `--quoted-triple-syntax rdf12` (**default**) |
+| SPARQL **query** | `<< s p o >>`: a quoted triple, unless the query declares `VERSION "1.2"` | `<<( s p o )>>`: a triple term, always; under `VERSION "1.2"`, `<< s p o >>` is a reified triple (`?r rdf:reifies <<( s p o )>>`) |
 
 The two input defaults look inconsistent and are not: `<<( … )>>` is
 unambiguous, so reading an RDF 1.2 file as RDF-star fails loudly, whereas
@@ -165,7 +312,8 @@ an exported quoted triple comes back as `<<( s p o )>>`, not as
 **Base-direction language strings** (`"…"@lang--dir`, RDF 1.2's
 `rdf:dirLangString`) are modelled — `DATATYPE` reports `rdf:dirLangString` and
 `LANG` returns the language subtag — and a leading SPARQL 1.2 `VERSION "1.2"`
-declaration is accepted; `--quoted-triple-syntax rdf12` is also what lets the
+declaration is accepted (it switches `<< … >>` in the query to the SPARQL 1.2
+reified triple; see [SPARQL 1.2 triple terms](sparql.md#rdf-star)); `--quoted-triple-syntax rdf12` is also what lets the
 Turtle reader *parse* the `@lang--dir` form. Not yet: the new SPARQL 1.2
 direction *functions* (`LANGDIR`…). The RDF 1.2 Turtle/TriG reader runs in the
 browser too: the in-browser builder's **Quoted triples: RDF 1.2** choice reads

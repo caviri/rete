@@ -24,7 +24,8 @@ pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
 /// Default per-tile budget in (uncompressed) encoded bytes. Tiles are the
 /// independently-compressed, independently-fetchable units of a permutation
 /// section: ~64 KiB matches both zstd's sweet spot and one HTTP range read.
-pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
+/// The budget a build uses is [`crate::write_opts::tile_budget`] (`--tile-kib`).
+pub const INDEX_TILE_BUDGET: usize = crate::write_opts::DEFAULT_TILE_BUDGET_BYTES;
 
 /// Geometric tile-prefetch ramp for an unbound (multi-tile) scan (see
 /// [`GraphIndex::scan_iter`]). The first coalesced batch faults this many
@@ -360,7 +361,7 @@ impl Default for GraphIndexBuilder {
     fn default() -> Self {
         Self {
             triples: Vec::new(),
-            tile_budget: INDEX_TILE_BUDGET,
+            tile_budget: crate::write_opts::tile_budget(),
             perms: PermSet::ALL,
         }
     }
@@ -377,7 +378,7 @@ impl GraphIndexBuilder {
     pub fn from_triples(triples: Vec<Triple>) -> Self {
         Self {
             triples,
-            tile_budget: INDEX_TILE_BUDGET,
+            tile_budget: crate::write_opts::tile_budget(),
             perms: PermSet::ALL,
         }
     }
@@ -971,6 +972,46 @@ impl GraphIndex {
             .sum()
     }
 
+    /// Stream **every** triple of one stored permutation in that section's own
+    /// order, as `(a, b, c)` in the permutation's column order (SPO gives
+    /// `(s, p, o)`, OSP gives `(o, s, p)`, …).
+    ///
+    /// The access a whole-graph pass needs — `rete recard`'s streaming card
+    /// derivation reads SPO for out-degrees and OSP for in-degrees and literal
+    /// objects — and one [`scan_iter`](Self::scan_iter) cannot give, because a
+    /// fully unbound pattern always routes to SPO. Tiles fault with the same
+    /// geometric prefetch as a scan and are decoded one at a time; nothing is
+    /// retained beyond the tile cache, so memory follows its cap, not the
+    /// section. A failed fault is recorded in
+    /// [`load_incomplete`](Self::load_incomplete) and the tile is skipped, as
+    /// everywhere else. Returns `false` when the file does not store `perm`.
+    pub fn for_each_in_order(
+        &self,
+        perm: IndexPermutation,
+        f: &mut dyn FnMut(u32, u32, u32),
+    ) -> bool {
+        if !self.perms.contains(perm) {
+            return false;
+        }
+        let si = perm.section_index();
+        let end = self.sections[si].len();
+        let mut window = PREFETCH_WINDOW_START;
+        for ti in 0..end {
+            if !self.tile_resident(si, ti) {
+                self.prefetch_span(si, ti, (ti + window).min(end));
+                window = window.saturating_mul(2).min(PREFETCH_WINDOW_MAX);
+            }
+            if let Some(entry) = self.tile_entry(si, ti) {
+                if let Ok(block) = TripleBlock::parse(entry.body()) {
+                    for (a, b, c) in block.scan(None, None, None) {
+                        f(a, b, c);
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// The tiles of each permutation section (in `ALL_PERMS` order), for the
     /// file writer.
     pub fn tile_sections(&self) -> [&[Tile]; NUM_PERMS] {
@@ -1392,6 +1433,30 @@ impl GraphIndex {
             best = best.min(est);
         }
         best
+    }
+
+    /// The smallest leading id `>= a` present in permutation section `section`,
+    /// or `None` past the last one. Routes by the tile directory, then reads the
+    /// tile's own group directory — so it skips the ids a tile's *range* covers
+    /// but its body does not hold. That matters where a range is conservative:
+    /// a quad-index view's tile shared with other graphs is `0..=u32::MAX`, and
+    /// stepping through it id by id would never finish. Faults the tiles it
+    /// reads; a failed fault ends the search (`load_incomplete` says so).
+    pub(crate) fn next_leading(&self, section: usize, a: u32) -> Option<u32> {
+        let tiles = &self.sections[section];
+        let mut ti = tiles.partition_point(|t| t.max_a < a);
+        while ti < tiles.len() {
+            let from = a.max(tiles[ti].min_a);
+            let entry = self.tile_entry(section, ti)?;
+            if let Ok(block) = TripleBlock::parse(entry.body()) {
+                let dir = self.tile_dir(section, ti, &entry, &block);
+                if let Some(x) = dir.first_at_or_after(from) {
+                    return Some(x);
+                }
+            }
+            ti += 1;
+        }
+        None
     }
 
     /// The tile index span a scan must visit: every tile when the leading

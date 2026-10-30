@@ -345,6 +345,12 @@ pub struct Signals {
     /// document, with no file to measure — and never "no index".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_index: Option<TextIndexSignal>,
+    /// Whether the file carries a **label index (LABEL_INDEX section, kind 8)**,
+    /// and how large it is. Like [`Signals::text_index`], measured from the
+    /// file at read time and stripped before the card's bytes are written;
+    /// `None` means unknown, never "no index". See [`LabelIndexSignal`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_index: Option<LabelIndexSignal>,
     /// Which **index permutations** the file stores. Like
     /// [`Signals::text_index`], measured from the file at read time and
     /// stripped before the card's bytes are written; `None` means unknown (a
@@ -601,6 +607,59 @@ impl TextIndexSignal {
     }
 }
 
+/// The file's label-prefix-search affordance: does it carry a **LABEL_INDEX
+/// section (kind 8)**, how many labels, and how large is it?
+///
+/// **Measured at read time, never stored**, for the reasons
+/// [`TextIndexSignal`] gives: presence and size come free with the header,
+/// and `entries` is the u64 at bytes 20..28 of the section's fixed preamble —
+/// one 32-byte range read, never the index. A file without the section may
+/// still answer a prefix search from the legacy label block of its
+/// pyramid-meta (at most 8,192 labels); that block is not measured here,
+/// because reading it means fetching the whole pyramid-meta.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelIndexSignal {
+    /// True iff the file has a kind-8 section. Always written, including as
+    /// `false`.
+    pub present: bool,
+    /// Byte length of the whole LABEL_INDEX section.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub bytes: u64,
+    /// Number of `(subject, label)` entries; `None` when there is no index or
+    /// its preamble was unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries: Option<u64>,
+}
+
+impl LabelIndexSignal {
+    /// Measure the signal from a file's header, through the reader the card
+    /// was read with: nothing beyond the header when there is no index, one
+    /// 32-byte range read when there is.
+    pub fn probe<R: crate::RangeReader + ?Sized>(reader: &R, header: &Header) -> Self {
+        let Some(s) = header.label_index_section() else {
+            return LabelIndexSignal::default();
+        };
+        LabelIndexSignal {
+            present: true,
+            bytes: s.length,
+            entries: crate::label_index::read_label_index_entries_ranged(reader, header),
+        }
+    }
+
+    /// One line for the human catalog view.
+    pub fn describe(&self) -> String {
+        if !self.present {
+            return "no LABEL_INDEX section — a prefix search finds only what a pyramid's \
+                    legacy label block holds, if any"
+                .to_string();
+        }
+        match self.entries {
+            Some(n) => format!("LABEL_INDEX present — {n} labels, {} bytes", self.bytes),
+            None => format!("LABEL_INDEX present — {} bytes", self.bytes),
+        }
+    }
+}
+
 /// The build-time OWL RL / RDFS coherence verdict, stamped into the card by
 /// `rete build --reason`. Deterministic and free of free-text detail (only a
 /// sorted `by_kind` histogram + short tags), so it folds into the file's content
@@ -720,6 +779,56 @@ where
 }
 
 impl CardInput {
+    /// The curated half of an existing card, **verbatim** — the inverse of
+    /// `fill`. What `rete recard --keep-curated` hands the new
+    /// card, so a re-card carries a publisher's title, licence and prose
+    /// byte for byte instead of re-typing them (or, as a bare
+    /// `repyramid --card` did, silently dropping them).
+    pub fn from_card(card: &DatasetCard) -> Self {
+        CardInput {
+            title: card.title.clone(),
+            description: card.description.clone(),
+            license: card.license.clone(),
+            source: card.source.clone(),
+            created: card.created.clone(),
+            version: card.version.clone(),
+            creators: card.creators.clone(),
+            publisher: card.publisher.clone(),
+            canonical_url: card.canonical_url.clone(),
+            sparql_endpoint: card.sparql_endpoint.clone(),
+            source_date: card.source_date.clone(),
+            derived_from: card.derived_from.clone(),
+            doi: card.doi.clone(),
+            cite_as: card.cite_as.clone(),
+            keywords: card.keywords.clone(),
+            theme: card.theme.clone(),
+            extra: card.extra.clone(),
+            example_queries: card.example_queries.clone(),
+        }
+    }
+
+    /// True when no curated field is set — a card made of derived facts only.
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.description.is_none()
+            && self.license.is_none()
+            && self.source.is_none()
+            && self.created.is_none()
+            && self.version.is_none()
+            && self.creators.is_empty()
+            && self.publisher.is_none()
+            && self.canonical_url.is_none()
+            && self.sparql_endpoint.is_none()
+            && self.source_date.is_none()
+            && self.derived_from.is_empty()
+            && self.doi.is_none()
+            && self.cite_as.is_none()
+            && self.keywords.is_empty()
+            && self.theme.is_empty()
+            && self.extra.is_empty()
+            && self.example_queries.is_empty()
+    }
+
     /// Move every curated field into a card (the shared step of all derivation
     /// paths, so a new curated field is wired exactly once).
     fn fill(self, card: &mut DatasetCard) {
@@ -809,6 +918,7 @@ impl DatasetCard {
     /// so a hand-written card file cannot set it either.)
     pub fn to_json_bytes(&self) -> Vec<u8> {
         if self.signals.text_index.is_none()
+            && self.signals.label_index.is_none()
             && self.signals.permutations.is_none()
             && self.signals.quoted_triples.is_none()
         {
@@ -816,6 +926,7 @@ impl DatasetCard {
         }
         let mut stored = self.clone();
         stored.signals.text_index = None;
+        stored.signals.label_index = None;
         stored.signals.permutations = None;
         stored.signals.quoted_triples = None;
         serde_json::to_vec(&stored).expect("DatasetCard serializes")
@@ -829,6 +940,12 @@ impl DatasetCard {
     /// `rete card-audit` reports it.
     pub fn observe_text_index(&mut self, measured: TextIndexSignal) -> Option<TextIndexSignal> {
         self.signals.text_index.replace(measured)
+    }
+
+    /// Attach the read-time [`LabelIndexSignal`]. Same contract as
+    /// [`observe_text_index`](Self::observe_text_index).
+    pub fn observe_label_index(&mut self, measured: LabelIndexSignal) -> Option<LabelIndexSignal> {
+        self.signals.label_index.replace(measured)
     }
 
     /// Attach the read-time [`PermutationsSignal`]. Same contract as
@@ -922,8 +1039,8 @@ const OWL_SAMEAS: &str = "<http://www.w3.org/2002/07/owl#sameAs>";
 const SKOS_EXACTMATCH: &str = "<http://www.w3.org/2004/02/skos/core#exactMatch>";
 const SKOS_CLOSEMATCH: &str = "<http://www.w3.org/2004/02/skos/core#closeMatch>";
 const RDFS_SEEALSO: &str = "<http://www.w3.org/2000/01/rdf-schema#seeAlso>";
-const WGS_LAT: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#lat>";
-const WGS_LONG: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#long>";
+pub(crate) const WGS_LAT: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#lat>";
+pub(crate) const WGS_LONG: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#long>";
 // `pub`: the query generator gates its geometry template on which of
 // these two the card actually recorded, so both modules must name the same IRI.
 pub const GEO_ASWKT: &str = "<http://www.opengis.net/ont/geosparql#asWKT>";
@@ -948,7 +1065,8 @@ const LABEL_PREDICATES: &[&str] = &[
     DCT_TITLE,
 ];
 /// Cross-dataset linking predicates (emitted in `signals.link_predicates`).
-const LINK_PREDICATES: &[&str] = &[OWL_SAMEAS, SKOS_EXACTMATCH, SKOS_CLOSEMATCH, RDFS_SEEALSO];
+pub(crate) const LINK_PREDICATES: &[&str] =
+    &[OWL_SAMEAS, SKOS_EXACTMATCH, SKOS_CLOSEMATCH, RDFS_SEEALSO];
 
 /// A replayable source of a graph's **default-graph** triples for card
 /// derivation. `replay` may be called more than once (the derivation makes two
@@ -1085,7 +1203,7 @@ pub fn derive_card_from(
         } else if t.starts_with('"') {
             O_LITERAL.to_string()
         } else {
-            "(untyped)".to_string()
+            O_UNTYPED.to_string()
         }
     };
 
@@ -1094,44 +1212,16 @@ pub fn derive_card_from(
     // same derivation serves a streaming source whose term strings are transient;
     // a `BTreeMap<String, _>` sorts identically to the old `BTreeMap<&str, _>`, so
     // the output is byte-identical.
-    let mut pred_counts: BTreeMap<String, u64> = BTreeMap::new();
-    let mut class_counts: BTreeMap<String, u64> = BTreeMap::new();
-    let mut datatype_counts: BTreeMap<String, u64> = BTreeMap::new();
-    let mut lang_counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut prof = Profile::default();
     let mut out_degree: BTreeMap<String, u64> = BTreeMap::new();
     let mut in_degree: BTreeMap<String, u64> = BTreeMap::new();
-    let mut link_rows: BTreeMap<(String, String, String), u64> = BTreeMap::new();
-    let mut subject_ns: BTreeMap<String, u64> = BTreeMap::new();
-    // Per-predicate temporal evidence: object-shape hits and a name hint.
-    let mut time_obj_hits: BTreeMap<String, u64> = BTreeMap::new();
-    // Per-predicate numeric-object hits (for value-range queries).
-    let mut num_obj_hits: BTreeMap<String, u64> = BTreeMap::new();
-    // RDF-star: statements ABOUT statements. `annotation_hits` counts the
-    // predicate of a statement whose subject is a quoted triple,
-    // `quoting_hits` the predicate of one whose object is; `witnessed_pairs`
-    // counts the pairs matched against pass 1's sample — the witness a body
-    // pinning both needs (see `Signals::annotated_statement`).
-    let mut annotation_hits: BTreeMap<String, u64> = BTreeMap::new();
-    let mut quoting_hits: BTreeMap<String, u64> = BTreeMap::new();
-    let mut witnessed_pairs: BTreeMap<(String, String), u64> = BTreeMap::new();
-    // Objects of each candidate time predicate, grouped by datatype, for extent.
-    let mut time_values: BTreeMap<String, (Option<String>, Option<String>)> = BTreeMap::new();
-    let mut time_value_dt: BTreeMap<String, String> = BTreeMap::new();
-    let mut lat_lo = f64::INFINITY;
-    let mut lat_hi = f64::NEG_INFINITY;
-    let mut lon_lo = f64::INFINITY;
-    let mut lon_hi = f64::NEG_INFINITY;
-    let mut have_lat = false;
-    let mut have_lon = false;
-    let mut geo_wkt = false;
-    let mut triple_count = 0u64;
 
     src.replay(&mut |s, p, o| {
-        triple_count += 1;
-        *pred_counts.entry(p.to_string()).or_default() += 1;
+        prof.triple_count += 1;
+        *prof.pred_counts.entry(p.to_string()).or_default() += 1;
         *out_degree.entry(s.to_string()).or_default() += 1;
         if let Some(ns) = split_namespace(s) {
-            *subject_ns.entry(ns).or_default() += 1;
+            *prof.subject_ns.entry(ns).or_default() += 1;
         }
 
         // In-degree: every non-literal object referenced. Matches the
@@ -1145,10 +1235,10 @@ pub fn derive_card_from(
         // may be typed (`<< s p o >> a :Claim`) like anything else, and that
         // statement is still one made about a statement.
         if crate::terms::is_quoted_triple(s) {
-            *annotation_hits.entry(p.to_string()).or_default() += 1;
+            *prof.annotation_hits.entry(p.to_string()).or_default() += 1;
         }
         if crate::terms::is_quoted_triple(o) {
-            *quoting_hits.entry(p.to_string()).or_default() += 1;
+            *prof.quoting_hits.entry(p.to_string()).or_default() += 1;
         }
         // The `annotated_statement` witness: THIS statement is asserted, and
         // pass 1 saw it quoted and annotated. `quoted_subject_preds` is empty
@@ -1158,61 +1248,173 @@ pub fn derive_card_from(
         // appear inside a quoted triple.
         if !quoted_subject_preds.is_empty() && quoted_subject_preds.contains(p) {
             if let Some(about) = annotated_tokens.get(&format!("<<{s} {p} {o}>>")) {
-                *witnessed_pairs
+                *prof
+                    .witnessed_pairs
                     .entry((p.to_string(), about.clone()))
                     .or_default() += 1;
             }
         }
 
         if p == RDF_TYPE {
-            *class_counts.entry(o.to_string()).or_default() += 1;
+            *prof.class_counts.entry(o.to_string()).or_default() += 1;
             return; // type assertions define classes, not data relations
         }
 
         // Class-to-class quotient (the effective schema).
-        *link_rows
+        *prof
+            .link_rows
             .entry((classify(s), p.to_string(), classify(o)))
             .or_default() += 1;
 
         if p == GEO_ASWKT || p == GEO_HASGEOMETRY {
-            geo_wkt = true;
+            prof.geo_wkt = true;
         }
 
         // Literal objects: datatype / language / temporal / geo analysis.
         if let Some(lit) = parse_literal(o) {
-            *datatype_counts
-                .entry(format!("<{}>", lit.datatype))
-                .or_default() += 1;
-            *lang_counts.entry(lit.lang.clone()).or_default() += 1;
-            if lit.datatype == GEO_WKTLITERAL {
-                geo_wkt = true;
-            }
-            // Temporal object-shape: a date/year datatype or a year-like value.
-            if is_temporal_datatype(&lit.datatype) || looks_like_year(&lit.value) {
-                *time_obj_hits.entry(p.to_string()).or_default() += 1;
-                update_time_extent(p, &lit, &mut time_values, &mut time_value_dt);
-            } else if is_numeric_datatype(&lit.datatype) {
-                // A year-shaped value is temporal, not "numeric range" material,
-                // so this is an `else if` — `birthYear` is a time predicate.
-                *num_obj_hits.entry(p.to_string()).or_default() += 1;
-            }
-            // wgs84 lat/long numeric extent.
-            if p == WGS_LAT {
-                if let Ok(v) = lit.value.parse::<f64>() {
-                    have_lat = true;
-                    lat_lo = lat_lo.min(v);
-                    lat_hi = lat_hi.max(v);
-                }
-            } else if p == WGS_LONG {
-                if let Ok(v) = lit.value.parse::<f64>() {
-                    have_lon = true;
-                    lon_lo = lon_lo.min(v);
-                    lon_hi = lon_hi.max(v);
-                }
-            }
+            prof.literal(p, &lit, 1);
         }
     });
 
+    let mut truncated = false;
+    let top_hubs = cap(sort_desc_owned(out_degree), &mut truncated);
+    let in_hubs = cap(sort_desc_owned(in_degree), &mut truncated);
+    finish(
+        prof,
+        Hubs {
+            top_hubs,
+            in_hubs,
+            truncated,
+        },
+        quad_count,
+        term_count,
+        named_graph_count,
+        curated,
+    )
+}
+
+/// The [`ClassLink::o_class`] / `s_class` sentinel for a term that carries no
+/// `rdf:type` (an IRI or blank node nobody typed).
+const O_UNTYPED: &str = "(untyped)";
+
+/// The bounded tallies a card profile is computed from — what both derivation
+/// paths fill and [`finish`] turns into a card, so the signals, caps and
+/// orderings have exactly one implementation.
+///
+/// "Bounded" is the point: every map here is keyed by *vocabulary* (predicates,
+/// classes, datatypes, languages, namespaces), never by subject or object, so
+/// its size does not grow with the graph. The two per-term tallies — out- and
+/// in-degree — are the exception, and each path keeps them its own way: the
+/// in-memory one in full maps, the streaming one in a top-N heap
+/// ([`TopN`]), handing [`finish`] the capped lists through [`Hubs`].
+#[derive(Default)]
+struct Profile {
+    triple_count: u64,
+    pred_counts: BTreeMap<String, u64>,
+    class_counts: BTreeMap<String, u64>,
+    datatype_counts: BTreeMap<String, u64>,
+    lang_counts: BTreeMap<String, u64>,
+    link_rows: BTreeMap<(String, String, String), u64>,
+    subject_ns: BTreeMap<String, u64>,
+    /// Per-predicate temporal evidence (statements whose object is a date).
+    time_obj_hits: BTreeMap<String, u64>,
+    /// Per-predicate numeric-object hits (for value-range queries).
+    num_obj_hits: BTreeMap<String, u64>,
+    /// RDF-star: the predicate of a statement whose subject is a quoted triple
+    /// (`annotation_hits`), or whose object is (`quoting_hits`), and the
+    /// pairs matched against the sample — the witness a body pinning both
+    /// needs (see `Signals::annotated_statement`).
+    annotation_hits: BTreeMap<String, u64>,
+    quoting_hits: BTreeMap<String, u64>,
+    witnessed_pairs: BTreeMap<(String, String), u64>,
+    /// Per-predicate earliest and latest date, in calendar order.
+    time_extent: BTreeMap<String, (String, String)>,
+    /// wgs84 extents, `(min, max)`.
+    lat: Option<(f64, f64)>,
+    lon: Option<(f64, f64)>,
+    geo_wkt: bool,
+}
+
+impl Profile {
+    /// Fold one literal object of predicate `p` in, counted `weight` times —
+    /// 1 per statement on the in-memory path; the streaming path sees each
+    /// distinct `(object, predicate)` pair once, with its multiplicity.
+    fn literal(&mut self, p: &str, lit: &Literal, weight: u64) {
+        *self
+            .datatype_counts
+            .entry(format!("<{}>", lit.datatype))
+            .or_default() += weight;
+        *self.lang_counts.entry(lit.lang.clone()).or_default() += weight;
+        if lit.datatype == GEO_WKTLITERAL {
+            self.geo_wkt = true;
+        }
+        if is_temporal(p, lit) {
+            *self.time_obj_hits.entry(p.to_string()).or_default() += weight;
+            update_time_extent(p, &lit.value, &mut self.time_extent);
+        } else if is_numeric_datatype(&lit.datatype) {
+            // A date is temporal, not "numeric range" material, so this is an
+            // `else if` — a year typed `xsd:gYear` is a time predicate.
+            *self.num_obj_hits.entry(p.to_string()).or_default() += weight;
+        }
+        // wgs84 lat/long numeric extent.
+        if p == WGS_LAT {
+            if let Ok(v) = lit.value.parse::<f64>() {
+                widen(&mut self.lat, v);
+            }
+        } else if p == WGS_LONG {
+            if let Ok(v) = lit.value.parse::<f64>() {
+                widen(&mut self.lon, v);
+            }
+        }
+    }
+}
+
+/// Grow a `(min, max)` extent to cover `v`.
+fn widen(extent: &mut Option<(f64, f64)>, v: f64) {
+    *extent = Some(match *extent {
+        None => (v, v),
+        Some((lo, hi)) => (lo.min(v), hi.max(v)),
+    });
+}
+
+/// The two per-term top-N lists, already capped, and whether either was cut.
+struct Hubs {
+    top_hubs: Vec<(String, u64)>,
+    in_hubs: Vec<(String, u64)>,
+    truncated: bool,
+}
+
+/// Turn the tallies into a card: cap and order every list, derive the
+/// signals, fill the curated half, and generate the starter queries. The one
+/// place both derivation paths meet, so a card derived from quads and a card
+/// derived from a finished `.rete` cannot disagree about anything but the
+/// counts they were handed.
+fn finish(
+    p: Profile,
+    hubs: Hubs,
+    quad_count: u64,
+    term_count: u64,
+    named_graph_count: u64,
+    curated: CardInput,
+) -> DatasetCard {
+    let Profile {
+        triple_count,
+        pred_counts,
+        class_counts,
+        datatype_counts,
+        lang_counts,
+        link_rows,
+        subject_ns,
+        time_obj_hits,
+        num_obj_hits,
+        annotation_hits,
+        quoting_hits,
+        witnessed_pairs,
+        time_extent,
+        lat,
+        lon,
+        geo_wkt,
+    } = p;
     // Signal lookups that need the raw per-predicate counts — computed before
     // `pred_counts` is consumed by the sort below.
     let pred_count = |iri: &str| pred_counts.get(iri).copied().unwrap_or(0);
@@ -1227,13 +1429,11 @@ pub fn derive_card_from(
         .map(|s| s.to_string())
         .collect();
 
-    let mut truncated = false;
+    let mut truncated = hubs.truncated;
     let predicates = cap(sort_desc_owned(pred_counts), &mut truncated);
     let classes = cap(sort_desc_owned(class_counts), &mut truncated);
     let datatypes = cap(sort_desc_owned(datatype_counts), &mut truncated);
     let languages = cap(sort_desc_owned(lang_counts), &mut truncated);
-    let top_hubs = cap(sort_desc_owned(out_degree), &mut truncated);
-    let in_hubs = cap(sort_desc_owned(in_degree), &mut truncated);
     let class_links = cap(sort_links(link_rows), &mut truncated);
 
     // Vocabularies: distinct namespaces of the predicate and class IRIs.
@@ -1292,18 +1492,18 @@ pub fn derive_card_from(
         .into_iter()
         .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
         .map(|(pair, _)| pair);
-    let geo_latlong = have_lat && have_lon;
+    let geo_latlong = lat.is_some() && lon.is_some();
     let temporal_extent = time_ranked
         .first()
-        .and_then(|(p, _)| time_values.get(p))
-        .and_then(|(lo, hi)| match (lo, hi) {
-            (Some(lo), Some(hi)) => Some((lo.clone(), hi.clone())),
-            _ => None,
-        });
-    let spatial_bbox = if geo_latlong && lon_lo.is_finite() && lat_lo.is_finite() {
-        Some([lon_lo, lat_lo, lon_hi, lat_hi])
-    } else {
-        None
+        .and_then(|(p, _)| time_extent.get(p))
+        .cloned();
+    let spatial_bbox = match (lat, lon) {
+        (Some((lat_lo, lat_hi)), Some((lon_lo, lon_hi)))
+            if lon_lo.is_finite() && lat_lo.is_finite() =>
+        {
+            Some([lon_lo, lat_lo, lon_hi, lat_hi])
+        }
+        _ => None,
     };
 
     let signals = Signals {
@@ -1324,6 +1524,7 @@ pub fn derive_card_from(
         // never derived from the triples and never written — see
         // `TextIndexSignal`, `PermutationsSignal` and `QuotedTriplesSignal`.
         text_index: None,
+        label_index: None,
         permutations: None,
         quoted_triples: None,
     };
@@ -1339,8 +1540,8 @@ pub fn derive_card_from(
         datatypes,
         languages,
         class_links,
-        top_hubs,
-        in_hubs,
+        top_hubs: hubs.top_hubs,
+        in_hubs: hubs.in_hubs,
         signals,
         queries: Vec::new(),
         // Stamped later by the build pipeline via `with_coherence` when `--reason`
@@ -1495,16 +1696,157 @@ fn parse_literal(term: &str) -> Option<Literal> {
     }
 }
 
-/// True for XSD date/time/year datatypes — the strong temporal signal.
+/// True for the XSD datatypes whose values are points on a calendar — the
+/// strong temporal signal. `gMonthDay` and `gDay` are recurring dates with no
+/// year, so they have no extent and are not counted.
 fn is_temporal_datatype(dt: &str) -> bool {
     matches!(
         dt,
         "http://www.w3.org/2001/XMLSchema#date"
             | "http://www.w3.org/2001/XMLSchema#dateTime"
+            | "http://www.w3.org/2001/XMLSchema#dateTimeStamp"
             | "http://www.w3.org/2001/XMLSchema#gYear"
             | "http://www.w3.org/2001/XMLSchema#gYearMonth"
-            | "http://www.w3.org/2001/XMLSchema#gMonthDay"
     )
+}
+
+/// Predicates whose values are dates by definition, so a date-shaped value
+/// that arrives as a plain string (or a bare integer year) still counts as
+/// time. Deliberately a closed list: guessing from a local name (`…Year`,
+/// `…date…`) is how ORCIDs and page numbers became "years".
+const DATE_PREDICATES: &[&str] = &[
+    "<http://purl.org/dc/terms/date>",
+    "<http://purl.org/dc/terms/issued>",
+    "<http://purl.org/dc/terms/created>",
+    "<http://purl.org/dc/terms/modified>",
+    "<http://purl.org/dc/terms/available>",
+    "<http://purl.org/dc/terms/dateAccepted>",
+    "<http://purl.org/dc/terms/dateCopyrighted>",
+    "<http://purl.org/dc/terms/dateSubmitted>",
+    "<http://purl.org/dc/elements/1.1/date>",
+    "<http://schema.org/datePublished>",
+    "<http://schema.org/dateCreated>",
+    "<http://schema.org/dateModified>",
+    "<http://schema.org/startDate>",
+    "<http://schema.org/endDate>",
+    "<http://schema.org/birthDate>",
+    "<http://schema.org/deathDate>",
+    "<http://schema.org/foundingDate>",
+    "<http://schema.org/uploadDate>",
+    "<https://schema.org/datePublished>",
+    "<https://schema.org/dateCreated>",
+    "<https://schema.org/dateModified>",
+    "<https://schema.org/startDate>",
+    "<https://schema.org/endDate>",
+    "<https://schema.org/birthDate>",
+    "<https://schema.org/deathDate>",
+    "<http://prismstandard.org/namespaces/basic/2.0/publicationDate>",
+    "<http://prismstandard.org/namespaces/basic/2.0/coverDate>",
+    "<http://www.w3.org/ns/prov#generatedAtTime>",
+    "<http://www.w3.org/ns/prov#invalidatedAtTime>",
+    "<http://www.w3.org/ns/prov#startedAtTime>",
+    "<http://www.w3.org/ns/prov#endedAtTime>",
+    "<http://www.w3.org/ns/prov#atTime>",
+    "<http://www.w3.org/2006/time#inXSDDate>",
+    "<http://www.w3.org/2006/time#inXSDDateTime>",
+    "<http://www.w3.org/2006/time#inXSDDateTimeStamp>",
+    "<http://www.w3.org/2006/time#inXSDgYear>",
+    "<http://www.w3.org/2006/time#inXSDgYearMonth>",
+    "<http://dbpedia.org/ontology/birthDate>",
+    "<http://dbpedia.org/ontology/deathDate>",
+    "<http://dbpedia.org/ontology/releaseDate>",
+    "<http://www.wikidata.org/prop/direct/P569>",
+    "<http://www.wikidata.org/prop/direct/P570>",
+    "<http://www.wikidata.org/prop/direct/P571>",
+    "<http://www.wikidata.org/prop/direct/P577>",
+    "<http://www.wikidata.org/prop/direct/P580>",
+    "<http://www.wikidata.org/prop/direct/P582>",
+    "<http://www.wikidata.org/prop/direct/P585>",
+];
+
+/// Is this literal, on this predicate, evidence of time?
+///
+/// Two ways in, and both demand a value that is **shaped like a date**:
+///
+/// * a calendar datatype ([`is_temporal_datatype`]) — a typed value that is
+///   not date-shaped is malformed, and malformed values are no evidence;
+/// * a known date predicate ([`DATE_PREDICATES`]) with an untyped, string or
+///   integer value.
+///
+/// What it no longer accepts is the old weak signal, "any value whose first
+/// four characters are digits", which read an ORCID (`0000-0001-5001-3721`),
+/// a page number (`9999880`) and a title starting with a year as years and
+/// gave the OpenCitations card a "temporal extent" from one to the other.
+fn is_temporal(p: &str, lit: &Literal) -> bool {
+    if is_temporal_datatype(&lit.datatype) {
+        return date_shaped(&lit.value);
+    }
+    DATE_PREDICATES.contains(&p) && date_shaped(&lit.value)
+}
+
+/// A strict ISO 8601 / XSD date shape: `[-]YYYY`, `YYYY-MM`, `YYYY-MM-DD` or
+/// `YYYY-MM-DDThh:mm[:ss[.f+]]`, each with an optional `Z` / `±hh:mm` zone —
+/// exactly four year digits, month 01–12, day 01–31, and nothing after.
+///
+/// Identifier-shaped and page-shaped strings fail it by construction: a fifth
+/// digit makes a number, not a year (`9999880`); a second four-digit group
+/// cannot be a month (`0000-0001-5001-3721`, `1234-1240`).
+fn date_shaped(v: &str) -> bool {
+    let b = v.as_bytes();
+    let digits =
+        |at: usize, n: usize| b.len() >= at + n && b[at..at + n].iter().all(u8::is_ascii_digit);
+    let two_in = |at: usize, lo: u8, hi: u8| {
+        digits(at, 2) && {
+            let n = (b[at] - b'0') * 10 + (b[at + 1] - b'0');
+            (lo..=hi).contains(&n)
+        }
+    };
+    let mut i = usize::from(b.first() == Some(&b'-'));
+    if !digits(i, 4) {
+        return false;
+    }
+    i += 4;
+    if b.get(i) == Some(&b'-') {
+        if !two_in(i + 1, 1, 12) {
+            return false;
+        }
+        i += 3;
+        if b.get(i) == Some(&b'-') {
+            if !two_in(i + 1, 1, 31) {
+                return false;
+            }
+            i += 3;
+            if b.get(i) == Some(&b'T') {
+                if !(two_in(i + 1, 0, 24) && b.get(i + 3) == Some(&b':') && two_in(i + 4, 0, 59)) {
+                    return false;
+                }
+                i += 6;
+                if b.get(i) == Some(&b':') {
+                    if !two_in(i + 1, 0, 60) {
+                        return false;
+                    }
+                    i += 3;
+                    if b.get(i) == Some(&b'.') {
+                        let start = i + 1;
+                        i = start;
+                        while b.get(i).is_some_and(u8::is_ascii_digit) {
+                            i += 1;
+                        }
+                        if i == start {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    match &b[i..] {
+        [] | [b'Z'] => true,
+        [sign, h1, h2, b':', m1, m2] => {
+            (*sign == b'+' || *sign == b'-') && [h1, h2, m1, m2].iter().all(|c| c.is_ascii_digit())
+        }
+        _ => false,
+    }
 }
 
 /// True for XSD numeric datatypes — candidates for value-range aggregates.
@@ -1523,40 +1865,630 @@ fn is_numeric_datatype(dt: &str) -> bool {
     )
 }
 
-/// A weak temporal signal: a value whose leading token is a 4-digit year
-/// (optionally BCE-negative), e.g. `1492`, `1492-10-12`, `-0044-03-15`.
-fn looks_like_year(value: &str) -> bool {
-    let v = value.strip_prefix('-').unwrap_or(value);
-    let head: String = v.chars().take(4).collect();
-    head.len() == 4 && head.chars().all(|c| c.is_ascii_digit())
+/// Calendar order over date-shaped lexical values of mixed precision: the
+/// signed year first (so `-0100` sorts before `-0044`, which a byte compare
+/// gets backwards), then the rest of the value lexically (`2019` < `2019-05` <
+/// `2019-05-01`, the order a reader expects of an extent).
+fn temporal_key(v: &str) -> (i64, &str) {
+    let (neg, rest) = match v.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, v),
+    };
+    let n = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let year: i64 = rest[..n].parse().unwrap_or(0);
+    (if neg { -year } else { year }, &rest[n..])
 }
 
-/// Fold one temporal literal into the per-predicate MIN/MAX extent, keeping the
-/// extent within a single datatype (the predicate's first-seen one) so a lexical
-/// compare never mixes incompatible value spaces (Risk R4).
-fn update_time_extent(
-    pred: &str,
-    lit: &Literal,
-    values: &mut BTreeMap<String, (Option<String>, Option<String>)>,
-    value_dt: &mut BTreeMap<String, String>,
-) {
-    let dt = value_dt
-        .entry(pred.to_string())
-        .or_insert_with(|| lit.datatype.clone());
-    if *dt != lit.datatype {
-        return; // a different value space for this predicate — skip for extent
+/// Fold one temporal value into its predicate's earliest/latest. Every value
+/// reaching here passed [`date_shaped`], so the calendar order of
+/// [`temporal_key`] is meaningful across `xsd:date`, `xsd:gYear` and
+/// `xsd:gYearMonth` alike — the mix OpenCitations publishes on one
+/// predicate, which the old per-datatype extent split three ways.
+fn update_time_extent(pred: &str, value: &str, extent: &mut BTreeMap<String, (String, String)>) {
+    match extent.get_mut(pred) {
+        None => {
+            extent.insert(pred.to_string(), (value.to_string(), value.to_string()));
+        }
+        Some((lo, hi)) => {
+            if temporal_key(value) < temporal_key(lo) {
+                *lo = value.to_string();
+            }
+            if temporal_key(value) > temporal_key(hi) {
+                *hi = value.to_string();
+            }
+        }
     }
-    let entry = values.entry(pred.to_string()).or_insert((None, None));
-    match &mut entry.0 {
-        Some(lo) if lit.value < *lo => *lo = lit.value.clone(),
-        None => entry.0 = Some(lit.value.clone()),
-        _ => {}
+}
+
+// ===========================================================================
+// Deriving a card from a `.rete` that already exists (`rete recard`)
+// ===========================================================================
+//
+// The in-memory derivation above replays the statements as strings twice and
+// keeps a map from every typed subject to its class, and a degree for every
+// subject and every object: hundreds of bytes per statement, which is why
+// `repyramid --card` tops out near 80 M statements. A finished `.rete` already
+// holds the same statements **sorted six ways and deduplicated**, and sorted
+// input is what turns every per-term tally into a running one:
+//
+//   * SPO groups each subject's statements together — its out-degree is known
+//     the moment the subject changes, so the top-N hubs need a heap of N, not a
+//     map of every subject; its namespace is read once per subject;
+//   * OSP does the same for objects — in-degrees, and each literal object is
+//     decoded once with the multiplicity of every predicate that uses it;
+//   * the `rdf:type` range of POS gives every typed subject its class before
+//     the SPO pass needs it.
+//
+// What remains per-term is the subject→class map behind `class_links`, kept as
+// one small integer per subject id ([`ClassMap`], 1 byte on a graph with fewer
+// than 255 classes). Every other map is keyed by vocabulary. On the 2.9 B-
+// statement OpenCitations parts that is the difference between a 3 h rebuild
+// and a re-card inside a 4 GiB container.
+
+/// How many statements a streamed card was derived from, and what the
+/// per-subject class map cost — for the caller's progress report.
+#[derive(Debug, Clone, Default)]
+pub struct StreamReport {
+    pub statements: u64,
+    pub subjects: u64,
+    pub literal_objects: u64,
+    pub classes: u64,
+    pub class_map_bytes: u64,
+}
+
+/// One subject's class code, for every subject id: `0` = untyped, `1..` the
+/// classes in order of first appearance. Starts one byte wide and widens the
+/// first time a code does not fit, so the common case (tens of classes) costs
+/// one byte per subject.
+enum ClassMap {
+    U8(Vec<u8>),
+    U16(Vec<u16>),
+    U32(Vec<u32>),
+}
+
+impl ClassMap {
+    fn new(subjects: u64) -> Self {
+        // `vec![0; n]` is a zeroed allocation: pages that never get a class
+        // are never touched, so an untyped region costs address space only.
+        ClassMap::U8(vec![0; subjects as usize + 1])
     }
-    match &mut entry.1 {
-        Some(hi) if lit.value > *hi => *hi = lit.value.clone(),
-        None => entry.1 = Some(lit.value.clone()),
-        _ => {}
+
+    fn get(&self, id: u32) -> u32 {
+        let i = id as usize;
+        match self {
+            ClassMap::U8(v) => v.get(i).map_or(0, |&c| c as u32),
+            ClassMap::U16(v) => v.get(i).map_or(0, |&c| c as u32),
+            ClassMap::U32(v) => v.get(i).copied().unwrap_or(0),
+        }
     }
+
+    fn set(&mut self, id: u32, code: u32) {
+        if code > u8::MAX as u32 {
+            if let ClassMap::U8(v) = self {
+                *self = ClassMap::U16(v.iter().map(|&c| c as u16).collect());
+            }
+        }
+        if code > u16::MAX as u32 {
+            if let ClassMap::U16(v) = self {
+                *self = ClassMap::U32(v.iter().map(|&c| c as u32).collect());
+            }
+        }
+        let i = id as usize;
+        match self {
+            ClassMap::U8(v) => {
+                if let Some(slot) = v.get_mut(i) {
+                    *slot = code as u8;
+                }
+            }
+            ClassMap::U16(v) => {
+                if let Some(slot) = v.get_mut(i) {
+                    *slot = code as u16;
+                }
+            }
+            ClassMap::U32(v) => {
+                if let Some(slot) = v.get_mut(i) {
+                    *slot = code;
+                }
+            }
+        }
+    }
+
+    fn bytes(&self) -> u64 {
+        match self {
+            ClassMap::U8(v) => v.len() as u64,
+            ClassMap::U16(v) => v.len() as u64 * 2,
+            ClassMap::U32(v) => v.len() as u64 * 4,
+        }
+    }
+}
+
+/// The N terms with the highest counts, kept in a heap of N while a sorted
+/// pass offers every term once. Ties at the cut go to the lower dictionary id,
+/// which is the lower **term** within one dictionary section (each is sorted),
+/// so one `TopN` per section, merged by term afterwards ([`top_terms`]), keeps
+/// exactly the list the in-memory derivation's sort-then-cap keeps.
+struct TopN {
+    heap: std::collections::BinaryHeap<std::cmp::Reverse<(u64, std::cmp::Reverse<u32>)>>,
+    offered: u64,
+}
+
+impl TopN {
+    fn new() -> Self {
+        TopN {
+            heap: std::collections::BinaryHeap::with_capacity(CARD_TOP_N + 1),
+            offered: 0,
+        }
+    }
+
+    fn offer(&mut self, id: u32, n: u64) {
+        use std::cmp::Reverse;
+        self.offered += 1;
+        let key = Reverse((n, Reverse(id)));
+        if self.heap.len() < CARD_TOP_N {
+            self.heap.push(key);
+        } else if let Some(worst) = self.heap.peek() {
+            // `worst` is the smallest (count, then highest id) kept so far.
+            if (n, Reverse(id)) > worst.0 {
+                self.heap.pop();
+                self.heap.push(key);
+            }
+        }
+    }
+
+    /// The kept `(id, count)` pairs, and whether anything was cut.
+    fn into_parts(self) -> (Vec<(u32, u64)>, bool) {
+        let cut = self.offered > CARD_TOP_N as u64;
+        let v = self
+            .heap
+            .into_iter()
+            .map(|std::cmp::Reverse((n, std::cmp::Reverse(id)))| (id, n))
+            .collect();
+        (v, cut)
+    }
+}
+
+/// Merge per-section [`TopN`]s into the card's list: resolve the survivors'
+/// terms, order by count then term, cut at [`CARD_TOP_N`] — the in-memory
+/// `cap(sort_desc_owned(…))`, over the only candidates that could reach it.
+fn top_terms(
+    tops: [TopN; 2],
+    terms: &dyn Fn(&[u32]) -> Vec<Option<String>>,
+) -> (Vec<(String, u64)>, bool) {
+    let mut offered = 0u64;
+    let mut ids: Vec<(u32, u64)> = Vec::new();
+    for top in tops {
+        offered += top.offered;
+        ids.extend(top.into_parts().0);
+    }
+    let names = terms(&ids.iter().map(|&(id, _)| id).collect::<Vec<_>>());
+    let mut v: Vec<(String, u64)> = ids
+        .iter()
+        .zip(names)
+        .filter_map(|(&(_, n), t)| t.map(|t| (t, n)))
+        .collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.truncate(CARD_TOP_N);
+    (v, offered > CARD_TOP_N as u64)
+}
+
+/// A fast, deterministic hasher for small integer keys — `class_links` is
+/// tallied once per statement, and SipHash there is measurable at 2.9 B.
+#[derive(Default, Clone, Copy)]
+struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(5) ^ b as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+    }
+    fn write_u32(&mut self, n: u32) {
+        self.0 = (self.0.rotate_left(5) ^ n as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+type IdBuild = std::hash::BuildHasherDefault<IdHasher>;
+
+/// The smallest id in `lo..=hi` whose term is `>= key`, or `hi + 1` — a binary
+/// search over one dictionary section, which is sorted bytewise. `O(log n)`
+/// term decodes; what finds the literal and quoted-triple ranges below.
+fn first_at_or_above(lo: u32, hi: u32, key: &str, term: &dyn Fn(u32) -> Option<String>) -> u32 {
+    let (mut a, mut b) = (lo as u64, hi as u64 + 1);
+    while a < b {
+        let mid = a + (b - a) / 2;
+        match term(mid as u32) {
+            Some(t) if t.as_str() < key => a = mid + 1,
+            _ => b = mid,
+        }
+    }
+    a as u32
+}
+
+/// The ids in each section whose terms start with `prefix`'s first byte(s),
+/// as half-open ranges in the role's id space — sorted sections make every
+/// term kind a contiguous run (`"…` literals before `<<…` quoted triples
+/// before `<…` IRIs before `_:…` blank nodes).
+fn id_range(
+    lo: u32,
+    hi: u32,
+    from: &str,
+    to: &str,
+    term: &dyn Fn(u32) -> Option<String>,
+) -> (u32, u32) {
+    if hi < lo {
+        return (lo, lo);
+    }
+    (
+        first_at_or_above(lo, hi, from, term),
+        first_at_or_above(lo, hi, to, term),
+    )
+}
+
+fn in_any(id: u32, ranges: &[(u32, u32)]) -> bool {
+    ranges.iter().any(|&(a, b)| a <= id && id < b)
+}
+
+/// Derive a full card — profile, signals and starter queries — from a `.rete`
+/// that already exists, **streaming** its sections in sorted order with memory
+/// that does not grow with the statement count (see the section notes above).
+///
+/// The result is the card [`derive_card`] would derive from the same
+/// statements, with two differences that come from reading a finished file
+/// rather than its input, both documented in `docs/dataset-cards.md`:
+///
+/// * counts are over the **deduplicated** statements the file holds (the
+///   in-memory card counts its input multiset, then corrects only the totals);
+/// * a subject typed more than once is classified by the class with the
+///   highest dictionary id ("last type wins" in index order, as
+///   [`crate::schema_summary`] reads it), not by the last type in input order.
+///
+/// On a graph with no duplicates and no multi-typed subjects the two cards are
+/// equal, which is what the tests hold it to. Named graphs are summarized by
+/// their counts, as on every other path. `progress` receives one line per
+/// phase.
+pub fn derive_card_streaming(
+    rete: &crate::Rete,
+    curated: CardInput,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(DatasetCard, StreamReport), String> {
+    use crate::index::IndexPermutation;
+
+    let header = rete.header();
+    let dict = rete.dictionary();
+    let index = rete.default_index();
+    let shared = dict.shared_count();
+    let subjects_end = shared as u64 + dict.subject_only_count() as u64;
+    let objects_end = shared as u64 + dict.object_only_count() as u64;
+    let n_preds = dict.predicate_count() as usize;
+    let pred_terms: Vec<String> = (0..=n_preds as u32)
+        .map(|p| {
+            if p == 0 {
+                String::new()
+            } else {
+                dict.predicate_term(p).unwrap_or_default()
+            }
+        })
+        .collect();
+    let type_id = dict.predicate_id(RDF_TYPE);
+
+    // Term-kind ranges, found by binary search instead of decoding every term.
+    let object_term = |id: u32| dict.object_term(id);
+    let subject_term = |id: u32| dict.subject_term(id);
+    let s_end = subjects_end.min(u32::MAX as u64) as u32;
+    let o_end = objects_end.min(u32::MAX as u64) as u32;
+    let literal_ranges = [
+        id_range(1, shared, "\"", "#", &object_term),
+        id_range(shared + 1, o_end, "\"", "#", &object_term),
+    ];
+    let is_literal = |o: u32| in_any(o, &literal_ranges);
+    let quoted = header.has_quoted_triples();
+    let (quoted_subjects, quoted_objects) = if quoted {
+        (
+            vec![
+                id_range(1, shared, "<<", "<=", &subject_term),
+                id_range(shared + 1, s_end, "<<", "<=", &subject_term),
+            ],
+            vec![
+                id_range(1, shared, "<<", "<=", &object_term),
+                id_range(shared + 1, o_end, "<<", "<=", &object_term),
+            ],
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    let mut report = StreamReport::default();
+
+    // --- Pass 1: the `rdf:type` range of POS → class counts and the class map.
+    progress("pass 1/3: classes (the rdf:type range of POS)");
+    let mut class_map = ClassMap::new(subjects_end);
+    let mut class_code: std::collections::HashMap<u32, u32, IdBuild> = Default::default();
+    let mut class_ids: Vec<u32> = vec![0];
+    let mut class_counts: Vec<u64> = vec![0];
+    if let Some(t) = type_id {
+        for (s, _, o) in index.scan_iter((None, Some(t), None)) {
+            let next = class_ids.len() as u32;
+            let code = *class_code.entry(o).or_insert_with(|| {
+                class_ids.push(o);
+                class_counts.push(0);
+                next
+            });
+            class_counts[code as usize] += 1;
+            class_map.set(s, code);
+        }
+    }
+    report.classes = class_ids.len() as u64 - 1;
+    report.class_map_bytes = class_map.bytes();
+
+    // --- Pass 2: SPO → totals, out-degrees, namespaces, the quotient, RDF-star.
+    progress("pass 2/3: subjects (SPO)");
+    const LITERAL_CODE: u32 = u32::MAX;
+    const WINDOW: usize = 1 << 16;
+    let mut prof = Profile::default();
+    let mut pred_counts = vec![0u64; n_preds + 1];
+    let mut annotation_hits = vec![0u64; n_preds + 1];
+    let mut quoting_hits = vec![0u64; n_preds + 1];
+    let mut links: std::collections::HashMap<(u32, u32, u32), u64, IdBuild> = Default::default();
+    // One per dictionary section: shared ids, then the role's own ids.
+    let mut out_top = [TopN::new(), TopN::new()];
+    let mut sample: Vec<(u32, u32)> = Vec::new();
+    let mut window: Vec<(u32, u64)> = Vec::with_capacity(WINDOW);
+    let mut subject_ns: BTreeMap<String, u64> = BTreeMap::new();
+    let flush_ns = |window: &mut Vec<(u32, u64)>, subject_ns: &mut BTreeMap<String, u64>| {
+        let ids: Vec<u32> = window.iter().map(|&(s, _)| s).collect();
+        let terms = dict.subject_terms(&ids);
+        // Sorted subjects mostly share a namespace with their neighbour, so
+        // one map write per run of equal namespaces, not per subject.
+        let mut run: Option<(String, u64)> = None;
+        for (term, &(_, n)) in terms.iter().zip(window.iter()) {
+            let Some(ns) = term.as_deref().and_then(split_namespace) else {
+                continue;
+            };
+            match &mut run {
+                Some((cur, total)) if *cur == ns => *total += n,
+                _ => {
+                    if let Some((cur, total)) = run.take() {
+                        *subject_ns.entry(cur).or_default() += total;
+                    }
+                    run = Some((ns, n));
+                }
+            }
+        }
+        if let Some((cur, total)) = run {
+            *subject_ns.entry(cur).or_default() += total;
+        }
+        window.clear();
+    };
+    let mut cur_s = 0u32;
+    let mut cur_n = 0u64;
+    let stored = index.for_each_in_order(IndexPermutation::Spo, &mut |s, p, o| {
+        prof.triple_count += 1;
+        if let Some(c) = pred_counts.get_mut(p as usize) {
+            *c += 1;
+        }
+        if s != cur_s {
+            if cur_n > 0 {
+                out_top[usize::from(cur_s > shared)].offer(cur_s, cur_n);
+                window.push((cur_s, cur_n));
+                if window.len() >= WINDOW {
+                    flush_ns(&mut window, &mut subject_ns);
+                }
+            }
+            if quoted && in_any(s, &quoted_subjects) && sample.len() < ANNOTATION_WITNESS_SAMPLE {
+                sample.push((s, p));
+            }
+            cur_s = s;
+            cur_n = 0;
+        }
+        cur_n += 1;
+        if quoted {
+            if in_any(s, &quoted_subjects) {
+                if let Some(c) = annotation_hits.get_mut(p as usize) {
+                    *c += 1;
+                }
+            }
+            if in_any(o, &quoted_objects) {
+                if let Some(c) = quoting_hits.get_mut(p as usize) {
+                    *c += 1;
+                }
+            }
+        }
+        if Some(p) == type_id {
+            return;
+        }
+        let sc = class_map.get(s);
+        // Literal first: a writer may file a frequent literal in the shared
+        // section (`--frequent-objects`), so a shared id is not a subject.
+        let oc = if is_literal(o) {
+            LITERAL_CODE
+        } else if o <= shared {
+            class_map.get(o)
+        } else {
+            0
+        };
+        *links.entry((sc, p, oc)).or_default() += 1;
+    });
+    if !stored {
+        return Err("the file stores no SPO permutation".to_string());
+    }
+    if cur_n > 0 {
+        out_top[usize::from(cur_s > shared)].offer(cur_s, cur_n);
+        window.push((cur_s, cur_n));
+    }
+    if !window.is_empty() {
+        flush_ns(&mut window, &mut subject_ns);
+    }
+    report.statements = prof.triple_count;
+    report.subjects = out_top[0].offered + out_top[1].offered;
+    drop(class_map);
+
+    // --- Pass 3: OSP → in-degrees and every literal object, decoded once.
+    progress("pass 3/3: objects (OSP)");
+    let mut in_top = [TopN::new(), TopN::new()];
+    let mut lit_window: Vec<(u32, Vec<(u32, u64)>)> = Vec::with_capacity(WINDOW);
+    let mut lit_objects = 0u64;
+    let flush_lits = |lit_window: &mut Vec<(u32, Vec<(u32, u64)>)>, prof: &mut Profile| {
+        let ids: Vec<u32> = lit_window.iter().map(|(o, _)| *o).collect();
+        let terms = dict.object_terms(&ids);
+        for (term, (_, preds)) in terms.iter().zip(lit_window.iter()) {
+            let Some(lit) = term.as_deref().and_then(parse_literal) else {
+                continue;
+            };
+            for &(p, n) in preds {
+                if let Some(pt) = pred_terms.get(p as usize) {
+                    prof.literal(pt, &lit, n);
+                }
+            }
+        }
+        lit_window.clear();
+    };
+    let mut cur_o = 0u32;
+    let mut cur_n = 0u64;
+    let mut cur_preds: Vec<(u32, u64)> = Vec::new();
+    index.for_each_in_order(IndexPermutation::Osp, &mut |o, _s, p| {
+        if o != cur_o {
+            if cur_n > 0 {
+                if is_literal(cur_o) {
+                    lit_objects += 1;
+                    lit_window.push((cur_o, std::mem::take(&mut cur_preds)));
+                    if lit_window.len() >= WINDOW {
+                        flush_lits(&mut lit_window, &mut prof);
+                    }
+                } else {
+                    in_top[usize::from(cur_o > shared)].offer(cur_o, cur_n);
+                }
+            }
+            cur_o = o;
+            cur_n = 0;
+            cur_preds.clear();
+        }
+        cur_n += 1;
+        if is_literal(o) {
+            match cur_preds.iter_mut().find(|(q, _)| *q == p) {
+                Some((_, n)) => *n += 1,
+                None => cur_preds.push((p, 1)),
+            }
+        }
+    });
+    if cur_n > 0 {
+        if is_literal(cur_o) {
+            lit_objects += 1;
+            lit_window.push((cur_o, std::mem::take(&mut cur_preds)));
+        } else {
+            in_top[usize::from(cur_o > shared)].offer(cur_o, cur_n);
+        }
+    }
+    if !lit_window.is_empty() {
+        flush_lits(&mut lit_window, &mut prof);
+    }
+    report.literal_objects = lit_objects;
+
+    if rete.index_incomplete() {
+        return Err("a read failed part-way through the file; the card would be incomplete".into());
+    }
+
+    // --- Resolve the handful of ids the profile keeps back to terms.
+    progress("resolving the profile's terms");
+    let class_terms: Vec<String> = class_ids
+        .iter()
+        .map(|&o| {
+            if o == 0 {
+                O_UNTYPED.to_string()
+            } else {
+                dict.object_term(o).unwrap_or_default()
+            }
+        })
+        .collect();
+    let class_name = |code: u32| -> String {
+        if code == LITERAL_CODE {
+            O_LITERAL.to_string()
+        } else {
+            class_terms
+                .get(code as usize)
+                .cloned()
+                .unwrap_or_else(|| O_UNTYPED.to_string())
+        }
+    };
+    for (p, &n) in pred_counts.iter().enumerate() {
+        if n > 0 {
+            prof.pred_counts.insert(pred_terms[p].clone(), n);
+        }
+    }
+    for (code, &n) in class_counts.iter().enumerate().skip(1) {
+        if n > 0 {
+            *prof
+                .class_counts
+                .entry(class_terms[code].clone())
+                .or_default() += n;
+        }
+    }
+    for ((sc, p, oc), n) in links {
+        let Some(pt) = pred_terms.get(p as usize) else {
+            continue;
+        };
+        *prof
+            .link_rows
+            .entry((class_name(sc), pt.clone(), class_name(oc)))
+            .or_default() += n;
+    }
+    for (p, &n) in annotation_hits.iter().enumerate() {
+        if n > 0 {
+            prof.annotation_hits.insert(pred_terms[p].clone(), n);
+        }
+    }
+    for (p, &n) in quoting_hits.iter().enumerate() {
+        if n > 0 {
+            prof.quoting_hits.insert(pred_terms[p].clone(), n);
+        }
+    }
+    prof.subject_ns = subject_ns;
+    if pred_counts
+        .iter()
+        .enumerate()
+        .any(|(p, &n)| n > 0 && (pred_terms[p] == GEO_ASWKT || pred_terms[p] == GEO_HASGEOMETRY))
+    {
+        prof.geo_wkt = true;
+    }
+
+    // The RDF-star witness: a sampled annotated statement that the graph also
+    // asserts — one point lookup each.
+    let sample_ids: Vec<u32> = sample.iter().map(|&(s, _)| s).collect();
+    for (term, &(_, about)) in dict.subject_terms(&sample_ids).iter().zip(sample.iter()) {
+        let Some((a, qp, b)) = term.as_deref().and_then(crate::ingest::quoted_triple_parts) else {
+            continue;
+        };
+        if let Some((sid, pid, oid)) = dict.encode(&a, &qp, &b) {
+            if index
+                .scan_iter((Some(sid), Some(pid), Some(oid)))
+                .next()
+                .is_some()
+            {
+                if let Some(about) = pred_terms.get(about as usize) {
+                    *prof.witnessed_pairs.entry((qp, about.clone())).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    let (top_hubs, cut_out) = top_terms(out_top, &|ids| dict.subject_terms(ids));
+    let (in_hubs, cut_in) = top_terms(in_top, &|ids| dict.object_terms(ids));
+
+    let card = finish(
+        prof,
+        Hubs {
+            top_hubs,
+            in_hubs,
+            truncated: cut_out || cut_in,
+        },
+        header.quad_count,
+        header.term_count,
+        rete.named_graph_count() as u64,
+        curated,
+    );
+    Ok((card, report))
 }
 
 /// The namespace of an IRI term: the prefix up to and including the last `#` or
@@ -2377,11 +3309,14 @@ mod tests {
         .is_err());
         assert!(normalize_extra(bag(vec![(String::new(), json!(1))])).is_err());
 
-        // Depth cap: an object of objects-of-scalars (2 levels) ok, 3 rejected
-        // — records belong in Parquet companions, not the card.
-        normalize_extra(bag(vec![("d".into(), json!({"a": {"b": 1}}))])).expect("at the depth cap");
-        assert!(normalize_extra(bag(vec![("d".into(), json!({"a": {"b": {"c": 1}}}))])).is_err());
-        assert!(normalize_extra(bag(vec![("d".into(), json!([[[1]]]))])).is_err());
+        // Depth cap: three container levels ok (a list of objects holding a
+        // list), four rejected — records belong in Parquet companions, not
+        // the card.
+        normalize_extra(bag(vec![("d".into(), json!({"a": {"b": 1}}))])).expect("under the cap");
+        normalize_extra(bag(vec![("d".into(), json!([{"w": ["x", "y"]}]))]))
+            .expect("at the depth cap");
+        assert!(normalize_extra(bag(vec![("d".into(), json!({"a": {"b": {"c": [1]}}}))])).is_err());
+        assert!(normalize_extra(bag(vec![("d".into(), json!([[[[1]]]]))])).is_err());
 
         // "@context" is reserved for a future author-supplied mapping.
         let err = normalize_extra(bag(vec![("@context".into(), json!({}))]))
@@ -2669,5 +3604,339 @@ mod tests {
         // Non-literals decline.
         assert!(parse_literal("<http://ex/x>").is_none());
         assert!(parse_literal("_:b0").is_none());
+    }
+
+    // ---------------------------------------------------------------------
+    // D2: the temporal detector reads dates, not digits.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn date_shapes_are_strict() {
+        for ok in [
+            "2019",
+            "-0044",
+            "2019-05",
+            "2019-05-01",
+            "2019-05-01Z",
+            "2019-05-01+02:00",
+            "2019-05-01T12:30",
+            "2019-05-01T12:30:15",
+            "2019-05-01T12:30:15.250Z",
+            "1950Z",
+        ] {
+            assert!(date_shaped(ok), "{ok} is a date");
+        }
+        for bad in [
+            "0000-0001-5001-3721", // an ORCID
+            "9999880",             // a page number
+            "1234-1240",           // a page range
+            "123-456",
+            "2019 annual report", // a title that starts with a year
+            "2019-13",
+            "2019-05-32",
+            "2019-05-01T25:00",
+            "10.1000/182", // a DOI
+            "",
+            "-",
+            "2019-",
+        ] {
+            assert!(!date_shaped(bad), "{bad} is not a date");
+        }
+    }
+
+    /// OpenCitations-shaped literals: identifiers through
+    /// `literal:hasLiteralValue`, pages as strings, titles that start with a
+    /// year, and publication dates in three precisions on one predicate. Only
+    /// the dates may count — and their extent is calendar-ordered across the
+    /// three datatypes.
+    #[test]
+    fn temporal_extent_ignores_identifiers_pages_and_titles() {
+        let value = "<http://www.essepuntato.it/2010/06/literalreification/hasLiteralValue>";
+        let start = "<http://prismstandard.org/namespaces/basic/2.0/startingPage>";
+        let end = "<http://prismstandard.org/namespaces/basic/2.0/endingPage>";
+        let title = "<http://purl.org/dc/terms/title>";
+        let pubdate = "<http://prismstandard.org/namespaces/basic/2.0/publicationDate>";
+        let issued = "<http://purl.org/dc/terms/issued>";
+        let xsd = |t: &str| format!("http://www.w3.org/2001/XMLSchema#{t}");
+        let mut quads = Vec::new();
+        for (i, id) in [
+            "0000-0001-5001-3721",
+            "0000-0002-1825-0097",
+            "10.1000/182",
+            "9999880",
+            "2019",
+        ]
+        .iter()
+        .enumerate()
+        {
+            quads.push(q(
+                &format!("<http://ex/id/{i}>"),
+                value,
+                &format!("\"{id}\""),
+            ));
+        }
+        quads.push(q("<http://ex/re/1>", start, "\"9999880\""));
+        quads.push(q("<http://ex/re/1>", end, "\"9999899\""));
+        quads.push(q("<http://ex/re/2>", start, "\"1234-1240\""));
+        quads.push(q("<http://ex/br/1>", title, "\"2019 annual report\""));
+        quads.push(q(
+            "<http://ex/br/1>",
+            pubdate,
+            &format!("\"2019-05-01\"^^<{}>", xsd("date")),
+        ));
+        quads.push(q(
+            "<http://ex/br/2>",
+            pubdate,
+            &format!("\"1950\"^^<{}>", xsd("gYear")),
+        ));
+        quads.push(q(
+            "<http://ex/br/3>",
+            pubdate,
+            &format!("\"2021-03\"^^<{}>", xsd("gYearMonth")),
+        ));
+        // A malformed typed date is no evidence.
+        quads.push(q(
+            "<http://ex/br/4>",
+            pubdate,
+            &format!("\"0000-0001-5001-3721\"^^<{}>", xsd("date")),
+        ));
+        // A plain-string date on a known date predicate counts.
+        quads.push(q("<http://ex/br/5>", issued, "\"1999-12\""));
+        let card = derive_card(&quads, 40, 0, CardInput::default());
+        let s = &card.signals;
+        assert_eq!(
+            s.time_predicates,
+            vec![pubdate.to_string(), issued.to_string()],
+            "only the date predicates are time predicates"
+        );
+        assert_eq!(
+            s.temporal_extent,
+            Some(("1950".to_string(), "2021-03".to_string())),
+            "calendar order across xsd:gYear, xsd:date and xsd:gYearMonth"
+        );
+        // Pages and identifiers are strings, not numbers either.
+        assert!(
+            s.numeric_predicates.is_empty(),
+            "{:?}",
+            s.numeric_predicates
+        );
+        // And no time query is written against them.
+        assert!(card
+            .queries
+            .iter()
+            .filter(|q| q.dimension == "time")
+            .all(|q| q.sparql.contains("publicationDate")));
+    }
+
+    #[test]
+    fn negative_years_order_by_value_not_by_bytes() {
+        let mut extent = BTreeMap::new();
+        for v in ["-0044", "-0100", "0001", "-0044-03-15"] {
+            update_time_extent("<p>", v, &mut extent);
+        }
+        assert_eq!(
+            extent.get("<p>"),
+            Some(&("-0100".to_string(), "0001".to_string()))
+        );
+    }
+
+    /// A year typed as an integer on a predicate nobody declared temporal is a
+    /// number — the value-range family takes it, the time family does not.
+    #[test]
+    fn an_integer_year_off_a_date_predicate_is_numeric() {
+        let int = "http://www.w3.org/2001/XMLSchema#integer";
+        let quads = vec![
+            q(
+                "<http://ex/a>",
+                "<http://ex/year>",
+                &format!("\"1492\"^^<{int}>"),
+            ),
+            q(
+                "<http://ex/b>",
+                "<http://ex/year>",
+                &format!("\"1500\"^^<{int}>"),
+            ),
+        ];
+        let card = derive_card(&quads, 6, 0, CardInput::default());
+        assert!(card.signals.time_predicates.is_empty());
+        assert_eq!(
+            card.signals.numeric_predicates,
+            vec!["<http://ex/year>".to_string()]
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // B3: deriving the card from the finished file, streaming.
+    // ---------------------------------------------------------------------
+
+    /// A fixture that exercises every tally the profile keeps: types, labels
+    /// in two languages, numbers, dates, geometry, an alignment link, an
+    /// undescribed IRI, statements about statements (asserted and not, subject
+    /// and object position), and a named graph.
+    fn streaming_fixture() -> Vec<(String, String, String, Option<String>)> {
+        let xsd = |t: &str| format!("http://www.w3.org/2001/XMLSchema#{t}");
+        let mut v = enriched_fixture();
+        for i in 0..5 {
+            let s = format!("<http://ex/place/{i}>");
+            v.push(q(&s, TYPE, "<http://ex/Place>"));
+            v.push(q(&s, LABEL, &format!("\"Lieu {i}\"@fr")));
+            v.push(q(
+                &s,
+                "<http://www.w3.org/2003/01/geo/wgs84_pos#lat>",
+                &format!("\"4{i}.5\"^^<{}>", xsd("double")),
+            ));
+            v.push(q(
+                &s,
+                "<http://www.w3.org/2003/01/geo/wgs84_pos#long>",
+                &format!("\"{i}.25\"^^<{}>", xsd("double")),
+            ));
+            v.push(q(
+                &s,
+                "<http://www.opengis.net/ont/geosparql#asWKT>",
+                &format!(
+                    "\"POINT({i}.25 4{i}.5)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>"
+                ),
+            ));
+            v.push(q(
+                &s,
+                "<http://purl.org/dc/terms/created>",
+                &format!("\"20{i}0-01-0{}\"^^<{}>", i + 1, xsd("date")),
+            ));
+            v.push(q(&s, "<http://ex/near>", "<http://elsewhere/undescribed>"));
+        }
+        // RDF-star: two asserted, annotated statements, one annotated but not
+        // asserted, and one held as a value.
+        let knows = "<http://ex/a> <http://ex/knows> <http://ex/b>";
+        let lives = "<http://ex/a> <http://ex/livesIn> <http://ex/c>";
+        let ghost = "<http://ex/b> <http://ex/knows> <http://ex/c>";
+        for (t, who) in [(knows, "alice"), (lives, "bob"), (ghost, "carol")] {
+            v.push(q(
+                &format!("<<{t}>>"),
+                "<http://ex/recordedBy>",
+                &format!("<http://ex/{who}>"),
+            ));
+        }
+        v.push(q(
+            "<http://ex/claim/1>",
+            "<http://ex/states>",
+            &format!("<<{knows}>>"),
+        ));
+        v.push((
+            "<http://ex/note/1>".into(),
+            "<http://ex/about>".into(),
+            "<http://ex/a>".into(),
+            Some("<http://ex/graph/notes>".into()),
+        ));
+        v
+    }
+
+    /// Build the fixture, then derive its card both ways: `(streamed,
+    /// in_memory)`.
+    fn both_ways(quads: &[(String, String, String, Option<String>)]) -> (DatasetCard, DatasetCard) {
+        let (bytes, _) =
+            crate::ingest::assemble_dataset_with_opts(quads.to_vec(), true, false, None, |_, _| {
+                Vec::new()
+            });
+        let rete = crate::Rete::open(&bytes).unwrap();
+        let term_count = rete.header().term_count;
+        let (card, report) =
+            derive_card_streaming(&rete, CardInput::default(), &mut |_| {}).unwrap();
+        assert_eq!(report.statements, card.triple_count);
+        let in_memory = derive_card(
+            quads,
+            term_count,
+            rete.named_graph_count() as u64,
+            CardInput::default(),
+        );
+        (card, in_memory)
+    }
+
+    /// On a graph with no duplicate statements and no multi-typed subject, the
+    /// card derived by streaming the finished file is the card derived from the
+    /// quads — byte for byte, starter queries included.
+    #[test]
+    fn streaming_derivation_matches_the_in_memory_card() {
+        for quads in [enriched_fixture(), streaming_fixture()] {
+            let (streamed, in_memory) = both_ways(&quads);
+            assert_eq!(
+                String::from_utf8(streamed.to_json_bytes()).unwrap(),
+                String::from_utf8(in_memory.to_json_bytes()).unwrap()
+            );
+        }
+        // The fixture really exercised the RDF-star and geometry halves.
+        let (card, _) = both_ways(&streaming_fixture());
+        assert!(card.signals.annotated_statement.is_some());
+        assert!(!card.signals.quoting_predicates.is_empty());
+        assert!(card.signals.spatial_bbox.is_some());
+        assert!(card.signals.temporal_extent.is_some());
+        assert_eq!(card.named_graph_count, 1);
+    }
+
+    /// More than 255 classes: the per-subject class map widens from one byte
+    /// to two without losing a class, and the capped lists still agree.
+    #[test]
+    fn streaming_derivation_widens_the_class_map() {
+        let mut quads = Vec::new();
+        for i in 0..300 {
+            let s = format!("<http://ex/thing/{i:03}>");
+            quads.push(q(&s, TYPE, &format!("<http://ex/Class{i:03}>")));
+            quads.push(q(
+                &s,
+                "<http://ex/next>",
+                &format!("<http://ex/thing/{:03}>", (i + 1) % 300),
+            ));
+        }
+        let (streamed, in_memory) = both_ways(&quads);
+        assert!(streamed.truncated);
+        assert_eq!(streamed.classes, in_memory.classes);
+        assert_eq!(streamed.class_links, in_memory.class_links);
+        assert_eq!(
+            String::from_utf8(streamed.to_json_bytes()).unwrap(),
+            String::from_utf8(in_memory.to_json_bytes()).unwrap()
+        );
+    }
+
+    /// Duplicates are where the two paths are allowed to differ: the streamed
+    /// card counts the statements the file holds, the in-memory card its input.
+    #[test]
+    fn streaming_derivation_counts_the_deduplicated_file() {
+        let mut quads = enriched_fixture();
+        quads.push(quads[0].clone());
+        let (streamed, in_memory) = both_ways(&quads);
+        assert_eq!(streamed.triple_count, in_memory.triple_count - 1);
+        let type_count = |c: &DatasetCard| {
+            c.predicates
+                .iter()
+                .find(|(p, _)| p == TYPE)
+                .map(|(_, n)| *n)
+        };
+        assert_eq!(type_count(&streamed), type_count(&in_memory).map(|n| n - 1));
+    }
+
+    /// `--keep-curated` is the inverse of `fill`: every curated field of a card
+    /// comes back out verbatim — and only those, never a derived one.
+    #[test]
+    fn the_curated_half_of_a_card_round_trips() {
+        let doc = r##"{"title":"T","description":["# Heading","line"],"license":"CC0-1.0",
+            "source":"https://ex/src","created":"2026-01-01","version":"1",
+            "creators":[{"name":"Ada","orcid":"https://orcid.org/0000-0002-1825-0097"}],
+            "publisher":{"name":"P","ror":"https://ror.org/01ggx4157"},
+            "canonical_url":"https://ex/f.rete","sparql_endpoint":"https://ex/sparql",
+            "source_date":"2025-12-31","derived_from":["https://ex/dump"],
+            "doi":"https://doi.org/10.1/x","cite_as":"Cite me","keywords":["b","a"],
+            "theme":["http://publications.europa.eu/resource/authority/data-theme/EDUC"],
+            "extra":{"k":[{"words":["x"]}]},"example_queries":["ASK {}"]}"##;
+        let curated = CardInput::from_json_str(doc).unwrap();
+        assert!(!curated.is_empty());
+        let card = derive_card(&enriched_fixture(), 12, 0, curated);
+        let again = derive_card(&enriched_fixture(), 12, 0, CardInput::from_card(&card));
+        assert_eq!(again.to_json_bytes(), card.to_json_bytes());
+        assert!(CardInput::from_card(&derive_card(
+            &enriched_fixture(),
+            12,
+            0,
+            CardInput::default()
+        ))
+        .is_empty());
     }
 }

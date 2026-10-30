@@ -55,7 +55,12 @@ build (synthetic, `scripts`-style entities with type/label/edges):
 Output is byte-identical. Reproduce the phase-by-phase heap profile with
 `cargo run --release -p rete-bench -- --build-mem <file.nt>` — it snapshots the
 live heap (exact, via a counting allocator) after parse, dictionary, encode,
-the drop, pyramid, index, and write.
+the Dataset Card derivation, the drop, pyramid, the full-text index, index,
+write, and the starter-query costing that `rete build --card` runs against the
+written file (each query cold, as the build does; the five heaviest are listed
+under the phase row). That last phase is where a carded build peaks on a large
+graph, so it is the row to watch. `--no-card`, `--no-card-costs` and
+`--no-text-index` leave those phases out, mirroring a build without them.
 
 ### Build time (big graphs)
 
@@ -293,6 +298,132 @@ request cost of a real query against either build.
 
 Repro: `dev/perms/{build_bench.sh,query_bench.py,sections.py,rangeserver.py}`
 (gitignored; sources are `data/tree-city-inventory/` and `data/davidrumsey-maps/`).
+
+## Named graphs: per-graph layout vs the quad index
+
+`rete build --named-graphs quad` stores the named graphs in the quad index
+([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)) instead of
+one permutation container per graph. Measured on the OpenCitations Meta
+development sample (1 work in 1,200, 2026-10): 18,869,242 statements, of which
+12,897,306 are provenance in **1,494,934 per-entity graphs** of ~9 quads
+(`<entity>/prov/`) — the shape the per-graph layout handles worst. Same input,
+same flags (`--strict --no-pyramid --card`), one binary; the third column puts
+the provenance in the default graph instead (no `GRAPH` at all).
+
+| | per-graph (kind 5) | quad index (kind 10) | provenance in the default graph |
+|---|--:|--:|--:|
+| file | 1,062,199,572 B | **191,077,024 B** | 166,630,831 B |
+| named-graph section | 974,397,639 B | **102,138,600 B** | — |
+| bytes per provenance statement | 75.6 | **7.9** | ~6.1 |
+| build (in RAM) | 33 min, 9.8 GiB | **77 s, 1.9 GB** | — |
+
+Query cost, cold process per run, `--memory-budget-mb 2048`, a local nginx
+range server (requests and bytes as the server saw them):
+
+| Query | per-graph, remote | quad index, remote |
+|---|---|---|
+| one work's provenance, `GRAPH <work/prov/> { … }` | 81 requests · 414 MB · 1.04 s | **26 requests · 3.7 MB · 0.05 s** |
+| one deleted agent's provenance | 141 requests · 909 MB · 2.12 s | **26 requests · 3.5 MB · 0.04 s** |
+| `COUNT(*)` over `GRAPH ?g` (all 1.5 M graphs) | killed at 4 GB | **131 requests · 23 MB · 15.5 s · 0.36 GB** |
+
+Every query returns the same rows from each layout. Why: the per-graph layout
+spends ~650 B per graph on the graph's IRI as text, six tile directories and six
+zstd frames of a handful of triples each, and has no directory, so reaching one
+graph means walking the section up to it. The quad index stores the quads once
+in tiles shared by ~1,000 graphs and finds a graph by binary search. The one
+place it costs more than the default-graph layout is the graph column itself,
+mostly in the orders that lead with a predicate or an object. Details, the
+encoding experiment and the build table: `dev/session-notes/QUAD-INDEX-DESIGN.md`
+(gitignored).
+
+## Compression (0.4)
+
+What the writer knobs of `rete build` ([cli.md](cli.md#compression-knobs)) do to
+size, build cost and reads, and why 0.4 changed one default. Four inputs, each
+built `--strict --no-pyramid` in a 4 GiB container (6 CPUs) on a shared machine,
+so wall times carry noise of about ±20%; sizes and fetched bytes are exact.
+
+| | statements | terms | 0.3 file |
+|---|--:|--:|--:|
+| **B** OpenCitations sample, provenance in the default graph | 18,869,242 | 6,532,241 | 166,562,617 |
+| **D** the same sample, data only | 5,971,936 | 2,348,222 | 67,630,875 |
+| **C** CORDIS grants (graphs collapsed) | 5,816,992 | 2,167,023 | 106,765,099 |
+| **L** Biblissima, two shards | 879,939 | 283,415 | 9,248,218 |
+
+**Frame shape: the 0.4 default.** Up to 0.3 every tile and chunk was a streaming
+zstd frame, compressed without knowing its size, so zstd used the parameters it
+tunes for large inputs and declared a 4 MiB window. Frames that record their
+size let it use its small-input parameters instead. Same level (9), same data:
+
+| | B | D | C | L |
+|---|--:|--:|--:|--:|
+| file | −7.0% | −6.0% | −0.7% | −4.5% |
+| index sections | −8.3% | −7.0% | −2.4% | −8.0% |
+| dictionary sections | −0.6% | −1.0% | +3.9% | +2.5% |
+
+Encoding is faster (B: 76 against 95 CPU-seconds for the whole build, measured
+back to back in one container), and the 12-query OpenCitations set fetches 5–6%
+fewer bytes remotely with the same number of requests. `ruzstd` decodes the
+denser frames 5–10% slower per tile (wasm under node 18: about 290 against
+260 µs for a 64 KiB SOP tile; 125 against 115 µs for a dictionary chunk).
+Released 0.3.5 and 0.3.7 readers open the new files and answer identically.
+
+**zstd level** (`--zstd-level`), sized frames, against the 0.3 file:
+
+| level | B | D | build CPU-s (B) | ruzstd decode, B index |
+|--:|--:|--:|--:|--:|
+| 6 | −6.2% | −5.7% | 79 | — |
+| **9** | **−7.0%** | **−6.0%** | 76–97 | 386 MB/s |
+| 15 | −6.6% | −6.8% | 114 | 366 MB/s |
+| 19 | −11.8% | −10.1% | 208 | 334 MB/s |
+
+Level 15 is no better than 9 for the index; only 19 pays, at 2.7× the build CPU
+and 8–18% slower decoding. It also changed two of the 12 query plans for the
+worse on B: the evaluator chooses a merge join over a hash/probe join from the
+*compressed* size of the tiles a pattern spans, so a denser file can look
+cheaper to materialize than it is. (Fixed in 0.4.0: the planner's size gates
+now read the tile directory's row estimates, which only the data changes, so a
+level no longer moves a plan.) With the old streaming frames level 19 took 676
+CPU-s for the same size (7× a 0.3 level-9 build), and every level from 12 up
+encoded below 8 MB/s per core, because each 64 KiB frame initialised zstd's
+large-input tables.
+
+**Tile and chunk size** (`--tile-kib`, `--dict-chunk-kib`, set together; sized frames):
+
+| KiB | B file | D file | B remote bytes, 12 queries (0.3 frames) |
+|--:|--:|--:|--:|
+| 32 | +1.6% | +1.4% | −2.7% |
+| **64** | **0** | **0** | **0** |
+| 128 | −0.8% | −0.9% | −4.6% |
+| 256 | +5.1% | +4.2% | +9.0% |
+
+Above 128 KiB a tile no longer gets zstd's small-input parameters, so the file
+grows again; without the block cache (`RETE_BLOCK_KB=0`) every size above 64
+fetched more bytes (+7% at 128, +30% at 256). 64 stays.
+
+**Frequent-object promotion** (`--frequent-objects 64`, off by default): the
+64 most frequent object-only terms move into the shared dictionary section.
+
+| | B | D | C | L |
+|---|--:|--:|--:|--:|
+| promotion alone | −4.8% | −6.5% | −3.2% | −2.3% |
+| the dataset's TBox instead (499 statements) | −2.7% | −5.5% | | |
+| sized frames + promotion | −10.6% | −11.4% | −3.4% | −6.8% |
+| sized frames + promotion + level 19 | −15.0% | −15.3% | | |
+
+The gain is in the merge-join permutation SOP (B: 33.0 to 25.7 MB), where a
+subject's objects are delta-coded and a class at object id ~4 M cost 4 bytes per
+statement. It does not reduce what the 12 queries fetch (they hardly touch SOP),
+and costs no measurable build time or memory. More than 64 terms gains nothing. It stays opt-in because the external
+build (`--memory-budget-mb`) cannot do it, and the two builds are byte-identical
+by contract.
+
+**Measured and not adopted.** zstd dictionaries trained per section saved 0.35%
+(B) and 0.9% (D) of the file against sized frames, almost all of it in the
+dictionary sections, so they are not worth a new codec id (`ruzstd` does decode
+them, also in wasm). Ids ordered strictly by frequency (a "hot" dictionary
+section in front of the shared one, a format change) would save another 0.7–1.6%
+beyond promotion on B and D.
 
 ## Coherence checking: tier costs
 

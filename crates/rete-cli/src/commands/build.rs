@@ -6,8 +6,59 @@
 
 use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
-use rete_core::card::{claim_of, Claim};
 use rete_core::ingest;
+use rete_core::{IntoTextIndex, TextIndexScope};
+
+/// The optional sections added after the generation-1 freeze that a build
+/// writes: the LABEL_INDEX (kind 8, `--label-index`) and the SCHEMA (kind 9,
+/// on unless `--no-schema`). Whatever is chosen, `rete build` keeps the labels
+/// and the schema out of the pyramid-meta, which carries only the community
+/// summary and descriptors.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BuildSections {
+    /// `--label-index`.
+    pub label_index: bool,
+    /// Not `--no-schema`.
+    pub schema: bool,
+}
+
+impl Default for BuildSections {
+    /// What `rete build` writes with neither flag: the SCHEMA section, no
+    /// label index.
+    fn default() -> Self {
+        BuildSections {
+            label_index: false,
+            schema: true,
+        }
+    }
+}
+
+impl BuildSections {
+    /// The in-memory assembly options for these sections.
+    #[allow(clippy::too_many_arguments)]
+    fn assemble_options<'a>(
+        self,
+        with_pyramid: bool,
+        text_index: Option<&'a TextIndexScope>,
+        type_override: Option<&'a str>,
+        algo: rete_core::PyramidAlgo,
+        perms: rete_core::PermSet,
+        graphs: rete_core::GraphLayout,
+    ) -> ingest::AssembleOptions<'a> {
+        ingest::AssembleOptions {
+            with_pyramid,
+            with_text_index: text_index.is_some(),
+            text_index_scope: text_index,
+            type_override,
+            algo,
+            perms,
+            graph_layout: graphs,
+            pyramid_layout: rete_core::PyramidLayout::CommunityOnly,
+            label_index: self.label_index,
+            schema: self.schema,
+        }
+    }
+}
 
 /// Run the card's starter queries against the finished image and **remove the
 /// ones the run proves worthless**, returning the (possibly re-carded) image
@@ -45,52 +96,8 @@ fn drop_measured_empty_queries(
         if measured.len() == 1 { "y" } else { "ies" }
     );
 
-    let mut kept = Vec::with_capacity(measured.len());
-    let mut dropped = Vec::new();
-    for m in measured {
-        match m.useless {
-            None => kept.push(m.cost),
-            Some(why) => {
-                // Only a zero-row result can contradict a template: the
-                // non-emptiness claims are about row *count*, and
-                // `NonEmpty::Aggregate` says outright that the row's values may
-                // be unbound. So a vacuous row is news, not a broken promise —
-                // and inside this arm "useless but not vacuous" is exactly
-                // "measured zero rows".
-                let contradicts_claim = !m.vacuous && claim_of(&m.cost.id) == Claim::CannotBeEmpty;
-                dropped.push(buildinfo::DroppedQuery {
-                    id: m.cost.id,
-                    why,
-                    contradicts_claim,
-                });
-            }
-        }
-    }
-
+    let (kept, dropped) = buildinfo::keep_answering(&mut card, measured);
     if !dropped.is_empty() {
-        eprintln!(
-            "dropping {} starter quer{} the build measured as useless on this file:",
-            dropped.len(),
-            if dropped.len() == 1 { "y" } else { "ies" }
-        );
-        for d in &dropped {
-            eprintln!("  {:<14} {}", d.id, d.why);
-            if d.contradicts_claim {
-                // The static rule and the measurement disagree, and the
-                // measurement is the one that ran. A template that declares its
-                // emitted query cannot be empty and then measures zero is a bug
-                // in `queries.rs`, not a property of this dataset.
-                eprintln!(
-                    "  {:<14} ^ GENERATOR DEFECT: its template claims this query cannot come back \
-                     empty. Fix the rule in crates/rete-cli/src/commands/queries.rs.",
-                    ""
-                );
-            }
-        }
-        let dropped_ids: std::collections::BTreeSet<&str> =
-            dropped.iter().map(|d| d.id.as_str()).collect();
-        card.queries
-            .retain(|q| !dropped_ids.contains(q.id.as_str()));
         // The card is inside the content hash, so this is a new file identity —
         // correctly: the card is part of what the file says about itself. The
         // splice reproduces the writer's layout exactly, so the result is
@@ -105,87 +112,155 @@ fn drop_measured_empty_queries(
     Ok((bytes, buildinfo::query_costs(kept), dropped))
 }
 
-/// Attach the **build-info** section (kind 7, outside the content hash) to a
-/// finished card-carrying image: timestamp, builder version, the parameters in
-/// force, and — when `measure_costs` — each starter query's measured cost
-/// (bytes / range requests / rows / reference ms), run cold against this very
-/// image. Cardless builds skip this entirely, staying byte-identical to
-/// pre-build-info output.
+/// Every flag of a build that shapes the file, as the build record keeps it —
+/// assembled from the build function's own arguments, so the record cannot
+/// disagree with what the build was asked to do.
+pub(crate) struct RecordFlags<'a> {
+    /// `build`, `build --memory-budget-mb` or `repyramid`.
+    pub command: &'a str,
+    pub format: Option<&'a str>,
+    pub no_pyramid: bool,
+    pub pyramid_algo: rete_core::PyramidAlgo,
+    pub text_index: Option<&'a TextIndexScope>,
+    pub materialize: bool,
+    pub reason: bool,
+    pub sections: BuildSections,
+    pub perms: rete_core::PermSet,
+    pub graphs: rete_core::GraphLayout,
+    pub collapse_graphs: bool,
+    pub strict: bool,
+    pub surface: ingest::QuotedTripleSurface,
+    pub type_predicate: Option<&'a str>,
+    pub measure_costs: bool,
+    pub memory_budget_mb: Option<u64>,
+    pub card_args: &'a CardArgs,
+}
+
+impl RecordFlags<'_> {
+    /// The record's `params`. `codec` is the finished file's own.
+    fn params(&self, codec: Option<u8>) -> buildinfo::BuildParams {
+        let mut params = buildinfo::BuildParams {
+            command: Some(self.command.to_string()),
+            format: self.format.map(str::to_string),
+            no_pyramid: self.no_pyramid,
+            label_index: self.sections.label_index,
+            no_schema: !self.sections.schema,
+            materialize: self.materialize,
+            reason: self.reason,
+            pyramid_algo: (!self.no_pyramid).then(|| {
+                match self.pyramid_algo {
+                    rete_core::PyramidAlgo::Types => "types",
+                    _ => "louvain",
+                }
+                .to_string()
+            }),
+            memory_budget_mb: self.memory_budget_mb,
+            codec: codec.map(|c| buildinfo::codec_name(c).to_string()),
+            card_top_n: (self.memory_budget_mb.is_none()).then_some(card::CARD_TOP_N as u32),
+            write: buildinfo::write_record(),
+            permutations: Some(self.perms.len() as u8),
+            named_graphs: Some(
+                match self.graphs {
+                    rete_core::GraphLayout::Quad => "quad",
+                    _ => "per-graph",
+                }
+                .to_string(),
+            ),
+            collapse_graphs: Some(self.collapse_graphs),
+            strict: Some(self.strict),
+            quoted_triple_syntax: Some(
+                match self.surface {
+                    ingest::QuotedTripleSurface::Rdf12 => "rdf12",
+                    _ => "rdf-star",
+                }
+                .to_string(),
+            ),
+            type_predicate: self.type_predicate.map(str::to_string),
+            // The memory-bounded card has no starter queries to run.
+            card_costs: (self.memory_budget_mb.is_none()).then_some(self.measure_costs),
+            card_file: card::card_file_digest(self.card_args),
+            ..Default::default()
+        };
+        params.set_text_index(self.text_index);
+        if self.command == "repyramid" {
+            // It re-assembles an existing file: these flags do not exist there,
+            // and "false" would claim a choice nobody made.
+            params.collapse_graphs = None;
+            params.strict = None;
+            params.quoted_triple_syntax = None;
+        }
+        params
+    }
+}
+
+/// Write a finished card-carrying image to `output` with its **build record**
+/// (the kind-7 build-info section, outside the content hash): the flags, the
+/// engine and host, the inputs and their digests, the statement counts, and —
+/// when `flags.measure_costs` — each starter query's measured cost (bytes /
+/// range requests / rows / reference ms), run cold against this very image.
+/// Cardless builds skip this entirely, staying byte-identical to pre-build-info
+/// output.
 ///
-/// `measure_costs` is `--no-card-costs` inverted, and it now decides more than
+/// The record is written last-but-one: the image goes to disk with the record's
+/// widest form reserved ([`buildinfo::BuildInfo::widest`]), and the sealed
+/// record — whose wall time and peak RSS now cover the write — is patched into
+/// that reservation in place.
+///
+/// `measure_costs` is `--no-card-costs` inverted, and it decides more than
 /// whether a table of numbers is recorded: the same run is what proves each
 /// starter query answers ([`drop_measured_empty_queries`]). Opting out of the
 /// measurement therefore opts out of that protection — the card keeps whatever
 /// the generator's static reasoning produced, unchecked.
 #[allow(clippy::too_many_arguments)]
-fn attach_build_record(
+fn write_carded(
+    output: &str,
     bytes: Vec<u8>,
-    command: &str,
-    format: Option<&str>,
-    no_pyramid: bool,
-    text_index: bool,
-    materialize: bool,
-    reason: bool,
-    pyramid_algo: rete_core::PyramidAlgo,
-    measure_costs: bool,
-) -> anyhow::Result<Vec<u8>> {
+    flags: &RecordFlags<'_>,
+    rec: &buildinfo::Recorder,
+    stats: &ingest::BuildStats,
+    read: u64,
+    inferred: Option<u64>,
+    iri: &rete_core::IriReport,
+) -> anyhow::Result<usize> {
     let header = rete_core::Header::from_bytes(&bytes)?;
-    let mut info = buildinfo::new_build_info(buildinfo::BuildParams {
-        command: Some(command.to_string()),
-        format: format.map(str::to_string),
-        no_pyramid,
-        text_index,
-        materialize,
-        reason,
-        pyramid_algo: if no_pyramid {
-            None
-        } else {
-            Some(
-                match pyramid_algo {
-                    rete_core::PyramidAlgo::Types => "types",
-                    _ => "louvain",
-                }
-                .to_string(),
-            )
-        },
-        memory_budget_mb: None,
-        codec: Some(buildinfo::codec_name(header.dict_codec).to_string()),
-        card_top_n: Some(card::CARD_TOP_N as u32),
-    });
-    if !measure_costs {
+    let mut info = buildinfo::new_build_info(flags.params(Some(header.dict_codec)));
+    rec.begin(&mut info);
+    if !flags.measure_costs {
         eprintln!(
             "--no-card-costs: the starter queries were NOT run, so nothing checked that they \
              answer on this file"
         );
     }
-    let card = card::load_card(&bytes)?.filter(|c| measure_costs && !c.queries.is_empty());
+    let card = card::load_card(&bytes)?.filter(|c| flags.measure_costs && !c.queries.is_empty());
     let bytes = match card {
         Some(card) => {
             let (bytes, costs, dropped) = drop_measured_empty_queries(bytes, card)?;
             info.query_costs = Some(costs);
             info.dropped_queries = dropped;
+            rec.lap(rete_core::build_trace::Phase::StarterQueries);
             bytes
         }
         None => bytes,
     };
+    info.counts = Some(buildinfo::counts(stats, read, inferred, iri));
+    info.inputs = rec.inputs();
+    if rec.is_reproducible() {
+        buildinfo::zero_debug_ms(&mut info);
+    }
+    let reserve = info.reserve_bytes(buildinfo::Pending::Write, rec);
+    let path = std::path::Path::new(output);
+    let len = buildinfo::write_image_with_build_info(path, &bytes, &reserve)?;
+    drop(bytes);
+    rec.lap(rete_core::build_trace::Phase::Write);
+    rec.seal(&mut info);
     let blob = info.to_json_bytes();
-    let out = rete_core::attach_build_info(&bytes, &blob)?;
+    buildinfo::patch_build_info(path, &blob)?;
     eprintln!(
-        "embedded build info ({} bytes, outside the content hash)",
-        blob.len()
+        "embedded build info ({} bytes in a {}-byte section, outside the content hash)",
+        blob.len(),
+        reserve.len()
     );
-    Ok(out)
-}
-
-/// Open an input for streaming — a file path, or `-` for stdin — **transparently
-/// gunzipped**. Detection is by content, not name: a gzip member starts with the
-/// two magic bytes `1f 8b`, so `dump.ttl.gz`, a `.gz` that was renamed, and a
-/// piped `gzip -dc` stream all do the right thing. `MultiGzDecoder` (not
-/// `GzDecoder`) so a concatenation of members — what `cat *.gz` produces, and
-/// what several public dumps ship as — reads through to the end instead of
-/// stopping silently after the first member.
-fn open_reader(path: &str) -> anyhow::Result<Box<dyn std::io::BufRead>> {
-    Ok(open_reader_counted(path, None)?.0)
+    Ok(len as usize)
 }
 
 /// Counts the bytes pulled from an input — and, given a `limit`, reports EOF once
@@ -198,6 +273,10 @@ struct CountedRead<R> {
     inner: R,
     counter: std::rc::Rc<std::cell::Cell<u64>>,
     limit: Option<u64>,
+    /// The build record's running BLAKE3 of the input — fed here, under the
+    /// gzip decoder, so it is the digest of the file as stored, in the one pass
+    /// the build makes anyway.
+    hasher: Option<std::rc::Rc<std::cell::RefCell<blake3::Hasher>>>,
 }
 
 impl<R: std::io::Read> std::io::Read for CountedRead<R> {
@@ -207,6 +286,9 @@ impl<R: std::io::Read> std::io::Read for CountedRead<R> {
         }
         let n = self.inner.read(buf)?;
         self.counter.set(self.counter.get() + n as u64);
+        if let Some(h) = &self.hasher {
+            h.borrow_mut().update(&buf[..n]);
+        }
         Ok(n)
     }
 }
@@ -215,10 +297,36 @@ impl<R: std::io::Read> std::io::Read for CountedRead<R> {
 /// shared with the caller so it can watch progress against a sampling limit.
 pub(crate) type ByteCounter = std::rc::Rc<std::cell::Cell<u64>>;
 
-/// [`open_reader`] plus a live byte counter (and an optional early-EOF limit).
+/// [`open_reader_tapped`] plus a live byte counter (and an optional early-EOF limit).
 pub(crate) fn open_reader_counted(
     path: &str,
     limit: Option<u64>,
+) -> anyhow::Result<(Box<dyn std::io::BufRead>, ByteCounter)> {
+    open_reader_inner(path, limit, None)
+}
+
+/// Open an input for streaming — a file path, or `-` for stdin — **transparently
+/// gunzipped**. Detection is by content, not name: a gzip member starts with the
+/// two magic bytes `1f 8b`, so `dump.ttl.gz`, a `.gz` that was renamed, and a
+/// piped `gzip -dc` stream all do the right thing. `MultiGzDecoder` (not
+/// `GzDecoder`) so a concatenation of members — what `cat *.gz` produces, and
+/// what several public dumps ship as — reads through to the end instead of
+/// stopping silently after the first member.
+///
+/// Given a build-record [`buildinfo::InputTap`], the bytes read and their
+/// BLAKE3 accumulate in the tap as the input streams (under the decoder, so of
+/// the file as stored), and the tap learns whether the input was gzip.
+pub(crate) fn open_reader_tapped(
+    path: &str,
+    tap: Option<&buildinfo::InputTap>,
+) -> anyhow::Result<Box<dyn std::io::BufRead>> {
+    Ok(open_reader_inner(path, None, tap)?.0)
+}
+
+fn open_reader_inner(
+    path: &str,
+    limit: Option<u64>,
+    tap: Option<&buildinfo::InputTap>,
 ) -> anyhow::Result<(Box<dyn std::io::BufRead>, ByteCounter)> {
     use std::io::BufRead;
     let inner: Box<dyn std::io::Read> = if path == "-" {
@@ -226,17 +334,23 @@ pub(crate) fn open_reader_counted(
     } else {
         Box::new(std::fs::File::open(path).map_err(|e| anyhow::anyhow!("{path}: {e}"))?)
     };
-    let counter = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let counter = tap
+        .map(|t| t.bytes.clone())
+        .unwrap_or_else(|| std::rc::Rc::new(std::cell::Cell::new(0u64)));
     let counted = CountedRead {
         inner,
         counter: counter.clone(),
         limit,
+        hasher: tap.map(|t| t.hasher.clone()),
     };
     let mut buf = std::io::BufReader::with_capacity(1 << 20, counted);
     let gzipped = {
         let head = buf.fill_buf().map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
         head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b
     };
+    if let Some(t) = tap {
+        t.gzip.set(gzipped);
+    }
     if gzipped {
         Ok((
             Box::new(std::io::BufReader::with_capacity(
@@ -251,11 +365,11 @@ pub(crate) fn open_reader_counted(
 }
 
 /// Read an input source whole: a file path, or `-` for stdin. Gunzips
-/// transparently, like [`open_reader`].
-fn read_input(path: &str) -> anyhow::Result<String> {
+/// transparently, like [`open_reader_tapped`].
+fn read_input(path: &str, tap: Option<&buildinfo::InputTap>) -> anyhow::Result<String> {
     use std::io::Read;
     let mut s = String::new();
-    open_reader(path)?
+    open_reader_tapped(path, tap)?
         .read_to_string(&mut s)
         .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
     Ok(s)
@@ -264,7 +378,7 @@ fn read_input(path: &str) -> anyhow::Result<String> {
 /// The parser to use for an input: explicit `--format` wins, else by extension,
 /// else (no extension / stdin) N-Triples. A trailing `.gz` is stripped before
 /// the extension is read, so `authors.ttl.gz` is Turtle — the compression is
-/// detected from the bytes ([`open_reader`]), never from the name.
+/// detected from the bytes ([`open_reader_tapped`]), never from the name.
 pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
     if let Some(f) = override_fmt {
         return match f {
@@ -352,9 +466,11 @@ fn parse_inputs(
     format: Option<&str>,
     audit: &mut ingest::IriAudit,
     surface: ingest::QuotedTripleSurface,
+    taps: &[buildinfo::InputTap],
 ) -> anyhow::Result<Vec<ingest::RawQuad>> {
     let mut quads: Vec<ingest::RawQuad> = Vec::new();
-    for input in inputs {
+    for (i, input) in inputs.iter().enumerate() {
+        let tap = taps.get(i);
         let fmt = input_format(input, format);
         // Stream N-Triples / N-Quads files line by line so the whole file text is
         // never resident — the big-build memory win. Pre-size from the file length
@@ -365,10 +481,10 @@ fn parse_inputs(
             let cap = std::fs::metadata(input)
                 .map(|m| (m.len() / 64) as usize)
                 .unwrap_or(0);
-            ingest::parse_reader_audited(open_reader(input)?, fmt, cap, Some(audit))
+            ingest::parse_reader_audited(open_reader_tapped(input, tap)?, fmt, cap, Some(audit))
                 .map_err(|e| ingest_error(Some(input), e))?
         } else {
-            let text = read_input(input)?;
+            let text = read_input(input, tap)?;
             ingest::parse_statements_audited_surface(&text, fmt, Some(audit), surface).map_err(
                 |e| {
                     // OWL/XML and Functional Syntax look like ".owl" but are NOT RDF, so
@@ -407,7 +523,7 @@ pub(crate) fn validate(
     surface: ingest::QuotedTripleSurface,
 ) -> anyhow::Result<()> {
     let mut audit = iri_audit(strict);
-    let quads = parse_inputs(inputs, format, &mut audit, surface)?;
+    let quads = parse_inputs(inputs, format, &mut audit, surface, &[])?;
     let named: std::collections::BTreeSet<&String> =
         quads.iter().filter_map(|(_, _, _, g)| g.as_ref()).collect();
     let in_default = quads.iter().filter(|(_, _, _, g)| g.is_none()).count();
@@ -436,15 +552,54 @@ pub(crate) fn build(
     no_pyramid: bool,
     reason: bool,
     pyramid_algo: rete_core::PyramidAlgo,
-    text_index: bool,
+    text_index: impl IntoTextIndex,
     type_predicate: Option<&str>,
     collapse_graphs: bool,
     card_args: CardArgs,
     no_card_costs: bool,
     perms: rete_core::PermSet,
+    graphs: rete_core::GraphLayout,
     strict: bool,
     surface: ingest::QuotedTripleSurface,
+    sections: BuildSections,
 ) -> anyhow::Result<()> {
+    let text_index = text_index.into_text_index();
+    let inputs_fmt: Vec<(&str, &'static str)> = inputs
+        .iter()
+        .map(|i| (i.as_str(), input_format(i, format)))
+        .collect();
+    // The build record's clock and input taps start here, before any input is
+    // opened. A cardless build carries no record, so it taps nothing: its
+    // inputs are not hashed.
+    let recording = card_args.requested() || reason;
+    let rec = buildinfo::Recorder::start(if recording { &inputs_fmt[..] } else { &[] });
+    let flags = RecordFlags {
+        command: "build",
+        format,
+        no_pyramid,
+        pyramid_algo,
+        text_index: text_index.as_ref(),
+        materialize,
+        reason,
+        sections,
+        perms,
+        graphs,
+        collapse_graphs,
+        strict,
+        surface,
+        type_predicate,
+        measure_costs: !no_card_costs,
+        memory_budget_mb: None,
+        card_args: &card_args,
+    };
+    let opts = sections.assemble_options(
+        !no_pyramid,
+        text_index.as_ref(),
+        type_predicate,
+        pyramid_algo,
+        perms,
+        graphs,
+    );
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
     // materializing every parsed quad. Peak RAM drops from the (huge, heavily
@@ -472,95 +627,95 @@ pub(crate) fn build(
             None
         };
         let card_requested = curated.is_some();
-        let inputs_fmt: Vec<(&str, &'static str)> = inputs
-            .iter()
-            .map(|i| (i.as_str(), input_format(i, format)))
-            .collect();
         // Invalid-IRI audit, shared across every input so the build reports one
         // total. The assembler reads the inputs TWICE (observe terms, then
         // encode), so the audit runs on the first pass only — auditing both
         // would double every count. `--strict` aborts from inside that first
-        // pass, before any index work.
+        // pass, before any index work. The build record's input digests and
+        // statement count are taken on that same first pass.
         let audit = std::cell::RefCell::new(iri_audit(strict));
         let pass = std::cell::Cell::new(0u32);
+        let read = rec.statements_read.clone();
         // Re-readable source: each call re-opens and streams every input file. The
         // two-pass assembler invokes it once to observe terms, once to encode.
         let stream = |visit: &mut dyn FnMut(ingest::RawQuad)| -> Result<(), ingest::IngestError> {
             let first = pass.replace(pass.get() + 1) == 0;
             let mut guard = audit.borrow_mut();
             let mut sink = if first { Some(&mut *guard) } else { None };
-            for (path, fmt) in &inputs_fmt {
-                let rd = open_reader(path)
+            for (i, (path, fmt)) in inputs_fmt.iter().enumerate() {
+                let tap = if first { rec.taps.get(i) } else { None };
+                let rd = open_reader_tapped(path, tap)
                     .map_err(|e| ingest::IngestError::Io(format!("{path}: {e}")))?;
                 // No surface is threaded here on purpose: `streamable` above
                 // admits only `nt`/`nq` files, whose reader takes both spellings
                 // unconditionally. There is nothing for the flag to decide.
-                if collapse_graphs {
-                    let mut flatten = |q: ingest::RawQuad| visit((q.0, q.1, q.2, None));
-                    ingest::stream_reader_audited(rd, fmt, sink.as_deref_mut(), &mut flatten)?;
-                } else {
-                    ingest::stream_reader_audited(rd, fmt, sink.as_deref_mut(), visit)?;
-                }
+                let mut counted = |q: ingest::RawQuad| {
+                    if first {
+                        read.set(read.get() + 1);
+                    }
+                    if collapse_graphs {
+                        visit((q.0, q.1, q.2, None))
+                    } else {
+                        visit(q)
+                    }
+                };
+                ingest::stream_reader_audited(rd, fmt, sink.as_deref_mut(), &mut counted)?;
             }
             Ok(())
         };
-        let (bytes, stats) = ingest::assemble_dataset_streaming_with_perms(
-            stream,
-            !no_pyramid,
-            text_index,
-            type_predicate,
-            pyramid_algo,
-            perms,
-            |stats, dict, triples| match curated {
-                Some(curated) => {
-                    // Derive NOW (the dictionary and id-triples are resident and
-                    // about to be consumed), stamp the counts LATER: the number
-                    // of quads the file actually holds is only known once the
-                    // indexes have deduplicated the input, and a card that
-                    // reports the ingested count instead over-states every
-                    // dataset built from overlapping harvest pages.
-                    let card = card::derive_card_encoded(
-                        dict,
-                        triples,
-                        stats.statements as u64,
-                        stats.terms as u64,
-                        stats.named_graphs as u64,
-                        curated,
-                    );
-                    rete_core::ingest::DeferredMetadata::new(move |counts| {
-                        let blob = card.with_final_counts(counts).to_json_bytes();
-                        eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                        blob
-                    })
+        let (bytes, stats) =
+            ingest::assemble_dataset_streaming_opts(stream, &opts, |stats, dict, triples| {
+                match curated {
+                    Some(curated) => {
+                        // Derive NOW (the dictionary and id-triples are resident and
+                        // about to be consumed), stamp the counts LATER: the number
+                        // of quads the file actually holds is only known once the
+                        // indexes have deduplicated the input, and a card that
+                        // reports the ingested count instead over-states every
+                        // dataset built from overlapping harvest pages.
+                        let card = card::derive_card_encoded(
+                            dict,
+                            triples,
+                            stats.statements as u64,
+                            stats.terms as u64,
+                            stats.named_graphs as u64,
+                            curated,
+                        );
+                        rete_core::ingest::DeferredMetadata::new(move |counts| {
+                            let blob = card.with_final_counts(counts).to_json_bytes();
+                            eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                            blob
+                        })
+                    }
+                    None => rete_core::ingest::DeferredMetadata::none(),
                 }
-                None => rete_core::ingest::DeferredMetadata::none(),
-            },
-        )
-        .map_err(|e| ingest_error(None, e))?;
-        let bytes = if card_requested {
-            attach_build_record(
+            })
+            .map_err(|e| ingest_error(None, e))?;
+        let audit = audit.into_inner();
+        let len = if card_requested {
+            write_carded(
+                output,
                 bytes,
-                "build",
-                format,
-                no_pyramid,
-                text_index,
-                false,
-                false,
-                pyramid_algo,
-                !no_card_costs,
+                &flags,
+                &rec,
+                &stats,
+                rec.statements_read.get(),
+                None,
+                &audit.report,
             )?
         } else {
-            bytes
+            std::fs::write(output, &bytes)?;
+            bytes.len()
         };
-        std::fs::write(output, &bytes)?;
-        print_build_summary(output, &stats, bytes.len());
-        crate::commands::iri_report::warn_after_build(&audit.into_inner().report);
+        print_build_summary(output, &stats, len);
+        crate::commands::iri_report::warn_after_build(&audit.report);
         return Ok(());
     }
 
     // 1. Parse every input into quads (triples → default graph, `None`).
     let mut audit = iri_audit(strict);
-    let mut quads = parse_inputs(inputs, format, &mut audit, surface)?;
+    let mut quads = parse_inputs(inputs, format, &mut audit, surface, &rec.taps)?;
+    let read = quads.len() as u64;
     // 1a. `--collapse-graphs`: drop the graph term so everything lands in the
     // default graph. Done before reasoning, which only sees the default graph —
     // so collapsing a named-graph dump is also what makes it reasonable over.
@@ -569,6 +724,7 @@ pub(crate) fn build(
             q.3 = None;
         }
     }
+    rec.lap(rete_core::build_trace::Phase::Parse);
 
     // 1b. Reason over the default graph once if either flag needs it: `--materialize`
     // folds the inferred triples in (deduped later by the index builder, so they ship
@@ -605,6 +761,10 @@ pub(crate) fn build(
         quads.extend(r.inferred.iter().cloned().map(|(s, p, o)| (s, p, o, None)));
         eprintln!("materialized {inferred} inferred triple(s) into the default graph");
     }
+    let inferred = materialize.then(|| (quads.len() as u64).saturating_sub(read));
+    if reasoning.is_some() {
+        rec.lap(rete_core::build_trace::Phase::Reason);
+    }
 
     // 2. Assemble dictionary + indexes + pyramid into the file image, optionally
     // deriving + embedding a Dataset Card (data-catalog metadata) from the final
@@ -617,14 +777,8 @@ pub(crate) fn build(
         None
     };
     let card_requested = curated.is_some();
-    let (bytes, stats) = ingest::assemble_dataset_with_perms(
-        quads,
-        !no_pyramid,
-        text_index,
-        type_predicate,
-        pyramid_algo,
-        perms,
-        |stats, quads| match curated {
+    let (bytes, stats) =
+        ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
             Some(curated) => {
                 let mut dataset_card = card::derive_card(
                     quads,
@@ -644,25 +798,23 @@ pub(crate) fn build(
                 })
             }
             None => rete_core::ingest::DeferredMetadata::none(),
-        },
-    );
-    let bytes = if card_requested {
-        attach_build_record(
+        });
+    let len = if card_requested {
+        write_carded(
+            output,
             bytes,
-            "build",
-            format,
-            no_pyramid,
-            text_index,
-            materialize,
-            reason,
-            pyramid_algo,
-            !no_card_costs,
+            &flags,
+            &rec,
+            &stats,
+            read,
+            inferred,
+            &audit.report,
         )?
     } else {
-        bytes
+        std::fs::write(output, &bytes)?;
+        bytes.len()
     };
-    std::fs::write(output, &bytes)?;
-    print_build_summary(output, &stats, bytes.len());
+    print_build_summary(output, &stats, len);
     crate::commands::iri_report::warn_after_build(&audit.report);
     Ok(())
 }
@@ -670,14 +822,20 @@ pub(crate) fn build(
 /// `rete build --memory-budget-mb <N>`: the **memory-bounded external build** —
 /// chunk the input to disk, merge, and stream the final file, holding roughly the
 /// budget in RAM regardless of graph size (`rete_core::extbuild`). Output is
-/// byte-identical to a standard `--no-pyramid` build of the same input.
+/// byte-identical to a standard `--no-pyramid` build of the same input, the
+/// SCHEMA section and `--label-index` included (their passes are external sorts
+/// sized from the same budget).
 ///
 /// Named graphs are supported: the graph ordinal leads the external sort key, so
 /// each graph comes out as one contiguous run and is indexed from that run alone
 /// (`--collapse-graphs` still folds them into the default graph when that is what
 /// you want).
 ///
-/// Constraints (explicit errors): no pyramid, no text index, no reasoning.
+/// `--text-index` (any scope) is a second external sort over the literal
+/// words, inside the same budget, and writes the same TEXT_INDEX bytes as the
+/// in-RAM build (`rete_core::text_index_spill`).
+///
+/// Constraints (explicit errors): no pyramid, no reasoning.
 /// `--card` embeds curated fields + counts (the derived profile lists need
 /// unbounded RAM, so they are omitted here). Every input syntax streams,
 /// including gzipped ones, so the source never has to be decompressed to disk.
@@ -690,31 +848,20 @@ pub(crate) fn build_external_cmd(
     tmp_dir: Option<&str>,
     materialize: bool,
     reason: bool,
-    text_index: bool,
+    text_index: Option<TextIndexScope>,
     collapse_graphs: bool,
     card_args: CardArgs,
     perms: rete_core::PermSet,
+    graphs: rete_core::GraphLayout,
     strict: bool,
     surface: ingest::QuotedTripleSurface,
+    type_predicate: Option<&str>,
+    sections: BuildSections,
 ) -> anyhow::Result<()> {
     if materialize || reason {
         anyhow::bail!(
             "--memory-budget-mb is incompatible with --materialize/--reason \
              (they need the whole graph resident); run them via the standard build"
-        );
-    }
-    // Still refused, deliberately. The text index is `token -> sorted subjects`
-    // over the *literals* — a second external sort on a completely different
-    // key (a string token, not an id), fed from the chunk-local terms before the
-    // dictionary merge, and emitted as its own section. It shares no code with
-    // the named-graph column, so landing it here would not have saved a second
-    // pass over the same lines; it is its own change. Until then, build a
-    // text-indexed file with the standard build, or index the text separately.
-    if text_index {
-        anyhow::bail!(
-            "--memory-budget-mb does not support --text-index (the inverted index is \
-             a separate external sort over literal tokens, not part of the triple \
-             spill); build with the standard path, or drop --text-index"
         );
     }
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
@@ -745,37 +892,65 @@ pub(crate) fn build_external_cmd(
         );
     }
 
+    let rec = buildinfo::Recorder::start(if card_args.requested() {
+        &inputs_fmt[..]
+    } else {
+        &[]
+    });
     let curated = if card_args.requested() {
         Some(card::load_curated(&card_args)?)
     } else {
         None
     };
-    // Build conditions for the external build: the parameters are all known up
-    // front (there are no starter queries to measure — the external card has no
-    // derived profile), so the section is written natively during the stream.
-    let build_info = if curated.is_some() {
-        buildinfo::new_build_info(buildinfo::BuildParams {
-            command: Some("build --memory-budget-mb".to_string()),
-            format: format.map(str::to_string),
-            no_pyramid: true,
-            memory_budget_mb: Some(memory_budget_mb),
-            ..Default::default()
-        })
-        .to_json_bytes()
-    } else {
-        Vec::new()
+    // Build conditions for the external build. The section is written natively
+    // during the stream, before the inputs have been read to the end, so what is
+    // known up front goes in now and the section is sized for the widest record
+    // the run can produce ([`buildinfo::BuildInfo::widest`]); the measured half
+    // — digests, counts, spill, timings — is patched into it in place once the
+    // file is complete. (There are no starter queries to measure: the external
+    // card has no derived profile.)
+    let flags = RecordFlags {
+        command: "build --memory-budget-mb",
+        format,
+        no_pyramid: true,
+        pyramid_algo: rete_core::PyramidAlgo::Louvain,
+        text_index: text_index.as_ref(),
+        materialize: false,
+        reason: false,
+        sections,
+        perms,
+        graphs,
+        collapse_graphs,
+        strict,
+        surface,
+        type_predicate,
+        measure_costs: false,
+        memory_budget_mb: Some(memory_budget_mb),
+        card_args: &card_args,
     };
+    let mut info = curated.is_some().then(|| {
+        let mut info = buildinfo::new_build_info(flags.params(None));
+        rec.begin(&mut info);
+        info
+    });
+    let build_info = info
+        .as_ref()
+        .map(|i| i.reserve_bytes(buildinfo::Pending::Everything, &rec))
+        .unwrap_or_default();
+    let build_info_len = build_info.len();
     let out_path = std::path::Path::new(output).to_path_buf();
     // The external build reads its input exactly once, so — unlike the two-pass
     // streaming assembler — the audit needs no pass guard.
     let audit = std::cell::RefCell::new(iri_audit(strict));
+    let read = rec.statements_read.clone();
     let stats = rete_core::extbuild::build_external(
         |visit| {
             let mut guard = audit.borrow_mut();
-            for (path, fmt) in &inputs_fmt {
+            for (i, (path, fmt)) in inputs_fmt.iter().enumerate() {
                 let mut err: Option<rete_core::extbuild::ExtBuildError> = None;
                 let mut on_quad = |q: ingest::RawQuad| {
                     if err.is_none() {
+                        read.set(read.get() + 1);
                         let q = if collapse_graphs {
                             (q.0, q.1, q.2, None)
                         } else {
@@ -786,7 +961,7 @@ pub(crate) fn build_external_cmd(
                         }
                     }
                 };
-                let rd = open_reader(path).map_err(|e| {
+                let rd = open_reader_tapped(path, rec.taps.get(i)).map_err(|e| {
                     rete_core::extbuild::ExtBuildError::Ingest(ingest::IngestError::Io(
                         e.to_string(),
                     ))
@@ -824,15 +999,45 @@ pub(crate) fn build_external_cmd(
             }),
             build_info,
             perms,
+            label_index: sections.label_index,
+            schema: sections.schema,
+            type_override: type_predicate.map(str::to_string),
+            text_index,
+            graphs,
         },
     )
     .map_err(|e| match e {
         rete_core::extbuild::ExtBuildError::Ingest(inner) => ingest_error(None, inner),
         other => anyhow::anyhow!("{other}"),
     })?;
+    let audit = audit.into_inner();
+    if let Some(info) = info.as_mut() {
+        let codec = {
+            use std::io::Read;
+            let mut head = vec![0u8; rete_core::format::HEADER_LEN];
+            std::fs::File::open(&out_path)?.read_exact(&mut head)?;
+            rete_core::Header::from_bytes(&head)?.dict_codec
+        };
+        info.params.codec = Some(buildinfo::codec_name(codec).to_string());
+        info.counts = Some(buildinfo::counts(
+            &stats,
+            rec.statements_read.get(),
+            None,
+            &audit.report,
+        ));
+        info.spill = Some(rec.spill());
+        rec.seal(info);
+        let blob = info.to_json_bytes();
+        buildinfo::patch_build_info(&out_path, &blob)?;
+        eprintln!(
+            "embedded build info ({} bytes in a {}-byte section, outside the content hash)",
+            blob.len(),
+            build_info_len
+        );
+    }
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
     print_build_summary(output, &stats, byte_len);
-    crate::commands::iri_report::warn_after_build(&audit.into_inner().report);
+    crate::commands::iri_report::warn_after_build(&audit.report);
     Ok(())
 }
 
@@ -861,12 +1066,23 @@ fn print_build_summary(output: &str, stats: &ingest::BuildStats, byte_len: usize
 pub(crate) fn repyramid(
     input: &str,
     output: &str,
-    text_index: bool,
+    text_index: Option<TextIndexScope>,
     type_predicate: Option<&str>,
     pyramid_algo: rete_core::PyramidAlgo,
     card_args: CardArgs,
+    label_index: bool,
 ) -> anyhow::Result<()> {
+    let tapped = [(input, "rete")];
+    let rec = buildinfo::Recorder::start(if card_args.requested() {
+        &tapped[..]
+    } else {
+        &[]
+    });
     let bytes = std::fs::read(input)?;
+    if let Some(tap) = rec.taps.first() {
+        tap.bytes.set(bytes.len() as u64);
+        tap.hasher.borrow_mut().update(&bytes);
+    }
     let rete = rete_core::Rete::open(&bytes)?;
     // Rebuilding must not silently CHANGE what the file carries: a three-
     // permutation input stays three-permutation, a six stays six. `repyramid`
@@ -874,6 +1090,13 @@ pub(crate) fn repyramid(
     // `--no-pyramid` — it re-assembles an existing file, it does not re-decide
     // how it was built. Rebuild from source to change the set.
     let perms = rete.header().perms;
+    // The named-graph layout is the same kind of fact: a quad-index input
+    // stays a quad-index file.
+    let graphs = if rete.header().has_quad_index() {
+        rete_core::GraphLayout::Quad
+    } else {
+        rete_core::GraphLayout::PerGraph
+    };
     if perms != rete_core::PermSet::ALL {
         eprintln!(
             "preserving the input's {} permutation(s): {}",
@@ -881,6 +1104,12 @@ pub(crate) fn repyramid(
             perms.names().join(", ")
         );
     }
+    // The same rule for the label index: kept when the input has one, added
+    // with `--label-index`. The SCHEMA section is always written, as by `build`.
+    let sections = BuildSections {
+        label_index: label_index || rete.has_label_index(),
+        schema: true,
+    };
     // The decoded graph owns its sections, so the raw file image is done — free
     // it before building so the (large) assembly has the headroom.
     drop(bytes);
@@ -897,6 +1126,8 @@ pub(crate) fn repyramid(
         }
     }
     drop(rete); // only the quads are needed to re-assemble.
+    let read = quads.len() as u64;
+    rec.lap(rete_core::build_trace::Phase::Read);
 
     // Optionally derive + embed a Dataset Card from the rebuilt counts (same as
     // `build --card`); without a card flag the metadata payload stays empty.
@@ -906,14 +1137,16 @@ pub(crate) fn repyramid(
         None
     };
     let card_requested = curated.is_some();
-    let (out_bytes, stats) = ingest::assemble_dataset_with_perms(
-        quads,
+    let opts = sections.assemble_options(
         true,
-        text_index,
+        text_index.as_ref(),
         type_predicate,
         pyramid_algo,
         perms,
-        |stats, quads| match curated {
+        graphs,
+    );
+    let (out_bytes, stats) =
+        ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
             Some(curated) => {
                 let card = card::derive_card(
                     quads,
@@ -928,40 +1161,50 @@ pub(crate) fn repyramid(
                 })
             }
             None => rete_core::ingest::DeferredMetadata::none(),
-        },
-    );
-    let out_bytes = if card_requested {
-        attach_build_record(
-            out_bytes,
-            "repyramid",
-            None,
-            false,
-            text_index,
-            false,
-            false,
+        });
+    let len = if card_requested {
+        let flags = RecordFlags {
+            command: "repyramid",
+            format: None,
+            no_pyramid: false,
             pyramid_algo,
-            true,
+            text_index: text_index.as_ref(),
+            materialize: false,
+            reason: false,
+            sections,
+            perms,
+            graphs,
+            collapse_graphs: false,
+            strict: false,
+            surface: ingest::QuotedTripleSurface::default(),
+            type_predicate,
+            measure_costs: true,
+            memory_budget_mb: None,
+            card_args: &card_args,
+        };
+        write_carded(
+            output,
+            out_bytes,
+            &flags,
+            &rec,
+            &stats,
+            read,
+            None,
+            &rete_core::IriReport::default(),
         )?
     } else {
-        out_bytes
+        std::fs::write(output, &out_bytes)?;
+        out_bytes.len()
     };
-    std::fs::write(output, &out_bytes)?;
     if stats.named_graphs > 0 {
         println!(
             "repyramid: wrote {output} — {} quads ({} default + {} named), {} terms, {} bytes",
-            stats.statements,
-            stats.default_triples,
-            stats.named_graphs,
-            stats.terms,
-            out_bytes.len()
+            stats.statements, stats.default_triples, stats.named_graphs, stats.terms, len
         );
     } else {
         println!(
             "repyramid: wrote {output} — {} triples, {} terms, {} pyramid level(s), {} bytes",
-            stats.default_triples,
-            stats.terms,
-            stats.pyramid_levels,
-            out_bytes.len()
+            stats.default_triples, stats.terms, stats.pyramid_levels, len
         );
     }
     Ok(())
@@ -998,8 +1241,10 @@ mod tests {
             },
             !measure,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1189,8 +1434,10 @@ mod tests {
                 },
                 false,
                 rete_core::PermSet::ALL,
+                rete_core::GraphLayout::PerGraph,
                 false,
                 ingest::QuotedTripleSurface::default(),
+                BuildSections::default(),
             )
             .unwrap();
             std::fs::read(out).unwrap()
@@ -1283,8 +1530,10 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1322,8 +1571,10 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
 
@@ -1347,8 +1598,10 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();
@@ -1358,5 +1611,106 @@ mod tests {
 
         std::fs::remove_file(&inp).ok();
         std::fs::remove_file(&out).ok();
+    }
+
+    /// `--text-index` with `--memory-budget-mb` (B1): no longer refused, and the
+    /// TEXT_INDEX section is the bytes the in-RAM build writes — for the
+    /// default scope and for a scoped one, whose flags build-info records.
+    #[test]
+    fn memory_bounded_text_index_matches_the_in_ram_section() {
+        let nq = "<http://x/e1> <http://x/title> \"Glucose metabolism étude\" .\n\
+                  <http://x/e1> <http://x/desc> \"The entity has been modified.\" .\n\
+                  <http://x/e2> <http://x/title> \"Benzene ring\"@en .\n\
+                  <http://x/p1> <http://x/desc> \"The entity has been created.\" <http://x/g1> .\n\
+                  <http://x/p1> <http://x/note> \"created by an agent\" <http://x/g1> .\n";
+        let pid = std::process::id();
+        let dir = std::env::temp_dir().join(format!("rete_tiext_{pid}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let inp = dir.join("in.nq");
+        std::fs::write(&inp, nq).unwrap();
+        let input = [inp.to_str().unwrap().to_string()];
+        let none: [&str; 0] = [];
+        let scopes = [
+            TextIndexScope::default(),
+            TextIndexScope::from_options(rete_core::TextIndexGraphs::All, none, ["http://x/desc"])
+                .unwrap(),
+        ];
+        let section = |b: &[u8]| -> (Vec<u8>, bool) {
+            let h = rete_core::Header::from_bytes(b).unwrap();
+            let off = h.text_index_offset as usize;
+            (
+                b[off..off + h.text_index_len as usize].to_vec(),
+                h.text_index_partial,
+            )
+        };
+        for scope in scopes {
+            let ram = dir.join("ram.rete");
+            let ext = dir.join("ext.rete");
+            build(
+                &input,
+                ram.to_str().unwrap(),
+                None,
+                false,
+                true,
+                false,
+                rete_core::PyramidAlgo::Louvain,
+                Some(scope.clone()),
+                None,
+                false,
+                CardArgs::default(),
+                false,
+                rete_core::PermSet::ALL,
+                rete_core::GraphLayout::PerGraph,
+                false,
+                ingest::QuotedTripleSurface::default(),
+                BuildSections::default(),
+            )
+            .unwrap();
+            build_external_cmd(
+                &input,
+                ext.to_str().unwrap(),
+                None,
+                64,
+                Some(dir.to_str().unwrap()),
+                false,
+                false,
+                Some(scope.clone()),
+                false,
+                CardArgs {
+                    enabled: true,
+                    ..CardArgs::default()
+                },
+                rete_core::PermSet::ALL,
+                rete_core::GraphLayout::PerGraph,
+                false,
+                ingest::QuotedTripleSurface::default(),
+                None,
+                BuildSections::default(),
+            )
+            .unwrap();
+            let ram_bytes = std::fs::read(&ram).unwrap();
+            let ext_bytes = std::fs::read(&ext).unwrap();
+            let (ram_sec, ram_partial) = section(&ram_bytes);
+            let (ext_sec, ext_partial) = section(&ext_bytes);
+            assert!(!ram_sec.is_empty());
+            assert_eq!(ext_sec, ram_sec, "{scope:?}: TEXT_INDEX sections differ");
+            assert_eq!(ext_partial, scope.restricts_predicates());
+            assert_eq!(ram_partial, ext_partial);
+
+            // The carded external build records the scope it was given.
+            let info = buildinfo::BuildInfo::from_json_bytes(
+                &rete_core::read_build_info(&ext_bytes).unwrap().unwrap(),
+            )
+            .unwrap();
+            assert!(info.params.text_index);
+            if scope.is_default() {
+                assert_eq!(info.params.text_index_graphs, None);
+                assert!(info.params.text_index_exclude.is_empty());
+            } else {
+                assert_eq!(info.params.text_index_graphs.as_deref(), Some("all"));
+                assert_eq!(info.params.text_index_exclude, ["<http://x/desc>"]);
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

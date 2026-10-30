@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -633,6 +633,12 @@ before its explicit, pinned Binaryen transform.</p>
 <p>zstd's C encoder isn't used on wasm; decoding uses the pure-Rust <code>ruzstd</code>, so the
 browser reads compressed files fine. <code>rete-wasm</code> depends on <code>rete-core</code> with
 <code>--no-default-features</code>.</p>
+<p>In these packages, SPARQL <code>REGEX</code> classes are ASCII-only. <code>rete-wasm</code> keeps the
+small <code>regex-lite</code> engine by default, whose <code>\b</code>, <code>\w</code>, <code>\d</code> and <code>(?i)</code> know
+only ASCII, because the Unicode engine adds about 162 KB gzipped to a module
+every playground visitor downloads. The npm package <code>rete-graph</code> (and the
+Claude Desktop extension built on it) is compiled with <code>--features unicode-regex</code> and answers like the CLI. The table is in
+<a href="sparql.html">SPARQL support</a>.</p>
 <h2 id="stable-js-api">Stable JS API</h2>
 <p>The 1.0 stable surface is <code>Graph</code>, <code>RemoteGraph</code>, <code>build</code>, <code>query</code>,
 <code>query_sparql</code>, <code>header_ranges</code>, <code>summary_overview</code>, and the validation and
@@ -782,12 +788,32 @@ use <strong>synchronous XHR — which browsers permit only inside Web Workers</s
 call <code>sparql_url</code> from a worker (see <code>web/sparql-url-worker.js</code> and the
 "Remote SPARQL" section of the demo page); on the main thread the browser
 throws. The host must answer <code>Range</code> requests with <code>206 Partial Content</code>
-(a host that ignores <code>Range</code> is rejected loudly, never silently mis-read)
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.</p>
-<p>The length probe uses a one-byte ranged <code>GET</code> (reading the total from
-<code>Content-Range</code>) rather than <code>HEAD</code>, since some hosts reject <code>HEAD</code> —
-notably Hugging Face's signed-redirect storage, which answers <code>405</code>.</p>
+<p><strong>The length probe needs no exposed header.</strong> It is one ranged <code>GET</code> of the
+first KiB: a <code>.rete</code> header's section directory fixes the file length, and a
+4-byte read of the closing <code>RETE</code> footer confirms it, unless a readable
+<code>Content-Range</code> already agrees. That matters because a browser sees
+<code>Content-Range</code> only when the host lists it in
+<code>Access-Control-Expose-Headers</code>, and some hosts do not: Zenodo's file API
+(<code>…/api/records/&lt;id&gt;/files/&lt;name&gt;/content</code>) answers <code>206</code> with
+<code>Access-Control-Allow-Origin: *</code> but exposes only <code>Content-Type</code>, <code>ETag</code>,
+<code>Link</code> and its rate-limit headers, and GitHub Pages sends no expose list at
+all. <code>HEAD</code>'s <code>Content-Length</code> is always readable, but it can be the size of a
+compressed representation (GitHub Pages HEADs a 71 MB <code>.rete</code> as its 58 MB
+gzip, #95), so it is only the fallback for a resource that is not a plain
+<code>.rete</code> (a polyglot page). The opt-in persistent range cache below takes its
+total from <code>HEAD</code> in the same situation.</p>
+<p><strong>A host that ignores <code>Range</code></strong> answers with <code>200</code> and the whole file. Both
+engines treat that body as the file: up to 256 MiB it is kept and every later
+read is a slice of it (the file then behaves like an in-memory one, downloaded
+once per open, and the whole download is counted in the bytes the result line
+reports), and a bigger one is refused with a message that names the cause,
+without retrying the download. The body is never taken for the range
+that was asked for. (Chromium can hide this case for a cacheable body, by
+answering later range requests from its HTTP cache as <code>206</code>; a <code>no-store</code>
+host cannot be hidden that way, which is what
+<code>tests/gate/checks/check_zenodo_host.mjs</code> serves.)</p>
 <h2 id="caching-remote-reads">Caching remote reads</h2>
 <p>Range reads are <strong>cached</strong>, so re-running or refining a query on a remote dataset
 re-fetches almost nothing. Two layers:</p>
@@ -981,8 +1007,11 @@ retain native swipe and vertical scrolling inside long cards.</p>
 a graph's IRIs by heart. It opens on the schema card's <strong>classes and predicates</strong>
 (instant, from the resident card) and, as you type, also searches <strong>entities by
 label</strong> — synchronously for an embedded graph, and over HTTP-range reads (with a
-spinner) for a remote-lazy one, using the bounded label index. Click any result
-to drop its <code>&lt;IRI&gt;</code> at the cursor.</p>
+spinner) for a remote-lazy one, using the file's label index. Click any result
+to drop its <code>&lt;IRI&gt;</code> at the cursor. The label index is the LABEL_INDEX section of
+a file built with <code>--label-index</code> (every labelled subject, read a section head,
+one node per level and one block at a time), or, in a file built before 0.4.0,
+the label block inside its pyramid-meta, capped at 8,192 entries.</p>
 <p>Each predicate row also carries a <strong>values ›</strong> drill: click it for a faceted
 browse of the distinct objects that predicate takes — IRIs resolved to their
 human labels, literals shown verbatim — then click one to insert it into the

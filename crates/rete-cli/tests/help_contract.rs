@@ -16,6 +16,7 @@ fn top_level_help_and_version_are_stable() {
         "search",
         "card",
         "card-url",
+        "recard",
         "graphs",
         "export",
         "repyramid",

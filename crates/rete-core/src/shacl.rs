@@ -843,7 +843,7 @@ impl<'a, G: GraphView> Validator<'a, G> {
             } else {
                 format!("(?{inline}){pat}")
             };
-            let re = regex_lite::Regex::new(&full);
+            let re = crate::row::Regex::new(&full);
             for v in values {
                 if re.as_ref().map_or(true, |r| !r.is_match(&string_value(v))) {
                     out.push(self.result(

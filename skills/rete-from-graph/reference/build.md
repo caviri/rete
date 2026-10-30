@@ -15,7 +15,7 @@ this for you; raw form:
 ```bash
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -w /work rete-dev:latest \
   /work/target/release/rete build /work/data/foo/foo.nt -o /work/data/foo/foo.rete \
-  --pyramid-algo types --card
+  --pyramid-algo types --label-index --card
 ```
 
 (`MSYS_NO_PATHCONV=1` is only needed on Windows Git-Bash so `/work` isn't mangled.)
@@ -29,14 +29,16 @@ binary is stale/missing.
 | `-o, --output <FILE>` | required output `.rete` |
 | `<INPUTS>...` | one or more RDF inputs (merged); `-` reads stdin |
 | `--format nt\|nq\|ttl\|rdfxml` | force input format (else by extension) |
-| `--pyramid-algo louvain\|types` | community pyramid algo. **`types`** = partition by `rdf:type`: deterministic, parallelizable, self-naming, still emits planner `query_stats`; falls back to louvain when untyped. `louvain` (default) = topological modularity, single-threaded, byte-identical. Prefer `types` for typed graphs and anything large. |
+| `--pyramid-algo louvain\|types` | community pyramid algo. **`types`** = partition by `rdf:type`: deterministic, parallelizable, self-naming, falls back to louvain when untyped. `louvain` (default) = topological modularity, single-threaded, byte-identical. Prefer `types` for typed graphs and anything large. |
 | `--no-pyramid` | skip the pyramid entirely — smaller file, still fully queryable (SPARQL/SHACL/triple/reach don't use it). Only community/summary/progressive queries need it. |
 | `--text-index` | full-text word index over literals → `rete search --contains <word>`. Large on text-heavy graphs; off by default. |
+| `--label-index` | the LABEL_INDEX section → `rete search <prefix>` / the playground's entity search: every labelled subject (people as "family, given"), no cap, a few small range reads per search. **Pass it for a publishable dataset** — labels are no longer inside the pyramid, so without it there is no label index. Works with `--no-pyramid` and `--memory-budget-mb`. |
+| `--no-schema` | leave out the SCHEMA section (class hierarchy, level rollups, planner `query_stats`, characteristic sets), which every build writes by default — a few KB, no pyramid needed. |
 | `--type-predicate <FULL-IRI>` | override the typing predicate for the schema pyramid. **Use the full IRI** (`http://www.wikidata.org/prop/direct/P31`), never a prefix — a prefix yields "0 typed classes". |
 | `--card` | embed a Dataset Card (counts, top predicates/classes, vocabularies + curated fields). Always pass for a publishable dataset. |
 | `--title / --license / --source / --description / --created` | curated card fields (each implies `--card`). |
 | `--card-file <json>` | JSON of curated card fields (implies `--card`). Publisher-defined custom fields go inside its `extra` object (bounded: 8 KB serialized, ≤64 keys, nesting ≤2); unknown TOP-LEVEL keys are rejected loudly — see `docs/dataset-cards.md`. |
-| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build. PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir`. |
+| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build (the SCHEMA section and `--label-index` included). PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/reasoning; card = curated + counts. Since 0.4.0 it takes `--text-index` (any `--text-index-graphs/-include/-exclude` scope) and writes the same TEXT_INDEX bytes as the in-RAM build. Spill dir via `--tmp-dir`. |
 | `--tmp-dir <dir>` | Where `--memory-budget-mb` puts its spill files (default: alongside the output). |
 | `--permutations 3\|6` | How many index permutations to store. **Default 6 — leave it alone for anything published.** `3` writes SPO/POS/OSP only: same rows, same routing, same tiles for every query, but no sort-merge join (the planner hash-joins instead) and **older readers refuse the file outright** (`malformed container: expected 6 permutation sections`, exit 1). The three dropped orders are 36.8%–50.5% of a built file. Consider `3` only for a private/self-hosted, index-dominated dataset whose workload is lookup-and-follow rather than `?s <p1> ?o1 . ?s <p2> ?o2` subject stars — and measure with `rete cost` first. |
 | `--materialize` | bake RDFS/OWL-RL entailments into the file at build time (aborts if incoherent). |
@@ -46,7 +48,7 @@ binary is stale/missing.
 
 ```bash
 rete build foo.nt -o foo.rete \
-  --pyramid-algo types --card \
+  --pyramid-algo types --label-index --card \
   --title "Foo KG" --license "CC0-1.0" --source "https://example.org" \
   --description "What this graph is."
 # add --text-index if content search matters; --type-predicate <IRI> if not rdf:type
@@ -64,12 +66,23 @@ section). Escalating levers:
    .rete inside a 16 GiB budget). One file beats shards for UX (one URL, one card,
    real cross-entity BGP joins); shards still win when you need per-shard
    parallel builds or per-part re-publishing.
-4. **Shard** when one file won't fit or v1 limits bite (named graphs, pyramid,
-   text index): split the N-Triples by subject into ~1–2 GB shards, build each
+4. **Shard** when one file won't fit or v1 limits bite (the pyramid): split the N-Triples by subject into ~1–2 GB shards, build each
    with `--no-pyramid` in parallel, and ship a folder + a JSON manifest. The
    dictionary law: cross-shard joins are term-level (string) joins, so shard by
    **subject/entity** to keep star-queries inside one shard. Model:
    `data/scripts/standalone/build_databnf_shards.sh`, `data/scripts/standalone/build_biblissima_shards.sh`.
+
+### Many small named graphs (per-entity provenance)
+
+An N-Quads dump with one graph per entity (OpenCitations' `<entity>/prov/`, a
+graph per record) is the case `--named-graphs quad` (0.4.0) exists for: the
+per-graph layout pays ~650 B of framing per graph and a remote `GRAPH <g>` walks
+the section to reach `g`; the quad index stores the quads once in shared tiles
+and finds a graph by binary search. Same rows from every query. It works on
+every build path (`--memory-budget-mb` included). Readers before 0.4.0 refuse
+the file, so use it where the consumers are 0.4.0 or later. Few, large graphs
+(a TriG export of a handful of datasets) gain little; `--collapse-graphs` is
+still the choice when the graph names carry no meaning.
 
 ### External-build playbook (billion-triple single file)
 
@@ -84,7 +97,13 @@ Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:
 - **Spill sizing**: the spill (`--tmp-dir`) needs roughly ¼–½ of the input NT
   size (id-encoded + zstd) *plus* the staged NT itself if you put it there;
   ORCID's 198 GB NT spilled ~45 GB. It lives in a `.rete-extbuild-<pid>-<seq>`
-  SUBDIR of `--tmp-dir`.
+  SUBDIR of `--tmp-dir`. While the dictionary merge runs it also holds the id
+  remap tables, about 4 B per chunk-local term (~4% more spill on the
+  OpenCitations sample). They live there, not in RAM (0.4.0 and earlier held
+  them resident: 15 GB for 1.7 B terms), so the peak RAM no longer grows with
+  the graph. `--label-index` no longer adds to the spill peak (in 0.4.0 it
+  added ~20% on a data-only graph: its string records sat beside every
+  chunk's files).
 - **Crash resume**: the spill survives a kill. Completed `<PERM>.tiles.sec`
   sections, the merged dictionary and `global.tri` are all reusable — the
   `resume_from_spill` harness (`cargo test -p rete-core --release --lib

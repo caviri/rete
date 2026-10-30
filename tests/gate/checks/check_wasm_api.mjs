@@ -106,7 +106,7 @@ try {
     ["a stray top-level key", '{"title":"T","region":"CH"}', /unknown field `region`/],
     ["a free-text theme", '{"theme":["physics"]}', /not an IRI/],
     ["a theme pointing at keywords", '{"theme":["physics"]}', /keywords/],
-    ["an over-deep extra value", '{"extra":{"a":{"b":{"c":{"d":1}}}}}', /level cap/],
+    ["an over-deep extra value", '{"extra":{"a":{"b":{"c":{"d":{"e":1}}}}}}', /level cap/],
     ["a reserved extra key", '{"extra":{"@context":"x"}}', /reserved/],
   ]) {
     const msg = api.validate_card(doc);

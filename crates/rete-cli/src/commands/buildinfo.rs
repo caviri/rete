@@ -31,6 +31,10 @@ pub(crate) struct BuildInfo {
     /// Build-info schema version (this file: [`BUILD_INFO_SCHEMA`]).
     #[serde(default)]
     pub schema: u8,
+    /// When the build started (RFC 3339 UTC, whole seconds; `SOURCE_DATE_EPOCH`
+    /// honored like `built_at`). Absent before 0.4.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
     /// When the build wrote the file (RFC 3339 UTC, whole seconds). Honors
     /// `SOURCE_DATE_EPOCH` for reproducible pipelines. Distinct from the
     /// card's curated `created`/`source_date`, which describe the *data*.
@@ -41,9 +45,35 @@ pub(crate) struct BuildInfo {
     /// `rete` had written it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builder: Option<String>,
+    /// The same binary in full: version, git commit, target, profile, features.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Engine>,
+    /// The operating system and architecture the build ran on — and nothing
+    /// else about the machine: no host name, user, path or environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<Host>,
     /// The build parameters that shaped the result.
     #[serde(default, skip_serializing_if = "BuildParams::is_empty")]
     pub params: BuildParams,
+    /// What the build read: each input's file name (never its path), format,
+    /// size and BLAKE3, hashed as it streamed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<InputRecord>,
+    /// Inputs past [`MAX_INPUTS_LISTED`], counted but not listed, so a build
+    /// over thousands of shards does not grow the CARD-tier read without bound.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub inputs_omitted: u64,
+    /// Statement counts: read, unique, duplicates dropped, graphs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<Counts>,
+    /// Debugging and performance figures of this one run: wall time per phase,
+    /// peak RSS, the memory limit and CPUs it saw. Volatile — omitted under
+    /// `RETE_BUILD_RECORD=reproducible`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunRecord>,
+    /// What the memory-bounded build's external sort did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spill: Option<SpillRecord>,
     /// Measured starter-query costs (only in-memory `rete build` records these;
     /// memory-bounded/merge builds carry no starter queries to measure).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,6 +84,197 @@ pub(crate) struct BuildInfo {
     /// evidence outlives the terminal the build scrolled past.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_queries: Vec<DroppedQuery>,
+    /// Set when `rete recard` replaced this file's card instead of a rebuild.
+    /// Every other field then still describes the **build** that wrote the
+    /// data sections — they were copied byte for byte, so its timestamp,
+    /// builder and parameters are still the truth about them — except
+    /// `query_costs` / `dropped_queries` and `params.card_top_n`, which belong
+    /// to the new card and were measured by the re-card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recarded: Option<Recarded>,
+}
+
+/// When, by what, and from which file a card was replaced in place of a
+/// rebuild.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Recarded {
+    /// RFC 3339 UTC, like [`BuildInfo::built_at`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    /// The binary that re-carded it, e.g. `rete-cli 0.4.0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// The content hash (hex) of the file it was re-carded from — the identity
+    /// the data sections had before the card changed it.
+    pub from_content_hash: String,
+    /// The binary that re-carded it, in full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Engine>,
+    /// Where the re-card ran (OS and architecture only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<Host>,
+    /// The file it re-carded: its name and size. Its identity is
+    /// `from_content_hash`, so it is not hashed again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<InputRecord>,
+    /// The re-card's own flags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<RecardParams>,
+    /// The re-card's wall time per phase and peak RSS (volatile, like
+    /// [`BuildInfo::run`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunRecord>,
+}
+
+/// `rete recard`'s flags, as the re-card record keeps them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RecardParams {
+    #[serde(default)]
+    pub keep_curated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_file: Option<FileDigest>,
+    #[serde(default)]
+    pub card_costs: bool,
+    #[serde(default)]
+    pub memory_budget_mb: u64,
+}
+
+/// The engine that wrote a file — enough to rebuild the same binary.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Engine {
+    /// `rete-cli`.
+    pub name: String,
+    /// The crate version, e.g. `0.4.0`.
+    pub version: String,
+    /// The git commit the binary was built from, or `unknown` (see
+    /// `crates/rete-cli/build.rs` for where it comes from).
+    pub commit: String,
+    /// The Rust target triple, e.g. `x86_64-unknown-linux-gnu`.
+    pub target: String,
+    /// The cargo profile: `release`, or `debug` for a development binary —
+    /// whose timings are not comparable with a release build's.
+    pub profile: String,
+    /// The rete-core features compiled in (`compression`, `parallel`, …).
+    #[serde(default)]
+    pub features: Vec<String>,
+}
+
+/// The machine a build ran on: OS and architecture, deliberately nothing more.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Host {
+    /// `std::env::consts::OS`: `linux`, `macos`, `windows`, …
+    pub os: String,
+    /// `std::env::consts::ARCH`: `x86_64`, `aarch64`, …
+    pub arch: String,
+}
+
+/// One build input.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct InputRecord {
+    /// The file name without its directory (paths name users and machines),
+    /// or `stdin`.
+    pub name: String,
+    /// The syntax it was parsed as (`nt`, `nq`, `ttl`, `trig`, `rdfxml`,
+    /// `rete`).
+    pub format: String,
+    /// `gzip` when the bytes were gzip, detected from their magic number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<String>,
+    /// Bytes read, as stored (compressed when the input was).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// BLAKE3 (hex) of exactly those bytes, hashed as they streamed in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blake3: Option<String>,
+}
+
+/// A small file the build read whole (`--card-file`): its name and digest.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FileDigest {
+    pub name: String,
+    pub bytes: u64,
+    pub blake3: String,
+}
+
+impl FileDigest {
+    pub(crate) fn of(path: &str, bytes: &[u8]) -> Self {
+        FileDigest {
+            name: file_name(path),
+            bytes: bytes.len() as u64,
+            blake3: blake3::hash(bytes).to_hex().to_string(),
+        }
+    }
+}
+
+/// Statement counts. `statements_read` is what the parser handed over;
+/// `statements_unique` is what the file holds (the header's `quad_count`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Counts {
+    pub statements_read: u64,
+    /// `--materialize`: entailed triples the reasoner added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statements_inferred: Option<u64>,
+    pub statements_unique: u64,
+    /// `read + inferred - unique`: the duplicates the index sort dropped.
+    pub duplicates_dropped: u64,
+    pub default_graph_triples: u64,
+    pub named_graphs: u64,
+    pub named_graph_quads: u64,
+    pub terms: u64,
+    /// Invalid IRIs the tolerant parse stored verbatim (absent when there were
+    /// none; a `--strict` build that finished had none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid_iris: Option<InvalidIris>,
+}
+
+/// The `--strict` audit's tally (`rete_core::IriReport`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct InvalidIris {
+    pub statements: u64,
+    pub occurrences: u64,
+    pub repairable: u64,
+    pub unrepairable: u64,
+}
+
+/// One run's debugging and performance figures.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RunRecord {
+    /// Wall time from the start of the command to the record being sealed —
+    /// everything, the final write included.
+    pub wall_ms: u64,
+    /// Wall time per phase, in order. The phases partition the run; their sum
+    /// is `wall_ms` less the setup before the first one.
+    #[serde(default)]
+    pub phases: Vec<PhaseTime>,
+    /// Peak resident set size (`VmHWM`); `null` off Linux.
+    pub peak_rss_bytes: Option<u64>,
+    /// The memory limit the process saw (its cgroup's); `null` when none.
+    pub memory_limit_bytes: Option<u64>,
+    /// Logical CPUs available to the process (affinity and cgroup quota
+    /// applied — what the parallel phases size themselves to).
+    pub cpus: Option<u64>,
+}
+
+/// One phase's wall time.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct PhaseTime {
+    pub phase: String,
+    pub ms: u64,
+}
+
+/// The memory-bounded build's external sort.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SpillRecord {
+    /// Chunks the input was cut into.
+    pub chunks: u64,
+    /// k-way merges over spilled files (dictionary, permutations, named graphs,
+    /// text index, labels/schema): each reads every one of its runs once.
+    pub merge_passes: u64,
+    /// The spilled sorted runs (and chunk term files) those merges read.
+    pub sort_runs: u64,
+    /// The spill directory's size at its fullest, sampled at phase boundaries
+    /// and after each sort's runs are written — a lower bound on the peak.
+    pub scratch_peak_bytes: u64,
 }
 
 /// The flags in force for this build. `command` names the CLI path taken.
@@ -68,6 +289,22 @@ pub(crate) struct BuildParams {
     pub no_pyramid: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub text_index: bool,
+    /// `--label-index`: a LABEL_INDEX section (kind 8) was written.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub label_index: bool,
+    /// `--no-schema`: the SCHEMA section (kind 9) was left out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_schema: bool,
+    /// `--text-index-graphs`: `all` when the named graphs' literals are indexed
+    /// too; absent for the default graph only (the pre-0.4.0 scope).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_index_graphs: Option<String>,
+    /// `--text-index-include`: the only predicates whose literals are indexed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_index_include: Vec<String>,
+    /// `--text-index-exclude`: predicates whose literals are left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_index_exclude: Vec<String>,
     /// `--materialize`: OWL RL/RDFS entailments were baked into the file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub materialize: bool,
@@ -86,11 +323,97 @@ pub(crate) struct BuildParams {
     /// number `truncated: true` was hinting at without stating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_top_n: Option<u32>,
+    /// The writer knobs in force (`--tile-kib`, `--dict-chunk-kib`,
+    /// `--zstd-level`, the frame shape, `--frequent-objects`), so a file says
+    /// how it was compressed. Absent in files written before 0.4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write: Option<WriteRecord>,
+    // The fields below record the EFFECTIVE value of a flag, default or not,
+    // so the record reads the same whatever the defaults of a later version.
+    // Absent in files written before 0.4.0.
+    /// `--permutations`: 6 or 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permutations: Option<u8>,
+    /// `--named-graphs`: `per-graph` or `quad`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub named_graphs: Option<String>,
+    /// `--collapse-graphs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapse_graphs: Option<bool>,
+    /// `--strict`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+    /// `--quoted-triple-syntax` for Turtle/TriG input: `rdf-star` or `rdf12`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_triple_syntax: Option<String>,
+    /// `--type-predicate`, when one replaced `rdf:type`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_predicate: Option<String>,
+    /// Not `--no-card-costs`: the starter queries were run and measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_costs: Option<bool>,
+    /// `--card-file`: its file name (no path) and BLAKE3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_file: Option<FileDigest>,
+}
+
+/// [`rete_core::write_opts::WriteOptions`] as recorded in the build info.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WriteRecord {
+    pub tile_kib: u32,
+    pub dict_chunk_kib: u32,
+    pub zstd_level: i32,
+    /// `sized` (single-segment frames, the 0.4 default) or `stream`.
+    pub zstd_frame: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub frequent_objects: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// The writer settings this process is building with.
+pub(crate) fn write_record() -> Option<WriteRecord> {
+    let o = rete_core::write_opts::write_options();
+    Some(WriteRecord {
+        tile_kib: (o.tile_budget / 1024) as u32,
+        dict_chunk_kib: (o.dict_chunk_budget / 1024) as u32,
+        zstd_level: o.zstd_level,
+        zstd_frame: match o.frame {
+            rete_core::write_opts::FrameShape::Sized => "sized",
+            rete_core::write_opts::FrameShape::Stream => "stream",
+        }
+        .to_string(),
+        frequent_objects: o.frequent_objects as u64,
+    })
 }
 
 impl BuildParams {
     fn is_empty(&self) -> bool {
         *self == BuildParams::default()
+    }
+
+    /// Record the text index and its scope (`None` = no text index). The scope
+    /// is also in the section itself, which is what readers act on; this is
+    /// the build's account of the flags that produced it.
+    pub(crate) fn set_text_index(&mut self, scope: Option<&rete_core::TextIndexScope>) {
+        use rete_core::{TextIndexGraphs, TextIndexPredicates};
+        self.text_index = scope.is_some();
+        self.text_index_graphs = None;
+        self.text_index_include.clear();
+        self.text_index_exclude.clear();
+        let Some(scope) = scope else {
+            return;
+        };
+        if scope.graphs == TextIndexGraphs::All {
+            self.text_index_graphs = Some("all".to_string());
+        }
+        match &scope.predicates {
+            TextIndexPredicates::All => {}
+            TextIndexPredicates::Only(l) => self.text_index_include = l.clone(),
+            TextIndexPredicates::Except(l) => self.text_index_exclude = l.clone(),
+        }
     }
 }
 
@@ -187,18 +510,487 @@ pub(crate) fn codec_name(codec: u8) -> &'static str {
     }
 }
 
-/// A fresh [`BuildInfo`] carrying the timestamp, builder, and parameters —
-/// query costs are measured separately ([`measure_query_costs`]) because they
-/// need the finished image.
+/// A fresh [`BuildInfo`] carrying the timestamp, builder, engine, host and
+/// parameters — query costs are measured separately ([`measure_query_costs`])
+/// because they need the finished image, and a [`Recorder`] adds what the run
+/// measured.
 pub(crate) fn new_build_info(params: BuildParams) -> BuildInfo {
     BuildInfo {
         schema: BUILD_INFO_SCHEMA,
-        built_at: Some(now_rfc3339()),
+        built_at: timestamp(),
         builder: Some(builder_version()),
+        engine: Some(engine()),
+        host: Some(host()),
         params,
-        query_costs: None,
-        dropped_queries: Vec::new(),
+        ..Default::default()
     }
+}
+
+/// How many inputs a record lists one by one; the rest are counted in
+/// [`BuildInfo::inputs_omitted`]. Each listed input costs ~150 bytes of the
+/// CARD-tier read.
+pub(crate) const MAX_INPUTS_LISTED: usize = 64;
+
+/// `RETE_BUILD_RECORD=reproducible`: leave every volatile fact out of the
+/// record — the `run` block (wall times, peak RSS, the memory limit and CPUs
+/// seen), the starter queries' `debug_ms` (zeroed: older readers require the
+/// field), and the timestamps unless `SOURCE_DATE_EPOCH` pins them. Two such
+/// builds of the same input by the same binary are byte-identical, build
+/// record included. Without it, the comparison to make is with the build-info
+/// section stripped (`rete_core::attach_build_info(image, &[])`), which is what
+/// the test suite does.
+pub(crate) fn reproducible() -> bool {
+    std::env::var("RETE_BUILD_RECORD").is_ok_and(|v| v.trim() == "reproducible")
+}
+
+/// The timestamp to stamp now: [`now_rfc3339`], except that a reproducible
+/// record carries one only when `SOURCE_DATE_EPOCH` provides it.
+pub(crate) fn timestamp() -> Option<String> {
+    if reproducible() && std::env::var("SOURCE_DATE_EPOCH").is_err() {
+        None
+    } else {
+        Some(now_rfc3339())
+    }
+}
+
+/// This binary, in full.
+pub(crate) fn engine() -> Engine {
+    Engine {
+        name: "rete-cli".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        commit: env!("RETE_GIT_COMMIT").into(),
+        target: env!("RETE_TARGET").into(),
+        profile: env!("RETE_PROFILE").into(),
+        features: rete_core::build_trace::enabled_features()
+            .into_iter()
+            .map(String::from)
+            .collect(),
+    }
+}
+
+/// OS and architecture — the whole of what the record says about the machine.
+pub(crate) fn host() -> Host {
+    Host {
+        os: std::env::consts::OS.into(),
+        arch: std::env::consts::ARCH.into(),
+    }
+}
+
+/// The last component of `path`, or `stdin` for `-`: what a record may say
+/// about where an input came from. A directory names a user, a machine, a
+/// project layout; the file name is what a reader needs to match it.
+pub(crate) fn file_name(path: &str) -> String {
+    if path == "-" {
+        return "stdin".into();
+    }
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.rsplit(['/', '\\']).next().unwrap_or(path).to_string())
+}
+
+/// One input as the build reads it: its byte count and running BLAKE3, fed by
+/// the reader underneath any gzip decoder ([`super::build::open_reader_tapped`]),
+/// so the digest is of the bytes as stored and costs no second pass. Clones
+/// share the same state.
+#[derive(Clone)]
+pub(crate) struct InputTap {
+    pub name: String,
+    pub format: &'static str,
+    pub bytes: std::rc::Rc<std::cell::Cell<u64>>,
+    pub hasher: std::rc::Rc<std::cell::RefCell<blake3::Hasher>>,
+    pub gzip: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl InputTap {
+    pub(crate) fn new(path: &str, format: &'static str) -> Self {
+        InputTap {
+            name: file_name(path),
+            format,
+            bytes: Default::default(),
+            hasher: Default::default(),
+            gzip: Default::default(),
+        }
+    }
+
+    fn record(&self) -> InputRecord {
+        InputRecord {
+            name: self.name.clone(),
+            format: self.format.into(),
+            compression: self.gzip.get().then(|| "gzip".into()),
+            bytes: Some(self.bytes.get()),
+            blake3: Some(self.hasher.borrow().finalize().to_hex().to_string()),
+        }
+    }
+}
+
+/// Everything a build measures about itself while it runs, for the record.
+///
+/// Created at the start of the command: it starts the core's
+/// [`rete_core::build_trace`] lap timer on this thread, holds one
+/// [`InputTap`] per input, and counts statements as the stream hands them over.
+pub(crate) struct Recorder {
+    collector: rete_core::build_trace::Collector,
+    started: std::time::Instant,
+    started_at: Option<String>,
+    reproducible: bool,
+    pub taps: Vec<InputTap>,
+    pub statements_read: std::rc::Rc<std::cell::Cell<u64>>,
+}
+
+impl Recorder {
+    /// Start timing now. `inputs` pairs each input path with its format.
+    pub(crate) fn start(inputs: &[(&str, &'static str)]) -> Self {
+        Recorder {
+            collector: rete_core::build_trace::Collector::start(),
+            started: std::time::Instant::now(),
+            started_at: timestamp(),
+            reproducible: reproducible(),
+            taps: inputs.iter().map(|(p, f)| InputTap::new(p, f)).collect(),
+            statements_read: Default::default(),
+        }
+    }
+
+    /// End `phase` (see [`rete_core::build_trace::lap`]).
+    pub(crate) fn lap(&self, phase: rete_core::build_trace::Phase) {
+        rete_core::build_trace::lap(phase);
+    }
+
+    /// Stamp the parts of `info` known when the build starts: `started_at`,
+    /// and the inputs' names and formats.
+    pub(crate) fn begin(&self, info: &mut BuildInfo) {
+        info.started_at = self.started_at.clone();
+        info.inputs_omitted = self.taps.len().saturating_sub(MAX_INPUTS_LISTED) as u64;
+        info.inputs = self
+            .taps
+            .iter()
+            .take(MAX_INPUTS_LISTED)
+            .map(|t| InputRecord {
+                name: t.name.clone(),
+                format: t.format.into(),
+                ..Default::default()
+            })
+            .collect();
+    }
+
+    /// The inputs as read so far.
+    pub(crate) fn inputs(&self) -> Vec<InputRecord> {
+        self.taps
+            .iter()
+            .take(MAX_INPUTS_LISTED)
+            .map(InputTap::record)
+            .collect()
+    }
+
+    /// The memory-bounded build's spill figures, from the core's counters.
+    pub(crate) fn spill(&self) -> SpillRecord {
+        let t = self.collector.snapshot();
+        SpillRecord {
+            chunks: t.counter("chunks").unwrap_or(0),
+            merge_passes: t.counter("merge_passes").unwrap_or(0),
+            sort_runs: t.counter("sort_runs").unwrap_or(0),
+            scratch_peak_bytes: t.counter("scratch_peak_bytes").unwrap_or(0),
+        }
+    }
+
+    /// This run's figures as of now, or `None` in a reproducible record.
+    pub(crate) fn run(&self) -> Option<RunRecord> {
+        if self.reproducible {
+            return None;
+        }
+        Some(RunRecord {
+            wall_ms: self.started.elapsed().as_millis() as u64,
+            phases: self
+                .collector
+                .snapshot()
+                .phases
+                .into_iter()
+                .map(|(p, d)| PhaseTime {
+                    phase: p.as_str().into(),
+                    ms: d.as_millis() as u64,
+                })
+                .collect(),
+            peak_rss_bytes: peak_rss_bytes(),
+            memory_limit_bytes: memory_limit_bytes(),
+            cpus: std::thread::available_parallelism()
+                .ok()
+                .map(|n| n.get() as u64),
+        })
+    }
+
+    /// Whether this record leaves the volatile facts out.
+    pub(crate) fn is_reproducible(&self) -> bool {
+        self.reproducible
+    }
+
+    /// Seal `info` with what the run measured: the inputs, `built_at`, and
+    /// (unless reproducible) the `run` block. Call it last — the wall time and
+    /// peak RSS are read here.
+    pub(crate) fn seal(&self, info: &mut BuildInfo) {
+        if !self.taps.is_empty() {
+            info.inputs = self.inputs();
+        }
+        info.built_at = timestamp();
+        info.run = self.run();
+        if self.reproducible {
+            zero_debug_ms(info);
+        }
+    }
+}
+
+/// A reproducible record keeps the cost table's portable figures and zeroes
+/// its one wall-clock column (removing it would break older readers, which
+/// require the field).
+pub(crate) fn zero_debug_ms(info: &mut BuildInfo) {
+    if let Some(c) = info.query_costs.as_mut() {
+        for q in &mut c.queries {
+            q.debug_ms = 0;
+        }
+    }
+}
+
+/// Peak resident set size of this process: `VmHWM` from `/proc/self/status`.
+/// `None` where there is no procfs.
+pub(crate) fn peak_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
+}
+
+/// The memory limit of this process's cgroup (v2 `memory.max`, else v1
+/// `memory.limit_in_bytes`), `None` when unlimited or not on Linux.
+pub(crate) fn memory_limit_bytes() -> Option<u64> {
+    let v2 = std::fs::read_to_string("/proc/self/cgroup")
+        .ok()
+        .and_then(|c| {
+            c.lines()
+                .find_map(|l| l.strip_prefix("0::").map(str::to_string))
+        })
+        .map(|rel| format!("/sys/fs/cgroup{}/memory.max", rel.trim_end_matches('/')));
+    for path in v2
+        .into_iter()
+        .chain(["/sys/fs/cgroup/memory.max".to_string()])
+        .chain(["/sys/fs/cgroup/memory/memory.limit_in_bytes".to_string()])
+    {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let t = text.trim();
+            if t == "max" {
+                return None;
+            }
+            if let Ok(n) = t.parse::<u64>() {
+                // cgroup v1 reports "unlimited" as a page-rounded i64::MAX.
+                return (n < (1u64 << 60)).then_some(n);
+            }
+        }
+    }
+    None
+}
+
+/// The record's serialized form, padded with spaces to `len` (JSON allows
+/// trailing whitespace; every reader of the section — serde_json, the
+/// browser's `JSON.parse`, Python's `json.loads` — accepts it).
+fn padded(json: Vec<u8>, len: usize) -> Vec<u8> {
+    let mut out = json;
+    if out.len() < len {
+        out.resize(len, b' ');
+    }
+    out
+}
+
+impl BuildInfo {
+    /// A copy of this record with every field the run has **not yet measured**
+    /// at its widest serialization: the size the sealed record can grow to and
+    /// no more.
+    ///
+    /// A record is written into the file before the run it describes has
+    /// finished — the memory-bounded build writes it mid-stream, and every
+    /// build's last phase is writing the file — so the writer reserves this
+    /// many bytes and [`patch_build_info`] fills them in place once the run is
+    /// over: no second copy of the file, and the wall time and peak RSS cover
+    /// the write itself. Every measured number is a `u64` and every measured
+    /// string has a bounded width (a phase name from a closed set, a 64-digit
+    /// hex digest, `gzip`), so the bound is exact, not a guess.
+    ///
+    /// `pending` says what is still to come: [`Pending::Everything`] for the
+    /// memory-bounded build, which writes the section before it has read its
+    /// input; [`Pending::Write`] when only the final write remains, so the run's
+    /// phases are those already timed plus `write`. A reproducible record
+    /// ([`reproducible`]) has no run block to reserve. Fields already final are
+    /// left as they are, which is what keeps the padding small.
+    pub(crate) fn widest(&self, pending: Pending, rec: &Recorder) -> BuildInfo {
+        use rete_core::build_trace::Phase;
+        const MAX: u64 = u64::MAX;
+        let phases: Vec<Phase> = match pending {
+            Pending::Everything => Phase::ALL.to_vec(),
+            Pending::Write => {
+                let mut p: Vec<Phase> = rec
+                    .collector
+                    .snapshot()
+                    .phases
+                    .iter()
+                    .map(|(p, _)| *p)
+                    .collect();
+                if !p.contains(&Phase::Write) {
+                    p.push(Phase::Write);
+                }
+                p
+            }
+        };
+        let widest_run = || RunRecord {
+            wall_ms: MAX,
+            phases: phases
+                .iter()
+                .map(|p| PhaseTime {
+                    phase: p.as_str().into(),
+                    ms: MAX,
+                })
+                .collect(),
+            peak_rss_bytes: Some(MAX),
+            memory_limit_bytes: Some(MAX),
+            cpus: Some(MAX),
+        };
+        let run = !rec.is_reproducible();
+        let mut w = self.clone();
+        if let Some(r) = w.recarded.as_mut() {
+            // A re-card measures only itself; the build's own figures are
+            // copied as they are and do not change.
+            if run {
+                r.run = Some(widest_run());
+            }
+            return w;
+        }
+        if matches!(pending, Pending::Everything) {
+            for i in &mut w.inputs {
+                i.compression = Some("gzip".into());
+                i.bytes = Some(MAX);
+                i.blake3 = Some("f".repeat(64));
+            }
+            w.counts = Some(Counts {
+                statements_read: MAX,
+                statements_inferred: Some(MAX),
+                statements_unique: MAX,
+                duplicates_dropped: MAX,
+                default_graph_triples: MAX,
+                named_graphs: MAX,
+                named_graph_quads: MAX,
+                terms: MAX,
+                invalid_iris: Some(InvalidIris {
+                    statements: MAX,
+                    occurrences: MAX,
+                    repairable: MAX,
+                    unrepairable: MAX,
+                }),
+            });
+            w.spill = Some(SpillRecord {
+                chunks: MAX,
+                merge_passes: MAX,
+                sort_runs: MAX,
+                scratch_peak_bytes: MAX,
+            });
+            // The codec is read off the finished file's header.
+            w.params.codec = Some("unknown".into());
+        }
+        if run {
+            w.run = Some(widest_run());
+        }
+        w
+    }
+
+    /// [`widest`](Self::widest), serialized: the bytes to reserve.
+    pub(crate) fn reserve_bytes(&self, pending: Pending, rec: &Recorder) -> Vec<u8> {
+        self.widest(pending, rec).to_json_bytes()
+    }
+}
+
+/// What a record still has to measure when its section is reserved.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Pending {
+    /// Only the final write: the inputs, counts and costs are final.
+    Write,
+    /// Everything (the memory-bounded build reserves before it reads).
+    Everything,
+}
+
+/// Write a finished in-memory `image` to `path` with `info` spliced in as its
+/// build-info section — streamed from the image, so the file is never copied
+/// in memory (what [`rete_core::attach_build_info`] does, and on a multi-GB
+/// in-RAM build, a second image at the very end of the build is the peak).
+/// The bytes are exactly `attach_build_info(image, info)`'s.
+pub(crate) fn write_image_with_build_info(
+    path: &std::path::Path,
+    image: &[u8],
+    info: &[u8],
+) -> anyhow::Result<u64> {
+    use std::io::Write;
+    let plan = rete_core::plan_build_info(image, image.len() as u64, info.len() as u64)?;
+    let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(path)?);
+    out.write_all(&plan.header)?;
+    out.write_all(&image[rete_core::format::HEADER_LEN..plan.insert as usize])?;
+    out.write_all(info)?;
+    out.write_all(&image[plan.tail_start as usize..])?;
+    out.flush()?;
+    Ok(plan.new_len)
+}
+
+/// The statement counts of a finished build. `read` is what the parser handed
+/// over, `inferred` what `--materialize` added; `stats` is the written file.
+pub(crate) fn counts(
+    stats: &rete_core::ingest::BuildStats,
+    read: u64,
+    inferred: Option<u64>,
+    iri: &rete_core::IriReport,
+) -> Counts {
+    let unique = stats.statements as u64;
+    let default = stats.default_triples as u64;
+    Counts {
+        statements_read: read,
+        statements_inferred: inferred,
+        statements_unique: unique,
+        duplicates_dropped: (read + inferred.unwrap_or(0)).saturating_sub(unique),
+        default_graph_triples: default,
+        named_graphs: stats.named_graphs as u64,
+        named_graph_quads: unique.saturating_sub(default),
+        terms: stats.terms as u64,
+        invalid_iris: (!iri.is_empty()).then(|| InvalidIris {
+            statements: iri.statements(),
+            occurrences: iri.occurrences(),
+            repairable: iri.repairable(),
+            unrepairable: iri.unrepairable(),
+        }),
+    }
+}
+
+/// Fill a file's reserved build-info section in place with `info`, padded with
+/// spaces to the reserved length. One small write at the section's offset; the
+/// rest of the file is not touched, and the content hash does not cover the
+/// section. Falls back to [`write_build_info_streaming`] (a full rewrite) if the
+/// record somehow outgrew its reservation — which [`BuildInfo::widest`] is
+/// there to make impossible.
+pub(crate) fn patch_build_info(path: &std::path::Path, info: &[u8]) -> anyhow::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let mut head = vec![0u8; rete_core::format::HEADER_LEN];
+    f.read_exact(&mut head)?;
+    let h = rete_core::format::Header::from_bytes(&head)?;
+    let reserved = h.build_info_len as usize;
+    if reserved == 0 || info.len() > reserved {
+        drop(f);
+        eprintln!(
+            "warning: the build record ({} bytes) outgrew its reservation ({reserved}); \
+             rewriting the file to fit it",
+            info.len()
+        );
+        write_build_info_streaming(path, info)?;
+        return Ok(());
+    }
+    f.seek(SeekFrom::Start(h.build_info_offset))?;
+    f.write_all(&padded(info.to_vec(), reserved))?;
+    f.sync_all()?;
+    Ok(())
 }
 
 /// RFC 3339 UTC (`2026-08-04T12:34:56Z`), honoring `SOURCE_DATE_EPOCH` so a
@@ -263,19 +1055,82 @@ impl RangeReader for ImageReader {
 /// that card over HTTP unguarded is an 8 GB download nobody asked for. Past the
 /// budget the read fails, the query fails with it, and the failure is reported
 /// **with the bytes spent**: "costs more than N MB" is itself a usable answer.
+///
+/// Two ways to count. [`new`](Self::new) charges from the first byte — what
+/// `card-audit --max-mb` promises a remote caller. [`after_open`](Self::after_open)
+/// charges only what the query reads once the file is open, which is what the
+/// starter budget means: opening a 26 GB file reads ~44 MB of section
+/// directories whatever is asked of it, a cost every client pays once per
+/// session and no starter query can change, so charging it to the query would
+/// make every starter on a large enough file "too expensive".
 pub(crate) struct BudgetReader<R> {
     inner: R,
+    state: std::sync::Arc<BudgetState>,
+}
+
+struct BudgetState {
     budget: u64,
+    /// Reads are refused once `spent` would pass this; `u64::MAX` until a
+    /// [`Leash`] arms it.
+    limit: std::sync::atomic::AtomicU64,
     spent: std::sync::atomic::AtomicU64,
+}
+
+/// Arms an [`BudgetReader::after_open`] budget: from the moment of the call,
+/// the reader serves at most `budget` more bytes.
+pub(crate) struct Leash(std::sync::Arc<BudgetState>);
+
+impl Leash {
+    pub(crate) fn arm(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let spent = self.0.spent.load(Relaxed);
+        self.0
+            .limit
+            .store(spent.saturating_add(self.0.budget), Relaxed);
+    }
 }
 
 impl<R: RangeReader> BudgetReader<R> {
     pub(crate) fn new(inner: R, budget: u64) -> Self {
         Self {
             inner,
-            budget,
-            spent: std::sync::atomic::AtomicU64::new(0),
+            state: std::sync::Arc::new(BudgetState {
+                budget,
+                limit: std::sync::atomic::AtomicU64::new(budget),
+                spent: std::sync::atomic::AtomicU64::new(0),
+            }),
         }
+    }
+
+    /// A budget of `budget` bytes that starts counting when the returned
+    /// [`Leash`] is armed — after the open, see the type note.
+    pub(crate) fn after_open(inner: R, budget: u64) -> (Self, Leash) {
+        let state = std::sync::Arc::new(BudgetState {
+            budget,
+            limit: std::sync::atomic::AtomicU64::new(u64::MAX),
+            spent: std::sync::atomic::AtomicU64::new(0),
+        });
+        (
+            Self {
+                inner,
+                state: state.clone(),
+            },
+            Leash(state),
+        )
+    }
+
+    /// Charged BEFORE the read, so a single oversized range cannot slip
+    /// through by being the one that would have crossed the line.
+    fn charge(&self, len: u64) -> std::io::Result<()> {
+        use std::sync::atomic::Ordering::Relaxed;
+        let spent = self.state.spent.fetch_add(len, Relaxed) + len;
+        if spent > self.state.limit.load(Relaxed) {
+            return Err(std::io::Error::other(format!(
+                "byte budget exhausted: this query wanted more than {} bytes",
+                self.state.budget
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -285,33 +1140,12 @@ impl<R: RangeReader> RangeReader for BudgetReader<R> {
     }
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
-        // Charged BEFORE the read, so a single oversized range cannot slip
-        // through by being the one that would have crossed the line.
-        let spent = self
-            .spent
-            .fetch_add(len, std::sync::atomic::Ordering::Relaxed)
-            + len;
-        if spent > self.budget {
-            return Err(std::io::Error::other(format!(
-                "byte budget exhausted: this query wanted more than {} bytes",
-                self.budget
-            )));
-        }
+        self.charge(len)?;
         self.inner.read_at(offset, len)
     }
 
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
-        let want: u64 = ranges.iter().map(|&(_, l)| l).sum();
-        let spent = self
-            .spent
-            .fetch_add(want, std::sync::atomic::Ordering::Relaxed)
-            + want;
-        if spent > self.budget {
-            return Err(std::io::Error::other(format!(
-                "byte budget exhausted: this query wanted more than {} bytes",
-                self.budget
-            )));
-        }
+        self.charge(ranges.iter().map(|&(_, l)| l).sum())?;
         self.inner.read_many(ranges)
     }
 
@@ -443,10 +1277,26 @@ fn grade(out: &QueryOutput) -> Graded {
 fn measure_one<R: RangeReader + Send + Sync + 'static>(
     reader: std::sync::Arc<CountingReader<R>>,
     q: &ExampleQuery,
+    leash: Option<Leash>,
 ) -> Measured {
     let start = std::time::Instant::now();
-    let graded = match Rete::open_ranged_lazy(reader.clone()) {
+    let open = Rete::open_ranged_lazy(reader.clone());
+    // The open is paid whatever the query; a starter budget counts from here.
+    if let (Ok(_), Some(l)) = (&open, &leash) {
+        l.arm();
+    }
+    let graded = match open {
         Ok(rete) => match eval_query(&rete, &q.sparql) {
+            // A lazy open turns a failed range read into an empty tile and a
+            // flag, so the result of a run whose reads failed — a byte budget
+            // ran out, a request errored — is a partial answer that looks
+            // complete. It is a failed run, and saying so is what makes
+            // "costs more than N MB" an answer rather than a wrong row count.
+            Ok(_) if rete.index_incomplete() => Graded::failed(format!(
+                "did not finish: a range read was refused after {} bytes (byte budget \
+                 exhausted, or the source failed)",
+                reader.bytes_read()
+            )),
             Ok(result) => grade(&result),
             Err(e) => Graded::failed(format!("failed to run: {e}")),
         },
@@ -477,7 +1327,24 @@ where
     Ok(measure_one(
         std::sync::Arc::new(CountingReader::new(open()?)),
         q,
+        None,
     ))
+}
+
+/// Measure one **starter** query cold over `src`, inside the starter byte
+/// budget ([`rete_core::card::STARTER_MAX_BYTES`]) counted from the moment the
+/// file is open — what `rete build` and `rete recard` decide a card's queries
+/// on. The reported `bytes` still include the open, as every cost figure does.
+pub(crate) fn measure_starter<R: RangeReader + Send + Sync + 'static>(
+    src: R,
+    q: &ExampleQuery,
+) -> Measured {
+    let (reader, leash) = BudgetReader::after_open(src, rete_core::card::STARTER_MAX_BYTES);
+    measure_one(
+        std::sync::Arc::new(CountingReader::new(reader)),
+        q,
+        Some(leash),
+    )
 }
 
 /// Measure every starter query **cold** against the finished image: a fresh
@@ -493,19 +1360,87 @@ where
 /// nothing extra — the query had to run to be costed — and it is the whole
 /// point: for a carded build, "does this query answer?" is measured, not
 /// reasoned about.
+///
+/// Every run goes through [`measure_starter`]'s budget of
+/// [`rete_core::card::STARTER_MAX_BYTES`] past the open: a starter query that
+/// asks for more is a query that does not belong in a card, and the run stops
+/// there rather than finishing it. That cap is what keeps this phase from being the build's
+/// memory peak — measuring the old unbounded starters against the
+/// OpenCitations sample peaked at 8.7 GiB, above the 7.3 GiB of serializing it.
 pub(crate) fn measure_query_costs(
     image: std::sync::Arc<Vec<u8>>,
     queries: &[ExampleQuery],
 ) -> Vec<Measured> {
     queries
         .iter()
-        .map(|q| {
-            measure_one(
-                std::sync::Arc::new(CountingReader::new(ImageReader(image.clone()))),
-                q,
-            )
-        })
+        .map(|q| measure_starter(ImageReader(image.clone()), q))
         .collect()
+}
+
+/// Sort a measurement into the figures to record and the queries to drop, and
+/// remove the dropped ones from `card` — the one decision `rete build` and
+/// `rete recard` both make once every starter query has been run.
+///
+/// A query is dropped when the run shows it is worthless on this file: it
+/// answered nothing, it answered rows that bind nothing, or it did not finish
+/// inside [`rete_core::card::STARTER_MAX_BYTES`]. Only the first can
+/// contradict a template — the non-emptiness claims are about row *count*;
+/// `NonEmpty::Aggregate` says outright that the row's values may be unbound,
+/// and a run that ran out of budget says the query is too expensive to be a
+/// starter, nothing about its rows. The claim is read off the body that
+/// shipped ([`rete_core::card::claim_of_query`]), since a template's bounded
+/// form claims less than its exact one.
+pub(crate) fn keep_answering(
+    card: &mut super::card::DatasetCard,
+    measured: Vec<Measured>,
+) -> (Vec<QueryCost>, Vec<DroppedQuery>) {
+    use rete_core::card::{claim_of_query, Claim};
+    let mut kept = Vec::with_capacity(measured.len());
+    let mut dropped = Vec::new();
+    for m in measured {
+        match m.useless {
+            None => kept.push(m.cost),
+            Some(why) => {
+                let sparql = card
+                    .queries
+                    .iter()
+                    .find(|q| q.id == m.cost.id)
+                    .map(|q| q.sparql.as_str())
+                    .unwrap_or_default();
+                let contradicts_claim = !m.vacuous
+                    && m.error.is_none()
+                    && claim_of_query(&m.cost.id, sparql) == Claim::CannotBeEmpty;
+                dropped.push(DroppedQuery {
+                    id: m.cost.id,
+                    why,
+                    contradicts_claim,
+                });
+            }
+        }
+    }
+    if !dropped.is_empty() {
+        eprintln!(
+            "dropping {} starter quer{} the measurement showed useless on this file:",
+            dropped.len(),
+            if dropped.len() == 1 { "y" } else { "ies" }
+        );
+        for d in &dropped {
+            eprintln!("  {:<14} {}", d.id, d.why);
+            if d.contradicts_claim {
+                // The static rule and the measurement disagree, and the
+                // measurement is the one that ran. A template that declares its
+                // emitted query cannot be empty and then measures zero is a bug
+                // in `card_queries.rs`, not a property of this dataset.
+                eprintln!(
+                    "  {:<14} ^ GENERATOR DEFECT: its template claims this query cannot come back                      empty. Fix the rule in crates/rete-core/src/card_queries.rs.",
+                    ""
+                );
+            }
+        }
+        let ids: std::collections::BTreeSet<&str> = dropped.iter().map(|d| d.id.as_str()).collect();
+        card.queries.retain(|q| !ids.contains(q.id.as_str()));
+    }
+    (kept, dropped)
 }
 
 /// Wrap the kept per-query figures in the context that makes them
@@ -621,57 +1556,330 @@ pub(crate) fn write_build_info_streaming(
     Ok(plan.new_len)
 }
 
-/// Render the build info for the human `rete card` catalog view.
+/// `1234567` → `1,234,567`.
+fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Bytes as a human size (binary units, one decimal).
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut v = n as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u + 1 < UNITS.len() {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[u])
+    }
+}
+
+/// Milliseconds as `850 ms`, `12.3 s` or `4 min 05 s`.
+fn human_ms(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else if ms < 120_000 {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    } else {
+        let s = ms / 1000;
+        format!("{} min {:02} s", s / 60, s % 60)
+    }
+}
+
+/// The record's flags as the command line that would reproduce them, defaults
+/// included where the record states them (it records effective values).
+fn command_line(p: &BuildParams) -> String {
+    let mut f: Vec<String> = vec![format!(
+        "rete {}",
+        p.command
+            .as_deref()
+            .map(|c| c.trim_end_matches(" --memory-budget-mb"))
+            .unwrap_or("build")
+    )];
+    if let Some(v) = &p.format {
+        f.push(format!("--format {v}"));
+    }
+    if let Some(mb) = p.memory_budget_mb {
+        f.push(format!("--memory-budget-mb {mb}"));
+    }
+    if let Some(n) = p.permutations {
+        f.push(format!("--permutations {n}"));
+    }
+    if let Some(g) = &p.named_graphs {
+        f.push(format!("--named-graphs {g}"));
+    }
+    if p.collapse_graphs == Some(true) {
+        f.push("--collapse-graphs".into());
+    }
+    if p.no_pyramid {
+        f.push("--no-pyramid".into());
+    }
+    if let Some(a) = &p.pyramid_algo {
+        f.push(format!("--pyramid-algo {a}"));
+    }
+    if let Some(t) = &p.type_predicate {
+        f.push(format!("--type-predicate {t}"));
+    }
+    if p.label_index {
+        f.push("--label-index".into());
+    }
+    if p.no_schema {
+        f.push("--no-schema".into());
+    }
+    if p.text_index {
+        f.push("--text-index".into());
+    }
+    if let Some(g) = &p.text_index_graphs {
+        f.push(format!("--text-index-graphs {g}"));
+    }
+    for iri in &p.text_index_include {
+        f.push(format!("--text-index-include {iri}"));
+    }
+    for iri in &p.text_index_exclude {
+        f.push(format!("--text-index-exclude {iri}"));
+    }
+    if p.materialize {
+        f.push("--materialize".into());
+    }
+    if p.reason {
+        f.push("--reason".into());
+    }
+    if p.strict == Some(true) {
+        f.push("--strict".into());
+    }
+    if let Some(s) = &p.quoted_triple_syntax {
+        f.push(format!("--quoted-triple-syntax {s}"));
+    }
+    if let Some(w) = &p.write {
+        f.push(format!("--tile-kib {}", w.tile_kib));
+        f.push(format!("--dict-chunk-kib {}", w.dict_chunk_kib));
+        f.push(format!("--zstd-level {}", w.zstd_level));
+        if w.frequent_objects > 0 {
+            f.push(format!("--frequent-objects {}", w.frequent_objects));
+        }
+    }
+    if let Some(c) = &p.card_file {
+        f.push(format!("--card-file {}", c.name));
+    }
+    if p.card_costs == Some(false) {
+        f.push("--no-card-costs".into());
+    }
+    f.join(" ")
+}
+
+fn short_hash(h: &str) -> &str {
+    &h[..h.len().min(16)]
+}
+
+fn format_run(out: &mut String, run: &RunRecord, indent: &str) {
+    use std::fmt::Write;
+    let mut line = human_ms(run.wall_ms);
+    if let Some(c) = run.cpus {
+        let _ = write!(line, " on {c} CPU(s)");
+    }
+    let _ = writeln!(out, "{indent}{:<12}: {line}", "wall time");
+    let peak = run
+        .peak_rss_bytes
+        .map(human_bytes)
+        .unwrap_or_else(|| "not measured (no /proc on this OS)".into());
+    let limit = run
+        .memory_limit_bytes
+        .map(|l| format!(" of a {} limit", human_bytes(l)))
+        .unwrap_or_else(|| " (no memory limit)".into());
+    let _ = writeln!(out, "{indent}{:<12}: {peak}{limit}", "peak RAM");
+    if !run.phases.is_empty() {
+        let phases: Vec<String> = run
+            .phases
+            .iter()
+            .map(|p| format!("{} {}", p.phase, human_ms(p.ms)))
+            .collect();
+        // Several per line: a record has up to a dozen phases.
+        for (i, chunk) in phases.chunks(4).enumerate() {
+            let label = if i == 0 { "phases" } else { "" };
+            let sep = if i == 0 { ":" } else { " " };
+            let _ = writeln!(out, "{indent}{label:<12}{sep} {}", chunk.join(" · "));
+        }
+    }
+}
+
+/// Render the build record for the human `rete card` view: how the file was
+/// made (command line, engine, host, inputs), what came of it (statement
+/// counts), and what it cost (wall time per phase, peak RAM, spill).
 pub(crate) fn format_build_info(info: &BuildInfo) -> String {
     use std::fmt::Write;
     let mut out = String::new();
+    const I: &str = "      ";
     let _ = writeln!(out, "  build:");
     let opt = |out: &mut String, label: &str, v: &Option<String>| {
         if let Some(v) = v {
-            let _ = writeln!(out, "      {label:<11}: {v}");
+            let _ = writeln!(out, "{I}{label:<12}: {v}");
         }
     };
-    opt(&mut out, "built at", &info.built_at);
-    opt(&mut out, "builder", &info.builder);
+    match (&info.started_at, &info.built_at) {
+        (Some(s), Some(b)) => {
+            let _ = writeln!(out, "{I}{:<12}: {b} (started {s})", "built at");
+        }
+        _ => opt(&mut out, "built at", &info.built_at),
+    }
+    match &info.engine {
+        Some(e) => {
+            let mut line = format!("{} {}", e.name, e.version);
+            let _ = write!(line, ", commit {}", short_hash(&e.commit));
+            let _ = write!(line, ", {} ({})", e.target, e.profile);
+            if !e.features.is_empty() {
+                let _ = write!(line, "; features: {}", e.features.join(", "));
+            }
+            let _ = writeln!(out, "{I}{:<12}: {line}", "engine");
+        }
+        None => opt(&mut out, "builder", &info.builder),
+    }
+    if let Some(h) = &info.host {
+        let _ = writeln!(out, "{I}{:<12}: {} {}", "host", h.os, h.arch);
+    }
     let p = &info.params;
     if !p.is_empty() {
-        let mut flags: Vec<String> = Vec::new();
-        if let Some(c) = &p.command {
-            flags.push(c.clone());
+        let _ = writeln!(out, "{I}{:<12}: {}", "command", command_line(p));
+        if let Some(c) = &p.card_file {
+            let _ = writeln!(
+                out,
+                "{I}{:<12}: {} ({} B, blake3 {}…)",
+                "card file",
+                c.name,
+                thousands(c.bytes),
+                short_hash(&c.blake3)
+            );
         }
-        if let Some(f) = &p.format {
-            flags.push(format!("--format {f}"));
-        }
-        if p.no_pyramid {
-            flags.push("--no-pyramid".into());
-        }
-        if p.text_index {
-            flags.push("--text-index".into());
-        }
-        if p.materialize {
-            flags.push("--materialize".into());
-        }
-        if p.reason {
-            flags.push("--reason".into());
-        }
-        if let Some(a) = &p.pyramid_algo {
-            flags.push(format!("--pyramid-algo {a}"));
-        }
-        if let Some(mb) = p.memory_budget_mb {
-            flags.push(format!("--memory-budget-mb {mb}"));
-        }
-        let _ = writeln!(out, "      params     : {}", flags.join(" "));
-        if let Some(c) = &p.codec {
-            let _ = writeln!(out, "      codec      : {c}");
+        if let Some(w) = &p.write {
+            let _ = writeln!(
+                out,
+                "{I}{:<12}: {}, {} KiB tiles, {} KiB dictionary chunks, zstd level {} ({} frames)",
+                "writer",
+                p.codec.as_deref().unwrap_or("?"),
+                w.tile_kib,
+                w.dict_chunk_kib,
+                w.zstd_level,
+                w.zstd_frame
+            );
+        } else if let Some(c) = &p.codec {
+            let _ = writeln!(out, "{I}{:<12}: {c}", "codec");
         }
         if let Some(n) = p.card_top_n {
-            let _ = writeln!(out, "      card top-N : {n}");
+            let _ = writeln!(out, "{I}{:<12}: {n}", "card top-N");
+        }
+    }
+    for (n, i) in info.inputs.iter().enumerate() {
+        let mut line = format!("{} ({}", i.name, i.format);
+        if let Some(c) = &i.compression {
+            let _ = write!(line, ", {c}");
+        }
+        line.push(')');
+        if let Some(b) = i.bytes {
+            let _ = write!(line, ", {} B", thousands(b));
+        }
+        if let Some(h) = &i.blake3 {
+            let _ = write!(line, ", blake3 {}…", short_hash(h));
+        }
+        let label = if n == 0 { "inputs" } else { "" };
+        let sep = if n == 0 { ":" } else { " " };
+        let _ = writeln!(out, "{I}{label:<12}{sep} {line}");
+    }
+    if info.inputs_omitted > 0 {
+        let _ = writeln!(
+            out,
+            "{I}{:<12}  … and {} more input(s), not listed",
+            "", info.inputs_omitted
+        );
+    }
+    if let Some(c) = &info.counts {
+        let mut line = format!("{} read", thousands(c.statements_read));
+        if let Some(n) = c.statements_inferred {
+            let _ = write!(line, " + {} inferred", thousands(n));
+        }
+        let _ = write!(
+            line,
+            ", {} unique ({} duplicate(s) dropped)",
+            thousands(c.statements_unique),
+            thousands(c.duplicates_dropped)
+        );
+        let _ = writeln!(out, "{I}{:<12}: {line}", "statements");
+        let _ = writeln!(
+            out,
+            "{I}{:<12}  {} in the default graph, {} in {} named graph(s); {} terms",
+            "",
+            thousands(c.default_graph_triples),
+            thousands(c.named_graph_quads),
+            thousands(c.named_graphs),
+            thousands(c.terms)
+        );
+        if let Some(b) = &c.invalid_iris {
+            let _ = writeln!(
+                out,
+                "{I}{:<12}: {} occurrence(s) in {} statement(s), stored verbatim ({} not \
+                 repairable by `export --sanitize-iris`)",
+                "invalid IRIs",
+                thousands(b.occurrences),
+                thousands(b.statements),
+                thousands(b.unrepairable)
+            );
+        }
+    }
+    if let Some(run) = &info.run {
+        format_run(&mut out, run, I);
+    }
+    if let Some(s) = &info.spill {
+        let _ = writeln!(
+            out,
+            "{I}{:<12}: {} chunk(s); {} k-way merge(s) over {} sorted run(s); scratch peak {}",
+            "spill",
+            thousands(s.chunks),
+            thousands(s.merge_passes),
+            thousands(s.sort_runs),
+            human_bytes(s.scratch_peak_bytes)
+        );
+    }
+    if let Some(r) = &info.recarded {
+        let _ = writeln!(
+            out,
+            "{I}{:<12}: {} by {} (from content hash {})",
+            "re-carded",
+            r.at.as_deref().unwrap_or("?"),
+            r.engine
+                .as_ref()
+                .map(|e| format!("{} {}, commit {}", e.name, e.version, short_hash(&e.commit)))
+                .or_else(|| r.by.clone())
+                .unwrap_or_else(|| "?".into()),
+            r.from_content_hash
+        );
+        if let Some(i) = &r.input {
+            let _ = writeln!(
+                out,
+                "{I}  {:<10}: {}{}",
+                "from",
+                i.name,
+                i.bytes
+                    .map(|b| format!(" ({} B)", thousands(b)))
+                    .unwrap_or_default()
+            );
+        }
+        if let Some(run) = &r.run {
+            format_run(&mut out, run, &format!("{I}  "));
         }
     }
     if let Some(costs) = &info.query_costs {
         let _ = writeln!(
             out,
-            "      query costs (cold; bytes/requests portable, ms = one machine's debug ref):"
+            "{I}query costs (cold; bytes/requests portable, ms = one machine's debug ref):"
         );
         // The transport belongs WITH the numbers: "1.4 MB in 76 requests" is
         // only a cost once you know what did the requesting, and these figures
@@ -691,7 +1899,7 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
     if !info.dropped_queries.is_empty() {
         let _ = writeln!(
             out,
-            "      starter queries generated, measured, and NOT shipped:"
+            "{I}starter queries generated, measured, and NOT shipped:"
         );
         for d in &info.dropped_queries {
             let _ = writeln!(
@@ -753,6 +1961,111 @@ mod tests {
         let b = BuildInfo::from_json_bytes(b"{}").unwrap();
         assert!(b.built_at.is_none() && b.builder.is_none());
         assert!(b.params.is_empty());
+    }
+
+    /// The reservation is an exact upper bound: a record sealed with every
+    /// measured field at its largest — every phase timed, every counter at
+    /// `u64::MAX`, a gzip input — still fits the bytes reserved before the run.
+    #[test]
+    fn a_sealed_record_always_fits_its_reservation() {
+        use rete_core::build_trace::{lap, Phase};
+        let rec = Recorder::start(&[("/home/someone/data/in.nq.gz", "nq"), ("-", "nq")]);
+        let mut info = new_build_info(BuildParams {
+            command: Some("build --memory-budget-mb".into()),
+            ..Default::default()
+        });
+        rec.begin(&mut info);
+        let reserve = info.reserve_bytes(Pending::Everything, &rec);
+        for p in Phase::ALL.iter().rev() {
+            lap(*p);
+        }
+        for t in &rec.taps {
+            t.bytes.set(u64::MAX);
+            t.gzip.set(true);
+        }
+        info.counts = Some(Counts {
+            statements_read: u64::MAX,
+            statements_inferred: Some(u64::MAX),
+            statements_unique: u64::MAX,
+            duplicates_dropped: u64::MAX,
+            default_graph_triples: u64::MAX,
+            named_graphs: u64::MAX,
+            named_graph_quads: u64::MAX,
+            terms: u64::MAX,
+            invalid_iris: Some(InvalidIris {
+                statements: u64::MAX,
+                occurrences: u64::MAX,
+                repairable: u64::MAX,
+                unrepairable: u64::MAX,
+            }),
+        });
+        info.spill = Some(SpillRecord {
+            chunks: u64::MAX,
+            merge_passes: u64::MAX,
+            sort_runs: u64::MAX,
+            scratch_peak_bytes: u64::MAX,
+        });
+        info.params.codec = Some("zstd".into());
+        rec.seal(&mut info);
+        if let Some(r) = info.run.as_mut() {
+            r.wall_ms = u64::MAX;
+            r.peak_rss_bytes = Some(u64::MAX);
+            r.memory_limit_bytes = Some(u64::MAX);
+            r.cpus = Some(u64::MAX);
+            for p in &mut r.phases {
+                p.ms = u64::MAX;
+            }
+        }
+        let sealed = info.to_json_bytes();
+        assert!(
+            sealed.len() <= reserve.len(),
+            "sealed {} > reserved {}",
+            sealed.len(),
+            reserve.len()
+        );
+        // Names only, never a directory.
+        assert_eq!(info.inputs[0].name, "in.nq.gz");
+        assert_eq!(info.inputs[1].name, "stdin");
+    }
+
+    /// The in-place seal: the reserved section is overwritten with the record
+    /// padded by spaces, which every JSON reader accepts, and nothing else in
+    /// the file moves — the content hash and every other byte stay put.
+    #[test]
+    fn patching_fills_the_reservation_in_place() {
+        let (image, _) = rete_core::ingest::assemble_dataset(
+            vec![(
+                "<http://x/a>".into(),
+                "<http://x/p>".into(),
+                "<http://x/b>".into(),
+                None,
+            )],
+            br#"{"title":"t"}"#,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.rete");
+        let reserve = vec![b' '; 1024];
+        write_image_with_build_info(&path, &image, &reserve).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            rete_core::attach_build_info(&image, &reserve).unwrap(),
+            "the streamed splice is attach_build_info's bytes"
+        );
+        let info = new_build_info(BuildParams {
+            command: Some("build".into()),
+            ..Default::default()
+        });
+        patch_build_info(&path, &info.to_json_bytes()).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let section = rete_core::read_build_info(&bytes).unwrap().unwrap();
+        assert_eq!(section.len(), 1024, "patched in place, not rewritten");
+        assert!(section.ends_with(b" "));
+        assert_eq!(BuildInfo::from_json_bytes(&section).unwrap(), info);
+        assert!(rete_core::verify(&bytes).unwrap());
+        assert_eq!(
+            rete_core::attach_build_info(&bytes, &[]).unwrap(),
+            rete_core::attach_build_info(&image, &[]).unwrap()
+        );
     }
 
     /// The grade is read by two callers that ask different questions of it, so

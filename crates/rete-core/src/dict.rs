@@ -295,6 +295,15 @@ pub type ChunkLoader = Box<dyn Fn(usize) -> Option<Vec<u8>> + Send + Sync>;
 /// callers fall back to the per-chunk [`ChunkLoader`].
 pub type ChunkBulkLoader = Box<dyn Fn(&[usize]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
 
+/// Fetches chunks of **several sections** of one dictionary in one round trip:
+/// given `(section, chunk)` pairs, returns each chunk's decompressed body in
+/// the same order. Decoding a result touches every section (an IRI subject, a
+/// literal object, a predicate), and faulting them section by section cost one
+/// round trip per section on a remote file. The ranged reader issues the whole
+/// batch through one [`crate::RangeReader::read_many`]. `None` = the batch
+/// failed; the chunks stay unloaded for the per-chunk [`ChunkLoader`].
+pub type MultiChunkBulkLoader = Box<dyn Fn(&[(u8, usize)]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+
 /// One chunk: a run-aligned slice of the section body. `body_start` is the
 /// offset (in the section's coordinate space — the same space
 /// [`SectionMeta::restart_offsets`] uses) where `data[0]` sits.
@@ -554,6 +563,27 @@ impl ChunkedSection {
         }
     }
 
+    /// The chunks of `cis` a batch would still have to fetch: in range, not
+    /// resident, and only on a section that faults chunks in (a local section
+    /// has none to fetch). Order is kept.
+    pub(crate) fn missing_chunks(&self, cis: &[usize]) -> Vec<usize> {
+        if self.loader.is_none() {
+            return Vec::new();
+        }
+        cis.iter()
+            .copied()
+            .filter(|&ci| {
+                ci < self.chunks.len() && !self.cache.contains((self.section_index, ci as u32))
+            })
+            .collect()
+    }
+
+    /// Seed one batch-fetched chunk body into the cache.
+    pub(crate) fn seed_chunk(&self, ci: usize, body: Vec<u8>) {
+        self.cache
+            .insert((self.section_index, ci as u32), Arc::from(body));
+    }
+
     pub fn meta(&self) -> &SectionMeta {
         &self.meta
     }
@@ -571,13 +601,13 @@ impl ChunkedSection {
 
     /// Heap bytes this section holds for as long as it is open, independent
     /// of the chunk cache: the chunk directory (one descriptor plus its
-    /// routing key per chunk), the two copies of the per-chunk byte ranges the
-    /// ranged loaders capture, and any eager restart-offset table. Grows with
-    /// the chunk count, never with what a dump touches.
+    /// routing key per chunk), the per-chunk byte ranges the ranged loaders
+    /// share, and any eager restart-offset table. Grows with the chunk count,
+    /// never with what a dump touches.
     pub fn directory_bytes(&self) -> u64 {
         let n = self.chunks.len() as u64;
         let keys: u64 = self.chunks.iter().map(|c| c.key.capacity() as u64).sum();
-        let ranges = if self.loader.is_some() { 2 * 16 * n } else { 0 };
+        let ranges = if self.loader.is_some() { 16 * n } else { 0 };
         n * std::mem::size_of::<SectionChunk>() as u64
             + keys
             + ranges

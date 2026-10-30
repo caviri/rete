@@ -35,11 +35,16 @@
     { "name": "dataset_card", "description": "A graph's embedded self-description: what it is, licence, provenance, identity (creators, publisher, DOI), counts" },
     { "name": "dataset_schema", "description": "Classes and relations with counts, from the file's baked schema pyramid" },
     { "name": "example_queries", "description": "Runnable SPARQL the dataset ships with" },
-    { "name": "sparql_query", "description": "Run SPARQL 1.1, optionally with OWL 2 QL reasoning" },
+    { "name": "sparql_query", "description": "Run SPARQL 1.1, optionally with OWL 2 QL reasoning; a slow query comes back as a job instead of timing out" },
+    { "name": "start_query", "description": "Start a slow SPARQL query in the background and get its job id" },
+    { "name": "query_status", "description": "Wait for a query job and see its progress; the first rows once done" },
+    { "name": "query_result", "description": "Page through a query's rows, or save them all to a CSV/TSV/JSON file" },
+    { "name": "cancel_query", "description": "Stop a running query job" },
     { "name": "find_entities", "description": "Resolve a name to entity IRIs by label prefix and full text" },
     { "name": "describe_entity", "description": "Every statement about one IRI, in both directions" },
     { "name": "validate_shacl", "description": "Validate SHACL Core shapes against a graph" },
-    { "name": "build_rete", "description": "Build a new .rete file from RDF text, offline" }
+    { "name": "build_rete", "description": "Build a new .rete file from RDF text, offline" },
+    { "name": "load_rdf", "description": "Query RDF shared in the chat: its text becomes a graph held in memory" }
   ],
   "keywords": ["rdf", "sparql", "knowledge-graph", "linked-data", "wasm", "offline"],
   "license": "Apache-2.0",

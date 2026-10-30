@@ -255,14 +255,61 @@ pub fn escape_literal(s: &str) -> String {
     out
 }
 
+/// The datatype suffix of an `xsd:string`-typed literal token, closing quote
+/// included.
+const XSD_STRING_SUFFIX: &str = "\"^^<http://www.w3.org/2001/XMLSchema#string>";
+
+/// The **canonical** token of a literal: in RDF 1.1, `"x"^^xsd:string` and
+/// `"x"` are one term, and rete spells it `"x"` — at ingest, in query
+/// constants, in computed values and in results. Any other token comes back
+/// unchanged (borrowed).
+pub fn canonical_literal(token: &TermToken) -> Cow<'_, str> {
+    if is_literal(token) && token.ends_with(XSD_STRING_SUFFIX) {
+        Cow::Owned(token[..token.len() - XSD_STRING_SUFFIX.len() + 1].to_string())
+    } else {
+        Cow::Borrowed(token)
+    }
+}
+
+/// [`canonical_literal`] for an owned token, in place (no allocation).
+pub fn into_canonical_literal(mut token: String) -> String {
+    if is_literal(&token) && token.ends_with(XSD_STRING_SUFFIX) {
+        token.truncate(token.len() - XSD_STRING_SUFFIX.len() + 1);
+    }
+    token
+}
+
+/// The other spelling of a string literal: `"x"` ↔ `"x"^^xsd:string`. `None`
+/// for any other term. A file built before rete canonicalized the typed form
+/// at ingest can hold either spelling; a lookup that misses one tries the
+/// other, so a plain constant still finds a typed string stored by an older
+/// build.
+pub(crate) fn string_literal_alias(token: &TermToken) -> Option<String> {
+    if !is_literal(token) {
+        return None;
+    }
+    if token.ends_with(XSD_STRING_SUFFIX) {
+        return Some(token[..token.len() - XSD_STRING_SUFFIX.len() + 1].to_string());
+    }
+    // A plain literal: the closing quote is the last byte.
+    if token.len() >= 2 && closing_quote(token) == token.len() - 1 {
+        let mut typed = String::with_capacity(token.len() + XSD_STRING_SUFFIX.len());
+        typed.push_str(&token[..token.len() - 1]);
+        typed.push_str(XSD_STRING_SUFFIX);
+        return Some(typed);
+    }
+    None
+}
 /// Build a literal term token from a (raw, unescaped) lexical value, attaching
 /// an optional non-empty language tag (`@lang`) or datatype IRI content
 /// (`^^<dt>`). `lang` wins over `datatype` if both are given (a tagged literal
-/// is implicitly `rdf:langString`).
+/// is implicitly `rdf:langString`). An `xsd:string` datatype gives the plain
+/// literal, its canonical spelling (see [`canonical_literal`]).
 pub fn make_literal(lexical: &str, lang: Option<&str>, datatype: Option<&str>) -> String {
     let body = escape_literal(lexical);
     match (lang.filter(|l| !l.is_empty()), datatype) {
         (Some(l), _) => format!("\"{body}\"@{l}"),
+        (None, Some(XSD_STRING)) => format!("\"{body}\""),
         (None, Some(dt)) => format!("\"{body}\"^^<{dt}>"),
         (None, None) => format!("\"{body}\""),
     }

@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -683,7 +683,9 @@ much of the file to load:</p>
 <tr><td>Header</td><td>Magic/version, content hash, counts, and the section directory</td></tr>
 <tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
 <tr><td>Indexes</td><td>Compressed triple blocks in the file's permutation orders — six by default (SPO/POS/OSP/SOP/PSO/OPS), three (SPO/POS/OSP) with <code>build --permutations 3</code></td></tr>
-<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (query_stats, entity shapes, label index)</td></tr>
+<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and per-community descriptors (older files: also the profiling blocks below)</td></tr>
+<tr><td>Schema</td><td>Optional SCHEMA section (kind 9, written by default): class hierarchy, level rollups, coherence axioms, <code>query_stats</code>, entity shapes</td></tr>
+<tr><td>Label index</td><td>Optional <code>--label-index</code> section (kind 8): every labelled subject, for prefix search</td></tr>
 <tr><td>Text index</td><td>Optional <code>--text-index</code> section: word → subjects, for full-text (<code>--contains</code>) search</td></tr>
 <tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>
 </tbody></table>
@@ -692,12 +694,14 @@ for exact index queries. <code>SummaryView::open_ranged</code> reads only header
 dictionary, and summary, deliberately skipping the index.</p>
 <p>The pyramid-meta grows by <strong>length-prefixed, version-tagged blocks</strong> appended
 before the (trailing) schema block: <code>query_stats</code> (per-predicate cardinality),
-characteristic sets (entity shapes), and the <strong>label index</strong> (a bounded,
-label-sorted <code>(label, subject)</code> table powering <code>rete search</code> / <code>prefix_search</code> —
-case-insensitive prefix lookup by binary search, no literal scan). Each block is
-optional and skipped by a reader that predates it, so the format stays
-backward-compatible and a typeless, label-free graph encodes byte-identically to
-v1.</p>
+characteristic sets (entity shapes), and a bounded label block. Each block is
+optional and skipped by a reader that predates it. Since 0.4.0 <code>rete build</code> keeps
+only the community material there: the schema, <code>query_stats</code> and the entity shapes
+move to the <strong>SCHEMA</strong> section (kind 9), computed without the dendrogram, and the
+labels to the <strong>LABEL_INDEX</strong> section (kind 8) — every labelled subject, read with a
+few range requests, powering <code>rete search</code> / <code>prefix_search</code>. Both are outside the
+content hash and carry their own digests (<a href="SPEC.html">SPEC §6.4, §7.5</a>); readers fall
+back to the pyramid-meta blocks on older files.</p>
 <p>For <strong>full-text</strong> search — finding entities by a word <em>anywhere</em> in their
 literals, not just a label prefix — an opt-in <strong>TEXT_INDEX</strong> section (<code>rete build --text-index</code>, kind <code>6</code>) maps each literal word to its sorted subject ids. Like
 the dictionary, it is range-readable: a small front-coded token table is read
@@ -808,7 +812,11 @@ on the query shape.</li>
 </ol>
 <p>The product boundary here is strict: a host that ignores <code>Range</code> must fail
 clearly instead of silently downloading the world and pretending the query was
-bounded.</p>
+bounded. The CLI refuses its <code>200</code>. The browser reader has already received the
+whole body by the time it sees that <code>200</code>, so it keeps a body of up to 256 MiB
+and serves every read from it — and counts the whole download in the query's
+bytes, so nothing pretends the read was bounded; a larger body is refused by
+name.</p>
 <h2 id="reasoning-and-validation">Reasoning And Validation</h2>
 <p><code>build --materialize</code> can run the RDFS/OWL-RL subset at build time and write the
 inferred triples into the snapshot. SHACL validation reads the snapshot and shape

@@ -14,6 +14,8 @@ Subcommands (all read/write JSON; `-` means stdin/stdout):
   classify IN               one card -> one verdict row (JSON, one line)
   report   IN               a stream of verdict rows -> TSV table + summary
   verify   --old A --new B  gate: curated fields carried + starter queries answer
+  sections-equal A B        gate: every section but the card and the build
+                            record is byte-identical (the `rete recard` proof)
 
 Carrying the old card forward is the FLOOR, not the ceiling. A file this
 project published itself can also gain the identity fields nobody ever wrote —
@@ -34,7 +36,7 @@ import argparse
 import json
 import sys
 
-# Exactly the top level of `CardInput` (crates/rete-cli/src/commands/card.rs).
+# Exactly the top level of `CardInput` (crates/rete-core/src/card_derive.rs).
 # It is `deny_unknown_fields`, so a stray key here is a hard build error — the
 # list must stay in step with the struct, and the `verify` gate re-reads these
 # same keys out of the rebuilt card to prove none was dropped.
@@ -61,7 +63,7 @@ CURATED_FIELDS = [
 
 # Starter queries that may legitimately return zero rows on a healthy file —
 # the same set the generator marks `NonEmpty::Undecidable`
-# (crates/rete-cli/src/commands/queries.rs), for the same reasons:
+# (crates/rete-core/src/card_queries.rs), for the same reasons:
 #
 #   top-dangling  IRIs referenced but never described; a fully-described graph
 #                 has none, and the card does not record which objects are also
@@ -525,6 +527,60 @@ def cmd_verify(args) -> int:
     return 0
 
 
+# Section kinds a card rewrite replaces; every other section must survive it
+# byte for byte. 1 = metadata (the card), 7 = build info.
+_CARD_KINDS = (1, 7)
+
+
+def _section_digests(path: str) -> list[tuple[int, int, str]]:
+    """`(kind, length, sha256)` of every non-card section, in directory order."""
+    import hashlib
+    import struct
+
+    out = []
+    with open(path, "rb") as fh:
+        head = fh.read(1024)
+        if head[:4] != b"RETE":
+            raise ValueError(f"{path}: not a .rete file")
+        count = struct.unpack_from("<H", head, 44)[0]
+        for i in range(count):
+            kind = struct.unpack_from("<H", head, 64 + i * 24)[0]
+            off, length = struct.unpack_from("<QQ", head, 64 + i * 24 + 8)
+            if kind in _CARD_KINDS or not length:
+                continue
+            fh.seek(off)
+            digest, left = hashlib.sha256(), length
+            while left:
+                block = fh.read(min(left, 8 << 20))
+                if not block:
+                    raise ValueError(f"{path}: kind-{kind} section is truncated")
+                digest.update(block)
+                left -= len(block)
+            out.append((kind, length, digest.hexdigest()))
+    return out
+
+
+def cmd_sections_equal(args: argparse.Namespace) -> int:
+    """The data proof for a card-only rewrite: stronger than comparing N-Quads
+    (it is byte identity, not RDF equality) and far cheaper (one read of each
+    file, no serialization) — and true by construction of `rete recard`, which
+    copies these sections instead of rebuilding them, so a difference is a bug
+    or a damaged disk, never a modelling choice."""
+    a, b = _section_digests(args.a), _section_digests(args.b)
+    for kind, length, digest in a:
+        print(f"      kind {kind}: {length} bytes, sha256 {digest[:16]}", file=sys.stderr)
+    if a != b:
+        print("sections-equal: FAILED — the data sections differ", file=sys.stderr)
+        for x, y in zip(a, b):
+            if x != y:
+                print(f"  - {x} != {y}", file=sys.stderr)
+        if len(a) != len(b):
+            print(f"  - {len(a)} sections against {len(b)}", file=sys.stderr)
+        return 1
+    print(f"sections-equal: ok — {len(a)} sections byte-identical", file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -563,6 +619,12 @@ def main() -> int:
                         "in the new one); every other curated field must still "
                         "be carried unchanged")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("sections-equal",
+                       help="every section but the card is byte-identical")
+    p.add_argument("a")
+    p.add_argument("b")
+    p.set_defaults(func=cmd_sections_equal)
 
     args = parser.parse_args()
     try:

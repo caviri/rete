@@ -9,18 +9,28 @@ hosts this project uses in production.
 
 1. **HTTP range requests.** A `Range: bytes=…` request must get back
    `206 Partial Content` with exactly those bytes. A host that ignores `Range`
-   and replies `200` with the whole file is rejected loudly by every rete
-   client — never silently mis-read.
+   and replies `200` with the whole file is never silently mis-read: the CLI
+   rejects it, and the browser reader treats that body as the whole file —
+   it keeps a body of up to 256 MiB and serves every read from it (so the
+   file is downloaded whole, once per open, and the result line counts it),
+   and refuses a larger one with a message that says the host ignores `Range`.
 2. **CORS — for browser clients only.** The CLI (`rete query-url`,
    `sparql-url`, …) needs nothing else. But the playground / any web page
    fetches cross-origin, so the host must send
-   `Access-Control-Allow-Origin` (`*` is fine for public data).
-3. **A way to learn the file's length** (browser clients). The reader first
-   tries a `HEAD` request — `Content-Length` is CORS-safelisted, so this works
-   almost everywhere. If the host rejects `HEAD`, it falls back to a one-byte
-   ranged `GET` and reads the total from `Content-Range` — which is **not**
-   safelisted, so that fallback additionally needs
-   `Access-Control-Expose-Headers: Content-Range`. Satisfy either one.
+   `Access-Control-Allow-Origin` (`*` is fine for public data) and allow the
+   `Range` request header in a preflight (`Access-Control-Allow-Headers: Range`).
+3. **Nothing has to be exposed for the length** (browser clients). A browser
+   can read `Content-Range` only when the host lists it in
+   `Access-Control-Expose-Headers`, and `HEAD`'s `Content-Length` may describe
+   a compressed representation (GitHub Pages, #95). So the reader takes a
+   `.rete`'s length from the file itself: the first ranged `GET` reads the 1 KiB
+   header, whose section directory fixes the length, and one 4-byte read of the
+   closing `RETE` footer confirms it. A visible `Content-Range` that agrees
+   saves that footer read, which is why the production bucket still exposes
+   it. A resource that is not a plain `.rete` (a polyglot page) falls back to
+   `Content-Range`, then to `HEAD`'s `Content-Length`, which is
+   CORS-safelisted and readable everywhere; the opt-in persistent range cache
+   does the same when `Content-Range` is hidden.
 
 ### The ten-second check
 
@@ -78,14 +88,26 @@ or below that stay CDN-cacheable. A bigger graph is better published as several
 An academic repository works as a live query host: Zenodo serves uploads with
 `206` ranges and CORS, and gives the deposit a **DOI** — so a paper's data
 citation can point at a file that is *directly queryable in the browser*. No
-account tier, no server, and takedown-resistant persistence. Zenodo doesn't
-expose `Content-Range` cross-origin, which is exactly why the readers probe
-length with `HEAD` first (requirement 3 above) — it just works. The
-playground's `wikidata-zenodo` dataset is a 1 GB `.rete` served straight from
-a Zenodo DOI, and it benchmarks on par with R2 (~4 s to first answer).
+account tier, no server, and takedown-resistant persistence.
 
-Upload through the normal Zenodo web UI or REST API; the file URL under
-`https://zenodo.org/records/<id>/files/<name>` is the query URL.
+The query URL is the file API:
+`https://zenodo.org/api/records/<id>/files/<name>/content`. It answers a range
+request with `206` and `Access-Control-Allow-Origin: *` and allows `Range` in
+the preflight, but its `Access-Control-Expose-Headers` lists only
+`Content-Type`, `ETag`, `Link` and the rate-limit headers, so a browser cannot
+read `Content-Range`. That costs nothing (requirement 3 above): the reader
+takes the length from the file's own header and confirms it with a 4-byte
+footer read, and the playground labels the source with the file name rather
+than the URL's trailing `content`. `tests/gate/checks/check_zenodo_host.mjs`
+serves a file with exactly that header set, in both browser engines, so this
+stays true without depending on zenodo.org (whose API rate-limits with `403`).
+
+The playground's `wikidata-zenodo` entry still serves an R2 twin of record
+21168821, for a different reason: the deposited file is pre-1.0 format
+(header byte `0x04`), which current readers refuse; it has to be rebuilt to
+`0x05` and re-deposited before the DOI itself can be the query URL.
+
+Upload through the normal Zenodo web UI or REST API.
 
 ### GitHub Pages / raw.githubusercontent.com
 
@@ -98,8 +120,9 @@ for demos and small graphs, not for the big ones.
 
 Standard object stores work out of the box for the CLI; for browsers, attach
 the same kind of CORS policy as the R2 recipe (S3 and GCS both take a JSON CORS
-configuration; make sure `GET` + `HEAD` are allowed and `Content-Range` is
-exposed). For local development, the bundled dev server speaks ranges:
+configuration; make sure `GET` + `HEAD` are allowed; exposing `Content-Range`
+saves one request per open). For local development, the bundled dev server
+speaks ranges:
 
 ```sh
 python3 scripts/range_server.py 8000 .

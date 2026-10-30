@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -840,16 +840,29 @@ SELECT ?o WHERE { ?o a &lt;https://w3id.org/rete/gbif/taxon/class/Aves&gt; } LIM
 <p>The rewrite is a <strong>post-lowering pass on the query plan</strong> — the hot triple matcher
 and every non-reasoned query are byte-identical.</p>
 <ul>
-<li><strong>Hierarchy</strong> (<code>subClassOf</code> / <code>subPropertyOf</code>) is exactly what rete's
-goal-directed <a href="sparql.html#property-paths">property paths</a> already do, so a
-hierarchy atom becomes a path over the raw data — <code>?x a C</code> → <code>?x a ?c . ?c rdfs:subClassOf* C</code> (reflexive, so a direct type still matches). No <code>UNION</code>
-enumeration, so it does <strong>not</strong> blow up on deep taxonomies (gbif's ~1,200 classes
-stay one path, not 1,200 query branches).</li>
-<li><strong>Domain / range / inverseOf / existentials</strong> add <code>UNION</code> branches. A tiny TBox
-read (the objects of the hierarchy predicates, plus whether the graph declares
-domain/range/inverse/<code>someValuesFrom</code> axioms at all) <strong>gates</strong> the rewrite, so an
-atom whose class/property has no relevant axioms — and a graph with no ontology —
-is left untouched, making reasoning <strong>zero-overhead where it can add nothing</strong>.</li>
+<li><strong>The TBox</strong> — the <code>subClassOf</code>, <code>subPropertyOf</code>, <code>domain</code>, <code>range</code> and
+<code>inverseOf</code> statements of the file's <strong>default graph</strong> — is read once per
+query (a few scans of small predicates) and its hierarchies are closed before
+evaluation. It applies inside <code>GRAPH</code> and under <code>FROM</code> too.</li>
+<li><strong>An atom becomes the distinct union of the asserted patterns that entail
+it.</strong> <code>?x a C</code> → <code>?x a D</code> for every <code>D ⊑* C</code>, <code>?x p ?_</code> for every property
+whose domain is <code>⊑* C</code>, <code>?_ q ?x</code> for every property whose range is (each
+with its subproperties); <code>?x P ?y</code> → <code>?x Q ?y</code> for every <code>Q ⊑* P</code> and
+<code>?y R ?x</code> for its inverses. Each source streams in key order through a
+sorted permutation and the streams are merged, so <strong>each entailed triple
+answers once</strong> — a node typed <code>C</code> and a subclass of <code>C</code> is one <code>C</code> — without
+holding the answer set, and a <code>LIMIT</code> stops early. When a class has many
+subclasses that cover most of the typed nodes (a taxonomy of hundreds of
+classes below one), the union is read as one sorted scan of <code>rdf:type</code> instead of one
+cursor per class. Joined with rows that already bind the subject, the atom
+is a check: the subject's own types are read once per row.</li>
+<li><strong>Gated per atom.</strong> A class gets a domain (range) source only for the
+properties whose domain (range) is <code>⊑* C</code>, and a class or property the file
+never uses contributes nothing. An atom that reasoning cannot extend — and a
+graph with no ontology — is left exactly as written, so reasoning is
+<strong>zero-overhead where it can add nothing</strong>, and one unrelated axiom does not
+slow the class atoms it says nothing about.</li>
+<li><strong>Existentials</strong> add a branch for a purely existential end (below).</li>
 </ul>
 <h3 id="existential-soundness">Existential soundness</h3>
 <p>The existential rewrite (<code>?x P ?y</code> answered from <code>A ⊑ ∃P</code>) is <strong>sound by

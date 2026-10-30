@@ -7,10 +7,10 @@
 //! then `S+1..` (subject-only); object IDs reuse `1..=S` for the same shared
 //! terms then `S+1..` for object-only. Predicates have their own space.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::chunk_cache::ChunkCache;
-use crate::dict::{ChunkedSection, DictSectionBuilder};
+use crate::dict::{ChunkedSection, DictSectionBuilder, MultiChunkBulkLoader};
 use crate::terms::{NodeId, ObjectId, PredicateId, SubjectId};
 
 /// Sort a term slice ascending — in parallel when the `parallel` feature is on.
@@ -38,11 +38,42 @@ pub struct DictionaryBuilder {
     subjects: HashSet<String>,
     objects: HashSet<String>,
     predicates: HashSet<String>,
+    /// Frequent-object promotion ([`Self::with_frequent_objects`]): how many of
+    /// the most frequent object-only terms move into the shared section.
+    promote: usize,
+    /// Object occurrence counts, kept **instead of** `objects` while promotion
+    /// is on (so a default build pays nothing for it).
+    object_counts: HashMap<String, u64>,
 }
 
 impl DictionaryBuilder {
+    /// A builder with the process-wide writer settings
+    /// ([`crate::write_opts::frequent_objects`]).
     pub fn new() -> Self {
-        Self::default()
+        Self::default().with_frequent_objects(crate::write_opts::frequent_objects())
+    }
+
+    /// Promote the `n` most frequent **object-only** terms (by the number of
+    /// statements that carry them as object; ties by term order) into the
+    /// shared section (`0` = off, the default).
+    ///
+    /// The shared section is numbered first and in term order, so a promoted
+    /// vocabulary term (a class, a scheme individual, a status literal) gets a
+    /// small object id wherever it sorts ahead of the shared entities — the
+    /// effect declaring the vocabulary in a TBox has, without the TBox. A
+    /// promoted term keeps its object id role; the subject id it also gets is
+    /// simply never used by any statement. Readers need nothing new: the shared
+    /// section has always been looked up first for both roles.
+    ///
+    /// Set it before the first [`Self::observe`]: promotion counts objects as
+    /// they are observed.
+    pub fn with_frequent_objects(mut self, n: usize) -> Self {
+        debug_assert!(
+            self.objects.is_empty() && self.object_counts.is_empty(),
+            "with_frequent_objects after observe"
+        );
+        self.promote = n;
+        self
     }
 
     /// Record one triple's terms (IDs are assigned later, in [`Self::build`]).
@@ -53,11 +84,27 @@ impl DictionaryBuilder {
         if !self.subjects.contains(subject) {
             self.subjects.insert(subject.to_string());
         }
-        if !self.objects.contains(object) {
+        if self.promote > 0 {
+            if let Some(n) = self.object_counts.get_mut(object) {
+                *n += 1;
+            } else {
+                self.object_counts.insert(object.to_string(), 1);
+            }
+        } else if !self.objects.contains(object) {
             self.objects.insert(object.to_string());
         }
         if !self.predicates.contains(predicate) {
             self.predicates.insert(predicate.to_string());
+        }
+    }
+
+    /// Record a **graph name** as a term in the subject role — how the quad
+    /// index (SPEC.md §6.5) makes graph names dictionary ids. It lands in the
+    /// shared section when the name is also an object, else in the
+    /// subject-only section.
+    pub fn observe_graph(&mut self, graph: &str) {
+        if !self.subjects.contains(graph) {
+            self.subjects.insert(graph.to_string());
         }
     }
 
@@ -66,31 +113,64 @@ impl DictionaryBuilder {
         // the old BTreeSet iteration, but without the per-insert tree cost.
         let mut subjects: Vec<String> = self.subjects.into_iter().collect();
         let mut predicates: Vec<String> = self.predicates.into_iter().collect();
-        let object_set = self.objects; // kept for the shared (subject ∩ object) test
         sort_terms(&mut subjects);
         sort_terms(&mut predicates);
 
         // A term is "shared" when it appears as both a subject and an object.
         let subject_set: HashSet<&str> = subjects.iter().map(String::as_str).collect();
 
+        // The object terms: a plain set, or (promotion on) the count map, used
+        // as-is rather than converted, so no second table over every object.
+        let object_set = if self.promote > 0 {
+            ObjectTerms::Counted(self.object_counts)
+        } else {
+            ObjectTerms::Plain(self.objects)
+        };
+        // Frequent-object promotion: the top `promote` object-only terms by
+        // statement count (ties by term order) join the shared section.
+        let mut promoted: Vec<String> = Vec::new();
+        if let ObjectTerms::Counted(counts) = &object_set {
+            let mut top: Vec<(&String, u64)> = counts
+                .iter()
+                .filter(|(t, _)| !subject_set.contains(t.as_str()))
+                .map(|(t, &n)| (t, n))
+                .collect();
+            let k = self.promote.min(top.len());
+            if k > 0 && k < top.len() {
+                top.select_nth_unstable_by(k - 1, |a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+            }
+            top.truncate(k);
+            promoted = top.into_iter().map(|(t, _)| t.clone()).collect();
+            sort_terms(&mut promoted);
+        }
+        let promoted_set: HashSet<&str> = promoted.iter().map(String::as_str).collect();
+
         let mut shared_b = DictSectionBuilder::new();
         let mut subj_b = DictSectionBuilder::new();
         let mut obj_b = DictSectionBuilder::new();
         let mut pred_b = DictSectionBuilder::new();
 
-        // Subjects ascending: shared (also an object) vs subject-only.
+        // Subjects ascending: shared (also an object) vs subject-only. Promoted
+        // objects are merged into the shared run in term order.
+        let mut promoted_iter = promoted.iter().peekable();
         for s in &subjects {
             if object_set.contains(s) {
+                while let Some(p) = promoted_iter.next_if(|p| p.as_str() < s.as_str()) {
+                    shared_b.push(p.clone());
+                }
                 shared_b.push(s.clone());
             } else {
                 subj_b.push(s.clone());
             }
         }
+        for p in promoted_iter {
+            shared_b.push(p.clone());
+        }
         // Objects ascending: object-only (shared terms were emitted above).
-        let mut objects: Vec<String> = object_set.into_iter().collect();
+        let mut objects: Vec<String> = object_set.into_terms();
         sort_terms(&mut objects);
         for o in &objects {
-            if !subject_set.contains(o.as_str()) {
+            if !subject_set.contains(o.as_str()) && !promoted_set.contains(o.as_str()) {
                 obj_b.push(o.clone());
             }
         }
@@ -111,6 +191,29 @@ impl DictionaryBuilder {
     }
 }
 
+/// The object terms a [`DictionaryBuilder`] observed: a set, or the
+/// occurrence counts frequent-object promotion needs.
+enum ObjectTerms {
+    Plain(HashSet<String>),
+    Counted(HashMap<String, u64>),
+}
+
+impl ObjectTerms {
+    fn contains(&self, term: &str) -> bool {
+        match self {
+            ObjectTerms::Plain(s) => s.contains(term),
+            ObjectTerms::Counted(m) => m.contains_key(term),
+        }
+    }
+
+    fn into_terms(self) -> Vec<String> {
+        match self {
+            ObjectTerms::Plain(s) => s.into_iter().collect(),
+            ObjectTerms::Counted(m) => m.into_keys().collect(),
+        }
+    }
+}
+
 /// Reusable per-window scratch for [`Dictionary::resolve_window`]: one job list
 /// per section (`(local_id, out_slot)` pairs) and the resolved-term output.
 /// Held across windows by the export loop so a window allocates only when a
@@ -123,6 +226,13 @@ pub struct WindowResolver {
     /// Resolved terms, indexed by output slot `row * 3 + {0:s, 1:p, 2:o}`.
     out: Vec<Option<String>>,
 }
+
+/// The most chunks one id-list prefetch ([`Dictionary::prefetch_subject_terms`],
+/// [`Dictionary::prefetch_node_terms`]) faults in a single batch. A batch holds
+/// every body it fetched until all are cached, so this bounds that transient
+/// (512 chunks of ≤64 KiB: ≤32 MiB) however many ids a caller passes; a longer
+/// list goes out in several batches.
+const PREFETCH_BATCH_CHUNKS: usize = 512;
 
 /// A read-only dictionary mapping terms ↔ role-specific IDs.
 ///
@@ -137,6 +247,9 @@ pub struct Dictionary {
     /// time (from the observed terms); `false` on the read path, where the
     /// header's `FLAG_HAS_QUOTED_TRIPLES` is the source of truth instead.
     has_quoted_triples: bool,
+    /// Faults the chunks of several sections in one batch (a ranged open);
+    /// `None` = section by section (local, or no batch reader).
+    multi_bulk: Option<MultiChunkBulkLoader>,
 }
 
 impl Dictionary {
@@ -162,6 +275,57 @@ impl Dictionary {
             sections,
             shared_len,
             has_quoted_triples: false,
+            multi_bulk: None,
+        }
+    }
+
+    /// Attach a cross-section chunk fetcher (see [`MultiChunkBulkLoader`]):
+    /// the term prefetchers then fault every section's missing chunks in one
+    /// batch instead of one batch per section.
+    pub(crate) fn with_multi_bulk_loader(mut self, loader: MultiChunkBulkLoader) -> Self {
+        self.multi_bulk = Some(loader);
+        self
+    }
+
+    /// Fault the chunks `want[si]` of each section, at most `batch` chunks
+    /// per read. With a cross-section fetcher every missing chunk goes out in
+    /// one batch (round trips: one, not one per section); without one, each
+    /// section batches its own. A failed batch leaves the chunks for the
+    /// per-chunk loader, which retries them lookup by lookup. Purely a cache
+    /// warmer: results never depend on it.
+    fn prefetch_sections(&self, want: &[Vec<usize>; 4], batch: usize) {
+        let batch = batch.max(2);
+        if let Some(multi) = &self.multi_bulk {
+            let pairs: Vec<(u8, usize)> = want
+                .iter()
+                .enumerate()
+                .flat_map(|(si, cis)| {
+                    self.sections[si]
+                        .missing_chunks(cis)
+                        .into_iter()
+                        .map(move |ci| (si as u8, ci))
+                })
+                .collect();
+            // A single missing chunk costs the same either way: leave it to
+            // the per-chunk loader, as a section's own batch does.
+            if pairs.len() < 2 {
+                return;
+            }
+            for part in pairs.chunks(batch) {
+                if let Some(bodies) = multi(part) {
+                    if bodies.len() == part.len() {
+                        for (&(si, ci), body) in part.iter().zip(bodies) {
+                            self.sections[si as usize].seed_chunk(ci, body);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        for (si, cis) in want.iter().enumerate() {
+            for part in cis.chunks(batch) {
+                self.sections[si].prefetch_chunks(part);
+            }
         }
     }
 
@@ -249,7 +413,6 @@ impl Dictionary {
     /// up to thousands of chunks at once, outside every cache cap. A bounded
     /// export batches it so that transient stays a few MB.
     pub fn prefetch_terms_batched(&self, node_ids: &[u32], predicate_ids: &[u32], batch: usize) {
-        let batch = batch.max(2);
         let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
         for &n in node_ids {
             if let Some((si, ci)) = self.node_chunk(n) {
@@ -261,14 +424,8 @@ impl Dictionary {
                 want[3].insert(ci);
             }
         }
-        for (si, set) in want.iter().enumerate() {
-            if set.len() >= 2 {
-                let cis: Vec<usize> = set.iter().copied().collect();
-                for part in cis.chunks(batch) {
-                    self.sections[si].prefetch_chunks(part);
-                }
-            }
-        }
+        let want: [Vec<usize>; 4] = want.map(|set| set.into_iter().collect());
+        self.prefetch_sections(&want, batch);
     }
 
     /// The `(section, chunk)` holding a unified node id — mirrors the section
@@ -306,6 +463,47 @@ impl Dictionary {
     /// Number of object-only terms `Oo`.
     pub fn object_only_count(&self) -> u32 {
         self.sections[2].term_count()
+    }
+
+    /// Number of predicate terms.
+    pub fn predicate_count(&self) -> u32 {
+        self.sections[3].term_count()
+    }
+
+    /// [`subject_term`](Self::subject_term) for many ids at once: one
+    /// chunk-ordered, single-pass walk per section
+    /// ([`ChunkedSection::resolve_into`]) instead of a fault and a run walk per
+    /// id — the difference between a whole-dictionary pass taking minutes and
+    /// taking hours. `out[i]` is exactly what `subject_term(ids[i])` returns.
+    ///
+    /// [`ChunkedSection::resolve_into`]: crate::dict::ChunkedSection::resolve_into
+    pub fn subject_terms(&self, ids: &[SubjectId]) -> Vec<Option<String>> {
+        self.role_terms(ids, 1)
+    }
+
+    /// [`object_term`](Self::object_term) for many ids at once — see
+    /// [`subject_terms`](Self::subject_terms).
+    pub fn object_terms(&self, ids: &[ObjectId]) -> Vec<Option<String>> {
+        self.role_terms(ids, 2)
+    }
+
+    /// Shared ids route to section 0, the rest to `own` (1 subjects, 2 objects)
+    /// with the shared block subtracted — the routing of `subject_term` /
+    /// `object_term`.
+    fn role_terms(&self, ids: &[u32], own: usize) -> Vec<Option<String>> {
+        let mut out = vec![None; ids.len()];
+        let mut shared = Vec::new();
+        let mut rest = Vec::new();
+        for (slot, &id) in ids.iter().enumerate() {
+            if id <= self.shared_len {
+                shared.push((id, slot));
+            } else {
+                rest.push((id - self.shared_len, slot));
+            }
+        }
+        self.sections[0].resolve_into(&mut shared, &mut out);
+        self.sections[own].resolve_into(&mut rest, &mut out);
+        out
     }
 
     // --- unified node space (for graph algorithms / the pyramid) ----------
@@ -364,11 +562,19 @@ impl Dictionary {
                 per_section[si].push(ci);
             }
         }
-        for (si, cis) in per_section.iter_mut().enumerate() {
+        let [shared, subjects] = per_section;
+        self.prefetch_sorted([shared, subjects, Vec::new(), Vec::new()]);
+    }
+
+    /// Sort, dedup and fault each section's chunk list (one batch across
+    /// sections when the dictionary has a cross-section fetcher), at most
+    /// [`PREFETCH_BATCH_CHUNKS`] chunks per read.
+    fn prefetch_sorted(&self, mut want: [Vec<usize>; 4]) {
+        for cis in &mut want {
             cis.sort_unstable();
             cis.dedup();
-            self.sections[si].prefetch_chunks(cis);
         }
+        self.prefetch_sections(&want, PREFETCH_BATCH_CHUNKS);
     }
 
     /// [`prefetch_subject_terms`](Self::prefetch_subject_terms) for unified
@@ -398,19 +604,20 @@ impl Dictionary {
                 per_section[si].push(ci);
             }
         }
-        for (si, cis) in per_section.iter_mut().enumerate() {
-            cis.sort_unstable();
-            cis.dedup();
-            self.sections[si].prefetch_chunks(cis);
-        }
+        let [shared, subjects, objects] = per_section;
+        self.prefetch_sorted([shared, subjects, objects, Vec::new()]);
     }
 
     /// Unified node ID for a term, resolving via subject role then object role.
+    /// A string literal also matches its other spelling (`"x"` ↔
+    /// `"x"^^xsd:string`, one RDF 1.1 term; see [`Self::subject_id`]).
     pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
-        if let Some(sid) = self.subject_id(term) {
-            return Some(self.subject_node(sid));
-        }
-        self.object_id(term).map(|oid| self.object_node(oid))
+        let exact = |t: &str| {
+            self.subject_id_exact(t)
+                .map(|sid| self.subject_node(sid))
+                .or_else(|| self.object_id_exact(t).map(|oid| self.object_node(oid)))
+        };
+        exact(term).or_else(|| exact(&crate::terms::string_literal_alias(term)?))
     }
 
     /// Subject-role ID of a node, or `None` if the node never appears as a
@@ -439,7 +646,25 @@ impl Dictionary {
     // --- term -> id -------------------------------------------------------
 
     /// Subject-role ID for `term`: shared `1..=S`, else subject-only `S+1..`.
+    ///
+    /// A string literal that is not found under its own spelling is looked up
+    /// under the other (`"x"` ↔ `"x"^^xsd:string`): RDF 1.1 makes them one
+    /// term, ingest keeps only the plain one, and a file built before it did
+    /// may hold the typed one. The second lookup runs only on a miss, and the
+    /// two spellings sort side by side, so it reads no further chunk.
     pub fn subject_id(&self, term: &str) -> Option<SubjectId> {
+        self.subject_id_exact(term)
+            .or_else(|| self.subject_id_exact(&crate::terms::string_literal_alias(term)?))
+    }
+
+    /// Object-role ID for `term`, with the same string-literal fallback as
+    /// [`Self::subject_id`].
+    pub fn object_id(&self, term: &str) -> Option<ObjectId> {
+        self.object_id_exact(term)
+            .or_else(|| self.object_id_exact(&crate::terms::string_literal_alias(term)?))
+    }
+
+    fn subject_id_exact(&self, term: &str) -> Option<SubjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
@@ -447,7 +672,7 @@ impl Dictionary {
     }
 
     /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
-    pub fn object_id(&self, term: &str) -> Option<ObjectId> {
+    fn object_id_exact(&self, term: &str) -> Option<ObjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }

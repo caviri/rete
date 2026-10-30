@@ -21,6 +21,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod bgp;
 #[doc(hidden)]
 pub mod block_cache;
+pub mod build_trace;
 #[doc(hidden)]
 pub mod card_derive;
 #[doc(hidden)]
@@ -35,6 +36,9 @@ pub mod dict;
 pub mod dictionary;
 #[doc(hidden)]
 pub mod extbuild;
+mod extbuild_remap;
+mod extbuild_sections;
+mod extsort;
 #[doc(hidden)]
 pub mod file;
 #[doc(hidden)]
@@ -47,6 +51,7 @@ pub mod index;
 
 pub mod ingest;
 pub mod iri;
+pub mod label_index;
 pub mod manifest;
 #[doc(hidden)]
 pub mod meta;
@@ -55,17 +60,20 @@ pub mod meta;
 pub mod parallel;
 #[doc(hidden)]
 pub mod pyramid;
+mod quad;
 #[doc(hidden)]
 pub mod reach;
 #[doc(hidden)]
 pub mod reader;
 #[doc(hidden)]
 pub mod reason;
+pub mod recard;
 #[doc(hidden)]
 pub mod results;
 mod row;
 #[doc(hidden)]
 pub mod schema_pyramid;
+pub mod schema_section;
 #[doc(hidden)]
 pub mod service;
 #[doc(hidden)]
@@ -76,19 +84,21 @@ pub mod sparql;
 pub mod terms;
 #[doc(hidden)]
 pub mod text_index;
+mod text_index_spill;
 #[doc(hidden)]
 pub mod tiling;
 #[doc(hidden)]
 pub mod triples;
 #[doc(hidden)]
 pub mod varint;
+pub mod write_opts;
 
 /// Stable file-format, reader, and in-memory build API.
 pub mod format {
     pub use crate::file::{
-        attach_build_info, plan_build_info, read_build_info, replace_metadata, verify,
-        BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment, Rete, TermTriple,
-        TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
+        append_sections, attach_build_info, content_hash_parts, plan_build_info, read_build_info,
+        replace_metadata, verify, BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment,
+        PyramidLayout, Rete, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
         Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
@@ -96,12 +106,13 @@ pub mod format {
     };
     pub use crate::index::ScanPlan;
     pub use crate::ingest::{
-        assemble_dataset, assemble_dataset_with, assemble_dataset_with_opts,
-        assemble_dataset_with_opts_algo, assemble_dataset_with_perms, parse, parse_quads,
-        parse_rdfxml, parse_statements, parse_statements_audited_surface, parse_turtle,
-        parse_turtle_surface, BuildStats, DeferredMetadata, FinalCounts, IngestError, IntoMetadata,
-        QuotedTripleSurface, RawQuad, RawTriple,
+        assemble_dataset, assemble_dataset_with, assemble_dataset_with_layout,
+        assemble_dataset_with_opts, assemble_dataset_with_opts_algo, assemble_dataset_with_perms,
+        parse, parse_quads, parse_rdfxml, parse_statements, parse_statements_audited_surface,
+        parse_turtle, parse_turtle_surface, BuildStats, DeferredMetadata, FinalCounts, GraphLayout,
+        IngestError, IntoMetadata, QuotedTripleSurface, RawQuad, RawTriple,
     };
+    pub use crate::recard::{plan_card_rewrite, rewrite_card, CardRewritePlan, REWRITE_CHUNK};
 }
 
 /// Stable **Dataset Card** API — both halves of a card, so that every writer
@@ -124,11 +135,11 @@ pub mod format {
 /// spends that pass unless the caller asks for a card.
 pub mod card {
     pub use crate::card_derive::{
-        curated_counts_card, derive_card, derive_card_encoded, derive_card_from, load_card,
-        CardInput, CardTripleSource, ClassLink, Coherence, Creator, DatasetCard, ExampleQuery,
-        PermutationsSignal, Publisher, QuotedTriplesSignal, Signals, TextIndexSignal, Tier,
-        CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL, QUOTED_TRIPLE_SURFACE_RDF12,
-        QUOTED_TRIPLE_SURFACE_RDF_STAR,
+        curated_counts_card, derive_card, derive_card_encoded, derive_card_from,
+        derive_card_streaming, load_card, CardInput, CardTripleSource, ClassLink, Coherence,
+        Creator, DatasetCard, ExampleQuery, LabelIndexSignal, PermutationsSignal, Publisher,
+        QuotedTriplesSignal, Signals, StreamReport, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT,
+        GEO_HASGEOMETRY, O_LITERAL, QUOTED_TRIPLE_SURFACE_RDF12, QUOTED_TRIPLE_SURFACE_RDF_STAR,
     };
     pub use crate::card_input::{
         canonicalize_json, check_description_len, compose_curated_card, json_depth,
@@ -138,7 +149,9 @@ pub mod card {
         UNKNOWN_FIELD_HINT,
     };
     pub use crate::card_queries::{
-        audit, claim_of, generate, Claim, Finding, Observation, Recorded, Substitution, Verdict,
+        audit, audit_examples, claim_of, claim_of_query, example_query_id, generate, Claim,
+        Finding, Observation, Recorded, Substitution, Verdict, STARTER_MAX_BYTES,
+        STARTER_SCAN_BUDGET,
     };
 }
 
@@ -151,11 +164,11 @@ pub mod query {
         parse_sparql_json_results, sparql_json_ask, sparql_json_results, ServiceClient,
     };
     pub use crate::sparql::{
-        eval_query, eval_query_reasoned, eval_query_with, eval_query_with_warnings,
-        eval_select_communities, eval_sparql, eval_sparql_reasoned, query_predicates,
-        routed_triple_pattern, summary_query_shape, warnings_json, CommunityPartial,
-        CommunitySelect, QueryOpts, QueryOutput, QueryWarning, RoutedTriplePattern, SparqlError,
-        SummaryQueryShape, WarningSeverity,
+        eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
+        eval_query_with_warnings, eval_select_communities, eval_sparql, eval_sparql_reasoned,
+        partition_plan, query_predicates, routed_triple_pattern, summary_query_shape,
+        warnings_json, CommunityPartial, CommunitySelect, PartitionPlan, QueryOpts, QueryOutput,
+        QueryWarning, RoutedTriplePattern, SparqlError, SummaryQueryShape, WarningSeverity,
     };
 }
 
@@ -164,8 +177,9 @@ pub mod range {
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
         read_card_and_build_info_ranged, read_card_and_build_info_with_header,
-        read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged,
-        read_text_index_token_table_len_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
+        read_metadata_ranged, read_schema_coherence_ranged, read_schema_ranged,
+        read_schema_summary_ranged, read_text_index_token_table_len_ranged, ByteRange,
+        LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{
         detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader,
@@ -201,15 +215,16 @@ pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
 pub use file::{
-    attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,
-    plan_build_info, read_build_info, read_card_and_build_info_ranged,
-    read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged,
+    append_sections, attach_build_info, build_pyramid_meta, build_pyramid_meta_algo,
+    build_pyramid_meta_layout, build_pyramid_meta_with, compute_text_index, plan_build_info,
+    read_build_info, read_card_and_build_info_ranged, read_card_and_build_info_with_header,
+    read_metadata_ranged, read_schema_coherence_ranged, read_schema_ranged,
     read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
     schema_classes, schema_coherence, schema_summary, spill_threshold_for, split_memory_budget,
     verify, verify_ranged, write_dataset, write_dataset_with_metadata, write_file, BuildInfoPlan,
-    ByteRange, DumpPlan, FixedOverhead, LayoutSegment, MemoryBudget, Rete, SearchView, SummaryView,
-    TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_EXPORT_BUDGET_MB,
-    DEFAULT_QUERY_BUDGET_MB, DEFAULT_TILE_BUDGET, RDF_TYPE,
+    ByteRange, DumpPlan, FixedOverhead, LayoutSegment, MemoryBudget, PyramidLayout, Rete,
+    SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
+    DEFAULT_EXPORT_BUDGET_MB, DEFAULT_QUERY_BUDGET_MB, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 #[doc(hidden)]
 pub use header::{
@@ -218,9 +233,12 @@ pub use header::{
 };
 #[doc(hidden)]
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet, ScanPlan};
+pub use ingest::GraphLayout;
 pub use iri::{
     iri_content_defect, sanitize_iri_content, sanitize_term, term_defect, IriDefect, IriReport,
 };
+#[doc(hidden)]
+pub use label_index::{read_label_index_entries_ranged, LabelIndex};
 #[doc(hidden)]
 pub use meta::{
     CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,
@@ -245,6 +263,8 @@ pub use results::{push_json_string, results_envelope_json};
 #[doc(hidden)]
 pub use schema_pyramid::build_schema_pyramid;
 #[doc(hidden)]
+pub use schema_section::SchemaMeta;
+#[doc(hidden)]
 pub use service::{parse_sparql_json_results, sparql_json_ask, sparql_json_results, ServiceClient};
 #[doc(hidden)]
 pub use shacl::{
@@ -253,17 +273,20 @@ pub use shacl::{
 };
 #[doc(hidden)]
 pub use sparql::{
-    eval_query, eval_query_reasoned, eval_query_with, eval_query_with_warnings,
-    eval_select_communities, eval_sparql, eval_sparql_reasoned, parse_select, query_predicates,
-    routed_triple_pattern, summary_query_shape, warnings_json, Agg, CommunityPartial,
-    CommunitySelect, FExpr, GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOpts, QueryOutput,
-    QueryWarning, Rep, RoutedTriplePattern, Select, SparqlError, SummaryQueryShape,
-    WarningSeverity,
+    eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
+    eval_query_with_warnings, eval_select_communities, eval_sparql, eval_sparql_reasoned,
+    parse_select, partition_plan, query_predicates, routed_triple_pattern, summary_query_shape,
+    warnings_json, Agg, CommunityPartial, CommunitySelect, FExpr, GraphTarget, GroupSpec, Op,
+    PartitionPlan, PathAst, Plan, QueryOpts, QueryOutput, QueryWarning, Rep, RoutedTriplePattern,
+    Select, SparqlError, SummaryQueryShape, WarningSeverity,
 };
 #[doc(hidden)]
 pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};
 #[doc(hidden)]
-pub use text_index::{tokenize, TextIndex, TextIndexBuilder};
+pub use text_index::{
+    tokenize, IntoTextIndex, TextIndex, TextIndexBuilder, TextIndexGraphs, TextIndexPredicates,
+    TextIndexScope,
+};
 #[doc(hidden)]
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 #[doc(hidden)]

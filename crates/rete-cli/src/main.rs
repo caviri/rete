@@ -143,21 +143,74 @@ enum Command {
         no_pyramid: bool,
         /// Community algorithm for the pyramid: `louvain` (default — topological
         /// modularity, single-threaded, byte-identical) or `types` (partition by
-        /// `rdf:type` — deterministic, parallelizable, self-naming communities, and
-        /// it still emits the planner's `query_stats`; falls back to louvain when
-        /// the graph is untyped). `types` makes a pyramid feasible on graphs too
-        /// large for the single-threaded Louvain build.
+        /// `rdf:type` — deterministic, parallelizable, self-naming communities;
+        /// falls back to louvain when the graph is untyped). `types` makes a
+        /// pyramid feasible on graphs too large for the single-threaded Louvain
+        /// build. Neither decides the labels or the schema: those have sections
+        /// of their own (`--label-index`, `--no-schema`).
         #[arg(long = "pyramid-algo", value_parser = ["louvain", "types"], default_value = "louvain")]
         pyramid_algo: String,
         /// Build a **full-text index** over the literals: every string-literal
         /// word maps to the subjects that carry it, so `rete search --contains
         /// <word>` finds entities by content with no scan. Adds a `TextIndex`
         /// section (off by default; the index can be large on text-heavy graphs).
+        /// Works with `--memory-budget-mb` too: the section is the same bytes.
         #[arg(long = "text-index")]
         text_index: bool,
-        /// Override the predicate that types subjects with classes for the schema
-        /// pyramid (default: `rdf:type`, else auto-detected). Use it where
-        /// `rdf:type` is structural noise — e.g. Wikidata's `wdt:P31`:
+        /// Which graphs' literals the full-text index covers: `default` — the
+        /// default graph only, the one scope before 0.4.0 — or `all`, the
+        /// default graph and every named graph (provenance kept in named
+        /// graphs becomes searchable, and `FILTER(CONTAINS(…))` inside
+        /// `GRAPH` can use the index). Requires `--text-index`.
+        #[arg(
+            long = "text-index-graphs",
+            value_name = "SCOPE",
+            value_parser = ["default", "all"],
+            default_value = "default",
+            requires = "text_index"
+        )]
+        text_index_graphs: String,
+        /// Index only the literals of this predicate — a full IRI, bare or in
+        /// `<…>`. Repeat for several. Requires `--text-index`; not with
+        /// `--text-index-exclude`.
+        #[arg(
+            long = "text-index-include",
+            value_name = "IRI",
+            requires = "text_index",
+            conflicts_with = "text_index_exclude"
+        )]
+        text_index_include: Vec<String>,
+        /// Leave this predicate's literals out of the full-text index — a full
+        /// IRI, bare or in `<…>`. Repeat for several (e.g. provenance prose
+        /// and stored SPARQL text). A predicate-restricted index is written as
+        /// section kind 11, which readers older than 0.4.0 do not see, and the
+        /// SPARQL `CONTAINS` pushdown uses it only for predicates it covers.
+        /// Requires `--text-index`.
+        #[arg(
+            long = "text-index-exclude",
+            value_name = "IRI",
+            requires = "text_index"
+        )]
+        text_index_exclude: Vec<String>,
+        /// Build a **label index** (a LABEL_INDEX section, kind 8): the display
+        /// label of every labelled subject — `rdfs:label`, `skos:prefLabel`/
+        /// `altLabel`, `foaf:name`, `dc`/`dcterms:title`, `schema:name`, and
+        /// for people with only given/family names `"family, given"` — sorted
+        /// for `rete search <prefix>`. No cap; a remote prefix search reads a
+        /// few small ranges. Works with `--no-pyramid` and `--memory-budget-mb`.
+        /// Off by default: without it the file has no label index at all.
+        #[arg(long = "label-index")]
+        label_index: bool,
+        /// Leave out the **SCHEMA section** (kind 9) — the class hierarchy,
+        /// level rollups, coherence axioms, the planner's `query_stats` and the
+        /// characteristic sets, written by every build by default (a few
+        /// kilobytes, computed without the pyramid).
+        #[arg(long = "no-schema")]
+        no_schema: bool,
+        /// Override the predicate that types subjects with classes for the
+        /// schema (default: `rdf:type`; the pyramid's descriptors also fall back
+        /// to auto-detection). Use it where `rdf:type` is structural noise —
+        /// e.g. Wikidata's `wdt:P31`:
         /// `--type-predicate http://www.wikidata.org/prop/direct/P31`.
         #[arg(long = "type-predicate")]
         type_predicate: Option<String>,
@@ -197,13 +250,15 @@ enum Command {
         /// this many MiB of RAM by cutting the input into disk-spilled chunks
         /// and merging them (the budget decides the number of chunks and the
         /// external-sort run sizes). For graphs too large for the in-RAM build.
-        /// Output is byte-identical to a standard `--no-pyramid` build.
+        /// Output is byte-identical to a standard `--no-pyramid` build, the
+        /// SCHEMA section and `--label-index` included.
         /// Named graphs are carried through the same spill (the graph leads the
         /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
-        /// Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or not — RDF/XML
-        /// is the one syntax that must be converted first), implies
-        /// `--no-pyramid`, and excludes
-        /// `--text-index`/`--materialize`/`--reason`.
+        /// `--text-index` (any scope) is a second external sort over the
+        /// literal words inside the same budget, spilling to the same
+        /// `--tmp-dir`. Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or
+        /// not — RDF/XML is the one syntax that must be converted first),
+        /// implies `--no-pyramid`, and excludes `--materialize`/`--reason`.
         #[arg(long = "memory-budget-mb")]
         memory_budget_mb: Option<u64>,
         /// Directory for the external build's spill files (default: alongside
@@ -232,6 +287,27 @@ enum Command {
         /// anything published.
         #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
         permutations: String,
+        /// How to store the **named graphs**: `per-graph` (default) or `quad`.
+        ///
+        /// `per-graph` writes one permutation index per graph (the
+        /// NAMED_GRAPHS section): each graph's IRI as text, then its own
+        /// tiles, chained with no directory. `quad` writes the **quad index**
+        /// (SPEC.md §6.5): every named-graph quad once, the graph as a fourth
+        /// column of graph-leading permutations in tiles that many graphs
+        /// share, behind a sorted graph directory, with graph names as
+        /// dictionary terms. On many small graphs (per-entity provenance)
+        /// that is several times smaller and finds one graph by binary search
+        /// instead of walking the section; queries return the same rows.
+        ///
+        /// **A `quad` file is refused by every Rete before 0.4.0** (loudly:
+        /// the index container's section count), so keep `per-graph` for
+        /// files read by older engines. No effect without named graphs.
+        #[arg(
+            long = "named-graphs",
+            value_parser = ["per-graph", "quad"],
+            default_value = "per-graph"
+        )]
+        named_graphs: String,
         /// Refuse input containing an IRI the N-Triples/N-Quads `IRIREF` grammar
         /// and RFC 3987 disallow — a raw `[`/`]` outside an IP-literal host, a
         /// second `#`, a space or one of ``<>"{}|^` \``, a `%` not followed by
@@ -256,6 +332,8 @@ enum Command {
             long_help = INPUT_QUOTED_TRIPLE_SYNTAX_HELP
         )]
         quoted_triple_syntax: String,
+        #[command(flatten)]
+        write: commands::write_args::WriteArgs,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
@@ -515,6 +593,60 @@ enum Command {
         #[arg(long, requires = "write_costs")]
         allow_empty: bool,
     },
+    /// Give a finished `.rete` a new Dataset Card **without rebuilding it**.
+    ///
+    /// Derives the profile and the starter queries by streaming the file's own
+    /// sorted sections (memory: the reader's caches plus one byte per subject,
+    /// not the statements), runs each starter query against the file inside
+    /// the starter byte budget, then rewrites the file with only the card and
+    /// the build record replaced — every other section copied byte for byte,
+    /// the header's offsets fixed, the content hash recomputed (the card is
+    /// inside it). The curated fields come from `--card-file` and the curated
+    /// flags, as `rete build --card-file` takes them, or from the input card
+    /// verbatim with `--keep-curated`; an input card with curated fields and
+    /// neither option is refused, never silently stripped.
+    Recard {
+        /// The `.rete` to re-card (read only; never written).
+        file: String,
+        /// Output path. Must not exist.
+        #[arg(short, long)]
+        output: String,
+        /// JSON file of curated card fields (same document as `build --card-file`).
+        #[arg(long = "card-file", conflicts_with = "keep_curated")]
+        card_file: Option<String>,
+        /// Carry the input card's curated fields — title, licence, description,
+        /// creators, example queries, the `extra` bag, … — verbatim.
+        #[arg(long = "keep-curated")]
+        keep_curated: bool,
+        /// Card title (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        title: Option<String>,
+        /// Card license (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        license: Option<String>,
+        /// Card source URL (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        source: Option<String>,
+        /// Card description (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        description: Option<String>,
+        /// Card creation date (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        created: Option<String>,
+        /// Do not run the starter queries (nothing then checks that they
+        /// answer on this file, and the build record carries no costs).
+        #[arg(long = "no-card-costs")]
+        no_card_costs: bool,
+        /// Cache budget for reading the file while deriving the card, in MiB.
+        /// The derivation's own memory is one byte per subject on top of it
+        /// (two past 255 classes).
+        #[arg(long = "memory-budget-mb", default_value_t = 1024)]
+        memory_budget_mb: u64,
+        /// Re-read the written file and check its content hash before moving
+        /// it into place (one more read of the file).
+        #[arg(long)]
+        verify: bool,
+    },
     /// List the named graphs in a dataset.
     Graphs {
         /// Path to the `.rete` file.
@@ -707,6 +839,46 @@ enum Command {
         /// TEXT_INDEX section; same semantics as `build --text-index`.
         #[arg(long = "text-index")]
         text_index: bool,
+        /// Which graphs' literals the full-text index covers: `default` — the
+        /// default graph only, the one scope before 0.4.0 — or `all`, the
+        /// default graph and every named graph (provenance kept in named
+        /// graphs becomes searchable, and `FILTER(CONTAINS(…))` inside
+        /// `GRAPH` can use the index). Requires `--text-index`.
+        #[arg(
+            long = "text-index-graphs",
+            value_name = "SCOPE",
+            value_parser = ["default", "all"],
+            default_value = "default",
+            requires = "text_index"
+        )]
+        text_index_graphs: String,
+        /// Index only the literals of this predicate — a full IRI, bare or in
+        /// `<…>`. Repeat for several. Requires `--text-index`; not with
+        /// `--text-index-exclude`.
+        #[arg(
+            long = "text-index-include",
+            value_name = "IRI",
+            requires = "text_index",
+            conflicts_with = "text_index_exclude"
+        )]
+        text_index_include: Vec<String>,
+        /// Leave this predicate's literals out of the full-text index — a full
+        /// IRI, bare or in `<…>`. Repeat for several (e.g. provenance prose
+        /// and stored SPARQL text). A predicate-restricted index is written as
+        /// section kind 11, which readers older than 0.4.0 do not see, and the
+        /// SPARQL `CONTAINS` pushdown uses it only for predicates it covers.
+        /// Requires `--text-index`.
+        #[arg(
+            long = "text-index-exclude",
+            value_name = "IRI",
+            requires = "text_index"
+        )]
+        text_index_exclude: Vec<String>,
+        /// Add a LABEL_INDEX section (same semantics as `build --label-index`).
+        /// An input that already has one keeps it either way. The rebuilt file
+        /// always carries a SCHEMA section.
+        #[arg(long = "label-index")]
+        label_index: bool,
         /// Embed a **Dataset Card** in the rebuilt file (same flags as `build`).
         #[arg(long)]
         card: bool,
@@ -1304,6 +1476,25 @@ fn run() -> Result<ExitCode, CliError> {
     }
 }
 
+/// The full-text index the `--text-index*` flags ask for (`None` = no index).
+fn text_index_scope(
+    enabled: bool,
+    graphs: &str,
+    include: &[String],
+    exclude: &[String],
+) -> anyhow::Result<Option<rete_core::TextIndexScope>> {
+    if !enabled {
+        return Ok(None);
+    }
+    let graphs = match graphs {
+        "all" => rete_core::TextIndexGraphs::All,
+        _ => rete_core::TextIndexGraphs::Default,
+    };
+    rete_core::TextIndexScope::from_options(graphs, include, exclude)
+        .map(Some)
+        .map_err(anyhow::Error::msg)
+}
+
 fn dispatch(command: Command) -> anyhow::Result<()> {
     match command {
         Command::Generate { output } => generate_release_artifacts(&output),
@@ -1317,6 +1508,11 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             no_pyramid,
             pyramid_algo,
             text_index,
+            text_index_graphs,
+            text_index_include,
+            text_index_exclude,
+            label_index,
+            no_schema,
             type_predicate,
             card,
             card_file,
@@ -1329,14 +1525,31 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             memory_budget_mb,
             tmp_dir,
             permutations,
+            named_graphs,
             strict,
             quoted_triple_syntax,
+            write,
         } => {
+            write.apply();
+            let sections = commands::build::BuildSections {
+                label_index,
+                schema: !no_schema,
+            };
             let perms = match permutations.as_str() {
                 "3" => rete_core::PermSet::CORE,
                 _ => rete_core::PermSet::ALL,
             };
+            let graphs = match named_graphs.as_str() {
+                "quad" => rete_core::GraphLayout::Quad,
+                _ => rete_core::GraphLayout::PerGraph,
+            };
             let surface = commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?;
+            let text_index = text_index_scope(
+                text_index,
+                &text_index_graphs,
+                &text_index_include,
+                &text_index_exclude,
+            )?;
             let card_args = commands::card::CardArgs {
                 enabled: card,
                 file: card_file,
@@ -1347,6 +1560,11 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 created,
             };
             if let Some(mb) = memory_budget_mb {
+                if rete_core::write_opts::frequent_objects() > 0 {
+                    anyhow::bail!(
+                        "--memory-budget-mb does not support --frequent-objects (the external                          build merges chunk-local dictionaries by role, before any term's                          frequency over the whole input is known); build with the standard                          path, or drop --frequent-objects"
+                    );
+                }
                 commands::build::build_external_cmd(
                     &inputs,
                     &output,
@@ -1359,8 +1577,11 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     collapse_graphs,
                     card_args,
                     perms,
+                    graphs,
                     strict,
                     surface,
+                    type_predicate.as_deref(),
+                    sections,
                 )
             } else {
                 commands::build::build(
@@ -1377,8 +1598,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     card_args,
                     no_card_costs,
                     perms,
+                    graphs,
                     strict,
                     surface,
+                    sections,
                 )
             }
         }
@@ -1502,6 +1725,38 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 allow_empty,
             },
         ),
+        Command::Recard {
+            file,
+            output,
+            card_file,
+            keep_curated,
+            title,
+            license,
+            source,
+            description,
+            created,
+            no_card_costs,
+            memory_budget_mb,
+            verify,
+        } => commands::card::recard_cmd(
+            &file,
+            &commands::card::RecardOptions {
+                output,
+                card: commands::card::CardArgs {
+                    enabled: false,
+                    file: card_file,
+                    title,
+                    license,
+                    source,
+                    description,
+                    created,
+                },
+                keep_curated,
+                measure_costs: !no_card_costs,
+                memory_budget_mb,
+                verify,
+            },
+        ),
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export {
             file,
@@ -1544,6 +1799,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             type_predicate,
             pyramid_algo,
             text_index,
+            text_index_graphs,
+            text_index_include,
+            text_index_exclude,
+            label_index,
             card,
             card_file,
             title,
@@ -1554,7 +1813,12 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         } => commands::build::repyramid(
             &file,
             &output,
-            text_index,
+            text_index_scope(
+                text_index,
+                &text_index_graphs,
+                &text_index_include,
+                &text_index_exclude,
+            )?,
             type_predicate.as_deref(),
             rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
             commands::card::CardArgs {
@@ -1566,6 +1830,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 description,
                 created,
             },
+            label_index,
         ),
         Command::Query {
             file,

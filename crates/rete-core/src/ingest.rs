@@ -18,10 +18,7 @@
 //! feature (e.g. on wasm) sections are written with the `NONE` codec — larger
 //! files, byte-compatible readers.
 
-use crate::{
-    build_pyramid_meta_algo, Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo,
-    DEFAULT_TILE_BUDGET,
-};
+use crate::{Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo, DEFAULT_TILE_BUDGET};
 
 /// A parsed triple as three canonical term tokens.
 pub type RawTriple = (String, String, String);
@@ -874,6 +871,12 @@ pub(crate) fn take_term(s: &str) -> Option<(String, &str)> {
             let mut end = i + 1; // past closing quote
             if s[end..].starts_with("^^<") {
                 let close = s[end..].find('>')? + end;
+                // RDF 1.1: `"x"^^xsd:string` IS `"x"`; keep the one canonical
+                // spelling, so the two never become two dictionary terms and
+                // a plain query constant matches either input.
+                if &s[end + 3..close] == "http://www.w3.org/2001/XMLSchema#string" {
+                    return Some((s[..end].to_string(), &s[close + 1..]));
+                }
                 end = close + 1;
             } else if s[end..].starts_with('@') {
                 // Language tag: '@' then BCP-47 subtags `[a-zA-Z0-9-]+`. Stop at
@@ -929,6 +932,99 @@ pub struct BuildStats {
     pub terms: usize,
     /// Levels in the community pyramid, or `0` when the build skipped it.
     pub pyramid_levels: u16,
+}
+
+/// How a build stores the **named graphs** (the default graph is unaffected).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraphLayout {
+    /// One permutation index per graph, in the NAMED_GRAPHS section (kind 5):
+    /// the graph IRI as text, then a full container per graph. What every rete
+    /// before 0.4 writes and reads.
+    #[default]
+    PerGraph,
+    /// The **quad index** (kind 10, SPEC.md §6.5): every named-graph quad
+    /// stored once, the graph as a fourth column of graph-leading permutations
+    /// in shared tiles, behind a sorted graph directory; graph names become
+    /// dictionary terms. Far smaller and randomly addressable when graphs are
+    /// many and small. Readers before 0.4.0 refuse these files (loudly — see
+    /// `docs/compatibility.md`). Needs the 3- or 6-permutation set.
+    Quad,
+}
+
+/// One pass's named-graph quads, in the layout being built.
+enum NamedQuads {
+    PerGraph(std::collections::BTreeMap<String, Vec<(u32, u32, u32)>>),
+    Quad {
+        /// `(graph subject id, s, p, o)`.
+        quads: Vec<[u32; 4]>,
+        /// Distinct graphs seen (a bitset over subject ids).
+        seen: Vec<u64>,
+        graphs: usize,
+        /// The last graph name and its id: N-Quads dumps keep a graph's
+        /// statements together, so most quads skip the dictionary lookup.
+        last: Option<(String, u32)>,
+    },
+}
+
+impl NamedQuads {
+    fn new(layout: GraphLayout, dict: &Dictionary) -> Self {
+        match layout {
+            GraphLayout::PerGraph => NamedQuads::PerGraph(Default::default()),
+            GraphLayout::Quad => NamedQuads::Quad {
+                quads: Vec::new(),
+                seen: vec![
+                    0u64;
+                    (dict.shared_count() as usize + dict.subject_only_count() as usize) / 64
+                        + 2
+                ],
+                graphs: 0,
+                last: None,
+            },
+        }
+    }
+
+    fn push(&mut self, dict: &Dictionary, graph: String, t: (u32, u32, u32)) {
+        match self {
+            NamedQuads::PerGraph(m) => m.entry(graph).or_default().push(t),
+            NamedQuads::Quad {
+                quads,
+                seen,
+                graphs,
+                last,
+            } => {
+                let g = match last {
+                    Some((name, id)) if *name == graph => *id,
+                    _ => {
+                        let id = dict.subject_id(&graph).expect("observed graph name");
+                        *last = Some((graph, id));
+                        id
+                    }
+                };
+                let (w, b) = (g as usize / 64, g % 64);
+                if let Some(word) = seen.get_mut(w) {
+                    if *word & (1 << b) == 0 {
+                        *word |= 1 << b;
+                        *graphs += 1;
+                    }
+                }
+                quads.push([g, t.0, t.1, t.2]);
+            }
+        }
+    }
+
+    fn graph_count(&self) -> usize {
+        match self {
+            NamedQuads::PerGraph(m) => m.len(),
+            NamedQuads::Quad { graphs, .. } => *graphs,
+        }
+    }
+
+    fn quad_count(&self) -> usize {
+        match self {
+            NamedQuads::PerGraph(m) => m.values().map(Vec::len).sum(),
+            NamedQuads::Quad { quads, .. } => quads.len(),
+        }
+    }
 }
 
 /// The **deduplicated** counts of the file being written — what the header
@@ -1023,7 +1119,7 @@ pub fn assemble_dataset_with<M: IntoMetadata>(
 pub fn assemble_dataset_with_opts<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
@@ -1043,7 +1139,7 @@ pub fn assemble_dataset_with_opts<M: IntoMetadata>(
 pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
@@ -1067,29 +1163,154 @@ pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
 pub fn assemble_dataset_with_perms<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     perms: crate::index::PermSet,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
-    use std::collections::BTreeMap;
+    assemble_dataset_with_layout(
+        quads,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        perms,
+        GraphLayout::PerGraph,
+        metadata,
+    )
+}
 
+/// Like [`assemble_dataset_with_perms`], storing the named graphs in `graphs`
+/// layout. [`GraphLayout::PerGraph`] reproduces it exactly.
+///
+/// # Panics
+///
+/// With [`GraphLayout::Quad`] and a permutation set other than
+/// [`PermSet::CORE`](crate::index::PermSet::CORE) or
+/// [`PermSet::ALL`](crate::index::PermSet::ALL), when the input has named graphs.
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_with_layout<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    with_pyramid: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    perms: crate::index::PermSet,
+    graphs: GraphLayout,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
+    let text_index = crate::text_index::IntoTextIndex::into_text_index(with_text_index);
+    let opts = AssembleOptions {
+        with_pyramid,
+        with_text_index: text_index.is_some(),
+        text_index_scope: text_index.as_ref(),
+        type_override,
+        algo,
+        perms,
+        graph_layout: graphs,
+        ..AssembleOptions::legacy()
+    };
+    assemble_dataset_opts(quads, &opts, metadata)
+}
+
+/// Everything an in-memory build decides besides its input. The fields the
+/// older `assemble_*` entry points take positionally, plus the sections added
+/// after the generation-1 freeze.
+#[derive(Debug, Clone, Copy)]
+pub struct AssembleOptions<'a> {
+    /// Build the community pyramid (kind 4).
+    pub with_pyramid: bool,
+    /// Build the full-text index (kind 6, or kind 11 when its scope leaves
+    /// out some predicates).
+    pub with_text_index: bool,
+    /// The scope of that index (`--text-index-graphs`, `--text-index-include`,
+    /// `--text-index-exclude`); `None` is the default scope, the only one
+    /// before 0.4.0: the default graph, every predicate.
+    pub text_index_scope: Option<&'a crate::text_index::TextIndexScope>,
+    /// The type predicate for the schema (e.g. `wdt:P31`); `rdf:type` if `None`.
+    pub type_override: Option<&'a str>,
+    /// The community algorithm of the pyramid.
+    pub algo: PyramidAlgo,
+    /// Which index permutations to write.
+    pub perms: crate::index::PermSet,
+    /// How the named graphs are stored: one index per graph (kind 5) or the
+    /// quad index (kind 10, `rete build --named-graphs quad`).
+    pub graph_layout: GraphLayout,
+    /// What the pyramid-meta carries besides the summary.
+    pub pyramid_layout: crate::file::PyramidLayout,
+    /// Write the LABEL_INDEX section (kind 8, `rete build --label-index`).
+    pub label_index: bool,
+    /// Write the SCHEMA section (kind 9; `rete build` writes it unless
+    /// `--no-schema`).
+    pub schema: bool,
+}
+
+impl AssembleOptions<'_> {
+    /// What every `assemble_*` entry point wrote before kinds 8 and 9 existed:
+    /// a Louvain pyramid with the combined pyramid-meta, no text index, all six
+    /// permutations, one index per named graph, no LABEL_INDEX or SCHEMA
+    /// section.
+    pub fn legacy() -> Self {
+        AssembleOptions {
+            with_pyramid: true,
+            with_text_index: false,
+            text_index_scope: None,
+            type_override: None,
+            algo: PyramidAlgo::Louvain,
+            perms: crate::index::PermSet::ALL,
+            graph_layout: GraphLayout::PerGraph,
+            pyramid_layout: crate::file::PyramidLayout::Combined,
+            label_index: false,
+            schema: false,
+        }
+    }
+
+    /// What `rete build` writes: the pyramid-meta carries only the community
+    /// material, the schema has its own section, and the label index is
+    /// opt-in.
+    pub fn sectioned() -> Self {
+        AssembleOptions {
+            pyramid_layout: crate::file::PyramidLayout::CommunityOnly,
+            schema: true,
+            ..Self::legacy()
+        }
+    }
+}
+
+/// Assemble a file image from parsed quads under explicit [`AssembleOptions`].
+///
+/// # Panics
+///
+/// With [`GraphLayout::Quad`] and a permutation set other than
+/// [`PermSet::CORE`](crate::index::PermSet::CORE) or
+/// [`PermSet::ALL`](crate::index::PermSet::ALL), when the input has named graphs.
+pub fn assemble_dataset_opts<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    opts: &AssembleOptions<'_>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
+    let graphs = opts.graph_layout;
     let mut db = DictionaryBuilder::new();
-    for (s, p, o, _) in &quads {
+    for (s, p, o, g) in &quads {
         db.observe(s, p, o);
+        if let (GraphLayout::Quad, Some(g)) = (graphs, g) {
+            db.observe_graph(g);
+        }
     }
     let dict = db.build();
+    crate::build_trace::lap(crate::build_trace::Phase::Dictionary);
 
     let mut default_triples = Vec::new();
-    let mut named: BTreeMap<String, Vec<(u32, u32, u32)>> = BTreeMap::new();
+    let mut named = NamedQuads::new(graphs, &dict);
     for (s, p, o, g) in &quads {
         let t = dict.encode(s, p, o).expect("observed term");
         match g {
             None => default_triples.push(t),
-            Some(graph) => named.entry(graph.clone()).or_default().push(t),
+            Some(graph) => named.push(&dict, graph.clone(), t),
         }
     }
+    crate::build_trace::lap(crate::build_trace::Phase::Encode);
 
     // Derive the metadata blob (the Dataset Card) from the raw quads NOW, while
     // they are resident — then DROP them before the memory-heavy pyramid + index
@@ -1102,25 +1323,15 @@ pub fn assemble_dataset_with_perms<M: IntoMetadata>(
     let stats = BuildStats {
         statements: quads.len(),
         default_triples: default_triples.len(),
-        named_graphs: named.len(),
+        named_graphs: named.graph_count(),
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
     };
     let pending = metadata(&stats, &quads);
+    crate::build_trace::lap(crate::build_trace::Phase::CardDerive);
     drop(quads);
 
-    finish_assembly(
-        dict,
-        default_triples,
-        named,
-        with_pyramid,
-        with_text_index,
-        type_override,
-        algo,
-        perms,
-        pending,
-        stats,
-    )
+    finish_assembly(dict, default_triples, named, opts, pending, stats)
 }
 
 /// **Two-pass, low-RAM** assembly: build a `.rete` by **streaming** the input(s)
@@ -1140,7 +1351,7 @@ pub fn assemble_dataset_with_perms<M: IntoMetadata>(
 pub fn assemble_dataset_streaming<S, M: IntoMetadata>(
     stream: S,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
@@ -1163,7 +1374,7 @@ where
 pub fn assemble_dataset_streaming_algo<S, M: IntoMetadata>(
     stream: S,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
@@ -1186,9 +1397,9 @@ where
 /// `perms` — the two-pass low-RAM twin of [`assemble_dataset_with_perms`].
 #[allow(clippy::too_many_arguments)]
 pub fn assemble_dataset_streaming_with_perms<S, M: IntoMetadata>(
-    mut stream: S,
+    stream: S,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     perms: crate::index::PermSet,
@@ -1197,43 +1408,106 @@ pub fn assemble_dataset_streaming_with_perms<S, M: IntoMetadata>(
 where
     S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
 {
-    use std::collections::BTreeMap;
-
-    // Pass 1: observe every term (the dictionary dedups; the string quads are
-    // freed line by line and never collected).
-    let mut db = DictionaryBuilder::new();
-    stream(&mut |(s, p, o, _g)| db.observe(&s, &p, &o))?;
-    let dict = db.build();
-
-    // Pass 2: encode each quad to an id-triple, bucketing named graphs.
-    let mut default_triples: Vec<(u32, u32, u32)> = Vec::new();
-    let mut named: BTreeMap<String, Vec<(u32, u32, u32)>> = BTreeMap::new();
-    stream(&mut |(s, p, o, g)| {
-        let t = dict.encode(&s, &p, &o).expect("observed term");
-        match g {
-            None => default_triples.push(t),
-            Some(graph) => named.entry(graph).or_default().push(t),
-        }
-    })?;
-
-    let statements = default_triples.len() + named.values().map(Vec::len).sum::<usize>();
-    let stats = BuildStats {
-        statements,
-        default_triples: default_triples.len(),
-        named_graphs: named.len(),
-        terms: dict.term_count() as usize,
-        pyramid_levels: 0,
-    };
-    let pending = metadata(&stats, &dict, &default_triples);
-    Ok(finish_assembly(
-        dict,
-        default_triples,
-        named,
+    assemble_dataset_streaming_with_layout(
+        stream,
         with_pyramid,
         with_text_index,
         type_override,
         algo,
         perms,
+        GraphLayout::PerGraph,
+        metadata,
+    )
+}
+
+/// Like [`assemble_dataset_streaming_with_perms`], storing the named graphs in
+/// `graphs` layout — the two-pass low-RAM twin of
+/// [`assemble_dataset_with_layout`]. [`GraphLayout::Quad`] with a permutation
+/// set other than the 3- or 6-permutation one is an error.
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_streaming_with_layout<S, M: IntoMetadata>(
+    stream: S,
+    with_pyramid: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    perms: crate::index::PermSet,
+    graphs: GraphLayout,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
+) -> Result<(Vec<u8>, BuildStats), IngestError>
+where
+    S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
+{
+    let text_index = crate::text_index::IntoTextIndex::into_text_index(with_text_index);
+    let opts = AssembleOptions {
+        with_pyramid,
+        with_text_index: text_index.is_some(),
+        text_index_scope: text_index.as_ref(),
+        type_override,
+        algo,
+        perms,
+        graph_layout: graphs,
+        ..AssembleOptions::legacy()
+    };
+    assemble_dataset_streaming_opts(stream, &opts, metadata)
+}
+
+/// The two-pass low-RAM twin of [`assemble_dataset_opts`]. A quad-index layout
+/// with a permutation set other than the 3- or 6-permutation one is an error.
+pub fn assemble_dataset_streaming_opts<S, M: IntoMetadata>(
+    mut stream: S,
+    opts: &AssembleOptions<'_>,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
+) -> Result<(Vec<u8>, BuildStats), IngestError>
+where
+    S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
+{
+    let graphs = opts.graph_layout;
+    if graphs == GraphLayout::Quad && crate::quad::check_perms(opts.perms).is_err() {
+        return Err(IngestError::Io(
+            "the quad index needs the 3- or 6-permutation set".into(),
+        ));
+    }
+    // Pass 1: observe every term (the dictionary dedups; the string quads are
+    // freed line by line and never collected). With the quad index, graph
+    // names are terms too.
+    let mut db = DictionaryBuilder::new();
+    stream(&mut |(s, p, o, g)| {
+        db.observe(&s, &p, &o);
+        if let (GraphLayout::Quad, Some(g)) = (graphs, g) {
+            db.observe_graph(&g);
+        }
+    })?;
+    let dict = db.build();
+    crate::build_trace::lap(crate::build_trace::Phase::ParseDictionary);
+
+    // Pass 2: encode each quad to an id-triple, bucketing named graphs.
+    let mut default_triples: Vec<(u32, u32, u32)> = Vec::new();
+    let mut named = NamedQuads::new(graphs, &dict);
+    stream(&mut |(s, p, o, g)| {
+        let t = dict.encode(&s, &p, &o).expect("observed term");
+        match g {
+            None => default_triples.push(t),
+            Some(graph) => named.push(&dict, graph, t),
+        }
+    })?;
+    crate::build_trace::lap(crate::build_trace::Phase::ParseEncode);
+
+    let statements = default_triples.len() + named.quad_count();
+    let stats = BuildStats {
+        statements,
+        default_triples: default_triples.len(),
+        named_graphs: named.graph_count(),
+        terms: dict.term_count() as usize,
+        pyramid_levels: 0,
+    };
+    let pending = metadata(&stats, &dict, &default_triples);
+    crate::build_trace::lap(crate::build_trace::Phase::CardDerive);
+    Ok(finish_assembly(
+        dict,
+        default_triples,
+        named,
+        opts,
         pending,
         stats,
     ))
@@ -1243,41 +1517,107 @@ where
 /// id-triples (default graph + named), build the community pyramid, the optional
 /// full-text index, the permutation indexes, and serialize the file image. Takes
 /// the id-triples **by value** so they are freed as the permutations consume them.
-#[allow(clippy::too_many_arguments)]
 fn finish_assembly<M: IntoMetadata>(
     dict: Dictionary,
-    default_triples: Vec<(u32, u32, u32)>,
-    named: std::collections::BTreeMap<String, Vec<(u32, u32, u32)>>,
-    with_pyramid: bool,
-    with_text_index: bool,
-    type_override: Option<&str>,
-    algo: PyramidAlgo,
-    perms: crate::index::PermSet,
+    mut default_triples: Vec<(u32, u32, u32)>,
+    named: NamedQuads,
+    opts: &AssembleOptions<'_>,
     pending: M,
     mut stats: BuildStats,
 ) -> (Vec<u8>, BuildStats) {
-    let has_named = !named.is_empty();
+    let has_named = named.graph_count() > 0;
+    let perms = opts.perms;
 
     // The pyramid and the full-text index are built FIRST, while the dictionary and
     // the default id-triples are both still resident — both need the two together.
-    let (meta, levels) = if with_pyramid {
-        build_pyramid_meta_algo(
+    // The pyramid sees the triples in input order (Louvain is order-sensitive).
+    let (meta, levels) = if opts.with_pyramid {
+        crate::file::build_pyramid_meta_layout(
             &dict,
             &default_triples,
             DEFAULT_TILE_BUDGET,
-            type_override,
-            algo,
+            opts.type_override,
+            opts.algo,
+            opts.pyramid_layout,
         )
     } else {
         (Vec::new(), 0)
     };
     stats.pyramid_levels = levels;
+    if opts.with_pyramid {
+        crate::build_trace::lap(crate::build_trace::Phase::Pyramid);
+    }
 
-    let text_index = if with_text_index {
-        crate::file::compute_text_index(&dict, &default_triples)
-    } else {
-        Vec::new()
+    // The full-text index over the literals of the requested scope: the
+    // default graph's (the only scope before 0.4.0), optionally every named
+    // graph's too, optionally only some predicates'.
+    let with_text_index = opts
+        .with_text_index
+        .then(|| opts.text_index_scope.cloned().unwrap_or_default());
+    // The named graphs' triples, for an index whose scope covers them: per
+    // graph, or (in the quad layout) the quads' `(s, p, o)`, copied only when
+    // the scope needs them; the index does not care which graph a word came
+    // from.
+    let quad_spo: Vec<(u32, u32, u32)>;
+    let named_triples: Vec<&[(u32, u32, u32)]> = match &named {
+        NamedQuads::PerGraph(m) => m.values().map(Vec::as_slice).collect(),
+        NamedQuads::Quad { quads, .. } => {
+            quad_spo = if with_text_index
+                .as_ref()
+                .is_some_and(crate::text_index::TextIndexScope::covers_named_graphs)
+            {
+                quads.iter().map(|q| (q[1], q[2], q[3])).collect()
+            } else {
+                Vec::new()
+            };
+            vec![quad_spo.as_slice()]
+        }
     };
+    let text_index = match &with_text_index {
+        Some(scope) => crate::text_index::build_section(
+            &dict,
+            scope,
+            &default_triples,
+            named_triples.into_iter(),
+            crate::file::writer_codec(),
+        ),
+        None => Vec::new(),
+    };
+    if with_text_index.is_some() {
+        crate::build_trace::lap(crate::build_trace::Phase::TextIndex);
+    }
+    let text_index_partial = with_text_index
+        .as_ref()
+        .is_some_and(crate::text_index::TextIndexScope::restricts_predicates);
+    let text_index_named = with_text_index
+        .as_ref()
+        .is_some_and(crate::text_index::TextIndexScope::covers_named_graphs);
+
+    // The LABEL_INDEX and SCHEMA sections are computed over the DEDUPLICATED
+    // default graph in SPO order (and the schema's second pass in POS order),
+    // the order every index build re-sorts into anyway — which is what lets
+    // the memory-bounded build, reading its sorted permutation streams, write
+    // the very same bytes. Both need the dictionary, so they run before it is
+    // dropped. Without either section the triples stay in input order.
+    let mut label_section = Vec::new();
+    let mut schema_section = Vec::new();
+    if opts.label_index || opts.schema {
+        crate::schema_section::sort_dedup_spo(&mut default_triples);
+        if opts.label_index {
+            let entries = crate::label_index::entries_from_sorted_triples(&dict, &default_triples);
+            label_section =
+                crate::label_index::encode_section(&entries, crate::file::writer_codec());
+        }
+        if opts.schema {
+            schema_section = crate::schema_section::compute_in_memory(
+                &dict,
+                &mut default_triples,
+                opts.type_override,
+            )
+            .encode();
+        }
+        crate::build_trace::lap(crate::build_trace::Phase::LabelsSchema);
+    }
 
     // From here the dictionary is only needed for its own serialized bytes. Encode
     // it, capture the header term count, then DROP it before building the
@@ -1290,6 +1630,7 @@ fn finish_assembly<M: IntoMetadata>(
     let term_count = dict.term_count() as u64;
     let has_quoted_triples = dict.has_quoted_triples();
     drop(dict);
+    crate::build_trace::lap(crate::build_trace::Phase::DictionarySection);
 
     // Build each graph's six permutations one-at-a-time on a large graph (a single
     // permuted copy resident at a time, each sort still parallel) instead of all
@@ -1306,10 +1647,32 @@ fn finish_assembly<M: IntoMetadata>(
         }
     };
     let def = build_index(default_triples);
-    let named_indexes: Vec<(String, crate::GraphIndex)> = named
-        .into_iter()
-        .map(|(g, ts)| (g, build_index(ts)))
-        .collect();
+    // The named graphs: one index per graph, or one quad index for all of them
+    // (no per-graph index is ever built on that path).
+    let (named_indexes, quad_index): (Vec<(String, crate::GraphIndex)>, _) = match named {
+        NamedQuads::PerGraph(named) => (
+            named
+                .into_iter()
+                .map(|(g, ts)| (g, build_index(ts)))
+                .collect(),
+            None,
+        ),
+        NamedQuads::Quad { quads, .. } => (
+            Vec::new(),
+            Some(
+                crate::quad::encode_quad_index(quads, perms, codec)
+                    .expect("the quad index needs the 3- or 6-permutation set"),
+            ),
+        ),
+    };
+    let named_quads = match &quad_index {
+        Some(q) => q.quad_count,
+        None => named_indexes
+            .iter()
+            .map(|(_, ix)| ix.triple_count() as u64)
+            .sum::<u64>(),
+    };
+    crate::build_trace::lap(crate::build_trace::Phase::IndexPermutations);
 
     // Only now is the DEDUPLICATED size of the file known: every index sorts and
     // dedups, so an input containing duplicate statements (a harvest that pages
@@ -1319,11 +1682,7 @@ fn finish_assembly<M: IntoMetadata>(
     // the header — which is what an embedded Dataset Card used to do.
     let counts = FinalCounts {
         default_triples: def.triple_count() as u64,
-        quads: def.triple_count() as u64
-            + named_indexes
-                .iter()
-                .map(|(_, ix)| ix.triple_count() as u64)
-                .sum::<u64>(),
+        quads: def.triple_count() as u64 + named_quads,
     };
     let blob = pending.into_metadata(counts);
     // Report what was WRITTEN, not what was read: the returned stats drive the
@@ -1335,15 +1694,35 @@ fn finish_assembly<M: IntoMetadata>(
         &dict_container,
         term_count,
         &def,
-        &named_indexes,
+        match &quad_index {
+            Some(q) => crate::file::NamedPart::Quad(q),
+            None => crate::file::NamedPart::PerGraph(&named_indexes),
+        },
         has_named,
         has_quoted_triples,
         &meta,
         levels,
         &blob,
         &text_index,
+        text_index_partial,
+        text_index_named,
         codec,
     );
+    // Kinds 8 and 9 go after everything else: they are outside the content
+    // hash, so appending them moves nothing and changes no hash.
+    let bytes = if label_section.is_empty() && schema_section.is_empty() {
+        bytes
+    } else {
+        crate::file::append_sections(
+            &bytes,
+            &[
+                (crate::header::SectionKind::LabelIndex, &label_section),
+                (crate::header::SectionKind::Schema, &schema_section),
+            ],
+        )
+        .expect("appending to an image this function just wrote")
+    };
+    crate::build_trace::lap(crate::build_trace::Phase::Serialize);
     (bytes, stats)
 }
 

@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -779,18 +779,47 @@ long multi-source fan-out isn't a silent spinner.</p>
 <p>The playground goes past the CLI's union: it also does a <strong>term-level cross-source
 JOIN</strong> — one BGP split across sources and joined on the shared variables — so the
 "cross-file join is not found" limit above is a <em>CLI</em> limit, not a playground one.
-Each triple pattern is routed to a source by its predicate (and by where its
-subject was bound), each source answers its own sub-pattern with the join keys
-already narrowed down, and the partial rows are joined in the browser. Queries
-that can't be split this way (OPTIONAL / UNION / aggregates / property paths)
-fall back to the union path. So e.g. USTC editions ⋈ the Embassy books they
-cite, joined on the book IRI, returns real joined rows across the two files.</p>
+Queries that can't be split this way (OPTIONAL / UNION / aggregates / property
+paths / VALUES) fall back to the union path. So e.g. USTC editions ⋈ the Embassy
+books they cite, joined on the book IRI, returns real joined rows across the two
+files. How a BGP is split:</p>
+<ul>
+<li><strong>Every pattern goes to every source that can contribute</strong>, and their rows are
+unioned. Each <code>.rete</code> or in-memory source is asked (<code>ASK</code>, cached per file for
+the session) whether it has the pattern's predicate, and — when several do and
+the pattern has a constant — whether it has the pattern itself, which is what
+keeps <code>?b a schema:Book</code> on the one dataset that has the class while <code>rdf:type</code>
+is in all of them. A live endpoint is never asked (it answers anything): it
+takes the patterns no other source has, and the patterns whose subject it bound
+(<code>?wd wdt:P17 ?c . ?c rdfs:label ?l</code> — the labels of <em>its</em> entities).</li>
+<li><strong>Patterns only one dataset can answer run together</strong> on it as one sub-query
+(exact: every matching triple is in that dataset). Patterns several datasets
+can answer run one at a time, on each of them.</li>
+<li><strong>Steps run most-constrained first</strong>, each step's join keys VALUES-injected into
+the next (≤ 250 per hop); a FILTER runs in the first step where all its
+variables are bound. The <strong>🔍 Plan</strong> button shows the routing and the sub-queries
+without running them; after a run, the banner lists each pattern's sources and
+the rows, bytes and requests of its step.</li>
+</ul>
+<p>This replaced a router that sent each pattern to <strong>one</strong> source — the one that
+bound its subject, whenever that source had the predicate at all. One stray
+triple was enough to break it: <code>crossref-citations.rete</code> holds a single
+<code>rdfs:label</code> (in its declaration of <code>cx:citedDOIAsWritten</code>), so a title lookup on
+citing works went there and the Crossref title join returned 0 rows; now the
+label pattern runs on both files and the titles come from <code>crossref.rete</code>.</p>
 <p>A <strong>sharded dataset</strong> is registered as one logical graph with a <code>shards: [url0, url1, …]</code> list in the catalog; the playground treats <code>url0</code> as the primary and the rest as
 intrinsic federation partners, so <strong>every query auto-fans across all shards</strong> (union)
 and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
 Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
 triple Wikidata split into six independent <code>--no-pyramid</code> shards — is served and queried
-as one. The path to a bigger graph is just more shards.</p>
+as one. The path to a bigger graph is just more shards. With a partner added, the
+sharded dataset (on either side: a sharded partner brings all its shards) stays one
+logical source to the join: a pattern only it can answer runs on every shard that has
+it, one subject at a time — a subject's triples live in one shard, but a join between
+two subjects may cross shards, so it is joined across shards like a join between
+datasets. (Before, every pattern of a sharded dataset with a partner went to its first
+shard only.) Without a partner, a query still runs whole on each shard and the rows are
+unioned, so a join between subjects in different shards is not found there.</p>
 <p><strong>Worked example — resolve five terms across two ontologies.</strong> The bundled
 <code>chebi-full</code> (the complete ChEBI ontology, 8.83 M triples) and <code>chemotion</code> (a
 chemistry ELN graph merged with CHMO + RXNO) share <code>CHEBI_*</code> IRIs plus

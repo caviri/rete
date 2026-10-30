@@ -41,16 +41,30 @@ the index-free card with no compute; unlike `--materialize` it records
 data-catalog metadata plus an auto-derived profile; the card file's `extra`
 object carries bounded publisher-defined custom fields (no flag — see
 [Custom fields](dataset-cards.md)); a card build also writes a
-**build-info section** (build timestamp, builder version, parameters, measured
-starter-query costs — kept *outside* the content hash so identical data still
-hashes identically). That same run is what proves each starter query answers:
-one measured at zero rows (or returning a row that binds nothing) is **dropped
-from the card**, loudly and with the reason recorded — see
-[dataset-cards.md](dataset-cards.md). `--no-card-costs` skips the run, and so
-skips that check as well. `--text-index` adds a
+**build record** (the build-info section, kept *outside* the content hash so
+identical data still hashes identically): every flag that shaped the file, by
+its effective value; the engine (version, git commit, target, profile,
+features) and the host's OS and architecture — nothing else about the machine;
+each input by **file name only** with its size, format and a BLAKE3 hashed as
+it streamed; the statement counts (read, unique, duplicates dropped, named
+graphs); wall time per phase, peak RSS, the memory limit and CPUs seen; the
+memory-bounded build's spill; and the measured starter-query costs. See
+[the build record](dataset-cards.md#build-conditions-the-build-info-section).
+`RETE_BUILD_RECORD=reproducible` leaves the volatile facts out, so two builds
+are byte-identical with it. That same run is what proves each starter query answers:
+one measured at zero rows (or returning a row that binds nothing), or one that
+does not finish inside the 64 MiB starter byte budget (counted past the open),
+is **dropped from the
+card**, loudly and with the reason recorded. The starters themselves are
+bounded before they are run: past 2,000,000 statements a template ships a
+`LIMIT`ed form or, when the card's own profile answers it, nothing — see
+[Bounded by construction](dataset-cards.md#bounded-by-construction).
+`--no-card-costs` skips the run, and so skips that check as well. `--text-index` adds a
 full-text (word/CONTAINS) index over the literals for `rete search --contains`
-(see below). `--type-predicate <IRI>` overrides the predicate that types subjects
-with classes for the schema pyramid (default `rdf:type`, else auto-detected) —
+and SPARQL `CONTAINS` — its scope flags and the memory-bounded build are under
+[Full-text index](#full-text-index---text-index-and-its-scope) below.
+`--type-predicate <IRI>` overrides the predicate that types subjects
+with classes for the schema (default `rdf:type`) —
 e.g. Wikidata's `--type-predicate http://www.wikidata.org/prop/direct/P31`.
 `--no-pyramid` skips the community pyramid entirely (no pyramid section): SPARQL /
 SHACL / triple-pattern / reachability queries don't use it, so the file stays
@@ -59,8 +73,53 @@ queries need the pyramid. `--pyramid-algo louvain|types` picks the community
 algorithm: `louvain` (default) detects topological communities; `types` partitions
 by `rdf:type` instead — deterministic, self-naming communities that stay feasible
 on graphs too large for the single-threaded Louvain build (it falls back to
-Louvain when the graph is untyped). All of these are opt-in; without them the
-output is byte-identical to a plain build.
+Louvain when the graph is untyped). These are opt-in; without them the output is
+a plain build.
+
+**Labels and schema have sections of their own, outside the pyramid.**
+`--label-index` writes a LABEL_INDEX section (kind 8): the display label of
+**every** labelled subject — `rdfs:label`, `skos:prefLabel`/`altLabel`,
+`foaf:name`, `dc`/`dcterms:title`, `schema:name`, and for people who carry only
+given and family names, `"family, given"` — sorted for
+[`rete search <prefix>`](#rete-search-file-prefix---contains-word---contains-prefix-p---limit-n---json).
+It has no cap, and a remote prefix search reads a few small ranges of it and no
+dictionary. Without the flag the file has **no label index at all**: the
+pyramid-meta no longer carries the 8,192-entry block it used to. Every build also
+writes a SCHEMA section (kind 9) — the class hierarchy and level rollups, the
+coherence axioms, the planner's per-predicate `query_stats` and the
+characteristic sets — computed without the pyramid, so `--no-pyramid` and
+`--memory-budget-mb` files have them too; it is a few kilobytes, and `--no-schema`
+leaves it out. Both flags work with `--no-pyramid`, any `--pyramid-algo` and
+`--memory-budget-mb`, and both sections sit outside the content hash (an older
+`rete verify` still passes; an older reader just doesn't see them — see
+[compatibility.md](compatibility.md)). The publish recipe is
+`--pyramid-algo types --label-index --card`.
+
+```sh
+rete build data.nt -o data.rete --no-pyramid --label-index   # labels + schema, no pyramid
+rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index
+```
+
+**The memory-bounded build (`--memory-budget-mb N`).** It reads the input
+once and cuts it into chunks of about half the budget. Each chunk's
+dictionary and statements go to `--tmp-dir` (default: next to the output). A
+k-way merge then builds the one global dictionary, the chunks are rewritten in
+global ids one at a time, and external sorts build every index. At any moment
+it holds one chunk being sealed, the merge's buffers, or one sort run, and
+each of those is sized from the budget, not from the graph. On the
+OpenCitations sample (18.9 M statements, `--named-graphs quad --text-index
+--label-index`) the peak RSS is 850 MiB at a budget of 1,000 MiB and 2.4 GB at
+3,000 MiB, both while the chunks are sealed; eight renamed copies of it (151 M
+statements, 186 chunks at 400 MiB) peak at 391 MiB, where 0.4.0 needed
+1,084 MiB. The spill peaks at the end of the dictionary merge, while every
+chunk's statements are still on disk; `--label-index` adds nothing to it,
+because the label pass works on ids and reads its strings back from the
+finished file. The
+file is byte-identical to the in-RAM `--no-pyramid` build of the same input,
+except for the card, which carries counts only (`rete recard` writes a full
+one). Up to 0.4.0 the merge also kept every chunk's id remap table until the
+last chunk was rewritten, 4 B per chunk-local term: 15.0 GB for half of
+OpenCitations Meta, which is why that graph had to be split.
 
 `--strict` refuses input carrying an IRI that the N-Triples/N-Quads `IRIREF`
 grammar and RFC 3987 disallow. It is **off** by default and the build only
@@ -134,19 +193,218 @@ refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see [compatibility.md](compatibility.md).
 
+`--named-graphs per-graph|quad` (default **per-graph**) chooses how the named
+graphs of an N-Quads/TriG input are stored. `per-graph` writes one permutation
+index per graph (the NAMED_GRAPHS section): the graph's IRI as text, then its
+own tiles, the graphs chained with no directory. `quad` writes the **quad
+index** ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)):
+every named-graph quad stored once, the graph as a fourth column of
+graph-leading permutations in tiles that many graphs share, behind a sorted
+graph directory, with graph names as dictionary terms. The rows a query returns
+are the same either way. What changes is the cost of many small graphs — on the
+OpenCitations sample (1.5 M per-entity provenance graphs of ~9 quads) the
+named-graph section drops from 974 MB to 102 MB, the build from 33 min to 77 s,
+and a remote `GRAPH <g>` query from 414 MB in 81 requests to 3.7 MB in 26
+([BENCHMARK.md](BENCHMARK.md#named-graphs-per-graph-layout-vs-the-quad-index)).
+The layout applies to every build path, `--memory-budget-mb` included;
+`repyramid` and `merge` keep the layout of their input.
+
+**A `quad` file is refused by every Rete before 0.4.0** — loudly, with the same
+container section-count error as above, on every query, export and remote open
+(`info`, `verify` and `card-url` still work). Keep `per-graph` for a file older
+engines must read.
+
 The flag exists on `build` only. The two commands that re-assemble an existing
-file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-)
+file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---label-index---card-)
 **preserves its input's set** (and says so on stderr when that set is not the
 default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-)
 writes the **union** of its inputs' sets — one full shard is enough to keep the
 merge-join orders its queries relied on. To change a file's set, rebuild it from
 its RDF source.
 
-### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--card …]`
+#### Full-text index: `--text-index` and its scope
+
+`--text-index` adds a TEXT_INDEX section: every word of every literal object in
+the index's **scope** maps to the subjects that carry it. `rete search
+--contains` answers from it, and SPARQL uses it to prune a `FILTER(CONTAINS(…))`
+before re-checking every row. Three flags set the scope; each needs
+`--text-index`, and `repyramid` takes them too:
+
+| flag | default | what it covers |
+| --- | --- | --- |
+| `--text-index-graphs default\|all` | `default` | `default`: the default graph's literals — the scope of every index built before 0.4.0. `all`: those and every named graph's. |
+| `--text-index-include <IRI>` | every predicate | only the literals of this predicate; repeat the flag for several |
+| `--text-index-exclude <IRI>` | none left out | every predicate's literals but this one's; repeat for several |
+
+The IRI is a full one, bare or in `<…>`; a prefixed name is refused, because a
+build has no prefix map to expand it with. Include and exclude do not combine: an
+include list already says exactly what is indexed. A listed predicate that no
+literal in scope carries is reported on stderr, since a misspelt exclude would
+otherwise exclude nothing.
+
+```sh
+rete build data.nq -o data.rete --text-index
+# OpenCitations-style: index the provenance graphs too, but not the generated
+# change notes or the stored SPARQL update text
+rete build oc.nq -o oc.rete --text-index --text-index-graphs all \
+  --text-index-exclude http://purl.org/dc/terms/description \
+  --text-index-exclude https://w3id.org/oc/ontology/hasUpdateQuery
+```
+
+The scope is written **into the section** (SPEC §6.3), so a reader acts on what
+the file covers rather than on how it was built:
+
+- `rete search --contains` finds only words of literals in scope.
+- The SPARQL `CONTAINS` pushdown runs only where the index covers the query: the
+  active graph must be the default graph (or, under `all`, any graph), and the
+  pattern's predicate must be indexed — a variable predicate only when every
+  predicate is. Anywhere else the filter scans and returns the same rows, just
+  without the shortcut. (Before 0.4.0 the pushdown also ran inside `GRAPH`
+  against a default-graph index, where it returned no rows at all.)
+- **An include/exclude index is stored as section kind 11**, not 6. Readers
+  older than 0.4.0 do not know kind 11 and see no text index: `rete search
+  --contains` says the file has none, and `CONTAINS` scans. That is on purpose.
+  Those readers prune `CONTAINS` with whatever text index they find, as if it
+  covered every literal; with a predicate-restricted one they would silently
+  drop the rows of the predicates it left out. A `--text-index-graphs all` index
+  over every predicate stays kind 6, because it covers more than they assume,
+  never less.
+
+A carded build records the flags in its build-info (`text_index_graphs`,
+`text_index_include`, `text_index_exclude`), next to `text_index`.
+
+**What a scope saves**, measured on the OpenCitations Meta sample (M=1200,
+18,869,242 statements) laid out with its provenance **in the default graph**,
+memory-bounded at 3,000 MiB. The file without a text index is 166,562,617 B.
+
+| `--text-index` scope | tokens | section | token table | file |
+| --- | --: | --: | --: | --: |
+| every predicate | 2,178,475 | 68,256,530 B | 9,996,927 B | 234,819,147 B |
+| all but `oco:hasUpdateQuery` | 2,164,679 | 60,352,482 B (−12%) | 9,770,745 B | 226,915,099 B |
+| all but `dcterms:description` | 831,343 | 36,789,772 B (−46%) | 4,667,222 B | 203,352,389 B |
+| all but both | 534,449 | 23,825,664 B (−65%) | 3,177,349 B | 190,388,281 B |
+| all but both and `prov:generatedAtTime`, `prov:invalidatedAtTime` | 533,705 | 10,199,845 B (−85%) | 3,156,034 B | 176,762,462 B |
+
+The last row is the data alone: its postings are byte for byte those of the same
+sample built with provenance in named graphs and the default scope, and it finds
+the same subjects for every data word. The provenance prose ("The entity … has
+been modified.") and the stored SPARQL update text are 65% of the full index,
+the timestamps another 20%. The token table, which a first remote search
+fetches whole, shrinks from 10.0 MB to 3.2 MB.
+
+The other way round: with the provenance **in named graphs** (the layout
+OpenCitations ships), the default scope indexes the data alone (10.2 MB), and
+`--text-index-graphs all` indexes the same literals as the first row above —
+the same 2,178,475 tokens and the same postings, 68.3 MB, +5.4% on the 1.07 GB
+file — so the provenance becomes searchable without moving it out of its
+graphs.
+
+**In the memory-bounded build.** `--text-index`, with any scope, works with
+`--memory-budget-mb`, and the TEXT_INDEX section is **byte-identical** to the
+in-RAM build's for the same input. Each chunk writes its literal words with
+chunk-local subject ids to `--tmp-dir` while it is sealed. The ids are remapped
+with the tables the dictionary merge already produces, sorted externally by
+`(word, subject)` in runs of at most a quarter of the budget, and merged into
+the section. The token table is the one part a reader must hold whole, so the
+build streams it to disk and compresses it from there; the in-RAM build
+compresses it with the same streaming encoder, which keeps the two identical
+past zstd's 4 MiB window (0.4.0 did not: its memory-bounded token table could
+come out a few KB larger). `extbuild: text index …` reports the token and
+record counts.
+
+Measured on the same sample with provenance in the default graph (50.5 M word
+records, 2.18 M tokens): at 1,500 MiB the build took 83 s instead of 59 s, peak
+RSS 1.19 GB against 1.17 GB without the index, and the peak spill grew from
+0.91 GB to 1.38 GB. The peak is set by the chunk phase, not by the text sort,
+so it does not move with the index. With provenance in named graphs and the
+default scope (3.3 M records) the text phase takes under a second of a build
+whose time goes to the 1.49 M named graphs.
+
+<a id="compression-knobs"></a>
+**Compression knobs (`--tile-kib`, `--dict-chunk-kib`, `--zstd-level`,
+`--frequent-objects`).** How the index and dictionary are cut and compressed.
+None of them changes the file format: every combination opens in every reader of
+format `0x05`, released ones included (see
+[compatibility.md](compatibility.md#04-writer-changes-that-every-0x05-reader-reads)),
+and every one changes the bytes but never an answer. The measurements behind the
+defaults are in [BENCHMARK.md](BENCHMARK.md#compression-04).
+
+| flag | default | what it trades |
+| --- | --- | --- |
+| `--tile-kib N` (4–4096) | 64 | Uncompressed size of an index tile, the unit a reader fetches and decompresses. 128 makes the file about 1% smaller and each touched tile larger; above 128 the file grows again (zstd's small-input parameters stop applying) and remote queries fetch more bytes (+9% at 256, +24% at 512). |
+| `--dict-chunk-kib N` (4–4096) | 64 | The same for dictionary chunks. |
+| `--zstd-level N` (1–22) | 9 | Level of every tile and chunk. `19` makes a file 4–9% smaller than `9` for about 2.7× the build CPU, and decodes 8–18% slower: a choice for a file built once and read for a long time. Levels between 9 and 19 gain little or nothing. |
+| `--frequent-objects N` | 0 (off) | Moves the `N` most frequent object-only terms (classes, controlled vocabularies, status literals) into the shared dictionary section, which gives them small ids where they sort ahead of the shared entities — the size effect of declaring the vocabulary in a TBox, without one. `64` made the OpenCitations samples 4.8–6.5% smaller, against 2.7–5.5% for their 499-statement TBox, and two other datasets 2.3–3.2% smaller, at no measurable build cost. Not available with `--memory-budget-mb` (refused). |
+
+Each flag falls back to an environment variable when left out
+(`RETE_TILE_KIB`, `RETE_DICT_CHUNK_KIB`, `RETE_ZSTD_LEVEL`,
+`RETE_FREQUENT_OBJECTS`), which is also how `merge` and `repyramid` take them
+(`merge` runs the external builder, so it ignores `RETE_FREQUENT_OBJECTS`). A card
+build records the settings in its build info (`params.write`).
+
+Since 0.4 every tile and chunk is a **single-segment zstd frame that records its
+size**, which lets zstd use its small-input parameters: at the same level the
+four measured datasets came out 0.7–7.0% smaller, and the build used less CPU. `RETE_ZSTD_FRAME=stream` writes
+the streaming frames of 0.3 instead, byte for byte.
+
+### `rete recard <file> -o <out.rete> [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]`
+Give a finished `.rete` a new Dataset Card **without rebuilding it** — the
+re-card path for a file of any size.
+
+The card is derived by **streaming the file's own sorted sections**: the
+`rdf:type` range of POS gives every typed subject its class, SPO gives each
+subject's out-degree and namespace the moment the subject changes, and OSP each
+object's in-degree and every literal object, decoded once with the multiplicity
+of each predicate that uses it. Every tally is kept per *vocabulary* term
+(predicates, classes, datatypes, languages, namespaces), never per statement;
+the one per-term structure is a class code per subject id — **one byte per
+subject** below 255 classes, two above. Memory is that plus the reader's caches
+(`--memory-budget-mb`, default 1024), not the statement count.
+
+Then the starter queries are generated, each is run against the file inside the
+starter byte budget (64 MiB past the open, see [Dataset Cards](dataset-cards.md#bounded-by-construction)),
+the ones that do not answer within it are dropped and recorded, and the file is
+**rewritten with only the card (metadata section) and the build record
+(build-info section) replaced**: every other section — dictionary, index,
+pyramid, named graphs, text index, any section kind this binary does not know —
+is copied byte for byte, the header's offsets are fixed, and the content hash is
+recomputed while the bytes go past (the card is inside it). One read of the file
+to derive, one to copy; `--verify` adds a third to check the written hash before
+the file is moved into place.
+
+The curated half comes from `--card-file` and the curated flags exactly as
+`rete build --card-file` takes them, or with `--keep-curated` from the input's
+card, **verbatim** — description, example queries and `extra` bag included. With
+neither, an input card that carries curated fields is **refused** rather than
+silently stripped (the defect of a bare `repyramid --card`). The output must not
+exist: a re-card writes a new file and never over its input.
+
+The build record keeps the original build's timestamp, builder and parameters —
+the sections they describe were copied, not rebuilt — and gains a `recarded`
+entry (`at`, `by`, `from_content_hash`, and the re-card's own `engine`, `host`,
+`input` by file name, `params` and `run`); its `query_costs` and
+`dropped_queries` are the re-card's own measurement.
+
+Two differences from the card a build derives, both because a finished file is
+read rather than its input: counts are over the **deduplicated** statements the
+file holds, and a subject typed more than once is classified by its class with
+the highest dictionary id (index order). On input with neither, the two cards
+are identical, byte for byte.
+
+```sh
+rete recard old.rete -o new.rete --keep-curated --verify
+rete recard old.rete -o new.rete --card-file curated.json     # curated fields from a document
+bash scripts/recard/recard.sh --source /work/old.rete --out /work/new.rete   # with both proofs
+```
+
+Measured on an OpenCitations Meta part (26.5 GB, 2,904,375,666 statements,
+978,932,751 terms): see [Maintaining a published card](dataset-cards.md#which-re-card-path).
+
+### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--label-index] [--card …]`
 Rebuild a file's pyramid **in place**, reading the triples straight from the
 existing `.rete` — no `export | build` N-Quads round-trip. Use it to add a schema
-pyramid (or a `--text-index` / a Dataset Card) to a file built before those
-existed, or to re-derive the schema pyramid under a different `--type-predicate`
+(or a `--text-index`, a `--label-index` / a Dataset Card) to a file built before
+those existed, or to re-derive the schema pyramid under a different `--type-predicate`
 or `--pyramid-algo` (same semantics as `rete build`). The card flags match
 `rete build` (`--card-file` / `--title` / `--license` / …) — and take the
 curated half **only** from those flags, so a bare `--card` drops the
@@ -155,15 +413,17 @@ defaults to `louvain` rather than to whatever the file was built with.
 
 It loads and materializes every quad, so its RAM tracks the **statement count**
 (~350–700 B each), not the file size — roughly **80 M statements** on a 48 GB
-machine, past which the staged `export --format nq | build` route is the one
-that fits. See
-[Maintaining a published card](dataset-cards.md#maintaining-a-published-card).
+machine. **To change only the card, use [`rete recard`](#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)**,
+which copies every other section instead of rebuilding it and has no such
+ceiling; `repyramid` is for when the pyramid or the text index must change too.
+See [Maintaining a published card](dataset-cards.md#maintaining-a-published-card).
 
 ```sh
 rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
 rete repyramid old.rete -o new.rete --text-index    # add full-text search to an existing file
 
-# re-card a published file, carrying its curated fields across
+# re-card AND re-pyramid a published file, carrying its curated fields across
+# (to change only the card, `rete recard old.rete -o new.rete --keep-curated`)
 rete card old.rete --json > old-card.json
 python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
 rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
@@ -173,7 +433,11 @@ rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-al
 3-permutation, a 6 stays 6, and it prints the preserved set on stderr when it is
 not the default six. It re-assembles an existing file rather than re-deciding how
 it was built, so it has no `--permutations` of its own — rebuild from source to
-change the set.
+change the set. It keeps a LABEL_INDEX the input carries (`--label-index` adds
+one), and writes the SCHEMA section and the community-only pyramid-meta `rete build`
+writes. The named-graph layout is kept the same way: a quad-index input
+(`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
+when any of its inputs is one.
 
 ### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …]`
 Fold several `.rete` files into one without going back through text — the way to
@@ -334,13 +598,34 @@ the header and card byte ranges (the same two small reads `card-url` does over
 HTTP), so a 50 GB file answers in about a second.
 
 ### `rete stats <file>`
-Human-friendly overview: file size, default-graph triple count, distinct terms,
-named-graph count, pyramid levels, and top predicates. Notes the label-index and
-**text-index** sizes when the file carries them.
+Human-friendly overview: file size, statement counts, distinct terms, pyramid
+levels, and top predicates. Notes the label-index and **text-index** sizes when
+the file carries them.
+
+The header counts every statement in the file, so `stats` prints that as
+`statements` and splits it: `default-graph triples`, `named graphs` (the graph
+count) and, when there are any, `named-graph quads`. The split costs no read of
+the named graphs: with none, the header says it all; otherwise it comes from
+the [Dataset Card](dataset-cards.md)'s build-time counts when the card agrees
+with the header, else from counting the default graph's index tiles. The line
+says which.
+
+```text
+opencitations-2026-06-small-full-labels.rete — 1073354201 bytes
+  statements            : 18869242 (all graphs)
+  default-graph triples : 5971936
+  named graphs          : 1494934
+  named-graph quads     : 12897306 (split from the dataset card)
+```
+
+Before 0.4.0 the first line read `default-graph triples : 18869242`, which
+on this file is the whole dataset, 1.5 M provenance graphs included.
 
 ### `rete verify <file>`
-Recompute the blake3 content hash and compare to the header. Exits non-zero with
-`FAILED — content hash mismatch` on corruption/truncation. The hashed sections
+Recompute the blake3 content hash and compare to the header, and check the
+LABEL_INDEX / SCHEMA sections against their own digests (they are outside the
+content hash). Exits non-zero with `FAILED — content hash mismatch, …` on
+corruption/truncation. The hashed sections
 are streamed in 8 MiB reads, so verifying a 49 GB file needs megabytes, not
 49 GB (it used to read the whole file into memory).
 
@@ -351,13 +636,14 @@ Two modes.
 (case-insensitive), printed as `label<TAB><iri>` (or
 `{"schemaVersion":1,"matches":[{"label":…,"subject":…}]}` with `--json`).
 An empty prefix returns the first `--limit` labels (default 20).
-Answered from a bounded, label-sorted block in the pyramid-meta by binary search
-— **no literal scan** — so it is the fast path for autocomplete (~22× a
-`FILTER(STRSTARTS(LCASE(?l), …))` scan at 6k labels; the gap widens with size).
-Labels come from `rdfs:label`, `skos:prefLabel`/`altLabel`, `foaf:name`,
-`dc(terms):title`, and `schema:name`; the block keeps the top 8,192 most-connected
-labeled subjects. Files built before this feature carry no label index (the block
-is additive — rebuild to add it).
+Answered from the file's **LABEL_INDEX** section (`rete build --label-index`) —
+**no literal scan**, every labelled subject, results in label order — so it is the
+fast path for autocomplete. Labels come from `rdfs:label`, `skos:prefLabel`/`altLabel`,
+`foaf:name`, `dc(terms):title` and `schema:name`, and for people with only
+given/family names `"family, given"` (so `svobodová, j` finds the author). A file
+built before the section existed answers from the bounded block its pyramid-meta
+carried instead (the 8,192 most-connected labelled subjects, direct labels only).
+A file with neither says so; rebuild with `--label-index`.
 
 **Full-text** (`--contains <word>…`) — the subjects whose literals contain
 **every** given word (whole-word, case-insensitive — AND), printed one IRI per
@@ -366,7 +652,9 @@ line (or the same versioned `matches` envelope with `{subject}` entries under
 requires a literal word starting with `einst`. Answered from the opt-in
 **TEXT_INDEX** section (`rete build --text-index`); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
-without `--text-index` reports that it has no text index. To search a file you
+without `--text-index` reports that it has no text index. Only words of the
+literals in the index's [scope](#full-text-index---text-index-and-its-scope) are
+found — by default the default graph's, every predicate. To search a file you
 have **not** downloaded, use `rete search-url` (below).
 
 ```sh
@@ -380,12 +668,18 @@ rete search data.rete --contains-prefix einst    # a word starting with "einst�
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/creators/publisher/…) plus the derived profile (counts, top
 predicates and classes, vocabularies), the content-hash checksum, and (when the
-file carries one) the **build record**: when it was built, by which `rete`, with
-which flags, and the starter queries' measured costs. Costs two small range
+file carries one) the **build record** as a `build:` block: when it was built,
+by which `rete` (version, commit, target), on what OS, the command line that
+reproduces it, its inputs (name, format, size, BLAKE3), the statement counts,
+the wall time per phase and the peak RAM, and the starter queries' measured
+costs. Costs two small range
 reads (header + one coalesced card/build-info range), never the dictionary or
 index — instant on any size. `--json` emits the card object plus
-`schemaVersion: 1` and a `build` block. `--format jsonld` projects the card to
-JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
+`schemaVersion: 1` and a `build` block (the whole record). `--format jsonld`
+projects the card to JSON-LD (VoID + schema.org + PROV-O — already RDF when
+lifted out; the build is a `prov:Activity` with `prov:startedAtTime`,
+`prov:endedAtTime`, `prov:used` for each input and `prov:wasAssociatedWith`
+the engine, the rest under `rete:` as JSON literals);
 `--format croissant` emits the honestly-mappable Croissant subset (no
 `recordSet`: a graph is not a table). `--sha256` supplies the whole-file
 sha256 the Croissant projection's `FileObject` requires — a file cannot carry
@@ -848,12 +1142,30 @@ never an addition: giving both, or neither, is a usage error (exit 2). The
 file must be UTF-8 (a leading byte-order mark is ignored); a file that cannot
 be read, or holds only whitespace, is an error (exit 1).
 
-**Memory & I/O.** A local file larger than a quarter of the memory budget
-(1 GiB at the default) opens through the same lazy range reader the `-url`
-commands use (threshold override: `RETE_LOCAL_LAZY_ABOVE_MB`, block size:
-`RETE_BLOCK_KB`), and aggregation streams through per-group accumulators.
-Preview a query's byte cost with `rete cost`, and see the exact ranges a query
-read with `rete why`.
+**Memory & I/O.** Every command that opens a local file (this one, `stats`,
+`search`, `serve`, …) reads it whole only when that is cheap, and otherwise
+opens it through the same lazy range reader the `-url` commands use (block
+size: `RETE_BLOCK_KB`). Reading whole holds the file image, its decoded
+dictionary and every index permutation, none of it evictable: 6.8× the file
+on the OpenCitations sample. So a file is read whole only when it is **at most
+a sixteenth of the memory available to the process**, never past 1 GiB, and
+for `sparql` also at most a quarter of `--memory-budget-mb`. Available memory
+is the smaller of the kernel's `MemAvailable` and the headroom under the
+process's cgroup limit (v2 `memory.max` or v1 `memory.limit_in_bytes`, page
+cache not counted as used), so inside a container the container's limit is
+what counts. Where neither can be read (macOS, Windows) the threshold is
+256 MiB. `RETE_LOCAL_LAZY_ABOVE_MB` overrides the threshold outright (`0` =
+always lazy); `RETE_OPEN_DEBUG=1` prints which way each open went and why.
+
+Measured in a 4 GiB container on the OpenCitations sample: under the fixed
+1 GiB threshold of earlier releases, `stats`, `sparql`, `search` and `serve`
+on the 1.07 GB file each read it whole, passed 4 GiB and were killed after
+24–49 s. Now the same file opens lazily: a one-row `sparql` answers in
+0.035 s at 15 MB peak, `search --contains` in 0.11 s at 59 MB, `stats` in
+0.53 s at 421 MB (it reads the pyramid's statistics blocks). Its 0.24 GB
+sibling is still a small enough fraction to read whole (3.1 s, 1.6 GB). Aggregation
+streams through per-group accumulators. Preview a query's byte cost with
+`rete cost`, and see the exact ranges a query read with `rete why`.
 
 **`--memory-budget-mb N`** (default 4096; `0` = unlimited) bounds what the
 lazy reader keeps resident: the decoded dictionary chunks, the decoded index
@@ -897,9 +1209,22 @@ federate against the endpoint with `SERVICE <http://host:port/sparql>`.
 - Binds loopback by default. Expose deliberately (`--bind 0.0.0.0:7878`) and
   set `--token`: updates then require `Authorization: Bearer <t>` (reads stay
   open). CORS is enabled, so browsers can query it directly.
-- Scale: the state lives in memory and rebuilds after writes — built for
-  living small/medium datasets (annotation, curation; up to a few million
-  triples), not the multi-GB catalog files.
+- Scale: until the first update the endpoint answers **straight from the
+  file**, opened like any local command opens it (read whole only when it is a
+  small fraction of the free memory, lazily otherwise; see `rete sparql`'s
+  Memory & I/O), and `GET /snapshot.rete` streams the file itself. So serving
+  a multi-GB catalog file read-only costs what its queries touch. Before
+  0.4.0 the server loaded every quad at startup: in a 4 GiB container it was
+  killed before answering on both the 1.07 GB and the 0.24 GB OpenCitations
+  files (18.9 M quads each); now it answers its first query in 0.06 s at
+  16 MB, and in 3.0 s at 1.6 GB on the smaller file, which it reads whole. The first update (or a
+  journal with changes to replay at startup) loads every quad into memory and
+  rebuilds after each write, which is built for living small/medium datasets
+  (annotation, curation; up to a few million triples). An update whose load
+  would not fit is refused with `503` and a message, and the endpoint keeps
+  answering queries. The estimate is 1 KiB per quad against the available
+  memory (measured: 646 MiB at peak for 1 M OpenCitations quads), so a graph
+  of very long literals can still need more than it predicts.
 
 ```sh
 rete serve notes.rete
@@ -917,8 +1242,11 @@ summary-based routing, and compares three access paths:
   triple index.
 - **routed pattern open** — for a single default-graph triple pattern, header +
   dictionary + the one selected permutation payload (the best of the six).
-- **full query open** — the current SPARQL engine path, which opens dictionary +
-  index (+ pyramid/named-graph metadata when present) before evaluation.
+- **full query open** — the eager open, which reads the dictionary + index
+  (+ pyramid, text-index and named-graph sections when present) before
+  evaluation. Its figure is computed from the header, not by performing the
+  open: previewing a large file no longer reads it whole (a 26 GB file used
+  to be killed at 2 GB).
 
 ```sh
 rete cost data.rete "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
@@ -1138,6 +1466,41 @@ rete reach g.rete --predicate '<http://ex/knows>' --seeds-file seeds.txt --paral
 Both URL commands work against `http://` and `https://` hosts that honor `Range`
 requests (S3, GitHub, any CDN).
 
+**How the ranges are fetched.** On a remote file the time goes to round trips,
+not bytes, so the HTTP reader behind every `-url` command (and `cost`,
+`progressive`, `card-audit`, `reason --url`, `shacl-url` and `federate` on a
+URL):
+
+- keeps its connections alive: one client with a connection pool, where each
+  range used to open (and on `https://` TLS-handshake) a connection of its own;
+- fetches the engine's **batches in parallel**, up to 16 requests in flight —
+  the tiles a scan or a join step is about to read, the dictionary chunks a
+  result decodes (all four dictionary sections in one batch), the subjects a
+  full-text search returns — so a batch costs one round trip instead of one
+  per range; before 0.4.0 the CLI passed every batch on one range at a time;
+- walks the dictionary and the index containers **at the same time** while
+  opening a file: each is a chain of small dependent reads (a container's
+  sections are found through their length prefixes), and the header says
+  where both start;
+- merges ranges of one batch that lie at most 32 KiB apart into one request
+  (never past 8 MiB), and slices them apart again;
+- retries a transient failure (a dropped connection, a short body, `408`,
+  `429`, a `5xx`) twice with backoff, and fails at once on a permanent one: a
+  host that ignores `Range` (`200` for a range request), a `Content-Range` for
+  the wrong offset, a `404`. One range failing fails the batch, and a query
+  never returns a partial answer as if it were whole.
+
+Knobs: `RETE_HTTP_CONCURRENCY` (requests in flight, 1–64, default 16; `1`
+fetches one range at a time, the behaviour before 0.4.0),
+`RETE_HTTP_COALESCE_KB` (default 32; `0` merges only touching ranges) and
+`RETE_HTTP_RETRIES` (default 2). The `fetched … in N range request(s)` line
+counts the ranges handed to the HTTP reader (after the block cache has merged
+adjacent blocks); when the reader merges two nearby ones into one request the
+server sees one fewer, and retries are not counted.
+
+Measured through a latency-injecting proxy on the OpenCitations sample: see
+the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.
+
 ### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
 Fetch only the embedded [Dataset Card](dataset-cards.md) — the header and one
 coalesced metadata + build-info range, in **two small range requests**. The
@@ -1170,9 +1533,22 @@ The judgement is the query generator's own (`Cap::joint_with`, `NonEmpty`,
 `provably_empty`), not a second copy of it. Input is a `.rete` (local path or
 URL) or a card JSON document from `rete card --json` / `rete card-url --json`.
 
+**The curated `example_queries` are audited too, and reported apart** — under
+`example_findings` in the JSON and in a section of their own in the text, with
+the ids `example-1`, `example-2`, … and `revision: "curated"`. A curated query
+makes no claim, so the card decides only what it can show: `invalid` (it does
+not parse), `empty` (it reads only the default graph of a file whose default
+graph the card records as empty), `suspect` (it names a predicate the card's
+complete predicate list does not contain — not `empty`, since the predicate may
+sit in an `OPTIONAL` or `UNION` branch), and otherwise `undecidable`.
+`--measure` runs them like the starters (and `--only example-2` picks one);
+their costs are reported beside, never stored by `--write-costs`, whose cost
+list is the starters'.
+
 ```sh
 rete card-audit https://host/data.rete
 rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+rete card-audit data.rete --json | jq '.example_findings[] | select(.verdict!="undecidable")'
 ```
 
 #### `--measure`: run them instead of reasoning about them
@@ -1230,20 +1606,17 @@ is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
 by rename, but it is still one full pass of I/O and — for a published file — a
 full re-upload.
 
-Where that is worth it: when the alternative is a re-card. A re-card rewrites
-the file too, and additionally costs 17–35× the file in RAM (`repyramid`) or
-9–15× in staged N-Quads on disk (`--mode stream`, see `scripts/recard`), which
-puts anything past ~150 M statements out of reach. Attaching costs is one pass
-with no staging.
+Where that is worth it: when the queries answer and only the record is
+missing. When they do not, re-card instead — [`rete recard`](#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
+is the same single rewrite with a new card in it, at any size.
 
-**The RAM goes into the measurement, not the rewrite**, and it is not free
-either: the engine evaluates eagerly, so a starter query with a big result
-materializes it. `switzerland-fedlex` (1.04 GB, 56.3 M quads) took 381 s and
-peaked at **14.2 GiB** for `--measure --write-costs` — `ng-list` alone, which
-returns 497,905 rows, accounts for 3.2 GiB of that; the rewrite of the 1.04 GB
-file that followed is a bounded-buffer copy. Against `repyramid`'s ≈36 GiB
-prediction and the staged path's ≤19.1 GiB for the same file, it is the cheaper
-route, but budget for the queries, not for the file.
+**The RAM goes into the measurement, not the rewrite**: the engine evaluates
+eagerly, so a starter query with a big result materializes it. A card written
+by an older build can carry unbounded starters — `switzerland-fedlex` (1.04 GB,
+56.3 M quads) peaked at **14.2 GiB** for `--measure --write-costs`, 3.2 GiB of
+it `ng-list`'s 497,905 rows — so budget for those queries (or `--max-mb` them),
+not for the file. A card generated since 0.4.0 carries only bounded starters
+([Dataset Cards](dataset-cards.md#bounded-by-construction)).
 
 So: if the audit says the queries are stale or broken, re-card — same rewrite,
 more value. If the queries answer and the only gap is the missing record, write
@@ -1266,8 +1639,11 @@ The open is deliberately narrower than any other remote command's. It reads the
 header and the **subject** halves of the dictionary (the shared and subject-only
 sections), and stops: no permutation tile directories, no pyramid, no index.
 `--contains` then faults the TEXT_INDEX token table once and one range request
-per posting list; the bare prefix mode faults the pyramid instead, where the
-label index lives.
+per posting list. The bare prefix mode reads the LABEL_INDEX section — its head
+(preamble and root, one range of at most 64 KiB), one directory node per level and
+the data blocks it needs — and on such a file the dictionary is **not opened at
+all**, because the section stores each subject's term. On an older file it faults
+the pyramid instead, where the legacy label block lives.
 
 That narrowness is the point, because on a literal-heavy graph the dictionary is
 most of the file, and on a file built before 2026-08 its **object-only chunk

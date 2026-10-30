@@ -97,7 +97,7 @@ break an old reader.*
 │   ├ shared (terms used as both subject & object)               │
 │   ├ subjects-only                                              │
 │   ├ objects-only (incl. literals)                              │
-│   └ predicates          (graph IRIs live in NAMED GRAPHS)      │
+│   └ predicates   (graph IRIs: NAMED GRAPHS, or subject terms)  │
 ├──────────────────────────────────────────────────────────────┤
 │ INDEX             default-graph permutation container:         │
 │   SPO/POS/OSP/SOP/PSO/OPS streams, each a zone-mapped,         │
@@ -108,6 +108,9 @@ break an old reader.*
 ├──────────────────────────────────────────────────────────────┤
 │ NAMED GRAPHS      optional: (graph IRI, permutation container) │
 │   per named graph, sharing the dictionary. Quads only.         │
+│   — or QUAD INDEX (kind 10, §6.5): each named-graph quad once, │
+│   the graph as a 4th column of graph-leading permutations in   │
+│   shared tiles, behind a sorted graph directory.               │
 ├──────────────────────────────────────────────────────────────┤
 │ FOOTER            4-byte `RETE` magic — a format/integrity     │
 │                   sentinel (the directory is the header).      │
@@ -144,7 +147,7 @@ addressing — *how many* of those six a given file actually stores is its
 |---|---|---|
 | 0 | 4 | magic `RETE` |
 | 4 | 1 | format version (`0x05`, stable generation 1) |
-| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples) |
+| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples; bit3: the named graphs live in the quad index, §6.5; bit4: the text index also covers the named graphs' literals, `--text-index-graphs all`, §6.3 — Rete 0.4.0, ignored by older readers) |
 | 6 | 2 | header length (= 1024) |
 | 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
 | 24 | 8 | total quad count |
@@ -161,7 +164,7 @@ addressing — *how many* of those six a given file actually stores is its
 
 | Offset | Size | Field |
 |---|---|---|
-| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info; higher ids reserved for future sections) |
+| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info, `8` label-index, `9` schema, `10` quad-index (§6.5), `11` text-index restricted to some predicates (§6.3); other ids reserved for future sections) |
 | +2 | 2 | section flags (reserved) |
 | +4 | 4 | reserved (zero) |
 | +8 | 8 | section offset |
@@ -190,8 +193,14 @@ The **build-info section** (kind `7`) is an optional opaque payload laid out
 **immediately after the metadata section** — adjacent, so a card reader fetches
 metadata + build-info in one coalesced range and the CARD tier stays at one
 header read plus one range read. The CLI stores build-conditions JSON there:
-build timestamp, builder version, the flags in force, and measured starter-query
-costs (see [Dataset Cards](dataset-cards.md)). Unlike every other section its
+build timestamps, the engine (version, commit, target, features), the flags in
+force, the inputs (file names and BLAKE3 digests), statement counts, per-phase
+timings and peak memory, and measured starter-query costs (see
+[Dataset Cards](dataset-cards.md#build-conditions-the-build-info-section)).
+Since 0.4.0 the JSON may be followed by **ASCII spaces** up to the section's
+length: the writer reserves the record's widest form before the build has
+finished and fills it in place afterwards. JSON allows trailing whitespace, so
+a reader parses the payload as it is. Unlike every other section its
 bytes are **deliberately excluded from the content hash**: it records exactly
 the facts that differ between two builds of identical data (when, by which
 binary, how fast), and the reproducible-hash property — two builds of the same
@@ -199,6 +208,34 @@ input hash identically — must survive them. `verify` therefore does not cover
 it, on old readers (which see an unknown kind-7 entry and ignore it) and new
 ones alike; treat its contents as advisory provenance, not integrity-protected
 data.
+
+The **label-index** (kind `8`, §6.4) and **schema** (kind `9`, §7.5) sections are
+optional and were added after the generation-1 freeze. They are laid out **after
+every other section, just before the footer**, and — like build-info, for a
+different reason — they are **outside the content hash**. An older reader's
+`verify` folds in only the kinds it knows, so a hashed kind 8 or 9 would make every
+older `rete verify` report a new file as corrupt. Each section therefore starts with
+a **16-byte BLAKE3 digest of the rest of the section** (`blake3(section[16..])`,
+first 16 bytes), which a current `verify` checks besides the content hash. Both are
+pure functions of the data and the build flags, so the reproducible-hash property
+holds, and a file gains or loses them without changing its content identity (the
+content hash identifies the data, the card and the generation-1 indexes). A reader
+that predates them keeps their directory entries verbatim, shifts them on every
+header rewrite like any unknown kind, and never reads them; it answers every query
+with the same rows, but finds no label index, no schema and no planner statistics
+in a file whose pyramid-meta no longer carries them (§7.3).
+
+A **predicate-restricted text index** (kind `11`, §6.3) follows the same rule,
+although it sits where a kind-`6` index does: it is outside the content hash and
+starts with the same 16-byte self-digest, which a current `verify` checks. A
+reader older than 0.4.0 does not know kind `11`, so a hashed one would make its
+`verify` call the file corrupt. A kind-`6` index is hashed, as it always was.
+
+The **quad index** (kind `10`, §6.5) is hashed **by reference**: it is not a
+range of the content hash itself, but its BLAKE3 digest is the **seal**, the last
+section of the index container (kind `3`), which is — so it stays part of the
+file's identity, a current `verify` checks it against the seal, and an older
+`verify` (which refuses to open such a file anyway, on the seal) still passes.
 
 ---
 
@@ -220,7 +257,23 @@ data.
   (object-only). So a shared term has one ID that means the same thing in subject
   and object position. Predicates and graphs occupy their own independent ID
   spaces. This is what `dictionary.rs` builds on top of the §5.1 sections.
+- A writer **may also place object-only terms in the shared section**:
+  `rete build --frequent-objects N` (off by default) moves the `N` object-only
+  terms that the most statements carry as object — classes, controlled
+  vocabularies, status literals — into it. The section stays in term order, so a
+  promoted term gets a small object ID wherever it sorts ahead of the shared
+  entities, which shortens every varint that carries it (§6.1); its subject ID is
+  never used by a statement. Readers need nothing for this, and never did:
+  `term → id` consults the shared section first for both roles, and a pattern
+  whose subject is such a term simply matches nothing. Readers therefore **must
+  not** infer from section membership that a shared ID occurs in subject
+  position. No layout changes; every reader of format `0x05` reads such a file.
 - Literals carry datatype IRI (as a dictionary ID) and optional language tag.
+- A string literal is stored in its **canonical** spelling `"x"`, never
+  `"x"^^xsd:string` (one RDF 1.1 term). Writers since 0.4.0 canonicalize at
+  ingest; a reader also accepts a file written earlier that stores the typed
+  spelling, by looking a string literal up under its other spelling when its
+  own misses. No format change: the bytes of both kinds of file are valid.
 - **RDF-star quoted triples** (`<< s p o >>`) are stored as ordinary terms: a
   quoted triple is interned by its canonical N-Triples-star surface, exactly like
   an IRI or literal, so the dictionary, the permutation indexes, and this layout
@@ -307,8 +360,12 @@ prefix compresses worse.*
 - Each permutation is encoded as an **adjacency / bitmap-triples** structure
   (HDT-style): for SPO, a sorted list of subjects, each with its predicate
   list, each with its object list, delta-encoded.
-- Quads (named graphs) add a `G` dimension; the format stores per-graph triple
-  sets plus a default-graph union. (Full GSPO permutations are a later optimization.)
+- Quads (named graphs) add a `G` dimension, stored one of two ways, chosen at
+  build time (`rete build --named-graphs per-graph|quad`): one permutation
+  container per graph in the NAMED_GRAPHS section (kind 5), or the **quad
+  index** (kind 10, §6.5) — the graph as a fourth column of graph-leading
+  permutations `G+SPO`, `G+POS`, … in tiles shared across graphs. The default
+  graph is always the INDEX container's triples; there is no stored union.
 - Triples are **partitioned by pyramid tile** (see §7), and within a tile split
   into fixed-size **blocks**. Every block is prefixed with a **zone map**
   (min ID, max ID, count) so the query planner can skip blocks — Parquet-style.
@@ -338,7 +395,8 @@ contain a bound constant before fetching the body — the §7 routing then bound
 ### 6.2 Tiled permutation sections (format `0x02`)
 
 Each permutation section is **tiled**: consecutive runs of whole a-groups are
-packed to a byte budget (default 64 KiB of encoded triples), and each tile is a
+packed to a byte budget (default 64 KiB of encoded triples, set at build time with
+`rete build --tile-kib`), and each tile is a
 fully self-contained §6.1 block (its own zone map; deltas restart). Tiles are
 **compressed individually** with the header's block codec, so a ranged client
 can fetch and decompress exactly the tiles a query routes to. The section
@@ -386,12 +444,24 @@ section payload:  varint header_len, raw §5.1 header (term count, restart
                   chunks:    run-aligned body slices, compressed individually
 ```
 
-Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
+Chunks hold whole front-coded runs (~64 KiB of body per chunk by default;
+`rete build --dict-chunk-kib`), and the
 directory carries one **routing key** per chunk — so `term → id`
 binary-searches the directory locally and faults exactly **one** chunk, and
 `id → term` computes its chunk arithmetically and faults one. A lazily-opened
 remote file therefore pays the section headers + directories (KBs) up front and
 O(touched chunks) afterwards, instead of the whole dictionary container.
+
+**Compression frames.** Every tile and every dictionary chunk is one zstd frame
+(codec `1`), compressed at level 9 by default (`rete build --zstd-level`). Since
+0.4 the writer emits **single-segment frames that record their content size**;
+writers up to 0.3 emitted streaming frames without it, which declare the level's
+whole window (4 MiB at level 9) and are compressed with the parameters zstd tunes
+for large inputs. Both are plain zstd: readers must accept either, and any
+conformant decoder does (the C library natively, `ruzstd` in wasm). A reader must
+not rely on the content size being present, and must bound any allocation it
+derives from one, since the file is untrusted. Measurements:
+[BENCHMARK.md § Compression (0.4)](BENCHMARK.md#compression-04).
 
 The key is a **separator, not a term**. Its only contract is
 
@@ -418,18 +488,28 @@ while `term → id` returns wrong answers.
 
 ### 6.3 Full-text index (TEXT_INDEX section, optional)
 
-An **opt-in** section (kind `6`, built with `rete build --text-index`) that maps
-each **word** appearing in a string literal to the **subjects** that carry it, so
+An **opt-in** section (kind `6`, or `11` when it covers only some predicates —
+see *Where it is stored* below; built with `rete build --text-index`) that maps
+each **word** appearing in a literal to the **subjects** that carry it, so
 a reader can answer "which entities mention `glucose`?" without scanning the
 literals — and a *remote* reader fetches only the posting lists it queries, never
-the whole index. Absent by default: a build without `--text-index` writes no kind
-`6` entry and is byte-identical to one that never had the feature.
+the whole index. Absent by default: a build without `--text-index` writes no
+text-index entry and is byte-identical to one that never had the feature. The
+memory-bounded build (`--memory-budget-mb`) writes the same section bytes as the
+in-RAM build, for every scope.
 
-**What is indexed.** Every triple whose object is a **string literal** is
-tokenized: the literal's lexical value is split on non-alphanumeric (Unicode)
-boundaries, each run lowercased and kept if ≥ 2 characters. The build and query
-sides share one tokenizer, so a query word matches how it was stored. The result
-is `token → sorted distinct subject ids`.
+**What is indexed.** Every statement in the index's **scope** whose object is a
+**literal** (any datatype or language) is tokenized: the literal's lexical value
+is split on non-alphanumeric (Unicode) boundaries, each run lowercased and kept if
+≥ 2 characters. The build and query sides share one tokenizer, so a query word
+matches how it was stored. The result is `token → sorted distinct subject ids`.
+
+**Scope.** By default the scope is the **default graph, every predicate** — the
+only scope of any file written before Rete 0.4.0. A build may widen it to every
+named graph (`--text-index-graphs all`) and narrow it to some predicates
+(`--text-index-include <IRI>…` or `--text-index-exclude <IRI>…`). Subject ids are
+dictionary ids, which the default and named graphs share, so a named-graph
+subject's posting entry is the same id the graph's own index uses.
 
 **On-disk layout** (the section payload):
 
@@ -440,9 +520,45 @@ token table (compressed with the header's block codec):
   per token (ascending): varint shared_prefix_len   # front-coded vs previous token
                          varint suffix_len, suffix bytes
                          varint posting_off, varint posting_len   # into the postings blob
+  [scope block]          # only for a non-default scope, see below
 postings blob (uncompressed, so one posting range-reads directly):
   per token (same order): varint count, then `count` delta-varint ascending subject ids
 ```
+
+The **scope block** follows the last token entry inside the (compressed) token
+table, so a reader gets it with the table and pays no extra read:
+
+```
+u8      1            # scope-block version
+u8      graphs       # 0 = default graph only, 1 = default + every named graph
+u8      predicates   # 0 = every predicate, 1 = only those listed, 2 = all but those listed
+varint  n, then n × (varint len, bytes)   # predicate IRIs as N-Triples tokens `<…>`, ascending
+```
+
+The default scope writes **no** block: its section is byte-identical to one
+written before scopes existed, and a reader that predates the block stops after
+`num_tokens` entries and never looks further. A reader that finds a block of a
+version it does not know treats the index as covering no predicate — it still
+answers word search, and never prunes a query with coverage it cannot read.
+Fields appended to a version-1 block must not narrow what the index covers;
+anything that does takes a new version byte.
+
+**Where it is stored.** An index that covers every predicate is section kind `6`
+— with or without named graphs. One that leaves predicates out
+(`predicates` 1 or 2) is section kind **`11`**, same payload. The split is for
+readers older than scopes: they prune `FILTER(CONTAINS(…))` with any text index
+they find (below), as if it covered every literal. A kind-`6` index always
+covers at least what they assume — the default graph, every predicate — so they
+stay correct with it. A predicate-restricted index does not, so it is filed
+under a kind they do not know: they preserve it, never open it, and answer
+`CONTAINS` by scanning and `rete search --contains` with "no text index". The
+header maps either kind onto the same text-index offset and length.
+
+A kind-`11` section is `digest(16) | payload`, where `digest =
+blake3(payload)[..16]` and the payload is the kind-`6` layout above. It is outside
+the content hash (§4.1) and verified by that digest instead, so a reader that
+cannot see it still verifies the file; a reader skips the digest to reach the
+`token_table_len` varint. A kind-`6` section has no digest and is hashed.
 
 The **token table** is small (distinct words, front-coded) and read whole; the
 **postings blob** is the bulk and is fetched one posting at a time. A remote
@@ -451,7 +567,20 @@ one prefix range, binary-searches the (sorted) tokens locally, then range-reads
 the single `(posting_off, posting_len)` it needs — `lookup(word)` faults one
 posting, `prefix(word)` the contiguous run of postings whose tokens share the
 prefix. Multiple query words **AND** by intersecting their sorted posting lists.
-SPARQL never touches this section, so a query open neither fetches nor pays for it.
+
+**SPARQL** reads it in one place: a required `FILTER(CONTAINS(?v, "needle"))` over
+a pattern `?s <p> ?v` seeds `?s` with the subjects whose words contain every
+piece of the needle — an over-approximation that the original filter then
+re-verifies row by row, so the index can only make the query faster. That holds
+only inside the scope, so the engine applies it only when the active graph is
+covered (the default graph; any graph under `graphs = 1`) and the pattern's
+predicate is covered (a variable predicate only when every predicate is).
+Elsewhere — inside `GRAPH` over a default-scope index, under `FROM`, on a
+predicate left out — the filter scans. Whether the index covers the named graphs
+is header flag bit 4 (§4.1), written with `graphs = 1`, so a query off the
+default graph on a file without the bit decides from the header and fetches no
+byte of the section. A query that uses no such filter neither fetches nor pays
+for the section.
 
 **Discoverability.** Because a file *without* the section answers the same
 `FILTER(CONTAINS(…))` with the same rows — by full scan — the capability cannot
@@ -471,6 +600,66 @@ range read at `text_index offset` and is the honest cost figure; the section
 length alone overstates it several-fold, since the postings blob is never read
 whole.
 
+**Compatibility:** the scope block and kind `11` are optional additions inside
+`0x05` (Rete 0.4.0): a default-scope index is the same bytes as before, a
+`graphs = 1` kind-`6` index is read by older readers as a plain index (they find
+more subjects than they expect, which their re-verifying filter discards), and a
+kind-`11` index is invisible to them — outside the content hash, so their
+`verify` still passes. Header flag bit 4 is unknown to them and ignored.
+
+### 6.4 Label index (LABEL_INDEX section, optional)
+
+An **opt-in** section (kind `8`, `rete build --label-index`) holding the display
+label of **every** labelled subject of the default graph, sorted for prefix search
+(`rete search <prefix>`, the browser's entity search). It replaces the label block
+the pyramid-meta used to carry (§7.3), which was fetched whole and so capped at
+8,192 entries ranked by out-degree, and which a file without a pyramid lacked
+entirely. The section has no cap and no ranking, does not depend on the pyramid, and
+is written by the in-memory and the memory-bounded build alike. Outside the content
+hash, self-digested (§4.1).
+
+**Which labels** (index-only — the triples are not changed):
+- **L1**, every literal of `rdfs:label`, `skos:prefLabel`, `skos:altLabel`,
+  `foaf:name`, `dcterms:title`, `dc:title`, `schema:name`;
+- **L2**, only for a subject with no L1 label: `"family, given"` from the smallest
+  value of `foaf:familyName` / `foaf:lastName` / `foaf:surname` /
+  `foaf:family_name` / `schema:familyName` / `vcard:family-name` and the smallest
+  of `foaf:givenName` / `foaf:firstName` / `foaf:givenname` / `schema:givenName` /
+  `vcard:given-name` — or whichever of the two exists. People who carry only given
+  and family names get a label, surname first, the bibliographic convention.
+- A label is the literal's lexical value with escapes resolved, whitespace runs
+  collapsed to one space, trimmed, and cut to 512 bytes at a character boundary.
+  Its **key** is its Unicode lowercase form. There is one entry per
+  `(subject, key)`, keeping the smallest label; entries are sorted by
+  `(key, subject)`.
+
+**On-disk layout:**
+
+```text
+off  size
+0    16   digest = blake3(section[16..])[..16]
+16   1    version (1)
+17   1    levels: directory levels below the root (0 = the root lists data blocks)
+18   2    reserved (0)
+20   8    entry_count (u64 LE)
+28   4    root_len (u32 LE)
+32   root_len         root node
+32+root_len …         body: data blocks, then the directory nodes, level by level
+node  (block codec):  varint n; per child: varint shared, varint suffix_len, suffix
+                      (the child's first key, front-coded), varint off, varint len,
+                      varint entries          # off is relative to the body start
+block (block codec):  varint n; per entry: varint shared, varint suffix_len, suffix   # label
+                                           varint shared, varint suffix_len, suffix   # subject term
+```
+
+Data blocks close at 16 KiB uncompressed; a node holds at most 1,024 children, and
+levels are added until the root does too, so the root stays far below 64 KiB. The
+subject is stored as its **term**, not its dictionary id, so a search never reads
+the dictionary. A remote search reads the section's first `min(len, 64 KiB)` bytes
+(preamble + root), then one node per level and the data blocks of the matching run,
+one at a time, until `limit` entries are found or the run ends. A card reader learns
+`entry_count` from the 32-byte preamble alone (`signals.label_index`).
+
 **Compatibility:** `0x05` is stable format generation 1. Every stable reader from
 Rete **0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen
 in the 0.3 line and the release version is a separate number.
@@ -479,6 +668,88 @@ A required layout change uses a new format byte. **No backwards-compatibility
 promise is made before 1.0.0:** a later generation may drop `0x05` read support
 and force a rebuild from RDF source. Experimental formats `0x01` through `0x04`
 are already such a break and must be rebuilt from RDF source.
+
+### 6.5 Quad index (QUAD_INDEX section, optional)
+
+The alternative to the NAMED_GRAPHS section for files with many named graphs:
+every named-graph quad is stored **once**, the graph as a fourth column, in
+**graph-leading permutations** — `G+X` for every order `X` the file carries
+(byte 50), in the same order (`G+SPO, G+POS, G+OSP[, G+SOP, G+PSO, G+OPS]`) —
+cut into tiles that many graphs share, behind a **sorted graph directory**.
+A graph name is a dictionary term in the **subject** role (shared or
+subject-only section), and the graph column stores its subject id.
+
+A file uses it exactly when header flag bit 3 (`0b1000`) is set. Then:
+the directory has a kind-`10` entry; it has **no** kind-`5` entry; and the
+INDEX container (kind 3) holds `perms + 1` sections — the permutations, then a
+**seal**:
+
+```
+seal:  "RQIX" | u8 version = 1 | 16 bytes = blake3(QUAD_INDEX section)[0..16]
+```
+
+The seal is what keeps a reader that predates the quad index from misreading
+the file (see [compatibility.md](compatibility.md#named-graphs-in-the-quad-index)):
+every such reader checks the INDEX container's section count before it reads a
+payload, and `perms + 1` (4 or 7) is never what it expects, so it refuses the
+file on every open path. The quad index is written only with the 3- or the
+6-permutation set (a five-permutation set would make six). The content hash
+keeps its part list (§4.1) — the QUAD_INDEX section is not a part of its own;
+the seal, inside the hashed INDEX container, carries its digest, and `verify`
+checks the section against it.
+
+```
+section:   "RQIX" | u8 version = 1 | u8 order mask (byte-50 bits, never 0) | u16 reserved = 0
+           varint graph_count | varint quad_count | varint block_graphs (1024)
+           varint part_count (= 2 + 2·n, n = orders) | part_count × varint part_len
+parts, back to back:
+  P0           graph-directory block index:  varint num_blocks,
+               per block: varint Δfirst_g, varint (clen << 1 | raw)
+  P1 … Pn      tile directory of each order:  varint num_tiles, per tile:
+               varint Δfirst_g, varint first_a, varint last_g − first_g, varint last_a,
+               varint (clen << 1 | raw),
+               varint min_b, varint max_b − min_b, varint min_c, varint max_c − min_c
+  Pn+1         graph-directory blocks: per graph varint Δg, varint quad_count
+  Pn+2 … P2n+1 tile payloads of each order, concatenated
+quad tile:  varint num_segments
+            per segment (one graph's rows in the tile):
+              varint Δg (from the previous segment; the first from the tile's first_g)
+              varint zigzag(first_a − previous segment's first_a; 0 for the first)
+              varint body_len
+              body: varint num_a, then the §6.1 a-groups, the first one's Δa omitted;
+                    in the column that holds the subject (b in G+OSP and G+PSO,
+                    c in G+POS and G+OPS) the first value of each run is
+                    varint zigzag(v − the previous run's first v), 0 at segment start
+```
+
+The subject rule exists because within one graph the subjects are a handful of
+ids that recur in every a-group (a record's snapshots), so coding each run's
+first subject from 0 repeats a 3–4-byte id per group. On the OpenCitations
+M=1200 sample it shrinks those four orders by 46–49%; applied to the object
+column instead it makes `G+SPO` 64% larger, so it is not.
+
+- `(first_g, first_a)`/`(last_g, last_a)` are the leading keys of a tile's
+  first and last row. Tiles ascend by that key and never overlap, except that
+  consecutive tiles may share `(g, a)` where one `(g, a)` group was cut across
+  tiles (the §6.2 mega-group rule).
+- The routing parts (P0 and the tile directories) come first, so on a small file
+  they are one read; a reader resolving one graph needs P0, one directory block,
+  and the tile directory of each order its query uses — then only the tiles.
+- A tile or directory block is zstd-compressed (the block codec) unless that
+  does not shrink it; `raw = 1` marks it stored as is. A tile holding a handful
+  of quads is not worth a zstd frame.
+- Tiles are cut by one deterministic rule (whole `(g, a)` groups to ~64 KiB of
+  encoded rows, segment headers included), shared by the in-RAM and the
+  memory-bounded external builder, which therefore write identical bytes.
+
+A reader presents each graph as an ordinary permutation index over its slice of
+the shared tiles: for order `X`, the `G+X` tiles with `first_g ≤ g ≤ last_g`,
+whose leading range is exact where the directory knows it (`first_a` when
+`first_g = g`, `last_a` when `last_g = g`) and conservative otherwise; a tile's
+synopsis bounds every graph it holds. One decompressed tile serves every graph
+in it. Graphs enumerate in graph-id order. Orders led by `S`, `P` or `O` with
+the graph trailing (`SPO+G`, …) are not stored: SPARQL evaluates `GRAPH ?g` one
+graph at a time, which the graph-leading orders already route.
 
 ---
 
@@ -573,6 +844,27 @@ varint num_descriptors;    per: varint community, dominant_idx+1 (0 = none),
 The string table holds both class and predicate IRIs, so the schema pyramid decodes
 **without the dictionary** — the ontology travels as self-contained text.
 
+Between the tiles and the v2 block, three optional **tagged blocks** may appear, in
+this order, each `u8 tag, varint len, payload` so a reader that does not know a tag
+skips it:
+
+```text
+3  query_stats   varint n; per: varint predicate, count, distinct_subjects, distinct_objects,
+                                    max_objects_per_subject, max_subjects_per_object
+4  char_sets     varint n; per: varint num_predicates, predicate…, subjects     # top 128 shapes
+5  label block   varint n; per: len-prefixed label, varint subject id           # ≤ 8,192; legacy
+```
+
+**Two layouts.** Up to 0.3.x every pyramid-meta carried all of the above (the
+*combined* layout, which the library's legacy `assemble_*` entry points still
+write). `rete build` and `rete repyramid` now write the **community-only** layout:
+round, superedges, tiles, and a v2 block holding only the per-community
+`descriptors` — the parts that need the community partition. The schema, the
+`query_stats` and the characteristic sets live in the SCHEMA section (§7.5), the
+labels in the LABEL_INDEX section (§6.4). A reader takes each field from its
+section when the file has one, else from the pyramid-meta, so files of either
+layout read the same.
+
 ### 7.4 The schema pyramid — semantic zoom (v2)
 
 The community pyramid (§7.1) is **topological**; the schema pyramid is the
@@ -608,6 +900,42 @@ A client reads the leveled legend over the same index-free range fetch as the
 summary: `rete summary --level k` (and `summary-url`) render it without touching
 the triple index. The `subClassOf` axioms come from the data, or from
 `rete build --materialize` (the OWL-RL reasoner).
+
+### 7.5 The SCHEMA section (kind 9)
+
+The schema of §7.4 without the community pyramid: the class hierarchy, the
+per-level type rollups and lateral class links, the coherence axioms
+(`subClassOf` cycles, `owl:disjointWith` and `owl:equivalentClass` pairs), plus the
+planner's per-predicate `query_stats` and the characteristic sets. None of these
+needs the dendrogram — only the per-community descriptors do, and they stay in the
+pyramid-meta — so every `rete build` writes this section (`--no-schema` omits it),
+`--no-pyramid` and `--memory-budget-mb` included. It is a few kilobytes. Outside the
+content hash, self-digested (§4.1).
+
+```text
+0   16  digest = blake3(section[16..])[..16]
+16  1   version (1)
+17  …   varint len + bytes: the type predicate the rollups used (empty = no typing)
+    …   a pyramid-meta stream (§7.3) with round 0, no superedges, no tiles, no label
+        block and no descriptors: [3 query_stats] [4 char_sets] [v2 block]
+```
+
+Its content is computed over the **deduplicated** default graph with rules that do
+not depend on input order, which is what lets the in-memory build and the
+memory-bounded build (which reads its sorted permutation streams) write the same
+bytes:
+- the type predicate is `--type-predicate` when given, else `rdf:type`;
+- a subject's representative class is its type with the smallest object id;
+  instance counts count every type statement;
+- lateral links `(class(s), p, class(o))` skip the type and `subClassOf`
+  statements, with `(literal)` / `(untyped)` as object sentinels;
+- every level carries `round = 0` (there is no dendrogram to align with).
+
+Readers: `Rete::schema()`, `predicate_stats()` and `char_sets()` read it (a lazy
+open faults it, one range, on first use); `rete summary`, the Tier-0 coherence read
+and the schema summary read it before falling back to the pyramid-meta. The
+planner takes its selectivities from it — when the pyramid summary is resident, and,
+on a file without one, for a pattern position an outer row binds at run time.
 
 ---
 
@@ -725,7 +1053,8 @@ extension.
 - **Rust core**, compiled to both **native** (CLI, server-side) and **WASM**
   (browser client) — identical query code in both.
 - Crates to lean on: `oxrdf` / `oxttl` / `spargebra` (RDF + SPARQL), `ureq`
-  (CLI HTTP range reads), `zstd`/`ruzstd`, `blake3`, `regex-lite`, `serde_json`,
+  (CLI HTTP range reads), `zstd`/`ruzstd`, `blake3`, `regex` (native and the npm package, Unicode) /
+  `regex-lite` (the playground wasm), `serde_json`,
   `rayon` behind native-only feature gates, and Louvain-style community
   detection.
 - **Everything runs in Docker dev containers.** No host execution. The container

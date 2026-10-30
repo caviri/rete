@@ -28,7 +28,7 @@ for (const row of g.query("SELECT ?s ?label WHERE { ?s rdfs:label ?label } LIMIT
 One self-contained file, engine included — via any npm CDN:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/rete-graph@0.3.6/dist/rete-graph.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/rete-graph@0.4.0/dist/rete-graph.min.js"></script>
 <script>
   (async () => {
     const g = await rete.open(await rete.build("<urn:a> <urn:knows> <urn:b> ."));
@@ -49,7 +49,9 @@ g.stats(); // { fileLength, bytes, requests } — a LIMIT query fetches KBs–MB
 
 Remote opens use synchronous XHR range reads, so they work:
 
-- **in Node** (≥18) — out of the box, via a built-in sync-fetch bridge;
+- **in Node** (≥18) — out of the box, via a built-in sync-fetch bridge, which
+  also fetches the engine's batched reads in parallel (16 at once; set
+  `globalThis.reteReadMany = null` before the first `open()` to opt out);
 - **in browser web workers** — where sync binary XHR is allowed (this is how
   the playground runs its queries).
 
@@ -61,7 +63,8 @@ worker. The host serving the file must send CORS headers and honor `Range`.
 `query()` returns `{var: Term}` rows for SELECT, a boolean for ASK, and
 `[s, p, o]` Term triples for CONSTRUCT/DESCRIBE. A `Term` carries `.kind` /
 `.value` / `.datatype` / `.lang`, plus `.toJS()` (number/boolean/BigInt for
-common XSD types) and `.n3`. Also: `queryRaw`, `lastWarnings()` (why a FILTER silently dropped rows:
+common XSD types) and `.n3`. Also: `partitionPlan()` + `queryRaw(q, { partition })` (a long query as
+resumable chunks split by one variable), `queryRaw`, `lastWarnings()` (why a FILTER silently dropped rows:
 CONTAINS on an IRI, STRSTARTS on a number, … — see the docs), `query(q, {reason: true})`
 (OWL 2 QL entailment), `prefixSearch`, `textSearch`, `schema`, `graphNames`,
 `info`, `card()` / `examples()` (the file's embedded Dataset Card and its

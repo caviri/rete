@@ -15,6 +15,7 @@ mod common;
 use std::io::Write as _;
 
 use common::{fixture, rete};
+use predicates::prelude::PredicateBooleanExt as _;
 
 const TTL: &str = concat!(
     "@prefix ex: <http://example.test/> .\n",
@@ -280,22 +281,113 @@ fn merge_folds_named_graph_shards() {
         .stdout(predicates::str::contains("quad_count: 3"));
 }
 
-/// `--text-index` stays refused on the memory-bounded path, with an error that
-/// says why rather than a bare "not supported yet".
+/// `--text-index` on the memory-bounded path: it builds, the file is the same
+/// bytes as the in-RAM `--no-pyramid --text-index` build (cardless, so the
+/// whole file, not just the section), and `rete search --contains` answers —
+/// for the default scope and for a scoped one.
 #[test]
-fn external_build_rejects_text_index_with_a_reason() {
+fn external_build_writes_the_in_ram_text_index() {
+    let f = fixture();
+    let src = f.write(
+        "g.nq",
+        "<http://ex/s> <http://ex/p> \"hello world\" .\n\
+         <http://ex/s> <http://ex/desc> \"has been modified\" .\n\
+         <http://ex/t> <http://ex/p> \"hello études\"@fr .\n\
+         <http://ex/s/prov> <http://ex/desc> \"has been created\" <http://ex/s/g> .\n",
+    );
+    let scoped = [
+        "--text-index-graphs",
+        "all",
+        "--text-index-exclude",
+        "http://ex/desc",
+    ];
+    for extra in [&[][..], &scoped[..]] {
+        let ram = f.path("ram.rete");
+        let ext = f.path("ext.rete");
+        rete()
+            .args(["build"])
+            .arg(&src)
+            .args(["--text-index", "--no-pyramid"])
+            .args(extra)
+            .arg("-o")
+            .arg(&ram)
+            .assert()
+            .success();
+        rete()
+            .args(["build"])
+            .arg(&src)
+            .args(["--text-index", "--memory-budget-mb", "64"])
+            .args(extra)
+            .arg("-o")
+            .arg(&ext)
+            .assert()
+            .success()
+            .stderr(predicates::str::contains("extbuild: text index"));
+        assert_eq!(
+            std::fs::read(&ext).unwrap(),
+            std::fs::read(&ram).unwrap(),
+            "{extra:?}: memory-bounded and in-RAM builds differ"
+        );
+        rete()
+            .args(["search"])
+            .arg(&ext)
+            .args(["--contains", "hello"])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains("<http://ex/s>"))
+            .stdout(predicates::str::contains("<http://ex/t>"));
+    }
+    // The scoped file leaves `ex:desc` out, so `modified` finds nothing.
+    rete()
+        .args(["search"])
+        .arg(f.path("ext.rete"))
+        .args(["--contains", "modified"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("<http://ex/s>").not());
+}
+
+/// The scope flags need `--text-index`, take an absolute IRI, and do not mix
+/// an include list with an exclude list.
+#[test]
+fn text_index_scope_flags_are_validated() {
     let f = fixture();
     let src = f.write("g.nt", "<http://ex/s> <http://ex/p> \"hello world\" .\n");
-    let out = f.path("ext.rete");
-
-    rete()
-        .args(["build"])
-        .arg(&src)
-        .args(["--text-index", "--memory-budget-mb", "64", "-o"])
-        .arg(&out)
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("separate external sort"));
+    let out = f.path("out.rete");
+    for (args, why) in [
+        (
+            &["--text-index-exclude", "http://ex/p"][..],
+            "required arguments were not provided",
+        ),
+        (
+            &["--text-index-graphs", "all"][..],
+            "required arguments were not provided",
+        ),
+        (
+            &["--text-index", "--text-index-exclude", "description"][..],
+            "absolute",
+        ),
+        (
+            &[
+                "--text-index",
+                "--text-index-include",
+                "http://ex/a",
+                "--text-index-exclude",
+                "http://ex/b",
+            ][..],
+            "cannot be used with",
+        ),
+    ] {
+        rete()
+            .args(["build"])
+            .arg(&src)
+            .args(args)
+            .arg("-o")
+            .arg(&out)
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains(why));
+    }
 }
 
 /// RDF/XML is the one syntax the external build still refuses; the error has to
@@ -367,4 +459,46 @@ fn estimate_reads_gzipped_turtle() {
         .assert()
         .success()
         .stdout(predicates::str::contains("statements"));
+}
+
+/// `--label-index` and the default SCHEMA section are part of the external
+/// build's byte-identity promise: the memory-bounded build computes both with
+/// external sorts and must write exactly the in-RAM build's bytes.
+#[test]
+fn external_build_with_label_index_matches_in_ram() {
+    let f = fixture();
+    let nt = "<http://ex/w1> <http://purl.org/dc/terms/title> \"Acta  Universitatis\" .\n\
+              <http://ex/w1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Journal> .\n\
+              <http://ex/w1> <http://ex/editor> <http://ex/p1> .\n\
+              <http://ex/p1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .\n\
+              <http://ex/p1> <http://xmlns.com/foaf/0.1/familyName> \"Svobodová\" .\n\
+              <http://ex/p1> <http://xmlns.com/foaf/0.1/givenName> \"Jana\" .\n\
+              <http://ex/Journal> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Venue> .\n";
+    let src = f.write("l.nt", nt);
+    let (out_ext, out_ram) = (f.path("ext.rete"), f.path("ram.rete"));
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--memory-budget-mb", "64", "--label-index", "-o"])
+        .arg(&out_ext)
+        .assert()
+        .success();
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--no-pyramid", "--label-index", "-o"])
+        .arg(&out_ram)
+        .assert()
+        .success();
+    let ext = std::fs::read(&out_ext).unwrap();
+    assert_eq!(ext, std::fs::read(&out_ram).unwrap());
+    let h = rete_core::Header::from_bytes(&ext).unwrap();
+    assert!(h.label_index_section().is_some() && h.schema_section().is_some());
+    rete()
+        .args(["search"])
+        .arg(&out_ext)
+        .arg("svob")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Svobodová, Jana"));
 }

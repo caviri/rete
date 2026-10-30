@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -629,7 +629,7 @@ console.log(g.stats()); // { fileLength, bytes, requests } — lazy, not a downl
 <h2 id="or-a-single-script-tag--no-bundler-no-install">Or a single <code>&lt;script&gt;</code> tag — no bundler, no install</h2>
 <p>p5.js-style: one self-contained file (engine embedded), full and minified,
 served by any npm CDN:</p>
-<pre><code class="language-html">&lt;script src="https://cdn.jsdelivr.net/npm/rete-graph@0.3.6/dist/rete-graph.min.js"&gt;&lt;/script&gt;
+<pre><code class="language-html">&lt;script src="https://cdn.jsdelivr.net/npm/rete-graph@0.4.0/dist/rete-graph.min.js"&gt;&lt;/script&gt;
 &lt;script&gt;
   (async () =&gt; {
     const bytes = new Uint8Array(await (await fetch("mydata.rete")).arrayBuffer());
@@ -650,6 +650,17 @@ the engine stay simple and synchronous):</p>
 <p>On a main thread, either fetch the bytes yourself (small files) or run the
 graph in a worker — the pattern the playground uses. Hosts must send CORS
 headers and honor <code>Range</code> (<a href="hosting.html">Hosting your .rete</a>).</p>
+<p>In Node the bridge also serves the engine's <strong>batched reads</strong> in parallel:
+when a query needs a set of ranges at once — the dictionary terms a result
+decodes, the index tiles a join is about to probe — they are fetched
+concurrently (16 in flight) instead of one round trip each. A synchronous
+read is still a round trip, so this matters most over a slow link to a large
+file: on <code>crossref.rete</code> (60 GB) from a residential connection, listing the
+4,758 works that cite one paper took 3.5–4.9 s instead of 23–35 s, and title,
+venue and year for 100 of them 19–25 s instead of 46–65 s (two runs, cold
+cache). Results are identical. To keep reads
+strictly sequential, set <code>globalThis.reteReadMany = null</code> before the first
+<code>open()</code>.</p>
 <h2 id="query-results">Query results</h2>
 <p><code>query()</code> returns <code>{variable: Term}</code> rows for SELECT, a boolean for ASK, and
 <code>[s, p, o]</code> <code>Term</code> triples for CONSTRUCT/DESCRIBE. A <code>Term</code> has <code>.kind</code>
@@ -682,6 +693,21 @@ graph, and is <code>[]</code> when there is nothing to report. It works for ever
 form, including ASK's boolean, and the row array is the same as before. The
 raw envelope carries the same list as <code>warnings</code> when it is non-empty. An
 empty result can also come with a case-sensitivity hint (<code>severity: "hint"</code>).</p>
+<h3 id="a-long-query-in-chunks-partitionplan">A long query in chunks: <code>partitionPlan()</code></h3>
+<p>Per-entity details for thousands of entities on a remote graph can run as
+many short queries, split by the values of one variable, each retried or
+resumed on its own (<a href="sparql.html#partition">the rule</a>):</p>
+<pre><code class="language-js">const plan = g.partitionPlan(q, "?work");   // throws, saying why, if the split would change the answer
+const keys = g.queryRaw(plan.keys_query).rows.map((r) =&gt; r[plan.var]);
+let rows = [];
+for (let i = 0; i &lt; keys.length; i += 200) {
+  const part = g.queryRaw(q, { partition: { var: plan.var, keys: keys.slice(i, i + 200) } });
+  rows.push(...part.rows);                  // CONSTRUCT: part.triples
+}
+// dedupe if plan.dedupe, then apply plan.offset / plan.limit — the chunks drop them
+</code></pre>
+<p>Each chunk's rows are term tokens, as in <code>queryRaw</code>. The Claude Desktop
+extension's <code>partition_by</code> does this with checkpoints on disk.</p>
 <h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
 <p>The CLI's <code>--quoted-triple-syntax</code> vocabulary and defaults, in both directions.
 <code>build(text, "ttl" | "trig", { quotedTripleSyntax })</code> reads Turtle/TriG

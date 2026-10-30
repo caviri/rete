@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -722,14 +722,49 @@ published catalog directly over HTTP Range with no server in between.</p>
 <p>The format makes this unusually easy. MCPB's own guidance notes that Python
 bundles cannot portably ship compiled dependencies and that binary bundles
 need a build per platform; the rete engine is Rust <strong>already compiled to
-architecture-neutral wasm</strong>, so the extension is a plain <code>node</code> bundle — one
-JS file plus one <code>.wasm</code>, 1.3 MB packed — that runs unchanged on macOS,
-Windows and Linux with the Node runtime Claude Desktop ships.</p>
-<p>Nine tools, mirroring the hosted server's read surface plus local authoring:
-<code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>, <code>example_queries</code>,
-<code>sparql_query</code>, <code>find_entities</code>, <code>describe_entity</code>, <code>validate_shacl</code>,
-<code>build_rete</code>. Every <code>dataset</code> argument takes a local file name, a catalog
-key, or an <code>https://</code> URL to any published <code>.rete</code>.</p>
+architecture-neutral wasm</strong>, so the extension is a plain <code>node</code> bundle — two
+JS files (the server and its query worker) plus one <code>.wasm</code> — that runs
+unchanged on macOS, Windows and Linux with the Node runtime Claude Desktop
+ships.</p>
+<p>Fourteen tools, mirroring the hosted server's read surface plus local
+authoring and query jobs: <code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>,
+<code>example_queries</code>, <code>sparql_query</code>, <code>start_query</code>, <code>query_status</code>,
+<code>query_result</code>, <code>cancel_query</code>, <code>find_entities</code>, <code>describe_entity</code>,
+<code>validate_shacl</code>, <code>build_rete</code>, <code>load_rdf</code>. Every <code>dataset</code> argument takes a
+local file name, a catalog key, an <code>https://</code> URL to any published <code>.rete</code>,
+or <code>chat:&lt;name&gt;</code>.</p>
+<p><strong>Files shared in the chat.</strong> Claude Desktop does not pass chat attachments
+to an extension. For RDF the user attaches or pastes (Turtle, TriG,
+N-Triples, N-Quads), the model sends the text to <code>load_rdf</code>, which builds a
+graph in memory, queryable by every tool as <code>chat:&lt;name&gt;</code> until the extension
+restarts — no granted folder needed. Long files go in several parts; <code>save_as</code>
+keeps the result as a <code>.rete</code> in a granted folder. A <code>.rete</code> itself is binary
+and cannot travel through the chat: put it in a granted folder or give its URL.</p>
+<p><strong>Long queries do not time out.</strong> Claude gives up on a tool call after 60 s,
+and a query that visits thousands of scattered entities in a large published
+graph (title and year for every work citing a paper, on the 60 GB Crossref
+graph) takes minutes: each separate place in the file is a network round trip.
+Every query therefore runs on a worker thread as a job. <code>sparql_query</code> waits
+up to 40 s; a query still running by then answers with its <code>job_id</code> and keeps
+going, <code>query_status</code> waits for it (45 s at most per call) and reports reads,
+bytes and elapsed time, and <code>cancel_query</code> stops it. Up to three jobs run at
+once, so a quick lookup never queues behind a slow one, and the server stays
+responsive throughout (the engine's synchronous range reads used to block it
+for the whole query). An answer shows 200 rows; <code>query_result</code> pages through
+the rest by cursor or writes all of them to a CSV/TSV/JSON/N-Triples file in a
+granted folder.</p>
+<p><strong>Long extractions resume.</strong> With <code>partition_by: "?work"</code>, <code>sparql_query</code> /
+<code>start_query</code> split the query by that variable (<a href="sparql.html#partition">the rule</a>):
+its values are listed first, from the query's cheapest constant pattern on it,
+then the query runs a few hundred values at a time, two chunks at once, each
+sized to take about 15 s. Every finished chunk is kept on disk, so after a
+cancel, a crash or a restart of Claude Desktop the same call carries on where
+it stopped, and a call identical to one still running joins it. A split that
+would change the answer (ORDER BY, an aggregate not grouped by the variable, a
+variable only bound inside OPTIONAL) is refused, saying why. When the entities
+come from another graph — the works citing a paper are in <code>crossref-citations</code>,
+their titles in <code>crossref</code> — <code>keys_job</code> takes the values from the job that
+listed them, so the model never copies thousands of IRIs into a query.</p>
 <p>The decisive property is that <strong>local files are read lazily too</strong> — the same
 byte-range path as a remote graph, via the JS client's <code>file://</code> reader — so
 a multi-gigabyte graph on disk answers a selective query in megabytes and is

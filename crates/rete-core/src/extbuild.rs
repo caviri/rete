@@ -3,7 +3,7 @@
 //! intermediate artifacts to disk and merging them, instead of holding the whole
 //! dictionary + id-triples + permutations in RAM (SPEC-compatible output;
 //! byte-identical to [`crate::ingest::assemble_dataset_streaming_algo`] with the
-//! pyramid and text index disabled).
+//! pyramid disabled, text index included or not).
 //!
 //! ## How the budget bounds memory
 //!
@@ -19,22 +19,53 @@
 //!        └─ chunk K: …
 //! merge:  k-way term merge over all chunks
 //!           → global front-coded dict sections (streamed to disk)
-//!           → per-chunk id remap tables (local id → global id)
+//!           → per-chunk id remap tables (local id → global id), appended to
+//!             disk as the merge reaches each local id (`extbuild_remap`)
 //!           → k-way merge of the graph-name files → global graph ordinals
-//! remap:  each chunk's default triples remapped to global ids → global.tri
-//!         each chunk's named quads remapped → global.qtri (graph ordinal first)
+//! remap:  one chunk's remap tables loaded at a time:
+//!         its default triples remapped to global ids → global.tri
+//!         its named quads remapped → global.qtri (graph ordinal first)
 //! index:  per permutation: budget-sized sorted runs → k-way merge (dedup)
 //!           → streaming tiler → independently compressed tiles on disk
 //! named:  external sort of global.qtri by (g, s, p, o) — so every graph is one
 //!           CONTIGUOUS RUN — then one index container per graph, in graph-name
 //!           order, appended to a single spill file
-//! write:  header | metadata | dict | index | named graphs | footer, hashed
-//!           incrementally
+//! text:   (`--text-index` only) each chunk's literal words → c<i>.tok, remapped
+//!           with the same tables → global.tok, external sort by (token,
+//!           subject) → the TEXT_INDEX section (`crate::text_index_spill`)
+//! write:  header | metadata | dict | index | text index | named graphs |
+//!           footer, hashed incrementally; the spilled sections are deleted
+//! labels: (`--label-index`) the remap tees (object, slot, subject) ids; once
+//!           the file is written its own dictionary names them, and the
+//!           LABEL_INDEX and SCHEMA sections are appended (`extbuild_sections`)
 //! ```
 //!
-//! Peak RAM ≈ max(one chunk's working set, remap tables + merge buffers, one
-//! sort run, one named graph's index) — all sized from `memory_budget`, never
-//! from the dataset.
+//! Spill: the merge deletes each chunk's term files once it has read them,
+//! the remap each chunk's statements and remap tables once rewritten. The
+//! peak is at the end of the merge, while every chunk's statements are on
+//! disk; nothing of the label pass is there yet (up to 0.4.0 its string
+//! records were, +20% on a data-only graph).
+//!
+//! Peak RAM ≈ max(one chunk's working set, the merge's read and write buffers,
+//! one chunk's remap tables, one sort run, one named graph's index) — all
+//! sized from `memory_budget`, never from the dataset:
+//!
+//! - a chunk is sealed at half the budget; its remap tables, 4 B per local id,
+//!   are at most a quarter of that (`extbuild_remap`);
+//! - the merge reads every chunk's term files at once and appends to every
+//!   chunk's remap files at once, so those buffers shrink as the chunk count
+//!   grows: an eighth and a sixteenth of the budget, floored at 64 KiB per
+//!   reader and 4 KiB per writer;
+//! - a dictionary section's restart offsets (8 B per 16 terms) and chunk
+//!   directory are spilled too, and its header streamed from them;
+//! - a sort run holds a quarter of the budget in records (the text index's
+//!   vectors may grow to half);
+//! - what does grow with the data are the tile directories, about 30 B per
+//!   64 KiB tile — tens of MB at billions of statements.
+//!
+//! Up to 0.4.0 every chunk's remap tables stayed resident from the merge to
+//! the end of the remap, 4 B per chunk-local id: 15.0 GB at 1.73 B chunk-local
+//! terms, which capped one OpenCitations Meta build at half the graph.
 //!
 //! ## Named graphs
 //!
@@ -50,9 +81,24 @@
 //! so an input with no named graphs runs exactly the code (and the record
 //! widths) it ran before this existed.
 //!
-//! v1 limits (clear errors, not silent degradation): no community pyramid, no
-//! full-text index. SPARQL/joins/verify are unaffected (they never require the
-//! pyramid).
+//! ## Quad index (`GraphLayout::Quad`)
+//!
+//! Graph names **are** dictionary terms there (subject role), so the chunker
+//! observes each name into its chunk dictionary and spills a named quad as
+//! `(local subject id of g, s, p, o)`: no name file, no graph-ordinal merge;
+//! the remap phase maps `g` like `s`. Then, per graph-leading order, one
+//! external sort of 16-byte `(g, a, b, c)` records, a k-way merge with dedup,
+//! and the same `quad::QuadTiler` the in-RAM builder uses — so the two write
+//! identical bytes. The `G+SPO` pass also emits the graph directory. The
+//! section is assembled in a spill file (its digest goes into the index
+//! container's seal) and streamed after the index. Peak RAM: one sort run plus
+//! one tile batch.
+//!
+//!
+//! Limits (clear errors, not silent degradation): no community pyramid.
+//! SPARQL/joins/verify are unaffected (they never require the pyramid). The
+//! full-text index is supported, in any scope, and its section is byte-identical
+//! to the in-RAM build's.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -61,10 +107,15 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::build_trace::{self as trace, note_merge, Phase};
 use crate::dict::env_restart_interval;
 
-use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
-use crate::ingest::{BuildStats, IngestError, RawQuad};
+use crate::extbuild_remap::{
+    remap_buf_bytes, role_only_id, shared_id, RemapStore, RemapWriter, Seg, SegCounts,
+};
+use crate::extbuild_sections::{ExtLabels, ExtSchema};
+use crate::index::GroupSizer;
+use crate::ingest::{BuildStats, GraphLayout, IngestError, RawQuad};
 use crate::triples::TripleBlockBuilder;
 use crate::varint::write_uvarint;
 use crate::DictionaryBuilder;
@@ -108,6 +159,20 @@ pub struct ExternalBuildOptions {
     /// section on disk, so this is the single biggest lever on both build time
     /// and file size that does not touch the data.
     pub perms: crate::index::PermSet,
+    /// Write the LABEL_INDEX section (kind 8). See `extbuild_sections.rs`.
+    pub label_index: bool,
+    /// Write the SCHEMA section (kind 9). See `extbuild_sections.rs`.
+    pub schema: bool,
+    /// The schema's type predicate; `rdf:type` when `None`.
+    pub type_override: Option<String>,
+    /// Build the full-text index over the literals of this scope (`None` = no
+    /// TEXT_INDEX section). A second external sort, on the literal words, inside
+    /// the same budget; see `text_index_spill`.
+    pub text_index: Option<crate::text_index::TextIndexScope>,
+    /// How the named graphs are stored ([`GraphLayout::PerGraph`] by default).
+    /// [`GraphLayout::Quad`] writes the quad index (SPEC.md §6.5) through its
+    /// own external sorts — see "Quad index" in the module docs.
+    pub graphs: GraphLayout,
 }
 
 impl Default for ExternalBuildOptions {
@@ -118,8 +183,21 @@ impl Default for ExternalBuildOptions {
             metadata: Box::new(|_| Vec::new()),
             build_info: Vec::new(),
             perms: crate::index::PermSet::ALL,
+            label_index: false,
+            schema: false,
+            type_override: None,
+            text_index: None,
+            graphs: GraphLayout::PerGraph,
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// `(chunk budget, text-index run bytes)` for tests that drive a small
+    /// graph through [`build_external`] as many chunks and many sort runs —
+    /// the public budget floor would otherwise make it one of each.
+    pub(crate) static TEST_SPLIT: std::cell::Cell<Option<(u64, usize)>> = const { std::cell::Cell::new(None) };
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -178,12 +256,45 @@ where
 
     // ---- Phase 1: chunk the input ------------------------------------------
     let chunk_budget = (budget as f64 * CHUNK_BUDGET_FRACTION) as u64;
+    // A text-index sort run holds at most a quarter of the budget in records;
+    // its vectors may grow to twice that, which is the half the phase may use.
+    let text_run_bytes = (budget / 4) as usize;
+    #[cfg(test)]
+    let (chunk_budget, text_run_bytes) = TEST_SPLIT
+        .with(|c| c.get())
+        .unwrap_or((chunk_budget, text_run_bytes));
     eprintln!(
         "extbuild: budget {} MiB -> chunk target {} MiB",
         budget >> 20,
         chunk_budget >> 20
     );
-    let mut chunker = Chunker::new(&tmp, chunk_budget);
+    let quad_layout = opts.graphs == GraphLayout::Quad;
+    if quad_layout {
+        crate::quad::check_perms(opts.perms).map_err(|_| {
+            ExtBuildError::Internal("the quad index needs the 3- or 6-permutation set")
+        })?;
+    }
+    let mut text = opts
+        .text_index
+        .clone()
+        .map(crate::text_index_spill::TextSpill::new);
+    let mut chunker = Chunker::new(&tmp, chunk_budget, opts.graphs);
+    chunker.text = text.as_mut();
+    // LABEL_INDEX / SCHEMA (kinds 8, 9): the passes live in extbuild_sections;
+    // each phase below calls one hook. Both work on global ids from the remap
+    // on, so nothing of them is spilled beside the chunk files. A sort run
+    // gets an eighth of the budget while the remap runs, a quarter once the
+    // file is written.
+    let mut ext_labels = opts
+        .label_index
+        .then(|| ExtLabels::new(&tmp.dir, (budget / 8) as usize));
+    let mut ext_schema = opts.schema.then(|| {
+        ExtSchema::new(
+            &tmp.dir,
+            (budget / 8) as usize,
+            opts.type_override.as_deref(),
+        )
+    });
     stream(&mut |q: RawQuad| chunker.push(q))?;
     let chunks = chunker.finish()?;
     let statements: u64 = chunks
@@ -196,9 +307,21 @@ where
         chunks.len(),
         statements
     );
+    trace::add("chunks", chunks.len() as u64);
+    note_scratch(&tmp);
+    trace::lap(Phase::ParseChunk);
 
     // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
-    let mut merged = merge_dictionaries(&tmp, &chunks)?;
+    let schema_preds = crate::extbuild_sections::schema_predicates(opts.type_override.as_deref());
+    let (merged, remaps) = merge_dictionaries_with(&tmp, &chunks, &schema_preds, budget)?;
+    if let Some(x) = ext_schema.as_mut() {
+        x.set_merge_facts(&merged.schema_facts);
+    }
+    if let Some(l) = ext_labels.as_mut() {
+        l.set_predicates(merged.schema_facts.label_preds.clone());
+    }
+    note_scratch(&tmp);
+    trace::lap(Phase::Dictionary);
     eprintln!(
         "extbuild: merged dictionary — {} term(s)",
         merged.term_count
@@ -208,79 +331,69 @@ where
     }
 
     // ---- Phase 3: remap chunk triples to global ids --------------------------
-    let remaps = std::mem::take(&mut merged.remaps);
     let global_tri = tmp.path("global.tri");
     let global_qtri = tmp.path("global.qtri");
-    {
-        let mut out = BufWriter::new(File::create(&global_tri)?);
-        // The named-quad spill is opened only when the input actually carries
-        // named graphs, so a default-graph build writes and sorts exactly the
-        // bytes it did before quads existed here.
-        let mut qout = if has_named {
-            Some(BufWriter::new(File::create(&global_qtri)?))
-        } else {
-            None
-        };
-        for (ci, chunk) in chunks.iter().enumerate() {
-            let maps = &remaps[ci];
-            let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
-            let mut buf = [0u8; 12];
-            loop {
-                match rd.read_exact(&mut buf) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                    Err(e) => return Err(e.into()),
-                }
-                let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                let gs = maps.subj[(s - 1) as usize];
-                let gp = maps.pred[(p - 1) as usize];
-                let go = maps.obj[(o - 1) as usize];
-                out.write_all(&gs.to_le_bytes())?;
-                out.write_all(&gp.to_le_bytes())?;
-                out.write_all(&go.to_le_bytes())?;
-            }
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri")));
-            if chunk.quad_count > 0 {
-                let qout = qout
-                    .as_mut()
-                    .ok_or(ExtBuildError::Internal("named quads without a spill"))?;
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri")))?);
-                let mut buf = [0u8; 16];
-                loop {
-                    match rd.read_exact(&mut buf) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(e) => return Err(e.into()),
-                    }
-                    let g = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                    let s = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                    let p = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                    let o = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-                    qout.write_all(&maps.graph[(g - 1) as usize].to_le_bytes())?;
-                    qout.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
-                    qout.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
-                    qout.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
-                }
-            }
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.qtri")));
-        }
-        out.flush()?;
-        if let Some(mut q) = qout {
-            q.flush()?;
-        }
+    if let Some(text) = text.as_mut() {
+        text.begin_remap(tmp.path("global.tok"))?;
     }
-    drop(remaps); // free the remap tables before the sort phase
+    // The named-quad spill is opened only when the input actually carries
+    // named graphs, so a default-graph build writes and sorts exactly the
+    // bytes it did before quads existed here.
+    remap_chunks(
+        &tmp,
+        &chunks,
+        &remaps,
+        quad_layout,
+        &global_tri,
+        has_named.then_some(global_qtri.as_path()),
+        text.as_mut(),
+        ext_schema.as_mut(),
+        ext_labels.as_mut(),
+    )?;
+    note_scratch(&tmp);
+    trace::lap(Phase::Encode);
+
+    // ---- Phase 3b: the full-text index (`--text-index`) -----------------------
+    let codec = crate::file::writer_codec();
+    let text_section = match text {
+        Some(t) => {
+            let s = t.finish(&|name| tmp.path(name), text_run_bytes, codec)?;
+            note_scratch(&tmp);
+            trace::lap(Phase::TextIndex);
+            s
+        }
+        None => None,
+    };
 
     // ---- Phase 4: per-permutation external sort + streaming tiler -----------
-    let codec = crate::file::writer_codec();
     // A run holds R triples resident twice over during sort (Vec + sort scratch).
     let run_len = ((budget / 2) / 24).clamp(1 << 16, u32::MAX as u64) as usize;
     let mut perm_sections: Vec<SectionFile> = Vec::with_capacity(opts.perms.len());
     let mut deduped_count: Option<u64> = None;
+    if let Some(x) = ext_schema.as_mut() {
+        x.begin_spo()?;
+    }
     for perm in opts.perms.iter() {
-        let (section, n) = build_permutation_section(&tmp, &global_tri, perm, run_len, codec, "")?;
+        // The schema pass reads the deduplicated SPO and POS merge streams.
+        let mut observe = |t: IdTriple| -> std::io::Result<()> {
+            match (ext_schema.as_mut(), perm) {
+                (Some(x), crate::index::IndexPermutation::Spo) => x.observe_spo(t),
+                (Some(x), crate::index::IndexPermutation::Pos) => {
+                    x.observe_pos(t);
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        };
+        let (section, n) = build_permutation_section_observed(
+            &tmp,
+            &global_tri,
+            perm,
+            run_len,
+            codec,
+            "",
+            &mut observe,
+        )?;
         // every permutation dedups the same multiset — counts must agree
         if let Some(prev) = deduped_count {
             if prev != n {
@@ -294,20 +407,36 @@ where
             n
         );
         perm_sections.push(section);
+        trace::lap(Phase::IndexPermutations);
     }
     let _ = std::fs::remove_file(&global_tri);
     let default_count = deduped_count.unwrap_or(0);
+    if let Some(x) = ext_schema.as_mut() {
+        x.finish_links()?;
+    }
 
     // ---- Phase 4b: one index container per named graph ----------------------
     // The graph ordinal leads the sort key, so the merge hands back one
     // contiguous run per graph, in graph-name order — exactly the order the
     // named-graphs section stores them in.
-    let named = if has_named {
-        // Same accounting as `run_len`, at the quad record's 16 bytes rather
-        // than the triple's 12: a run holds Q quads resident twice over, so
-        // Q·16·2 = budget/2. Reusing `run_len` here would have quietly spent
-        // 4/3 of the intended half-budget on the quad sort.
-        let quad_run_len = ((budget / 2) / 32).clamp(1 << 16, u32::MAX as u64) as usize;
+    // Same accounting as `run_len`, at the quad record's 16 bytes rather
+    // than the triple's 12: a run holds Q quads resident twice over, so
+    // Q·16·2 = budget/2. Reusing `run_len` here would have quietly spent
+    // 4/3 of the intended half-budget on the quad sort.
+    let quad_run_len = ((budget / 2) / 32).clamp(1 << 16, u32::MAX as u64) as usize;
+    // ---- Phase 4b (quad index): graph-leading orders over the quad spill ----
+    let quad = if has_named && quad_layout {
+        let q = build_quad_section(&tmp, &global_qtri, quad_run_len, opts.perms, codec)?;
+        let _ = std::fs::remove_file(&global_qtri);
+        eprintln!(
+            "extbuild: quad index — {} named graph(s), {} unique quad(s), {} byte(s)",
+            q.graph_count, q.quad_count, q.len
+        );
+        Some(q)
+    } else {
+        None
+    };
+    let named = if has_named && !quad_layout {
         let ram_triples = (((budget / 2) / NAMED_GRAPH_BYTES_PER_TRIPLE).max(1) as usize)
             .min(NAMED_GRAPH_RAM_TRIPLE_CAP);
         let section = build_named_graphs(
@@ -333,8 +462,13 @@ where
     } else {
         None
     };
-    let named_triples = named.as_ref().map(|n| n.triples).unwrap_or(0);
-    let named_graphs = named.as_ref().map(|n| n.count).unwrap_or(0);
+    if has_named {
+        trace::lap(Phase::NamedGraphs);
+    }
+    let named_triples = named.as_ref().map(|n| n.triples).unwrap_or(0)
+        + quad.as_ref().map(|q| q.quad_count).unwrap_or(0);
+    let named_graphs = named.as_ref().map(|n| n.count).unwrap_or(0)
+        + quad.as_ref().map(|q| q.graph_count).unwrap_or(0);
     let quad_count = default_count + named_triples;
 
     // ---- Phase 5: stream the final file -------------------------------------
@@ -352,19 +486,104 @@ where
         pyramid_levels: 0,
     };
     let metadata = (opts.metadata)(&stats);
+    trace::lap(Phase::CardDerive);
     write_final_file(
         output,
         &metadata,
         &opts.build_info,
         &merged,
         &perm_sections,
+        text_section.as_ref(),
         named.as_ref(),
+        quad.as_ref(),
         quad_count,
         codec,
         opts.perms,
     )?;
     stats.pyramid_levels = 0;
+    note_scratch(&tmp);
+    trace::lap(Phase::Write);
+    // The sections now live in the output: drop their spill copies before the
+    // label pass sorts, so the two never stack.
+    for p in merged
+        .section_files
+        .iter()
+        .chain(perm_sections.iter())
+        .map(|s| &s.path)
+        .chain(text_section.iter().flat_map(|t| [&t.table, &t.postings]))
+        .chain(named.iter().map(|n| &n.body))
+        .chain(quad.iter().map(|q| &q.path))
+    {
+        let _ = std::fs::remove_file(p);
+    }
+
+    // ---- Phase 6: LABEL_INDEX / SCHEMA, appended (outside the content hash) --
+    // Both read the strings they name through the written file's dictionary.
+    let label_section = match ext_labels {
+        Some(l) => {
+            let s = l
+                .finish(output, (budget / 4) as usize, budget / 8, codec)
+                .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?;
+            note_scratch(&tmp);
+            s
+        }
+        None => None,
+    };
+    let schema_section = match ext_schema {
+        Some(x) => x
+            .finish(output)
+            .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?,
+        None => Vec::new(),
+    };
+    if label_section.is_some() || !schema_section.is_empty() {
+        use crate::file::PayloadPart;
+        use crate::header::SectionKind;
+        let mut sections: Vec<(SectionKind, Vec<PayloadPart<'_>>)> = Vec::new();
+        if let Some(l) = &label_section {
+            sections.push((
+                SectionKind::LabelIndex,
+                vec![
+                    PayloadPart::Bytes(&l.digest_and_head),
+                    PayloadPart::File(&l.body),
+                ],
+            ));
+            eprintln!("extbuild: label index — {} entries", l.entries);
+        }
+        if !schema_section.is_empty() {
+            sections.push((
+                SectionKind::Schema,
+                vec![PayloadPart::Bytes(&schema_section)],
+            ));
+            eprintln!("extbuild: schema section — {} bytes", schema_section.len());
+        }
+        crate::file::append_sections_to_file(output, &sections)
+            .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?;
+        trace::lap(Phase::LabelsSchema);
+    }
     Ok(stats)
+}
+
+/// Raise the `scratch_peak_bytes` counter to what the spill directory holds
+/// now. Sampled at phase boundaries (and once each external sort has written
+/// its runs, its high-water mark), so it is a lower bound on the true peak.
+/// Skipped — no directory walk — when no build trace is recording.
+fn note_scratch(tmp: &TmpDir) {
+    if !trace::active() {
+        return;
+    }
+    fn walk(dir: &Path) -> u64 {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        rd.flatten()
+            .map(|e| match e.metadata() {
+                Ok(m) if m.is_dir() => walk(&e.path()),
+                Ok(m) => m.len(),
+                Err(_) => 0,
+            })
+            .sum()
+    }
+    trace::max("scratch_peak_bytes", walk(&tmp.dir));
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +630,15 @@ struct ChunkInfo {
     graph_terms: u32,
 }
 
+impl ChunkInfo {
+    /// Local ids per remap segment ([`Seg`]): the section files' term counts,
+    /// then the graph names.
+    fn seg_counts(&self) -> SegCounts {
+        let [shared, subj, obj, pred] = self.section_terms;
+        [shared, subj, obj, pred, self.graph_terms]
+    }
+}
+
 struct Chunker<'a> {
     tmp: &'a TmpDir,
     chunk_budget: u64,
@@ -425,10 +653,15 @@ struct Chunker<'a> {
     graph_ids: std::collections::BTreeMap<String, u32>,
     chunks: Vec<ChunkInfo>,
     has_quoted: bool,
+    /// `--text-index`: each sealed chunk spills its literal words here.
+    text: Option<&'a mut crate::text_index_spill::TextSpill>,
+    /// Quad index: graph names are subject terms of the chunk dictionary and
+    /// a named quad's graph id is the name's local subject id.
+    quad: bool,
 }
 
 impl<'a> Chunker<'a> {
-    fn new(tmp: &'a TmpDir, chunk_budget: u64) -> Self {
+    fn new(tmp: &'a TmpDir, chunk_budget: u64, graphs: GraphLayout) -> Self {
         Chunker {
             tmp,
             chunk_budget,
@@ -438,6 +671,8 @@ impl<'a> Chunker<'a> {
             graph_ids: std::collections::BTreeMap::new(),
             chunks: Vec::new(),
             has_quoted: false,
+            text: None,
+            quad: graphs == GraphLayout::Quad,
         }
     }
 
@@ -480,7 +715,10 @@ impl<'a> Chunker<'a> {
         let graph_ids = std::mem::take(&mut self.graph_ids);
         self.acc_bytes = 0;
 
-        let mut db = DictionaryBuilder::new();
+        // Chunk-local dictionaries are merged by role, so they must classify
+        // terms by role alone: frequent-object promotion is an in-memory-build
+        // feature (the CLI refuses it with `--memory-budget-mb`).
+        let mut db = DictionaryBuilder::new().with_frequent_objects(0);
         for (s, p, o) in &quads {
             db.observe(s, p, o);
         }
@@ -490,9 +728,20 @@ impl<'a> Chunker<'a> {
         for (_, s, p, o) in &named {
             db.observe(s, p, o);
         }
+        // ...except in the quad index, where they are subject terms.
+        if self.quad {
+            for name in graph_ids.keys() {
+                db.observe_graph(name);
+            }
+        }
         let dict = db.build();
         if dict.has_quoted_triples() {
             self.has_quoted = true;
+        }
+        // `--text-index`: the chunk's literal words, keyed by chunk-local subject
+        // ids, while the raw strings and their dictionary are both in hand.
+        if let Some(text) = self.text.as_mut() {
+            text.spill_chunk(&self.tmp.path(&format!("c{ci}.tok")), &dict, &quads, &named)?;
         }
 
         // local id-triples (subject-space id, predicate id, object-space id)
@@ -515,8 +764,29 @@ impl<'a> Chunker<'a> {
         // (Graph names are NT tokens — an IRI or a blank node — so they never
         // contain a raw \n, the same property the term files rely on.)
         let quad_count = named.len() as u64;
-        let graph_terms = graph_ids.len() as u32;
-        if !named.is_empty() {
+        let graphs_seen = graph_ids.len();
+        let graph_terms = if self.quad { 0 } else { graph_ids.len() as u32 };
+        if !named.is_empty() && self.quad {
+            // Quad index: the graph column is the name's local subject id,
+            // remapped later exactly like a subject.
+            let mut sid_of = vec![0u32; graph_ids.len() + 1];
+            for (name, insertion_id) in &graph_ids {
+                sid_of[*insertion_id as usize] = dict
+                    .subject_id(name)
+                    .ok_or(ExtBuildError::Internal("graph name missing from own dict"))?;
+            }
+            let mut qw = BufWriter::new(File::create(self.tmp.path(&format!("c{ci}.qtri")))?);
+            for (gid, s, p, o) in &named {
+                let (si, pi, oi) = dict
+                    .encode(s, p, o)
+                    .ok_or(ExtBuildError::Internal("chunk term missing from own dict"))?;
+                qw.write_all(&sid_of[*gid as usize].to_le_bytes())?;
+                qw.write_all(&si.to_le_bytes())?;
+                qw.write_all(&pi.to_le_bytes())?;
+                qw.write_all(&oi.to_le_bytes())?;
+            }
+            qw.flush()?;
+        } else if !named.is_empty() {
             let mut rank_of = vec![0u32; graph_ids.len() + 1];
             let mut gw = BufWriter::new(File::create(self.tmp.path(&format!("c{ci}.graph")))?);
             for (rank, (name, insertion_id)) in graph_ids.iter().enumerate() {
@@ -573,7 +843,7 @@ impl<'a> Chunker<'a> {
         write_terms(&format!("c{ci}.pred"), preds, &|i| dict.predicate_term(i))?;
 
         eprintln!(
-            "extbuild: chunk {ci} sealed — {} statement(s), {} term(s), {graph_terms} graph(s)",
+            "extbuild: chunk {ci} sealed — {} statement(s), {} term(s), {graphs_seen} graph(s)",
             triple_count + quad_count,
             shared + subj_only + obj_only + preds
         );
@@ -609,28 +879,19 @@ impl<'a> Chunker<'a> {
 // Phase 2: global dictionary merge
 // ---------------------------------------------------------------------------
 
-/// Per-chunk id remap tables: local id (1-based, per space) → global id.
-struct ChunkRemap {
-    subj: Vec<u32>,
-    obj: Vec<u32>,
-    pred: Vec<u32>,
-    /// chunk-local graph rank → global graph ordinal (empty when the chunk saw
-    /// no named graphs)
-    graph: Vec<u32>,
-}
-
 struct MergedDict {
     /// The four chunked-encoded dict section payloads, spilled to tmp files
     /// (shared, subjects, objects, predicates — the container order).
     section_files: [SectionFile; 4],
     term_count: u64,
     has_quoted: bool,
-    remaps: Vec<ChunkRemap>,
     /// Every distinct graph name, ascending, one per line — spilled rather than
     /// resident because fedlex has 497,905 of them. `None` when the input had
     /// no named graphs.
     graph_names: Option<PathBuf>,
     graph_count: u32,
+    /// What the SCHEMA pass needs from the merge.
+    schema_facts: crate::extbuild_sections::MergeFacts,
 }
 
 /// A finished section payload living in a tmp file.
@@ -697,21 +958,47 @@ impl SpaceStream {
 
 /// Line-based reader over a chunk's sorted term file.
 struct TermFileReader {
-    rd: BufReader<File>,
+    /// `None` once the file has been read to its end
+    rd: Option<BufReader<File>>,
     buf: String,
+    /// deleted at the end of the file (the merge's chunk term files)
+    consume: Option<PathBuf>,
 }
 
 impl TermFileReader {
     fn open(path: &Path) -> Result<Self, std::io::Error> {
         Ok(TermFileReader {
-            rd: BufReader::with_capacity(1 << 20, File::open(path)?),
+            rd: Some(BufReader::with_capacity(1 << 20, File::open(path)?)),
             buf: String::new(),
+            consume: None,
         })
     }
+
+    /// With a `capacity`-byte read buffer, deleting the file once it has been
+    /// read to its end: the dictionary merge opens every chunk's term files at
+    /// once, sizes their buffers from the budget, and gives a chunk's space
+    /// back as soon as the merge is past its last term rather than when every
+    /// chunk is done. (A shared-section file is read twice, by the subject and
+    /// the object stream; its space comes back when the second one closes.)
+    fn open_consuming(path: &Path, capacity: usize) -> Result<Self, std::io::Error> {
+        Ok(TermFileReader {
+            rd: Some(BufReader::with_capacity(capacity, File::open(path)?)),
+            buf: String::new(),
+            consume: Some(path.to_path_buf()),
+        })
+    }
+
     fn next(&mut self) -> Result<Option<String>, std::io::Error> {
+        let Some(rd) = self.rd.as_mut() else {
+            return Ok(None);
+        };
         self.buf.clear();
-        let n = self.rd.read_line(&mut self.buf)?;
+        let n = rd.read_line(&mut self.buf)?;
         if n == 0 {
+            self.rd = None; // close before deleting
+            if let Some(p) = self.consume.take() {
+                let _ = std::fs::remove_file(p);
+            }
             return Ok(None);
         }
         // strip exactly the trailing '\n' we wrote
@@ -760,6 +1047,7 @@ struct KWayTerms {
 
 impl KWayTerms {
     fn new(mut streams: Vec<SpaceStream>) -> Result<Self, std::io::Error> {
+        note_merge(streams.len());
         let mut heap = BinaryHeap::new();
         for (ci, s) in streams.iter_mut().enumerate() {
             if let Some((term, id)) = s.next()? {
@@ -806,40 +1094,63 @@ impl KWayTerms {
     }
 }
 
-/// Provisional remap encoding while global section sizes are still unknown:
-/// class in the top 2 bits, class-local rank (0-based) below. Fixed up to real
-/// ids once the shared count is known.
-const CLASS_SHARED: u32 = 0b00 << 30;
-const CLASS_SUBJ_ONLY: u32 = 0b01 << 30;
-const CLASS_OBJ_ONLY: u32 = 0b10 << 30;
-const CLASS_MASK: u32 = 0b11 << 30;
+#[cfg(test)]
+fn merge_dictionaries(
+    tmp: &TmpDir,
+    chunks: &[ChunkInfo],
+) -> Result<(MergedDict, RemapStore), ExtBuildError> {
+    merge_dictionaries_with(tmp, chunks, &[], 64 << 20)
+}
 
-fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, ExtBuildError> {
+/// [`merge_dictionaries`], also recording what the SCHEMA pass needs: the
+/// global ids of `schema_preds`, the shared-term count and the literal
+/// prefixes of the shared and object-only sections. `budget` sizes the
+/// buffers of the merge's per-chunk readers and remap writers.
+///
+/// Returns the merged dictionary and every chunk's id remap tables, which are
+/// written to disk while the merge reaches each chunk-local id (see
+/// [`crate::extbuild_remap`]): within one remap segment of one chunk the
+/// merge meets the local ids in increasing order, so each table is a file of
+/// sequential appends.
+fn merge_dictionaries_with(
+    tmp: &TmpDir,
+    chunks: &[ChunkInfo],
+    schema_preds: &[String],
+    budget: u64,
+) -> Result<(MergedDict, RemapStore), ExtBuildError> {
     let k = chunks.len();
+    let mut schema_facts = crate::extbuild_sections::MergeFacts {
+        pred_ids: vec![None; schema_preds.len()],
+        ..Default::default()
+    };
 
-    // remap tables, sized by each chunk's spaces
-    let mut remaps: Vec<ChunkRemap> = chunks
-        .iter()
-        .map(|c| ChunkRemap {
-            subj: vec![0; (c.section_terms[0] + c.section_terms[1]) as usize],
-            obj: vec![0; (c.section_terms[0] + c.section_terms[2]) as usize],
-            pred: vec![0; c.section_terms[3] as usize],
-            graph: vec![0; c.graph_terms as usize],
-        })
-        .collect();
+    // The node merge reads four term files per chunk at once (shared twice,
+    // subject-only, object-only): their buffers share an eighth of the budget.
+    let read_buf = ((budget / 8) / (4 * k.max(1) as u64)).clamp(64 << 10, 1 << 20) as usize;
+    let counts: Vec<SegCounts> = chunks.iter().map(ChunkInfo::seg_counts).collect();
+    let mut remaps = RemapWriter::new(&tmp.dir, &counts, remap_buf_bytes(budget, k));
+    // A chunk-local id of the subject or object space at or below this is in
+    // the chunk's shared section, the same id in both spaces.
+    let shared_of = |ci: usize| chunks[ci].section_terms[0];
 
     // subject-space + object-space k-way streams
     let mut subj_streams = Vec::with_capacity(k);
     let mut obj_streams = Vec::with_capacity(k);
     for (ci, c) in chunks.iter().enumerate() {
+        let open = |suffix: &str| {
+            TermFileReader::open_consuming(&tmp.path(&format!("c{ci}.{suffix}")), read_buf)
+        };
+        // Both readers of the shared file open before either stream reads:
+        // a stream deletes its file at the end, and an empty one ends at once.
+        let (shared_s, shared_o) = (open("shared")?, open("shared")?);
         subj_streams.push(SpaceStream::new(
-            TermFileReader::open(&tmp.path(&format!("c{ci}.shared")))?,
-            TermFileReader::open(&tmp.path(&format!("c{ci}.subj")))?,
+            shared_s,
+            open("subj")?,
             c.section_terms[0],
         )?);
         obj_streams.push(SpaceStream::new(
-            TermFileReader::open(&tmp.path(&format!("c{ci}.shared")))?,
-            TermFileReader::open(&tmp.path(&format!("c{ci}.obj")))?,
+            shared_o,
+            open("obj")?,
             c.section_terms[0],
         )?);
     }
@@ -876,14 +1187,25 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
             Class::Shared => {
                 let (term, s_carriers) = s_item.take().unwrap();
                 let (_, o_carriers) = o_item.take().unwrap();
-                let enc = CLASS_SHARED | ranks[0];
+                // A shared id is final at once: shared ids lead both spaces.
+                let id = shared_id(ranks[0])?;
                 for (ci, lid) in s_carriers {
-                    remaps[ci].subj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        None | Some(0) => remaps.push(ci, Seg::Shared, lid, id)?,
+                        Some(rel) => remaps.push(ci, Seg::SubjOnly, rel, id)?,
+                    }
                 }
                 for (ci, lid) in o_carriers {
-                    remaps[ci].obj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        // shared in its chunk too: written from the subject side
+                        None | Some(0) => {}
+                        Some(rel) => remaps.push(ci, Seg::ObjOnly, rel, id)?,
+                    }
                 }
                 has_quoted |= term.starts_with("<<");
+                if term.starts_with('"') {
+                    schema_facts.shared_literals += 1;
+                }
                 shared_sec.push(&term)?;
                 ranks[0] += 1;
                 s_item = subjects.next()?;
@@ -891,9 +1213,16 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
             }
             Class::SubjOnly => {
                 let (term, carriers) = s_item.take().unwrap();
-                let enc = CLASS_SUBJ_ONLY | ranks[1];
+                let id = role_only_id(ranks[1])?;
                 for (ci, lid) in carriers {
-                    remaps[ci].subj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        Some(rel) if rel > 0 => remaps.push(ci, Seg::SubjOnly, rel, id)?,
+                        _ => {
+                            return Err(ExtBuildError::Internal(
+                                "a chunk-shared term merged as subject-only",
+                            ))
+                        }
+                    }
                 }
                 has_quoted |= term.starts_with("<<");
                 subj_sec.push(&term)?;
@@ -902,71 +1231,71 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
             }
             Class::ObjOnly => {
                 let (term, carriers) = o_item.take().unwrap();
-                let enc = CLASS_OBJ_ONLY | ranks[2];
+                let id = role_only_id(ranks[2])?;
                 for (ci, lid) in carriers {
-                    remaps[ci].obj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        Some(rel) if rel > 0 => remaps.push(ci, Seg::ObjOnly, rel, id)?,
+                        _ => {
+                            return Err(ExtBuildError::Internal(
+                                "a chunk-shared term merged as object-only",
+                            ))
+                        }
+                    }
                 }
                 has_quoted |= term.starts_with("<<");
+                if term.starts_with('"') {
+                    schema_facts.objonly_literals += 1;
+                }
                 obj_sec.push(&term)?;
                 ranks[2] += 1;
                 o_item = objects.next()?;
             }
         }
     }
+    // The node merge is over: release its readers and write buffers.
+    drop((subjects, objects));
+    for seg in [Seg::Shared, Seg::SubjOnly, Seg::ObjOnly] {
+        remaps.flush(seg)?;
+    }
     let (n_shared, n_subj, n_obj) = (ranks[0], ranks[1], ranks[2]);
+    if n_shared.checked_add(n_subj.max(n_obj)).is_none() {
+        return Err(ExtBuildError::Internal(
+            "more than 2^32 subject or object terms: the dictionary is too large for one file",
+        ));
+    }
+    schema_facts.n_shared = n_shared;
 
     // predicates: plain k-way merge over the pred term files
     let mut pred_sec = RawSectionWriter::create(tmp.path("g.pred.raw"))?;
     {
         let mut streams = Vec::with_capacity(k);
-        for (ci, _) in chunks.iter().enumerate() {
-            // empty shared reader + real pred reader => a plain single stream
+        for (ci, c) in chunks.iter().enumerate() {
+            // real pred reader + empty role-only reader => a plain single stream
+            let empty = tmp.path(&format!("c{ci}.pred.empty"));
+            File::create(&empty)?;
             streams.push(SpaceStream::new(
-                TermFileReader::open(&tmp.path(&format!("c{ci}.pred")))?,
-                TermFileReader::open(&tmp.path(&format!("c{ci}.pred.empty",))).or_else(
-                    |_| -> Result<TermFileReader, std::io::Error> {
-                        // create-once empty file per chunk
-                        let p = tmp.path(&format!("c{ci}.pred.empty"));
-                        File::create(&p)?;
-                        TermFileReader::open(&p)
-                    },
-                )?,
-                chunks[ci].section_terms[3],
+                TermFileReader::open_consuming(&tmp.path(&format!("c{ci}.pred")), read_buf)?,
+                TermFileReader::open_consuming(&empty, read_buf)?,
+                c.section_terms[3],
             )?);
         }
         let mut kway = KWayTerms::new(streams)?;
         let mut rank = 0u32;
         while let Some((term, carriers)) = kway.next()? {
             for (ci, lid) in carriers {
-                remaps[ci].pred[(lid - 1) as usize] = rank + 1; // pred ids are final now
+                remaps.push(ci, Seg::Pred, lid, rank + 1)?; // pred ids are final now
+            }
+            if let Some(i) = schema_preds.iter().position(|w| *w == term) {
+                schema_facts.pred_ids[i] = Some(rank + 1);
+            }
+            if let Some(slot) = crate::label_index::slot_of_predicate(&term) {
+                schema_facts.label_preds.push((rank + 1, slot));
             }
             pred_sec.push(&term)?;
             rank += 1;
         }
     }
-
-    // fix up provisional node encodings to final space ids:
-    //   shared:        id = rank + 1                      (both spaces)
-    //   subject-only:  id = n_shared + rank + 1           (subject space)
-    //   object-only:   id = n_shared + rank + 1           (object space)
-    for rm in &mut remaps {
-        for v in rm.subj.iter_mut() {
-            let rank = *v & !CLASS_MASK;
-            *v = match *v & CLASS_MASK {
-                CLASS_SHARED => rank + 1,
-                CLASS_SUBJ_ONLY => n_shared + rank + 1,
-                _ => return Err(ExtBuildError::Internal("subject remap class corrupt")),
-            };
-        }
-        for v in rm.obj.iter_mut() {
-            let rank = *v & !CLASS_MASK;
-            *v = match *v & CLASS_MASK {
-                CLASS_SHARED => rank + 1,
-                CLASS_OBJ_ONLY => n_shared + rank + 1,
-                _ => return Err(ExtBuildError::Internal("object remap class corrupt")),
-            };
-        }
-    }
+    remaps.flush(Seg::Pred)?;
 
     // graph names: the same k-way merge, into a plain sorted name list rather
     // than a front-coded dict section — the format stores graph names verbatim.
@@ -983,8 +1312,8 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
             let empty = tmp.path(&format!("c{ci}.graph.empty"));
             File::create(&empty)?;
             streams.push(SpaceStream::new(
-                TermFileReader::open(&real)?,
-                TermFileReader::open(&empty)?,
+                TermFileReader::open_consuming(&real, read_buf)?,
+                TermFileReader::open_consuming(&empty, read_buf)?,
                 c.graph_terms,
             )?);
         }
@@ -992,7 +1321,7 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
         while let Some((name, carriers)) = kway.next()? {
             graph_count += 1;
             for (ci, lid) in carriers {
-                remaps[ci].graph[(lid - 1) as usize] = graph_count;
+                remaps.push(ci, Seg::Graph, lid, graph_count)?;
             }
             w.write_all(name.as_bytes())?;
             w.write_all(b"\n")?;
@@ -1002,6 +1331,9 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
     } else {
         None
     };
+    // Subject- and object-only ids stay provisional until `n_shared` is
+    // known: they are fixed up as each chunk's tables are loaded.
+    let remaps = remaps.finish(n_shared)?;
 
     // chunk-encode each raw section (identical to encode_chunked_dict_section)
     let codec = crate::file::writer_codec();
@@ -1029,27 +1361,41 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
     let term_count =
         n_shared as u64 + n_subj as u64 + n_obj as u64 + section_files[3].term_count as u64;
 
-    Ok(MergedDict {
-        section_files: section_files.map(|s| s.file),
-        term_count,
-        has_quoted,
+    Ok((
+        MergedDict {
+            section_files: section_files.map(|s| s.file),
+            term_count,
+            has_quoted,
+            graph_names,
+            graph_count,
+            schema_facts,
+        },
         remaps,
-        graph_names,
-        graph_count,
-    })
+    ))
 }
 
 /// A raw front-coded dict-section body being streamed to a tmp file, exactly as
 /// [`crate::dict::DictSectionBuilder::build`] would lay it out — plus the
 /// restart-offset bookkeeping needed to emit the header and (later) the chunked
 /// encoding without ever holding the body in RAM.
+///
+/// The restart offsets go to disk too (8 B per `restart_interval` terms: a
+/// section of a billion terms has 62.5 M of them), and so does the chunk
+/// directory [`finish_chunked`](Self::finish_chunked) builds from them, so a
+/// section of any size costs this writer one 64 KiB chunk of RAM.
 struct RawSectionWriter {
     w: BufWriter<File>,
     path: PathBuf,
     prev: String,
     n: u64,
     body_len: u64,
-    restart_offsets: Vec<u64>,
+    /// every restart offset, `u64` little-endian, in order
+    restarts: BufWriter<File>,
+    restarts_path: PathBuf,
+    n_restarts: u64,
+    /// the restart offsets' varint bytes, summed: the header's length,
+    /// known without reading them back
+    restart_varint_bytes: u64,
 }
 
 struct FinishedSection {
@@ -1057,15 +1403,41 @@ struct FinishedSection {
     term_count: u32,
 }
 
+/// Reads back the `u64` restart offsets a [`RawSectionWriter`] spilled.
+struct OffsetReader {
+    rd: BufReader<File>,
+}
+
+impl OffsetReader {
+    fn open(path: &Path) -> Result<Self, std::io::Error> {
+        Ok(OffsetReader {
+            rd: BufReader::with_capacity(1 << 16, File::open(path)?),
+        })
+    }
+
+    fn next(&mut self) -> Result<Option<u64>, std::io::Error> {
+        let mut b = [0u8; 8];
+        match self.rd.read_exact(&mut b) {
+            Ok(()) => Ok(Some(u64::from_le_bytes(b))),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 impl RawSectionWriter {
     fn create(path: PathBuf) -> Result<Self, std::io::Error> {
+        let restarts_path = path.with_extension("restarts");
         Ok(RawSectionWriter {
             w: BufWriter::with_capacity(1 << 20, File::create(&path)?),
             path,
             prev: String::new(),
             n: 0,
             body_len: 0,
-            restart_offsets: Vec::new(),
+            restarts: BufWriter::with_capacity(1 << 16, File::create(&restarts_path)?),
+            restarts_path,
+            n_restarts: 0,
+            restart_varint_bytes: 0,
         })
     }
 
@@ -1073,7 +1445,9 @@ impl RawSectionWriter {
         let r = env_restart_interval() as u64;
         let mut entry = Vec::with_capacity(term.len() + 8);
         if self.n.is_multiple_of(r) {
-            self.restart_offsets.push(self.body_len);
+            self.restarts.write_all(&self.body_len.to_le_bytes())?;
+            self.n_restarts += 1;
+            self.restart_varint_bytes += uvarint_len(self.body_len);
             write_uvarint(&mut entry, 0);
             write_uvarint(&mut entry, term.len() as u64);
             entry.extend_from_slice(term.as_bytes());
@@ -1094,7 +1468,9 @@ impl RawSectionWriter {
 
     /// Emit the chunked section payload (byte-identical to running
     /// `encode_chunked_dict_section` over the equivalent raw section) into a new
-    /// tmp file, deleting the raw body.
+    /// tmp file, deleting the raw body. Streams: the restart offsets are read
+    /// back once to cut the chunks and once more to write the header, and the
+    /// chunk directory is spilled as it is built.
     fn finish_chunked(
         mut self,
         tmp: &TmpDir,
@@ -1103,48 +1479,55 @@ impl RawSectionWriter {
     ) -> Result<FinishedSection, ExtBuildError> {
         self.w.flush()?;
         drop(self.w);
+        self.restarts.flush()?;
+        drop(self.restarts);
         let term_count = self.n as u32;
+        let interval = env_restart_interval() as u64;
 
-        // the raw header exactly as DictSectionBuilder writes it
-        let mut header = Vec::new();
-        write_uvarint(&mut header, self.n);
-        write_uvarint(&mut header, env_restart_interval() as u64);
-        write_uvarint(&mut header, self.restart_offsets.len() as u64);
-        for off in &self.restart_offsets {
-            write_uvarint(&mut header, *off);
-        }
+        // the raw header exactly as DictSectionBuilder writes it:
+        // [n][restart interval][restart count][restart offsets…]
+        let header_len = uvarint_len(self.n)
+            + uvarint_len(interval)
+            + uvarint_len(self.n_restarts)
+            + self.restart_varint_bytes;
 
-        // chunk bounds over the body by run offsets (whole runs, 64 KiB budget)
-        let budget = 64 * 1024u64; // DICT_CHUNK_BUDGET
-        let offs = &self.restart_offsets;
-        let mut bounds: Vec<(usize, u64, u64)> = Vec::new(); // (first_run, start, end)
-        let mut r = 0usize;
-        while r < offs.len() {
-            let start = offs[r];
-            let mut r2 = r + 1;
-            while r2 < offs.len() && offs[r2] - start < budget {
-                r2 += 1;
-            }
-            let end = if r2 < offs.len() {
-                offs[r2]
-            } else {
-                self.body_len
-            };
-            bounds.push((r, start, end));
-            r = r2;
-        }
-
+        // Chunk bounds over the body by run offsets (whole runs, 64 KiB
+        // budget), exactly as `encode_chunked_dict_section` cuts them: a chunk
+        // starts at a run and takes the following runs while they start less
+        // than the budget past its own start.
+        let budget = crate::write_opts::dict_chunk_budget() as u64;
+        let mut offs = OffsetReader::open(&self.restarts_path)?;
         let mut body = File::open(&self.path)?;
-        // compress chunks (reading each body slice from disk), spill compressed
-        // bytes to a scratch file, record dir entries
+        // compressed chunks and the encoded directory, each spilled
         let comp_path = tmp.path(&format!("{out_name}.chunks"));
-        let mut comp_out = BufWriter::new(File::create(&comp_path)?);
-        let mut dir: Vec<(usize, Vec<u8>, u64)> = Vec::with_capacity(bounds.len());
+        let mut comp_out = BufWriter::with_capacity(1 << 20, File::create(&comp_path)?);
+        let dir_path = tmp.path(&format!("{out_name}.dir"));
+        let mut dir_out = BufWriter::with_capacity(1 << 16, File::create(&dir_path)?);
+        let mut dir_len = 0u64;
+        let mut num_chunks = 0u64;
+        let mut prev_run = 0u64;
         // The previous chunk's last term — the separator's lower bound. Kept in
         // lockstep with `encode_chunked_dict_section`; the two writers must emit
         // byte-identical directories for the same input.
         let mut prev_last: Option<Vec<u8>> = None;
-        for (i, &(first_run, start, end)) in bounds.iter().enumerate() {
+        let mut entry = Vec::new();
+        // `next` is the offset of run `run`, the first run not yet in a chunk
+        let mut run = 0u64;
+        let mut next = offs.next()?;
+        while let Some(start) = next {
+            let first_run = run;
+            let mut last_run_start = start;
+            run += 1;
+            next = offs.next()?;
+            while let Some(o) = next {
+                if o - start >= budget {
+                    break;
+                }
+                last_run_start = o;
+                run += 1;
+                next = offs.next()?;
+            }
+            let end = next.unwrap_or(self.body_len);
             body.seek(SeekFrom::Start(start))?;
             let mut raw = vec![0u8; (end - start) as usize];
             body.read_exact(&mut raw)?;
@@ -1153,7 +1536,7 @@ impl RawSectionWriter {
                 .ok_or(ExtBuildError::Internal("restart entry unreadable"))?;
             // Routing key = the shortest separator, not the first term; chunk 0
             // needs none. See `crate::dict::SectionChunk::key`.
-            let key = if i == 0 {
+            let key = if num_chunks == 0 {
                 Vec::new()
             } else {
                 match &prev_last {
@@ -1161,41 +1544,74 @@ impl RawSectionWriter {
                     Some(pl) => crate::dict::shortest_separator(pl, &first_term),
                 }
             };
-            if i + 1 < bounds.len() {
-                // This chunk's last run starts one run before the next chunk's;
-                // `raw` already holds the bytes, so decoding it is free of I/O.
-                let last_run_rel = (offs[bounds[i + 1].0 - 1] - start) as usize;
+            if next.is_some() {
+                // This chunk's last run is the one before the next chunk's
+                // first; `raw` already holds the bytes, so decoding it is free
+                // of I/O.
+                let last_run_rel = (last_run_start - start) as usize;
                 prev_last = crate::dict::run_last_term(&raw, last_run_rel, raw.len());
             }
             let comp = crate::file::compress(codec, &raw);
             comp_out.write_all(&comp)?;
-            dir.push((first_run, key, comp.len() as u64));
+            entry.clear();
+            write_uvarint(&mut entry, first_run - prev_run);
+            write_uvarint(&mut entry, key.len() as u64);
+            entry.extend_from_slice(&key);
+            write_uvarint(&mut entry, comp.len() as u64);
+            dir_out.write_all(&entry)?;
+            dir_len += entry.len() as u64;
+            prev_run = first_run;
+            num_chunks += 1;
         }
         comp_out.flush()?;
+        drop(comp_out);
+        dir_out.flush()?;
+        drop(dir_out);
         drop(body);
         let _ = std::fs::remove_file(&self.path);
 
         // assemble: [header_len][header][num_chunks][dir…][compressed chunks…]
         let out_path = tmp.path(out_name);
-        let mut out = BufWriter::new(File::create(&out_path)?);
+        let mut out = BufWriter::with_capacity(1 << 20, File::create(&out_path)?);
         let mut head = Vec::new();
-        write_uvarint(&mut head, header.len() as u64);
-        head.extend_from_slice(&header);
-        write_uvarint(&mut head, dir.len() as u64);
-        let mut prev_run = 0usize;
-        for (first_run, key, comp_len) in &dir {
-            write_uvarint(&mut head, (*first_run - prev_run) as u64);
-            write_uvarint(&mut head, key.len() as u64);
-            head.extend_from_slice(key);
-            write_uvarint(&mut head, *comp_len);
-            prev_run = *first_run;
-        }
+        write_uvarint(&mut head, header_len);
+        write_uvarint(&mut head, self.n);
+        write_uvarint(&mut head, interval);
+        write_uvarint(&mut head, self.n_restarts);
         out.write_all(&head)?;
+        let mut written = head.len() as u64;
+        let mut offs = OffsetReader::open(&self.restarts_path)?;
+        while let Some(off) = offs.next()? {
+            head.clear();
+            write_uvarint(&mut head, off);
+            out.write_all(&head)?;
+            written += head.len() as u64;
+        }
+        drop(offs);
+        let _ = std::fs::remove_file(&self.restarts_path);
+        if written != uvarint_len(header_len) + header_len {
+            return Err(ExtBuildError::Internal(
+                "dictionary section header length mismatch",
+            ));
+        }
+        head.clear();
+        write_uvarint(&mut head, num_chunks);
+        out.write_all(&head)?;
+        written += head.len() as u64;
+        let mut dir_in = File::open(&dir_path)?;
+        written += std::io::copy(&mut dir_in, &mut out)?;
+        drop(dir_in);
+        let _ = std::fs::remove_file(&dir_path);
         let mut comp_in = File::open(&comp_path)?;
         let copied = std::io::copy(&mut comp_in, &mut out)?;
+        drop(comp_in);
         out.flush()?;
         let _ = std::fs::remove_file(&comp_path);
-        let len = head.len() as u64 + copied;
+        let len = written + copied;
+        debug_assert_eq!(
+            len,
+            uvarint_len(header_len) + header_len + uvarint_len(num_chunks) + dir_len + copied
+        );
         Ok(FinishedSection {
             file: SectionFile {
                 path: out_path,
@@ -1226,6 +1642,110 @@ fn read_restart_term(raw: &[u8]) -> Option<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3: remap every chunk to global ids
+// ---------------------------------------------------------------------------
+
+/// Rewrite every chunk's statements in global ids, loading one chunk's remap
+/// tables at a time: default triples to `global_tri`, named quads to
+/// `global_qtri` (graph first: a subject id in the quad layout, an ordinal in
+/// the per-graph one). The default triples are teed into the SCHEMA and
+/// LABEL_INDEX passes and each chunk's text-index words are remapped onto the
+/// same subject ids. The
+/// chunk spills are deleted as they are consumed.
+#[allow(clippy::too_many_arguments)]
+fn remap_chunks(
+    tmp: &TmpDir,
+    chunks: &[ChunkInfo],
+    remaps: &RemapStore,
+    quad_layout: bool,
+    global_tri: &Path,
+    global_qtri: Option<&Path>,
+    mut text: Option<&mut crate::text_index_spill::TextSpill>,
+    mut schema: Option<&mut ExtSchema>,
+    mut labels: Option<&mut ExtLabels>,
+) -> Result<(), ExtBuildError> {
+    let mut out = BufWriter::with_capacity(1 << 20, File::create(global_tri)?);
+    let mut qout = match global_qtri {
+        Some(p) => Some(BufWriter::with_capacity(1 << 20, File::create(p)?)),
+        None => None,
+    };
+    for (ci, chunk) in chunks.iter().enumerate() {
+        let maps = remaps.load(ci)?;
+        // The chunk's literal words, onto the same global subject ids.
+        if let Some(text) = text.as_deref_mut() {
+            text.remap_chunk(&tmp.path(&format!("c{ci}.tok")), &maps.subj)?;
+        }
+        let mut rd =
+            BufReader::with_capacity(1 << 20, File::open(tmp.path(&format!("c{ci}.tri")))?);
+        let mut buf = [0u8; 12];
+        loop {
+            match rd.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+            let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
+            let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+            let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+            let gs = maps.subj[(s - 1) as usize];
+            let gp = maps.pred[(p - 1) as usize];
+            let go = maps.obj[(o - 1) as usize];
+            out.write_all(&gs.to_le_bytes())?;
+            out.write_all(&gp.to_le_bytes())?;
+            out.write_all(&go.to_le_bytes())?;
+            if let Some(x) = schema.as_deref_mut() {
+                x.tee(gs, gp, go)?;
+            }
+            if let Some(x) = labels.as_deref_mut() {
+                x.tee(gs, gp, go)?;
+            }
+        }
+        drop(rd);
+        let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri")));
+        if chunk.quad_count > 0 {
+            let qout = qout
+                .as_mut()
+                .ok_or(ExtBuildError::Internal("named quads without a spill"))?;
+            let mut rd =
+                BufReader::with_capacity(1 << 20, File::open(tmp.path(&format!("c{ci}.qtri")))?);
+            // Quad index: the graph is a subject id; else an ordinal.
+            let gmap = if quad_layout { &maps.subj } else { &maps.graph };
+            let mut buf = [0u8; 16];
+            loop {
+                match rd.read_exact(&mut buf) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => return Err(e.into()),
+                }
+                let g = u32::from_le_bytes(buf[0..4].try_into().unwrap());
+                let s = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+                let p = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+                let o = u32::from_le_bytes(buf[12..16].try_into().unwrap());
+                qout.write_all(&gmap[(g - 1) as usize].to_le_bytes())?;
+                qout.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
+                qout.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
+                qout.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
+            }
+        }
+        let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.qtri")));
+    }
+    out.flush()?;
+    if let Some(mut q) = qout {
+        q.flush()?;
+    }
+    let total = remaps.total_table_bytes();
+    trace::add("remap_total_bytes", total);
+    eprintln!(
+        "extbuild: remapped {} chunk(s) one at a time — {} B of id tables in all, \
+         at most {} B resident",
+        chunks.len(),
+        total,
+        remaps.largest_table_bytes()
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4: external permutation sort + streaming tiler
 // ---------------------------------------------------------------------------
 
@@ -1239,6 +1759,22 @@ fn build_permutation_section(
     run_len: usize,
     codec: u8,
     prefix: &str,
+) -> Result<(SectionFile, u64), ExtBuildError> {
+    build_permutation_section_observed(tmp, global_tri, perm, run_len, codec, prefix, &mut |_| {
+        Ok(())
+    })
+}
+
+/// [`build_permutation_section`], handing every deduplicated triple of the
+/// merge, in this permutation's order, to `observe` (the SCHEMA pass).
+fn build_permutation_section_observed(
+    tmp: &TmpDir,
+    global_tri: &Path,
+    perm: crate::index::IndexPermutation,
+    run_len: usize,
+    codec: u8,
+    prefix: &str,
+    observe: &mut dyn FnMut(IdTriple) -> std::io::Result<()>,
 ) -> Result<(SectionFile, u64), ExtBuildError> {
     // 1. sorted runs
     let mut runs: Vec<PathBuf> = Vec::new();
@@ -1279,6 +1815,8 @@ fn build_permutation_section(
     }
 
     // 2. k-way merge (dedup) feeding the streaming tiler
+    note_scratch(tmp);
+    note_merge(runs.len());
     let mut tiler = StreamingTiler::new(tmp, &format!("{prefix}{}", perm.name()), codec)?;
     {
         let mut readers: Vec<RunReader> = runs
@@ -1297,6 +1835,7 @@ fn build_permutation_section(
                 heap.push(std::cmp::Reverse((n, i)));
             }
             if last != Some(t) {
+                observe(t)?;
                 tiler.push(t)?;
                 last = Some(t);
             }
@@ -1396,10 +1935,14 @@ fn sort_quads(v: &mut [IdQuad]) {
     v.sort_unstable();
 }
 
-fn uvarint_len(v: u64) -> u64 {
-    let mut b = Vec::new();
-    write_uvarint(&mut b, v);
-    b.len() as u64
+/// Bytes [`write_uvarint`] takes for `v`.
+fn uvarint_len(mut v: u64) -> u64 {
+    let mut n = 1;
+    while v >= 0x80 {
+        v >>= 7;
+        n += 1;
+    }
+    n
 }
 
 /// Sort `global_qtri` by `(graph, s, p, o)` — so each graph is one contiguous
@@ -1462,6 +2005,8 @@ fn build_named_graphs(
     }
 
     // 2. k-way merge (dedup) → one contiguous run per graph
+    note_scratch(tmp);
+    note_merge(runs.len());
     let body_path = tmp.path("named.body");
     let mut body = BufWriter::with_capacity(1 << 20, File::create(&body_path)?);
     let mut names = TermFileReader::open(graph_names)?;
@@ -1666,6 +2211,222 @@ impl GraphRun {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4b (quad index): the graph-leading orders of `GraphLayout::Quad`
+// ---------------------------------------------------------------------------
+
+/// The finished QUAD_INDEX section, spilled, with the digest the index
+/// container's seal carries.
+struct QuadSectionFile {
+    path: PathBuf,
+    len: u64,
+    digest: [u8; 16],
+    graph_count: u64,
+    quad_count: u64,
+}
+
+/// Spill `input` (16-byte `(g, s, p, o)` records) as sorted, deduplicated runs
+/// of `map`ped quads.
+fn quad_runs(
+    tmp: &TmpDir,
+    input: &Path,
+    run_len: usize,
+    name: &str,
+    map: impl Fn(IdQuad) -> IdQuad,
+) -> Result<Vec<PathBuf>, ExtBuildError> {
+    let mut runs = Vec::new();
+    let mut rd = QuadRunReader::open(input)?;
+    let mut run: Vec<IdQuad> = Vec::with_capacity(run_len.min(1 << 22));
+    loop {
+        let next = rd.next()?;
+        if let Some(q) = next {
+            run.push(map(q));
+        }
+        if run.len() >= run_len || (next.is_none() && !run.is_empty()) {
+            sort_quads(&mut run);
+            run.dedup();
+            let path = tmp.path(&format!("{name}.run{}", runs.len()));
+            let mut w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
+            for &(g, a, b, c) in &run {
+                w.write_all(&g.to_le_bytes())?;
+                w.write_all(&a.to_le_bytes())?;
+                w.write_all(&b.to_le_bytes())?;
+                w.write_all(&c.to_le_bytes())?;
+            }
+            w.flush()?;
+            runs.push(path);
+            run.clear();
+        }
+        if next.is_none() {
+            break;
+        }
+    }
+    Ok(runs)
+}
+
+/// k-way merge of sorted runs, handing each distinct quad to `f` in order.
+fn merge_quad_runs(
+    runs: &[PathBuf],
+    mut f: impl FnMut(IdQuad) -> Result<(), ExtBuildError>,
+) -> Result<(), ExtBuildError> {
+    note_merge(runs.len());
+    let mut readers: Vec<QuadRunReader> = runs
+        .iter()
+        .map(|p| QuadRunReader::open(p))
+        .collect::<Result<_, _>>()?;
+    let mut heap: BinaryHeap<QuadMergeEntry> = BinaryHeap::new();
+    for (i, r) in readers.iter_mut().enumerate() {
+        if let Some(q) = r.next()? {
+            heap.push(std::cmp::Reverse((q, i)));
+        }
+    }
+    let mut last: Option<IdQuad> = None;
+    while let Some(std::cmp::Reverse((q, i))) = heap.pop() {
+        if let Some(n) = readers[i].next()? {
+            heap.push(std::cmp::Reverse((n, i)));
+        }
+        if last != Some(q) {
+            f(q)?;
+            last = Some(q);
+        }
+    }
+    Ok(())
+}
+
+/// Encode a batch of finished quad tiles into an order's directory + payload.
+fn drain_quad_tiles(
+    pending: &mut Vec<Vec<crate::quad::QuadRow>>,
+    codec: u8,
+    perm: crate::index::IndexPermutation,
+    dir: &mut crate::quad::PermDirWriter,
+    payload: &mut BufWriter<File>,
+) -> Result<(), ExtBuildError> {
+    for t in crate::quad::encode_tiles(pending, codec, perm) {
+        dir.add(&t);
+        payload.write_all(&t.bytes)?;
+    }
+    pending.clear();
+    Ok(())
+}
+
+/// Build the QUAD_INDEX section from the globally remapped quad spill: per
+/// graph-leading order, an external sort of `(g, a, b, c)` and the shared
+/// [`crate::quad::QuadTiler`] — byte-identical to `quad::encode_quad_index`.
+fn build_quad_section(
+    tmp: &TmpDir,
+    global_qtri: &Path,
+    run_len: usize,
+    perms: crate::index::PermSet,
+    codec: u8,
+) -> Result<QuadSectionFile, ExtBuildError> {
+    let gblocks_path = tmp.path("quad.gblocks");
+    let mut gblocks = BufWriter::with_capacity(1 << 20, File::create(&gblocks_path)?);
+    let mut gdir = crate::quad::GraphDirWriter::new(codec);
+    let mut dirs: Vec<Vec<u8>> = Vec::with_capacity(perms.len());
+    let mut payloads: Vec<(PathBuf, u64)> = Vec::with_capacity(perms.len());
+    let mut quad_count: Option<u64> = None;
+    for perm in perms.iter() {
+        let spo = perm == crate::index::IndexPermutation::Spo;
+        let name = format!("q{}", perm.name());
+        let runs = quad_runs(tmp, global_qtri, run_len, &name, |(g, s, p, o)| {
+            let (a, b, c) = perm.forward((s, p, o));
+            (g, a, b, c)
+        })?;
+        let ppath = tmp.path(&format!("{name}.tiles"));
+        let mut payload = BufWriter::with_capacity(1 << 20, File::create(&ppath)?);
+        let mut dir = crate::quad::PermDirWriter::default();
+        let mut tiler = crate::quad::QuadTiler::new();
+        let mut pending: Vec<Vec<crate::quad::QuadRow>> = Vec::new();
+        // G+SPO also yields the graph directory: (graph, deduplicated count).
+        let mut cur: Option<(u32, u64)> = None;
+        merge_quad_runs(&runs, |q| {
+            tiler.push(q, &mut |t| pending.push(t));
+            if pending.len() >= TILE_COMPRESS_BATCH {
+                drain_quad_tiles(&mut pending, codec, perm, &mut dir, &mut payload)?;
+            }
+            if spo {
+                cur = match cur {
+                    Some((g, n)) if g == q.0 => Some((g, n + 1)),
+                    Some((g, n)) => {
+                        gdir.push(g, n, &mut gblocks)?;
+                        Some((q.0, 1))
+                    }
+                    None => Some((q.0, 1)),
+                };
+            }
+            Ok(())
+        })?;
+        let n = tiler.finish(&mut |t| pending.push(t));
+        drain_quad_tiles(&mut pending, codec, perm, &mut dir, &mut payload)?;
+        if let (true, Some((g, k))) = (spo, cur) {
+            gdir.push(g, k, &mut gblocks)?;
+        }
+        payload.flush()?;
+        drop(payload);
+        for r in runs {
+            let _ = std::fs::remove_file(r);
+        }
+        if quad_count.is_some_and(|prev| prev != n) {
+            return Err(ExtBuildError::Internal("quad orders' dedup counts diverge"));
+        }
+        quad_count = Some(n);
+        payloads.push((ppath, dir.payload_len()));
+        dirs.push(dir.finish());
+        eprintln!(
+            "extbuild: quad order G+{} indexed ({n} unique quad(s))",
+            perm.name()
+        );
+    }
+    let (gindex, gblocks_len, graph_count) = gdir.finish(&mut gblocks)?;
+    gblocks.flush()?;
+    drop(gblocks);
+    let quad_count = quad_count.unwrap_or(0);
+
+    let mut part_lens = vec![gindex.len() as u64];
+    part_lens.extend(dirs.iter().map(|d| d.len() as u64));
+    part_lens.push(gblocks_len);
+    part_lens.extend(payloads.iter().map(|(_, l)| *l));
+    let preamble = crate::quad::encode_preamble(perms, graph_count, quad_count, &part_lens);
+
+    let path = tmp.path("quad.sec");
+    let mut out = BufWriter::with_capacity(1 << 20, File::create(&path)?);
+    let mut hasher = blake3::Hasher::new();
+    let mut len = 0u64;
+    for bytes in std::iter::once(&preamble)
+        .chain(std::iter::once(&gindex))
+        .chain(dirs.iter())
+    {
+        out.write_all(bytes)?;
+        hasher.update(bytes);
+        len += bytes.len() as u64;
+    }
+    for p in std::iter::once(&gblocks_path).chain(payloads.iter().map(|(p, _)| p)) {
+        let mut rd = File::open(p)?;
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            let k = rd.read(&mut buf)?;
+            if k == 0 {
+                break;
+            }
+            out.write_all(&buf[..k])?;
+            hasher.update(&buf[..k]);
+            len += k as u64;
+        }
+        drop(rd);
+        let _ = std::fs::remove_file(p);
+    }
+    out.flush()?;
+    let mut digest = [0u8; 16];
+    digest.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    Ok(QuadSectionFile {
+        path,
+        len,
+        digest,
+        graph_count,
+        quad_count,
+    })
+}
+
 fn write_uvarint_to(w: &mut BufWriter<File>, v: u64) -> Result<(), std::io::Error> {
     let mut b = Vec::new();
     write_uvarint(&mut b, v);
@@ -1708,7 +2469,7 @@ impl StreamingTiler {
     fn new(tmp: &TmpDir, name: &str, codec: u8) -> Result<Self, ExtBuildError> {
         let comp_path = tmp.path(&format!("{name}.tiles"));
         Ok(StreamingTiler {
-            tile_budget: INDEX_TILE_BUDGET,
+            tile_budget: crate::write_opts::tile_budget(),
             codec,
             tile: Vec::new(),
             tile_size: 0,
@@ -1875,9 +2636,10 @@ impl StreamingTiler {
 // Phase 5: final streaming file assembly
 // ---------------------------------------------------------------------------
 
-/// Stream `header | metadata | dict container | index container | footer` to
-/// `output`, hashing the payload sections incrementally (same part order as
-/// `write_dataset_from_parts`), then patch the finished header at offset 0.
+/// Stream `header | metadata | dict container | index container | text index |
+/// named graphs | footer` to `output`, hashing the payload sections
+/// incrementally (same part order as `write_dataset_from_parts`), then patch the
+/// finished header at offset 0.
 #[allow(clippy::too_many_arguments)]
 fn write_final_file(
     output: &Path,
@@ -1885,14 +2647,20 @@ fn write_final_file(
     build_info: &[u8],
     dict: &MergedDict,
     perm_sections: &[SectionFile],
+    text: Option<&crate::text_index_spill::TextSection>,
     named: Option<&NamedSection>,
+    quad: Option<&QuadSectionFile>,
     quad_count: u64,
     codec: u8,
     perms: crate::index::PermSet,
 ) -> Result<(), ExtBuildError> {
     use crate::header::{
-        Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN,
+        Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TEXT_INDEX_NAMED_GRAPHS,
+        FLAG_TILE_SYNOPSIS, HEADER_LEN,
     };
+    // Quad index: the index container ends with the seal (the section's
+    // digest), which every pre-quad-index reader refuses on the section count.
+    let seal = quad.map(|q| crate::quad::encode_seal(q.digest));
 
     // container framings are tiny; build them in RAM
     let mut dict_frame = Vec::new();
@@ -1907,7 +2675,10 @@ fn write_final_file(
     }
 
     let mut index_frame = Vec::new();
-    write_uvarint(&mut index_frame, perm_sections.len() as u64);
+    write_uvarint(
+        &mut index_frame,
+        (perm_sections.len() + usize::from(seal.is_some())) as u64,
+    );
     let mut index_len = index_frame.len() as u64;
     let mut index_section_heads = Vec::with_capacity(perm_sections.len());
     for s in perm_sections {
@@ -1915,6 +2686,12 @@ fn write_final_file(
         write_uvarint(&mut h, s.len);
         index_len += h.len() as u64 + s.len;
         index_section_heads.push(h);
+    }
+    let mut seal_frame = Vec::new();
+    if let Some(seal) = &seal {
+        write_uvarint(&mut seal_frame, seal.len() as u64);
+        seal_frame.extend_from_slice(seal);
+        index_len += seal_frame.len() as u64;
     }
 
     // The named-graphs section is `[count][per graph: iri, container]`; only the
@@ -1932,9 +2709,12 @@ fn write_final_file(
     let build_len = build_info.len() as u64;
     let dict_offset = HEADER_LEN as u64 + meta_len + build_len;
     let index_offset = dict_offset + dict_len;
-    // pyramid and text index are absent (length 0), so the named graphs follow
-    // the index directly — the same arithmetic `write_dataset_from_parts` does.
-    let named_offset = index_offset + index_len;
+    // The pyramid is absent (length 0), so the text index follows the index
+    // directly and the named graphs follow it — the same arithmetic
+    // `write_dataset_from_parts` does.
+    let text_offset = index_offset + index_len;
+    let text_len = text.map_or(0, |t| t.len());
+    let named_offset = text_offset + text_len;
 
     let mut out = BufWriter::with_capacity(1 << 20, File::create(output)?);
     let mut hasher = blake3::Hasher::new();
@@ -1975,14 +2755,42 @@ fn write_final_file(
         write_hashed(&mut out, &mut hasher, head)?;
         copy_hashed(&s.path, &mut out, &mut hasher)?;
     }
+    write_hashed(&mut out, &mut hasher, &seal_frame)?;
 
     // pyramid section is empty (hash update of nothing = no-op, same as the
-    // in-RAM writer pushing an empty slice); the text index is absent.
+    // in-RAM writer pushing an empty slice).
+
+    // text index: `varint table_len | token table | postings`. A kind-11
+    // (predicate-restricted) section is outside the content hash and starts
+    // with its own digest, patched in below once the payload has gone past —
+    // the bytes `write_dataset_from_parts` writes.
+    let mut text_digest: Option<blake3::Hash> = None;
+    if let Some(t) = text {
+        if t.partial {
+            out.write_all(&[0u8; crate::header::TEXT_INDEX_PARTIAL_DIGEST_LEN as usize])?;
+            let mut digest = blake3::Hasher::new();
+            write_hashed(&mut out, &mut digest, &t.head)?;
+            copy_hashed(&t.table, &mut out, &mut digest)?;
+            copy_hashed(&t.postings, &mut out, &mut digest)?;
+            text_digest = Some(digest.finalize());
+        } else {
+            write_hashed(&mut out, &mut hasher, &t.head)?;
+            copy_hashed(&t.table, &mut out, &mut hasher)?;
+            copy_hashed(&t.postings, &mut out, &mut hasher)?;
+        }
+    }
 
     // named-graphs container
     if let Some(n) = named {
         write_hashed(&mut out, &mut hasher, &named_frame)?;
         copy_hashed(&n.body, &mut out, &mut hasher)?;
+    }
+
+    // quad index: where the named graphs would be; not a hash part of its
+    // own (the seal above carries its digest), exactly as the in-RAM writer.
+    if let Some(q) = quad {
+        let mut rd = File::open(&q.path)?;
+        std::io::copy(&mut rd, &mut out)?;
     }
 
     out.write_all(&crate::header::MAGIC)?; // footer marker
@@ -1994,9 +2802,23 @@ fn write_final_file(
     let header = Header {
         version: crate::header::CURRENT_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
-            | if named_len > 0 { FLAG_HAS_QUADS } else { 0 }
+            | if named_len > 0 || quad.is_some() {
+                FLAG_HAS_QUADS
+            } else {
+                0
+            }
+            | if quad.is_some() {
+                crate::header::FLAG_QUAD_INDEX
+            } else {
+                0
+            }
             | if dict.has_quoted {
                 FLAG_HAS_QUOTED_TRIPLES
+            } else {
+                0
+            }
+            | if text.is_some_and(|t| t.named) {
+                FLAG_TEXT_INDEX_NAMED_GRAPHS
             } else {
                 0
             },
@@ -2018,19 +2840,32 @@ fn write_final_file(
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
         schema_meta_len: 0,
-        text_index_offset: 0,
-        text_index_len: 0,
+        text_index_offset: if text_len > 0 { text_offset } else { 0 },
+        text_index_len: text_len,
+        text_index_partial: text.is_some_and(|t| t.partial),
         build_info_offset: if build_len > 0 {
             HEADER_LEN as u64 + meta_len
         } else {
             0
         },
         build_info_len: build_len,
-        extra_sections: Vec::new(),
+        extra_sections: match quad {
+            Some(q) => vec![crate::header::Section {
+                kind: crate::header::SectionKind::QuadIndex,
+                flags: 0,
+                offset: named_offset,
+                length: q.len,
+            }],
+            None => Vec::new(),
+        },
     };
     let mut f = out.into_inner().map_err(|e| e.into_error())?;
     f.seek(SeekFrom::Start(0))?;
     f.write_all(&header.to_bytes())?;
+    if let Some(d) = text_digest {
+        f.seek(SeekFrom::Start(text_offset))?;
+        f.write_all(&d.as_bytes()[..crate::header::TEXT_INDEX_PARTIAL_DIGEST_LEN as usize])?;
+    }
     f.flush()?;
     Ok(())
 }
@@ -2126,6 +2961,7 @@ mod tests {
                 metadata: Box::new(|_| Vec::new()),
                 build_info: Vec::new(),
                 perms: crate::index::PermSet::ALL,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2160,6 +2996,7 @@ mod tests {
                 metadata: Box::new(|_| Vec::new()),
                 build_info: info.clone(),
                 perms: crate::index::PermSet::ALL,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2248,7 +3085,7 @@ mod tests {
 
         // drive the internals directly with a tiny chunk budget
         let tmp = TmpDir::create(&dir).unwrap();
-        let mut chunker = Chunker::new(&tmp, 4 * 1024); // ~4 KiB chunks
+        let mut chunker = Chunker::new(&tmp, 4 * 1024, GraphLayout::PerGraph); // ~4 KiB chunks
         for q in quads.iter().cloned() {
             chunker.push(q).unwrap();
         }
@@ -2259,29 +3096,21 @@ mod tests {
             chunks.len()
         );
         let statements: u64 = chunks.iter().map(|c| c.triple_count).sum();
-        let merged = merge_dictionaries(&tmp, &chunks).unwrap();
+        let (merged, remaps) = merge_dictionaries(&tmp, &chunks).unwrap();
 
         let global_tri = tmp.path("global.tri");
-        {
-            let mut w = BufWriter::new(File::create(&global_tri).unwrap());
-            for (ci, _c) in chunks.iter().enumerate() {
-                let maps = &merged.remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))).unwrap());
-                let mut buf = [0u8; 12];
-                while rd.read_exact(&mut buf).is_ok() {
-                    let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                    let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                    let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                    w.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())
-                        .unwrap();
-                    w.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())
-                        .unwrap();
-                    w.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())
-                        .unwrap();
-                }
-            }
-            w.flush().unwrap();
-        }
+        remap_chunks(
+            &tmp,
+            &chunks,
+            &remaps,
+            false,
+            &global_tri,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let codec = crate::file::writer_codec();
         let mut sections = Vec::new();
@@ -2303,6 +3132,8 @@ mod tests {
             &merged,
             &sections,
             None,
+            None,
+            None,
             count.unwrap(),
             codec,
             crate::index::PermSet::ALL,
@@ -2317,6 +3148,60 @@ mod tests {
         );
         drop(tmp);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// [`build_ext`] with the chunk budget forced down to `chunk` bytes, so a
+    /// small graph becomes many chunks.
+    fn build_ext_split(quads: &[RawQuad], chunk: u64) -> Vec<u8> {
+        TEST_SPLIT.with(|c| c.set(Some((chunk, 1 << 10))));
+        let (bytes, _) = build_ext(quads.to_vec(), 0);
+        TEST_SPLIT.with(|c| c.set(None));
+        bytes
+    }
+
+    /// The id remap tables were the part of the memory-bounded build that grew
+    /// with the dataset: every chunk's stayed resident from the dictionary
+    /// merge to the end of the remap. Now they go to disk as the merge writes
+    /// them and one chunk's are loaded at a time. Cutting four times the
+    /// graph into four times the chunks quadruples what the old build held
+    /// and leaves what this one holds where it was: one chunk's tables, at
+    /// most a quarter of the chunk budget. The files stay byte-identical.
+    #[test]
+    fn remap_memory_does_not_grow_with_the_chunk_count() {
+        const CHUNK: u64 = 4 * 1024;
+        let run = |n: usize| -> (u64, u64, u64) {
+            let quads = test_quads(n);
+            let reference = build_reference(quads.clone());
+            let collector = crate::build_trace::Collector::start();
+            let bytes = build_ext_split(&quads, CHUNK);
+            let t = collector.snapshot();
+            drop(collector);
+            assert_eq!(bytes, reference, "{n} quads: external build drifted");
+            (
+                t.counter("chunks").unwrap(),
+                t.counter("remap_total_bytes").unwrap(),
+                t.counter("remap_peak_bytes").unwrap(),
+            )
+        };
+        let (k1, total1, peak1) = run(1_000);
+        let (k4, total4, peak4) = run(4_000);
+        assert!(k1 >= 20 && k4 >= 3 * k1, "chunks: {k1}, then {k4}");
+        // What the old merge held resident grows with the chunks…
+        assert!(total4 >= 3 * total1, "tables: {total1} B, then {total4} B");
+        assert!(
+            total4 >= 50 * peak4,
+            "{total4} B in all, {peak4} B resident"
+        );
+        // …what this one holds does not: every buffered statement is charged
+        // at least 96 B against the chunk budget and brings at most six ids.
+        assert!(
+            peak4 <= peak1 * 3 / 2,
+            "resident: {peak1} B, then {peak4} B"
+        );
+        assert!(
+            peak4 <= (CHUNK + 1024) / 4,
+            "{peak4} B for a {CHUNK} B chunk"
+        );
     }
 
     /// The two dictionary writers must agree on the **separator keys**, not
@@ -2470,6 +3355,12 @@ mod tests {
     /// carries `global.qtri` and `g.graphs`, and this harness ignores both — it
     /// would resume as a file with the named graphs silently dropped. It is
     /// checked rather than commented: `global.qtri` present is a hard stop.
+    ///
+    /// **A text index is carried over when it was finished.** Phase 3b leaves
+    /// `tok.table` + `tok.postings` behind before any permutation is sorted, and
+    /// they are reused as they are. Text-index files of an unfinished phase
+    /// (`global.tok`, `tok.run*`, `c<i>.tok`) are a hard stop for the same
+    /// reason as `global.qtri`.
     #[test]
     #[ignore = "operational tool, driven by RETE_RESUME_* env vars"]
     fn resume_from_spill() {
@@ -2479,6 +3370,15 @@ mod tests {
             "this spill has named quads (global.qtri); resuming it here would \
              write a file with the named graphs silently missing — rerun the \
              build instead"
+        );
+        let unfinished_text = std::fs::read_dir(&spill).unwrap().flatten().any(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n == "global.tok" || n.starts_with("tok.run") || n.ends_with(".tok")
+        });
+        assert!(
+            !unfinished_text,
+            "this spill has an unfinished text index (global.tok / tok.run* / c<i>.tok); \
+             resuming it here would write a file without it — rerun the build instead"
         );
         let out = PathBuf::from(std::env::var("RETE_RESUME_OUT").expect("RETE_RESUME_OUT"));
         let term_count: u64 = std::env::var("RETE_RESUME_TERMS").unwrap().parse().unwrap();
@@ -2502,9 +3402,9 @@ mod tests {
             ],
             term_count,
             has_quoted: false,
-            remaps: Vec::new(),
             graph_names: None,
             graph_count: 0,
+            schema_facts: Default::default(),
         };
         let tmp = TmpDir { dir: spill.clone() };
         let global_tri = spill.join("global.tri");
@@ -2540,12 +3440,44 @@ mod tests {
             eprintln!("resume: {} done", perm.name());
             sections.push(s);
         }
+        let (table, postings) = (spill.join("tok.table"), spill.join("tok.postings"));
+        let text = if table.exists() && postings.exists() {
+            let table_len = std::fs::metadata(&table).unwrap().len();
+            let mut head = Vec::new();
+            write_uvarint(&mut head, table_len);
+            // The scope block in the token table decides kind 6 or 11, and
+            // the header's named-graphs bit.
+            let mut prefix = head.clone();
+            prefix.extend(std::fs::read(&table).unwrap());
+            let scope = crate::text_index::TextIndex::from_token_table(
+                &prefix,
+                codec,
+                Box::new(|_, _| None),
+            )
+            .expect("tok.table parses")
+            .scope()
+            .clone();
+            eprintln!("resume: reusing the text index");
+            Some(crate::text_index_spill::TextSection {
+                head,
+                table,
+                table_len,
+                postings_len: std::fs::metadata(&postings).unwrap().len(),
+                postings,
+                partial: scope.restricts_predicates(),
+                named: scope.covers_named_graphs(),
+            })
+        } else {
+            None
+        };
         write_final_file(
             &out,
             &metadata,
             &[],
             &merged,
             &sections,
+            text.as_ref(),
+            None,
             None,
             quad_count,
             codec,
@@ -2657,7 +3589,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("out.rete");
         let tmp = TmpDir::create(&dir).unwrap();
-        let mut chunker = Chunker::new(&tmp, 4 * 1024); // ~4 KiB chunks
+        let mut chunker = Chunker::new(&tmp, 4 * 1024, GraphLayout::PerGraph); // ~4 KiB chunks
         for q in quads.iter().cloned() {
             chunker.push(q).unwrap();
         }
@@ -2710,7 +3642,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("out.rete");
         let tmp = TmpDir::create(&dir).unwrap();
-        let mut chunker = Chunker::new(&tmp, 64 * 1024);
+        let mut chunker = Chunker::new(&tmp, 64 * 1024, GraphLayout::PerGraph);
         for q in quads.iter().cloned() {
             chunker.push(q).unwrap();
         }
@@ -2794,52 +3726,21 @@ mod tests {
         run_len: usize,
         ram_triples: usize,
     ) -> Result<Vec<u8>, ExtBuildError> {
-        let mut merged = merge_dictionaries(tmp, chunks)?;
-        let remaps = std::mem::take(&mut merged.remaps);
+        let (merged, remaps) = merge_dictionaries(tmp, chunks)?;
         let has_named = chunks.iter().any(|c| c.quad_count > 0);
         let global_tri = tmp.path("global.tri");
         let global_qtri = tmp.path("global.qtri");
-        {
-            let mut w = BufWriter::new(File::create(&global_tri)?);
-            let mut qw = if has_named {
-                Some(BufWriter::new(File::create(&global_qtri)?))
-            } else {
-                None
-            };
-            for (ci, chunk) in chunks.iter().enumerate() {
-                let maps = &remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
-                let mut buf = [0u8; 12];
-                while rd.read_exact(&mut buf).is_ok() {
-                    let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                    let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                    let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                    w.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
-                    w.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
-                    w.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
-                }
-                if chunk.quad_count > 0 {
-                    let qw = qw.as_mut().unwrap();
-                    let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri")))?);
-                    let mut buf = [0u8; 16];
-                    while rd.read_exact(&mut buf).is_ok() {
-                        let g = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                        let s = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                        let p = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                        let o = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-                        qw.write_all(&maps.graph[(g - 1) as usize].to_le_bytes())?;
-                        qw.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
-                        qw.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
-                        qw.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
-                    }
-                }
-            }
-            w.flush()?;
-            if let Some(mut q) = qw {
-                q.flush()?;
-            }
-        }
-        drop(remaps);
+        remap_chunks(
+            tmp,
+            chunks,
+            &remaps,
+            false,
+            &global_tri,
+            has_named.then_some(global_qtri.as_path()),
+            None,
+            None,
+            None,
+        )?;
 
         let codec = crate::file::writer_codec();
         let perms = crate::index::PermSet::ALL;
@@ -2872,11 +3773,370 @@ mod tests {
             &[],
             &merged,
             &sections,
+            None,
             named.as_ref(),
+            None,
             quads,
             codec,
             perms,
         )?;
         Ok(std::fs::read(out)?)
+    }
+
+    // ---- `--text-index` in the memory-bounded build -------------------------
+
+    /// Literal-rich quads: titles and provenance-style descriptions in the
+    /// default graph (multi-byte words included), provenance snapshots in
+    /// named graphs, on top of the fedlex shape (its `"Artikel …"@de` literals
+    /// live in named graphs too).
+    fn text_quads() -> Vec<RawQuad> {
+        let mut q = fedlex_shaped_quads(40, 9);
+        for i in 0..600usize {
+            let s = format!("<http://ex/w{}>", i % 150);
+            q.push((
+                s.clone(),
+                "<http://purl.org/dc/terms/title>".to_string(),
+                format!("\"Glucose Études {} on ünïcode café\"@en", i % 37),
+                None,
+            ));
+            q.push((
+                s.clone(),
+                "<http://purl.org/dc/terms/description>".to_string(),
+                format!("\"The entity {} has been modified.\"", i % 150),
+                None,
+            ));
+            q.push((
+                format!("<http://ex/w{}/prov/se/1>", i % 150),
+                "<http://purl.org/dc/terms/description>".to_string(),
+                format!("\"The entity has been created ({i}).\""),
+                Some(format!("<http://ex/w{}/prov/>", i % 150)),
+            ));
+        }
+        q
+    }
+
+    fn text_scopes() -> Vec<crate::text_index::TextIndexScope> {
+        use crate::text_index::{TextIndexGraphs, TextIndexScope};
+        let none: [&str; 0] = [];
+        vec![
+            TextIndexScope::default(),
+            TextIndexScope::from_options(TextIndexGraphs::All, none, none).unwrap(),
+            TextIndexScope::from_options(
+                TextIndexGraphs::Default,
+                none,
+                ["http://purl.org/dc/terms/description"],
+            )
+            .unwrap(),
+            TextIndexScope::from_options(
+                TextIndexGraphs::All,
+                ["http://purl.org/dc/terms/description"],
+                none,
+            )
+            .unwrap(),
+        ]
+    }
+
+    fn build_reference_text(
+        quads: &[RawQuad],
+        scope: &crate::text_index::TextIndexScope,
+    ) -> Vec<u8> {
+        let (bytes, _stats) = ingest::assemble_dataset_streaming_algo(
+            |visit: &mut dyn FnMut(RawQuad)| {
+                for q in quads.iter().cloned() {
+                    visit(q);
+                }
+                Ok(())
+            },
+            false,
+            scope.clone(),
+            None,
+            crate::PyramidAlgo::Louvain,
+            |_, _, _| Vec::new(),
+        )
+        .unwrap();
+        bytes
+    }
+
+    /// The public entry point with a text index; `split` forces many chunks and
+    /// many text sort runs on a small graph.
+    fn build_ext_text(
+        quads: &[RawQuad],
+        scope: &crate::text_index::TextIndexScope,
+        split: Option<(u64, usize)>,
+    ) -> Vec<u8> {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("rete-extbuild-text-{}-{seq}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.rete");
+        TEST_SPLIT.with(|c| c.set(split));
+        let res = build_external(
+            |visit| {
+                for q in quads.iter().cloned() {
+                    visit(q)?;
+                }
+                Ok(())
+            },
+            &out,
+            ExternalBuildOptions {
+                memory_budget: 0,
+                tmp_dir: Some(dir.clone()),
+                text_index: Some(scope.clone()),
+                ..Default::default()
+            },
+        );
+        TEST_SPLIT.with(|c| c.set(None));
+        res.unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        // The spill directory is gone; only the output remains.
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [std::ffi::OsString::from("out.rete")]);
+        let _ = std::fs::remove_dir_all(&dir);
+        bytes
+    }
+
+    /// B1's requirement: with `--text-index` the memory-bounded build writes the
+    /// same TEXT_INDEX section as the in-RAM build — and, the pyramid being off
+    /// on both sides, the same file — in one chunk and in many, for every scope.
+    #[test]
+    fn external_text_index_is_byte_identical_to_in_ram() {
+        let quads = text_quads();
+        for scope in text_scopes() {
+            let reference = build_reference_text(&quads, &scope);
+            let rh = crate::Header::from_bytes(&reference).unwrap();
+            assert!(
+                rh.text_index_len > 0,
+                "{scope:?}: the fixture must index something"
+            );
+            assert_eq!(rh.text_index_partial, scope.restricts_predicates());
+            assert_eq!(
+                rh.text_index_covers_named_graphs(),
+                scope.covers_named_graphs()
+            );
+            for split in [None, Some((4 * 1024, 1024))] {
+                let bytes = build_ext_text(&quads, &scope, split);
+                assert_eq!(
+                    bytes, reference,
+                    "{scope:?}, split {split:?}: external build must be byte-identical"
+                );
+            }
+        }
+    }
+
+    /// The external file's text index answers searches, verifies, and carries
+    /// its scope: the provenance text is found only when named graphs are in
+    /// scope, the descriptions only when their predicate is.
+    #[test]
+    fn external_text_index_is_searchable_in_its_scope() {
+        let quads = text_quads();
+        let scopes = text_scopes();
+        let search = |scope: &crate::text_index::TextIndexScope, word: &str| -> usize {
+            let bytes = build_ext_text(&quads, scope, Some((4 * 1024, 1024)));
+            assert!(crate::verify(&bytes).unwrap());
+            let rete = crate::Rete::open(&bytes).unwrap();
+            assert!(rete.has_text_index());
+            assert_eq!(rete.text_index().unwrap().scope(), scope);
+            rete.text_search(&[word], None, 0).len()
+        };
+        // "glucose": 150 titled works, in every scope that keeps titles.
+        assert_eq!(search(&scopes[0], "glucose"), 150);
+        assert_eq!(search(&scopes[2], "glucose"), 150);
+        assert_eq!(
+            search(&scopes[3], "glucose"),
+            0,
+            "an include-only scope drops titles"
+        );
+        // "modified": the default-graph descriptions.
+        assert_eq!(search(&scopes[0], "modified"), 150);
+        assert_eq!(search(&scopes[2], "modified"), 0, "excluded predicate");
+        // "created": only in the named provenance graphs.
+        assert_eq!(
+            search(&scopes[0], "created"),
+            0,
+            "named graphs not in scope"
+        );
+        assert_eq!(search(&scopes[1], "created"), 150);
+        assert_eq!(search(&scopes[3], "created"), 150);
+        // A multi-byte word survives the spill's byte-level front coding.
+        assert_eq!(search(&scopes[0], "études"), 150);
+    }
+
+    /// No literal in scope: no section at all, as the in-RAM build writes none.
+    #[test]
+    fn external_text_index_with_nothing_in_scope_writes_no_section() {
+        let quads = test_quads(400);
+        let none: [&str; 0] = [];
+        let scope = crate::text_index::TextIndexScope::from_options(
+            crate::text_index::TextIndexGraphs::Default,
+            ["http://ex/never"],
+            none,
+        )
+        .unwrap();
+        let reference = build_reference_text(&quads, &scope);
+        let bytes = build_ext_text(&quads, &scope, None);
+        assert_eq!(bytes, reference);
+        assert_eq!(crate::Header::from_bytes(&bytes).unwrap().text_index_len, 0);
+    }
+
+    // ---- quad index (`GraphLayout::Quad`) --------------------------------
+
+    fn build_reference_quad(quads: Vec<RawQuad>, perms: crate::index::PermSet) -> Vec<u8> {
+        let (bytes, _) = ingest::assemble_dataset_streaming_with_layout(
+            move |visit: &mut dyn FnMut(RawQuad)| {
+                for q in quads.iter().cloned() {
+                    visit(q);
+                }
+                Ok(())
+            },
+            false,
+            false,
+            None,
+            crate::PyramidAlgo::Louvain,
+            perms,
+            GraphLayout::Quad,
+            |_, _, _| Vec::new(),
+        )
+        .unwrap();
+        bytes
+    }
+
+    fn build_ext_quad(quads: Vec<RawQuad>, perms: crate::index::PermSet) -> (Vec<u8>, BuildStats) {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("rete-extbuild-quad-{}-{seq}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.rete");
+        let stats = build_external(
+            |visit| {
+                for q in quads.iter().cloned() {
+                    visit(q)?;
+                }
+                Ok(())
+            },
+            &out,
+            ExternalBuildOptions {
+                memory_budget: 0,
+                tmp_dir: Some(dir.clone()),
+                perms,
+                graphs: GraphLayout::Quad,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        (bytes, stats)
+    }
+
+    /// The external quad build writes the in-RAM build's bytes, for both
+    /// permutation sets — the shared `QuadTiler` is what guarantees it.
+    #[test]
+    fn quad_external_build_is_byte_identical() {
+        for perms in [crate::index::PermSet::ALL, crate::index::PermSet::CORE] {
+            let quads = fedlex_shaped_quads(60, 9);
+            let reference = build_reference_quad(quads.clone(), perms);
+            let (bytes, stats) = build_ext_quad(quads.clone(), perms);
+            assert_eq!(bytes, reference, "quad external build, {perms:?}");
+            let header = crate::Header::from_bytes(&bytes).unwrap();
+            assert!(header.has_quad_index());
+            assert_eq!(stats.statements as u64, header.quad_count);
+            let rete = crate::Rete::open(&bytes).unwrap();
+            assert_eq!(rete.named_graph_count(), stats.named_graphs);
+            assert!(crate::file::verify(&bytes).unwrap());
+        }
+    }
+
+    /// Many chunks and many sort runs: graph names first seen in different
+    /// chunks must merge into one dictionary id, and runs must merge back into
+    /// the same tiles.
+    #[test]
+    fn multi_chunk_multi_run_quad_build_is_byte_identical() {
+        let quads = fedlex_shaped_quads(80, 7);
+        let reference = build_reference_quad(quads.clone(), crate::index::PermSet::ALL);
+
+        let dir = std::env::temp_dir().join(format!("rete-extbuild-mcq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.rete");
+        let tmp = TmpDir::create(&dir).unwrap();
+        let mut chunker = Chunker::new(&tmp, 4 * 1024, GraphLayout::Quad);
+        for q in quads.iter().cloned() {
+            chunker.push(q).unwrap();
+        }
+        let chunks = chunker.finish().unwrap();
+        assert!(
+            chunks.len() >= 8,
+            "expected many chunks, got {}",
+            chunks.len()
+        );
+        let (merged, remaps) = merge_dictionaries(&tmp, &chunks).unwrap();
+        assert_eq!(merged.graph_count, 0, "no separate graph-name merge");
+        let global_tri = tmp.path("global.tri");
+        let global_qtri = tmp.path("global.qtri");
+        remap_chunks(
+            &tmp,
+            &chunks,
+            &remaps,
+            true,
+            &global_tri,
+            Some(&global_qtri),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let codec = crate::file::writer_codec();
+        let perms = crate::index::PermSet::ALL;
+        let mut sections = Vec::new();
+        let mut default_count = 0u64;
+        for perm in perms.iter() {
+            let (sec, n) =
+                build_permutation_section(&tmp, &global_tri, perm, 256, codec, "").unwrap();
+            default_count = n;
+            sections.push(sec);
+        }
+        // 64-quad runs: many runs per order, merged back.
+        let quad = build_quad_section(&tmp, &global_qtri, 64, perms, codec).unwrap();
+        write_final_file(
+            &out,
+            &[],
+            &[],
+            &merged,
+            &sections,
+            None,
+            None,
+            Some(&quad),
+            default_count + quad.quad_count,
+            codec,
+            perms,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        assert_eq!(bytes, reference, "multi-chunk, multi-run quad build");
+        drop(tmp);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The quad layout needs the 3- or 6-permutation set (see `quad::check_perms`).
+    #[test]
+    fn quad_external_build_refuses_other_permutation_sets() {
+        let dir = std::env::temp_dir().join(format!("rete-extbuild-q5-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let r = build_external(
+            |visit| visit(("<a>".into(), "<p>".into(), "<b>".into(), Some("<g>".into()))),
+            &dir.join("out.rete"),
+            ExternalBuildOptions {
+                tmp_dir: Some(dir.clone()),
+                perms: crate::index::PermSet::from_bits(0b0001_1111).unwrap(),
+                graphs: GraphLayout::Quad,
+                ..Default::default()
+            },
+        );
+        assert!(r.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

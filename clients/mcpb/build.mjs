@@ -20,7 +20,7 @@ if (!existsSync(wasm)) {
   throw new Error(
     "clients/js/dist is missing — build the JS client first:\n" +
       "  docker compose run --rm --user root dev bash -c 'wasm-pack build crates/rete-wasm " +
-      "--target web --no-opt --out-dir /work/clients/js/vendor/pkg'\n" +
+      "--target web --no-opt --out-dir /work/clients/js/vendor/pkg -- --features unicode-regex'\n" +
       "  docker run --rm -v \"$PWD\":/w -w /w/clients/js node:22-slim node build.mjs",
   );
 }
@@ -43,8 +43,10 @@ const workspace = readFileSync(join(repo, "Cargo.toml"), "utf8");
 const version = workspace.match(/\[workspace\.package\][\s\S]*?\nversion = "([^"]+)"/)?.[1];
 if (!version) throw new Error("could not read the workspace version from Cargo.toml");
 
-await build({
-  entryPoints: [join(here, "src", "server.mjs")],
+// Two bundles side by side: the server, and the query worker it starts on
+// worker threads (src/jobs.mjs) — each with its own copy of the client, since
+// each thread loads its own engine.
+const bundle = {
   bundle: true,
   platform: "node",
   target: "node18",
@@ -54,9 +56,10 @@ await build({
   external: ["node:*"],
   alias: { "rete-graph": join(client, "dist", "index.js") },
   define: { __RETE_VERSION__: JSON.stringify(version) },
-  outfile: join(out, "server", "index.mjs"),
   banner: { js: `// rete-graphs MCP server v${version} — Apache-2.0 — https://github.com/caviri/rete` },
-});
+};
+await build({ ...bundle, entryPoints: [join(here, "src", "server.mjs")], outfile: join(out, "server", "index.mjs") });
+await build({ ...bundle, entryPoints: [join(here, "src", "worker.mjs")], outfile: join(out, "server", "worker.mjs") });
 
 // The engine, loaded at runtime from beside the server bundle.
 cpSync(wasm, join(out, "server", "rete_wasm_bg.wasm"));
@@ -113,6 +116,7 @@ writeFileSync(join(out, "manifest.json"), `${JSON.stringify({ ...manifest, versi
 const mb = (p) => `${(statSync(p).size / 1e6).toFixed(2)} MB`;
 console.log(`built ${out} — version ${version} (from the workspace Cargo.toml)`);
 console.log(`  server/index.mjs        ${mb(join(out, "server", "index.mjs"))}`);
+console.log(`  server/worker.mjs       ${mb(join(out, "server", "worker.mjs"))}`);
 console.log(`  server/rete_wasm_bg.wasm ${mb(join(out, "server", "rete_wasm_bg.wasm"))}`);
 console.log(`  server/catalog.json     ${mb(join(out, "server", "catalog.json"))} (${datasets.length} datasets)`);
 console.log("next: npx @anthropic-ai/mcpb pack build rete.mcpb");

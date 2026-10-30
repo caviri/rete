@@ -135,15 +135,53 @@ published catalog directly over HTTP Range with no server in between.
 The format makes this unusually easy. MCPB's own guidance notes that Python
 bundles cannot portably ship compiled dependencies and that binary bundles
 need a build per platform; the rete engine is Rust **already compiled to
-architecture-neutral wasm**, so the extension is a plain `node` bundle — one
-JS file plus one `.wasm`, 1.3 MB packed — that runs unchanged on macOS,
-Windows and Linux with the Node runtime Claude Desktop ships.
+architecture-neutral wasm**, so the extension is a plain `node` bundle — two
+JS files (the server and its query worker) plus one `.wasm` — that runs
+unchanged on macOS, Windows and Linux with the Node runtime Claude Desktop
+ships.
 
-Nine tools, mirroring the hosted server's read surface plus local authoring:
-`list_datasets`, `dataset_card`, `dataset_schema`, `example_queries`,
-`sparql_query`, `find_entities`, `describe_entity`, `validate_shacl`,
-`build_rete`. Every `dataset` argument takes a local file name, a catalog
-key, or an `https://` URL to any published `.rete`.
+Fourteen tools, mirroring the hosted server's read surface plus local
+authoring and query jobs: `list_datasets`, `dataset_card`, `dataset_schema`,
+`example_queries`, `sparql_query`, `start_query`, `query_status`,
+`query_result`, `cancel_query`, `find_entities`, `describe_entity`,
+`validate_shacl`, `build_rete`, `load_rdf`. Every `dataset` argument takes a
+local file name, a catalog key, an `https://` URL to any published `.rete`,
+or `chat:<name>`.
+
+**Files shared in the chat.** Claude Desktop does not pass chat attachments
+to an extension. For RDF the user attaches or pastes (Turtle, TriG,
+N-Triples, N-Quads), the model sends the text to `load_rdf`, which builds a
+graph in memory, queryable by every tool as `chat:<name>` until the extension
+restarts — no granted folder needed. Long files go in several parts; `save_as`
+keeps the result as a `.rete` in a granted folder. A `.rete` itself is binary
+and cannot travel through the chat: put it in a granted folder or give its URL.
+
+**Long queries do not time out.** Claude gives up on a tool call after 60 s,
+and a query that visits thousands of scattered entities in a large published
+graph (title and year for every work citing a paper, on the 60 GB Crossref
+graph) takes minutes: each separate place in the file is a network round trip.
+Every query therefore runs on a worker thread as a job. `sparql_query` waits
+up to 40 s; a query still running by then answers with its `job_id` and keeps
+going, `query_status` waits for it (45 s at most per call) and reports reads,
+bytes and elapsed time, and `cancel_query` stops it. Up to three jobs run at
+once, so a quick lookup never queues behind a slow one, and the server stays
+responsive throughout (the engine's synchronous range reads used to block it
+for the whole query). An answer shows 200 rows; `query_result` pages through
+the rest by cursor or writes all of them to a CSV/TSV/JSON/N-Triples file in a
+granted folder.
+
+**Long extractions resume.** With `partition_by: "?work"`, `sparql_query` /
+`start_query` split the query by that variable ([the rule](sparql.md#partition)):
+its values are listed first, from the query's cheapest constant pattern on it,
+then the query runs a few hundred values at a time, two chunks at once, each
+sized to take about 15 s. Every finished chunk is kept on disk, so after a
+cancel, a crash or a restart of Claude Desktop the same call carries on where
+it stopped, and a call identical to one still running joins it. A split that
+would change the answer (ORDER BY, an aggregate not grouped by the variable, a
+variable only bound inside OPTIONAL) is refused, saying why. When the entities
+come from another graph — the works citing a paper are in `crossref-citations`,
+their titles in `crossref` — `keys_job` takes the values from the job that
+listed them, so the model never copies thousands of IRIs into a query.
 
 The decisive property is that **local files are read lazily too** — the same
 byte-range path as a remote graph, via the JS client's `file://` reader — so

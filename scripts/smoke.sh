@@ -83,6 +83,31 @@ printf '<http://ex/Z> <http://ex/p> <http://ex/W> .\n' > "$T/extra.nt"
 check "build merge" "triples"           -- "$B" build "$T/g.nt" "$T/extra.nt" -o "$T/merge.rete"
 check "build stdin" "triples"           -- bash -c "cat '$T/g.nt' | $B build - --format nt -o '$T/stdin.rete'"
 check "merge has both" "Z"              -- "$B" query "$T/merge.rete" --subject "<http://ex/Z>"
+# Writer knobs change the bytes, never the answers; promotion is in-memory only.
+check "build knobs" "5 triples"         -- "$B" build "$T/g.nt" -o "$T/knobs.rete" --tile-kib 16 \
+  --dict-chunk-kib 8 --zstd-level 19 --frequent-objects 4
+check "knobs verify" "OK|matches"       -- "$B" verify "$T/knobs.rete"
+check "knobs answer" "ex/Bob"           -- "$B" query "$T/knobs.rete" --object "<http://ex/Person>"
+check_code "knobs ext refused" 1 "does not support --frequent-objects" -- "$B" build "$T/g.nt" \
+  -o "$T/knobs-ext.rete" --memory-budget-mb 64 --frequent-objects 4
+check_code "tile-kib range" 2 "4..=4096|4096"  -- "$B" build "$T/g.nt" -o "$T/x.rete" --tile-kib 2
+
+echo "== full-text index =="
+cat > "$T/text.nq" <<EOF
+<http://ex/w1> <http://ex/title> "Glucose metabolism" .
+<http://ex/w1> <http://ex/desc> "The entity has been modified." .
+<http://ex/w1/prov> <http://ex/desc> "The entity has been created." <http://ex/w1/g> .
+EOF
+check "text-index build"      "quads"                -- "$B" build "$T/text.nq" -o "$T/text.rete" --text-index --no-pyramid
+# The memory-bounded build takes --text-index and writes the same bytes.
+check "text-index ext build"  "extbuild: text index" -- "$B" build "$T/text.nq" -o "$T/text-ext.rete" --text-index --memory-budget-mb 64
+check "text-index ext = ram"  "^same$"               -- bash -c "cmp '$T/text.rete' '$T/text-ext.rete' && echo same"
+check "search --contains"     "<http://ex/w1>"       -- "$B" search "$T/text-ext.rete" --contains glucose
+check "scope: named graphs"   "<http://ex/w1/prov>"  -- bash -c "$B build '$T/text.nq' -o '$T/text-all.rete' --text-index --text-index-graphs all --memory-budget-mb 64 >/dev/null 2>&1 && $B search '$T/text-all.rete' --contains created"
+check "scope: exclude"        "covers: .*all but <http://ex/desc>" -- bash -c "$B build '$T/text.nq' -o '$T/text-ex.rete' --text-index --text-index-exclude http://ex/desc >/dev/null 2>&1 && $B search '$T/text-ex.rete' --contains modified 2>&1"
+check "scope: stats kind 11"  "some predicates only" -- "$B" stats "$T/text-ex.rete"
+check "scope: repyramid"      "<http://ex/w1/prov>"  -- bash -c "$B repyramid '$T/text.rete' -o '$T/text-rp.rete' --text-index --text-index-graphs all >/dev/null 2>&1 && $B search '$T/text-rp.rete' --contains created"
+check_code "scope: needs --text-index" 2 "required" -- "$B" build "$T/text.nq" -o "$T/x.rete" --text-index-exclude http://ex/desc
 
 echo "== validate =="
 check "validate ok"    "valid: 5"       -- "$B" validate "$T/g.nt"
@@ -111,6 +136,40 @@ check "info"       "magic|version|pyramid"        -- "$B" info "$T/g.rete"
 check "stats"      "triples|terms|predicate"      -- "$B" stats "$T/g.rete"
 check "verify ok"  "OK|matches"     -- "$B" verify "$T/g.rete"
 check "graphs"     "g1|g2"                          -- "$B" graphs "$T/d.rete"
+# The header counts every statement; stats splits it (d.nq: 2 quads, 2 graphs).
+check "stats split"  "named-graph quads +: 2"        -- "$B" stats "$T/d.rete"
+check "stats dg"     "default-graph triples : 0"     -- "$B" stats "$T/d.rete"
+# The local open is memory-aware; RETE_OPEN_DEBUG says which way it went and why.
+check "open eager"   "threshold=[0-9]+ [(].+[)] -> EAGER" -- env RETE_OPEN_DEBUG=1 "$B" stats "$T/g.rete"
+check "open lazy"    "RETE_LOCAL_LAZY_ABOVE_MB=0[)] -> LAZY" -- env RETE_OPEN_DEBUG=1 RETE_LOCAL_LAZY_ABOVE_MB=0 "$B" stats "$T/g.rete"
+
+echo "== label index + schema sections (kinds 8, 9) =="
+cat > "$T/lab.nt" <<EOF
+<http://ex/w1> <http://purl.org/dc/terms/title> "Acta Universitatis Agriculturae" .
+<http://ex/w1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Journal> .
+<http://ex/w1> <http://ex/publisher> <http://ex/p1> .
+<http://ex/p1> <http://xmlns.com/foaf/0.1/familyName> "Svobodová" .
+<http://ex/p1> <http://xmlns.com/foaf/0.1/givenName> "Jana" .
+EOF
+check "build --label-index"    "5 triples"         -- "$B" build "$T/lab.nt" -o "$T/lab.rete" --no-pyramid --label-index
+check "search label section"   "Acta Universitatis" -- "$B" search "$T/lab.rete" "acta u"
+check "search composed name"   "Svobodová, Jana"   -- "$B" search "$T/lab.rete" "svobodová"
+check "stats label index"      "label index: 2 labels" -- "$B" stats "$T/lab.rete"
+check "stats schema, no pyramid" "planner stats"   -- "$B" stats "$T/lab.rete"
+check "summary schema section" "SCHEMA section"    -- "$B" summary "$T/lab.rete"
+check "verify sections"        "OK|matches"        -- "$B" verify "$T/lab.rete"
+check "no label index"         "no label index"    -- bash -c "$B search '$T/g.rete' ali 2>&1"
+check "memory-bounded labels"  "triples|quads"     -- "$B" build "$T/lab.nt" -o "$T/labx.rete" --memory-budget-mb 64 --label-index
+check "external = in-memory"   "^same$"            -- bash -c "cmp -s '$T/lab.rete' '$T/labx.rete' && echo same || echo differ"
+check "card label signal"      '"entries": ?2' -- bash -c "$B build '$T/lab.nt' -o '$T/labc.rete' --label-index --card >/dev/null 2>&1; $B card '$T/labc.rete' --json"
+
+# The quad index (`--named-graphs quad`): same graphs, same answers.
+check "build quad index" "quads"                    -- "$B" build "$T/d.nq" -o "$T/dq.rete" --named-graphs quad
+check "quad graphs"   "g1|g2"                       -- "$B" graphs "$T/dq.rete"
+check "quad GRAPH <g>" "Bob"                        -- "$B" sparql "$T/dq.rete" 'SELECT ?o WHERE { GRAPH <http://ex/g1> { ?s <http://ex/knows> ?o } }'
+check "quad verify"   "OK|matches"                  -- "$B" verify "$T/dq.rete"
+check "quad export"   "<http://ex/g2>"              -- "$B" export "$T/dq.rete"
+check "quad external = in-memory" "^same$"     -- bash -c "$B build '$T/d.nq' -o '$T/dqr.rete' --no-pyramid --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; $B build '$T/d.nq' -o '$T/dqx.rete' --memory-budget-mb 64 --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; cmp -s '$T/dqr.rete' '$T/dqx.rete' && echo same || echo differ"
 
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
@@ -134,6 +193,39 @@ $B build "$T/g.nt" -o "$T/gcw.rete" --card --no-card-costs >/dev/null 2>&1
 check "card-audit write" "content hash unchanged" -- bash -c "$B card-audit '$T/gcw.rete' --measure --write-costs --allow-empty 2>&1"
 check "card-audit write verify" "OK|matches"      -- "$B" verify "$T/gcw.rete"
 check "card-audit write costs"  "query costs"     -- "$B" card "$T/gcw.rete"
+# The curated example_queries are audited too, apart from the generated ones.
+printf '%s\n' '{"title":"Smoke","example_queries":["SELECT ?s WHERE { ?s ?p ?o } LIMIT 1","SELECT ?s WHERE {"]}' > "$T/gcx.json"
+$B build "$T/g.nt" -o "$T/gcx.rete" --card-file "$T/gcx.json" >/dev/null 2>&1
+check "card-audit curated" "curated example_queries \(2\)" -- "$B" card-audit "$T/gcx.rete"
+check "card-audit invalid" "invalid +example-2"   -- "$B" card-audit "$T/gcx.rete"
+
+# The build record: how the file was made — flags, engine, inputs by NAME (never
+# a path) with their BLAKE3, counts, wall time per phase, peak RAM.
+check "record engine"   "engine +: rete-cli"        -- "$B" card "$T/gcx.rete"
+check "record command"  "command +: rete build --permutations 6 --named-graphs per-graph" -- "$B" card "$T/gcx.rete"
+check "record inputs"   "inputs +: g\.nt \(nt\), [0-9,]+ B, blake3 [0-9a-f]{16}" -- "$B" card "$T/gcx.rete"
+check "record counts"   "statements +: 5 read, 5 unique"       -- "$B" card "$T/gcx.rete"
+check "record run"      "wall time +: .* on [0-9]+ CPU"        -- "$B" card "$T/gcx.rete"
+check "record card file" '"name": ?"gcx\.json"'               -- "$B" card "$T/gcx.rete" --json
+check "record no path"  "^clean$" -- bash -c "$B card '$T/gcx.rete' --json | grep -q '$T' && echo leaked || echo clean"
+check "record prov"     '"prov:startedAtTime"'                -- "$B" card "$T/gcx.rete" --format jsonld
+$B build "$T/g.nt" -o "$T/gcxe.rete" --card-file "$T/gcx.json" --memory-budget-mb 64 >/dev/null 2>&1
+check "record spill"    "spill +: 1 chunk"                     -- "$B" card "$T/gcxe.rete"
+# RETE_BUILD_RECORD=reproducible drops the volatile facts: two builds, one file.
+for n in 1 2; do
+  RETE_BUILD_RECORD=reproducible SOURCE_DATE_EPOCH=1785801600 \
+    "$B" build "$T/g.nt" -o "$T/repro$n.rete" --card-file "$T/gcx.json" >/dev/null 2>&1
+done
+check "record reproducible" "^same$" -- bash -c "cmp -s '$T/repro1.rete' '$T/repro2.rete' && echo same || echo differ"
+check "card-audit curated json" '"example_findings"' -- "$B" card-audit "$T/gcx.rete" --json
+check "card-audit curated run" "1 curated query run" -- "$B" card-audit "$T/gcx.rete" --measure --only example-1
+# A card-only rewrite: the card and the build record change, nothing else.
+check "recard" "starter quer"                     -- "$B" recard "$T/gcx.rete" -o "$T/gcr.rete" --keep-curated --verify
+check "recard verify" "OK|matches"                -- "$B" verify "$T/gcr.rete"
+check "recard keeps curated" '"title": ?"Smoke"' -- "$B" card "$T/gcr.rete" --json
+check "recard record" "re-carded"                 -- "$B" card "$T/gcr.rete"
+check_code "recard no overwrite" 1 "already exists" -- "$B" recard "$T/gcx.rete" -o "$T/gcr.rete" --keep-curated
+check_code "recard keeps prose" 1 "curated fields" -- "$B" recard "$T/gcx.rete" -o "$T/gcr2.rete"
 
 echo "== schema pyramid (semantic zoom) =="
 # A tiny subClassOf hierarchy: Astronomer ⊑ Scientist ⊑ Person, with instances.
@@ -300,6 +392,9 @@ check "sparql-url"  "Bob|solution" -- "$B" sparql-url "http://127.0.0.1:8099/web
 check "cost-url"    "full query open|range request" -- "$B" cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http://127.0.0.1:8099/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 check "why-url"     "index_permutation|POS|tile" -- "$B" why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
+# Same answer with the parallel batches off (one range at a time) and on.
+check "sparql-url seq" "Bob|solution" -- env RETE_HTTP_CONCURRENCY=1 RETE_HTTP_RETRIES=0 "$B" sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "search-url label index" "Svobodová, Jana" -- "$B" search-url "http://127.0.0.1:8099/lab.rete" "svob"
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="

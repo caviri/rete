@@ -17,17 +17,21 @@ use crate::file::Rete;
 mod aggregate;
 mod diag;
 mod distinct;
+mod distinct_union;
 mod eval;
 mod expr;
 mod lower;
+mod partition;
 mod path;
 mod ql;
+mod sparql12;
 mod value;
 
 pub use diag::{warnings_json, QueryWarning, WarningSeverity};
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
 use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
+pub use partition::PartitionPlan;
 // Re-exported so the sibling modules' `use super::*` can reach the evaluator
 // (expr's FILTER EXISTS evaluates a sub-plan via `eval_plan_in`).
 pub(crate) use eval::eval_plan_in;
@@ -48,6 +52,11 @@ pub enum SparqlError {
     /// attached to the file handle. Partial results are never returned.
     #[error("SERVICE federation: {0}")]
     Service(String),
+    /// [`partition_plan`] / [`eval_query_partitioned`] refused to split a
+    /// query by a variable, because the chunks' answers together would not be
+    /// the query's answer; the message says why and what to do instead.
+    #[error("cannot split this query {0}")]
+    Partition(String),
 }
 
 /// A lowered SELECT query: solution modifiers plus the evaluation plan tree.
@@ -176,6 +185,22 @@ pub enum Plan {
     Minus(Box<Plan>, Box<Plan>),
     /// `GRAPH <iri>|?g { … }` — evaluate the inner pattern against a named graph.
     Graph(GraphTarget, Box<Plan>),
+    /// The **distinct** bindings of `vars` over the union of single triple
+    /// patterns (`sources`) — each solution once, however many sources (or
+    /// triples of one source) produce it. Every variable of a source that is
+    /// not in `vars` is anonymous: matched, never bound in the output. With
+    /// `vars` empty it is an existence test (one empty solution or none).
+    ///
+    /// Built only by the OWL 2 QL rewriter (`ql`): an entailed atom such as
+    /// `?x a C` holds once per entailed triple, while its rewriting
+    /// (`?x a C₁`, `?x a C₂`, `?x p ?_` for a `p` with domain `C`, …) matches
+    /// it once per *asserted* triple. The sources stream sorted on the key
+    /// and are merged, so deduplicating costs one cursor per source, not a
+    /// set of every solution.
+    DistinctUnion {
+        vars: Vec<String>,
+        sources: Vec<TriplePattern>,
+    },
     /// A nested `SELECT` subquery: evaluated independently to its projected
     /// solutions, which then join with the surrounding pattern on shared
     /// variables (only the subquery's projected variables are visible outside).
@@ -861,6 +886,90 @@ pub fn eval_query_with_warnings(
     Ok((out, warnings))
 }
 
+/// Plan running `query` as many smaller queries, split by the values of
+/// `var` (`?w`, `$w` or `w`), so a long extraction can go in short chunks
+/// that each finish quickly and can be retried or resumed one by one.
+///
+/// Refused — [`SparqlError::Partition`], saying why — when the chunks'
+/// answers together would not be the query's answer: an ASK or DESCRIBE, an
+/// ORDER BY, an aggregate not grouped by `var`, or a `var` some solution may
+/// leave unbound. Otherwise the plan carries the **keys query**, which lists
+/// the values to split (a superset: a value with no solution makes an empty
+/// chunk), and the top-level OFFSET/LIMIT the chunks drop and the caller
+/// applies once to the merged rows. Run each chunk with
+/// [`eval_query_partitioned`].
+///
+/// Reads only the tile directory (to pick the cheapest pattern for the keys
+/// query), never tile data.
+pub fn partition_plan(rete: &Rete, query: &str, var: &str) -> Result<PartitionPlan, SparqlError> {
+    partition::plan(rete, query, var)
+}
+
+/// [`eval_query_with_warnings`] for one chunk of a [`partition_plan`]: the
+/// query restricted to the solutions whose `var` is one of `keys` (term
+/// tokens as the keys query returned them, e.g. `<https://…>`), without its
+/// top-level OFFSET/LIMIT. The keys are joined in as `VALUES` on the first
+/// required pattern block that binds `var`, so each one is an index lookup.
+///
+/// The chunks' rows, taken in the keys' order, are the query's rows — except
+/// that the caller applies the plan's OFFSET/LIMIT and, when the plan says
+/// `dedupe`, drops repeated rows.
+pub fn eval_query_partitioned(
+    rete: &Rete,
+    query: &str,
+    opts: QueryOpts,
+    var: &str,
+    keys: &[String],
+) -> Result<(QueryOutput, Vec<QueryWarning>), SparqlError> {
+    diag::begin();
+    let out = eval_partition_inner(rete, query, opts, partition::var_name(var), keys);
+    let out = match rete.take_service_error() {
+        Some(e) => Err(SparqlError::Service(e)),
+        None => out,
+    }?;
+    let warnings = diag::finish(&out);
+    Ok((out, warnings))
+}
+
+fn eval_partition_inner(
+    rete: &Rete,
+    query: &str,
+    opts: QueryOpts,
+    var: &str,
+    keys: &[String],
+) -> Result<QueryOutput, SparqlError> {
+    let parsed = parse_query(query)?;
+    partition::check(&parsed, var)?;
+    // Seeded after reasoning, so the VALUES lands on the pattern block the
+    // engine will actually scan.
+    let chunk = |sel: Select| -> Select {
+        let mut sel = maybe_reason(rete, apply_opts(sel, opts), opts.reason);
+        sel.offset = 0;
+        sel.limit = None;
+        sel.plan = partition::seed(sel.plan, var, keys);
+        sel
+    };
+    match parsed {
+        Query::Select {
+            pattern, dataset, ..
+        } => {
+            let (vars, rows) = run_select(rete, &chunk(lower_select(&pattern, &dataset)?));
+            Ok(QueryOutput::Select(vars, rows))
+        }
+        Query::Construct {
+            template, pattern, ..
+        } => {
+            let sel = chunk(lower_pattern(&pattern)?);
+            let (ctx, sols) = raw_solutions(rete, &sel);
+            Ok(QueryOutput::Construct(instantiate(&ctx, &template, &sols)))
+        }
+        // `check` refused every other form.
+        _ => Err(SparqlError::Unsupported(
+            "only SELECT and CONSTRUCT can be split",
+        )),
+    }
+}
+
 /// Apply OWL 2 QL plan rewriting when reasoning is on (no-op otherwise). Reads a
 /// small TBox slice from `rete` to gate the rewrite (see [`ql`]).
 fn maybe_reason(rete: &Rete, mut sel: Select, reason: bool) -> Select {
@@ -937,10 +1046,25 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
                     }
                 }
             }
+            // Described from the query's active default graph, the same graph
+            // its WHERE clause matched: the file's default graph, the `FROM`
+            // graphs, or (union-default toggle, no FROM) the default graph plus
+            // every named graph.
+            let mut graphs: Vec<Option<&str>> = Vec::new();
+            if !sel.from.is_empty() {
+                graphs.extend(sel.from.iter().map(|g| Some(g.as_str())));
+            } else {
+                graphs.push(None);
+                if sel.union_default {
+                    graphs.extend(rete.graph_names().into_iter().map(Some));
+                }
+            }
             let mut triples = std::collections::BTreeSet::new();
             for r in &resources {
-                for t in rete.query(Some(r), None, None) {
-                    triples.insert(t);
+                for g in &graphs {
+                    for t in rete.query_in_graph(*g, Some(r), None, None) {
+                        triples.insert(t);
+                    }
                 }
             }
             Ok(QueryOutput::Construct(triples.into_iter().collect()))
@@ -2222,5 +2346,102 @@ mod tests {
         );
         assert_eq!(subjects(r#"STRLEN(?l) = 25"#), vec![c]);
         assert_eq!(subjects(r#"STRLEN(?l) = 24"#), vec![b]);
+    }
+
+    /// The OWL 2 QL rewrite is gated PER ATOM: one `rdfs:domain` axiom on a
+    /// property the data never uses used to add a domain branch to every class
+    /// atom of every reasoned query (0.30 s became 1.02 s, 4.2 MB became
+    /// 11.8 MB fetched, on OpenCitations with its ontology). A class with no
+    /// subclass and no domain/range property the file uses keeps its plain
+    /// pattern; a class that gains members becomes a `DistinctUnion` holding
+    /// exactly the sources that can produce them.
+    #[test]
+    fn reasoning_rewrites_only_the_atoms_it_can_extend() {
+        let dom = "<http://www.w3.org/2000/01/rdf-schema#domain>";
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let bytes = rete_from(&[
+            (
+                "<http://ex/hasCharacterisation>",
+                dom,
+                "<http://ex/Citation>",
+            ),
+            ("<http://ex/SelfCitation>", sub, "<http://ex/Citation>"),
+            ("<http://ex/writtenBy>", dom, "<http://ex/Work>"),
+            ("<http://ex/r1>", ty, "<http://ex/Role>"),
+            ("<http://ex/w1>", ty, "<http://ex/Work>"),
+            ("<http://ex/w2>", "<http://ex/writtenBy>", "<http://ex/ann>"),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let rewrite = |q: &str| {
+            let sel = parse_select(q).unwrap();
+            ql::reason_rewrite(sel.plan, &rete, &sel.project)
+        };
+        // No subclass, and the one domain axiom is about another class: as is.
+        assert!(matches!(
+            rewrite("SELECT ?s WHERE { ?s a <http://ex/Role> ; ?p ?o }"),
+            Plan::Bgp(p) if p.len() == 2
+        ));
+        // The domain axiom's own class: its property and its subclass are
+        // never used, so there is nothing to add.
+        assert!(matches!(
+            rewrite("SELECT ?s WHERE { ?s a <http://ex/Citation> }"),
+            Plan::Bgp(p) if p.len() == 1
+        ));
+        // Work gains the subjects of writtenBy: two sources, one per way.
+        match rewrite("SELECT ?s WHERE { ?s a <http://ex/Work> }") {
+            Plan::DistinctUnion { vars, sources } => {
+                assert_eq!(vars, vec!["s".to_string()]);
+                assert_eq!(sources.len(), 2);
+            }
+            other => panic!("expected a DistinctUnion, got {other:?}"),
+        }
+        let (_, sols) =
+            eval_sparql_reasoned(&rete, "SELECT ?s WHERE { ?s a <http://ex/Work> }").unwrap();
+        let mut got: Vec<&str> = sols.iter().map(|b| b["s"].as_str()).collect();
+        got.sort();
+        assert_eq!(got, vec!["<http://ex/w1>", "<http://ex/w2>"]);
+    }
+
+    /// A join whose left side turns out far smaller than the right BGP probes
+    /// the BGP per left row instead of evaluating it whole — the same rows
+    /// either way. Driven here with the probe floor removed, so the small
+    /// graph takes the path a 2.9 B-triple file takes for real.
+    #[test]
+    fn a_small_left_side_probes_the_right_bgp() {
+        let mut t: Vec<(String, String, String)> = Vec::new();
+        let e = |n: String| format!("<http://ex/{n}>");
+        for i in 0..200 {
+            t.push((e(format!("j{i}")), e("a".into()), e("Journal".into())));
+            t.push((e(format!("j{i}")), e("title".into()), format!("\"T{i}\"")));
+            t.push((e(format!("j{i}")), e("id".into()), e(format!("id{i}"))));
+            t.push((e(format!("id{i}")), e("value".into()), format!("\"{i}\"")));
+        }
+        t.push((e("work".into()), e("partOf".into()), e("issue".into())));
+        t.push((e("issue".into()), e("partOf".into()), e("j7".into())));
+        let refs: Vec<(&str, &str, &str)> = t
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        let rete = Rete::open(&rete_from(&refs)).unwrap();
+        let queries = [
+            "PREFIX ex: <http://ex/> SELECT ?j ?t ?v WHERE { ex:work ex:partOf+ ?j . \
+             ?j ex:a ex:Journal ; ex:title ?t ; ex:id ?i . ?i ex:value ?v }",
+            "PREFIX ex: <http://ex/> SELECT ?j ?t WHERE { ex:work ex:partOf+ ?j \
+             OPTIONAL { ?j ex:title ?t } }",
+        ];
+        for q in queries {
+            let run = |floor: f64| {
+                crate::bgp::with_probe_floor(floor, || {
+                    let (_, sols) = eval_sparql(&rete, q).unwrap();
+                    let mut v: Vec<String> = sols.iter().map(|b| format!("{b:?}")).collect();
+                    v.sort();
+                    v
+                })
+            };
+            let hashed = run(f64::MAX);
+            assert!(!hashed.is_empty());
+            assert_eq!(run(0.0), hashed, "{q}");
+        }
     }
 }

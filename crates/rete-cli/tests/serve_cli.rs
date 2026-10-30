@@ -31,9 +31,20 @@ fn free_port() -> u16 {
 /// Spawn `rete serve` and wait until it answers.
 // The returned server is killed + waited by every test's tail (and by the
 // timeout path below), which clippy's zombie analysis can't see across fns.
-#[allow(clippy::zombie_processes)]
 fn spawn_server(file: &std::path::Path, port: u16, extra: &[&str]) -> Child {
+    spawn_server_env(file, port, extra, &[])
+}
+
+/// [`spawn_server`] with extra environment variables.
+#[allow(clippy::zombie_processes)]
+fn spawn_server_env(
+    file: &std::path::Path,
+    port: u16,
+    extra: &[&str],
+    env: &[(&str, &str)],
+) -> Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_rete"));
+    cmd.envs(env.iter().copied());
     cmd.arg("serve")
         .arg(file)
         .arg("--bind")
@@ -192,6 +203,61 @@ fn serve_query_update_snapshot_and_journal_replay() {
     assert!(!rows.iter().any(|b| b["n"] == "\"Alice\""));
     stop_server(server2);
 
+    let _ = std::fs::remove_file(format!("{}.changes", file.display()));
+}
+
+fn snapshot(port: u16) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    ureq::get(&format!("http://127.0.0.1:{port}/snapshot.rete"))
+        .call()
+        .unwrap()
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    bytes
+}
+
+/// Until the first update the endpoint answers from the base file itself,
+/// opened like any local command opens it (here forced lazy, as a file too big
+/// to read whole would be): no quad set, no rebuild, and the snapshot is the
+/// base file byte for byte. The first update then materializes the graph.
+#[test]
+fn serve_answers_from_the_base_file_until_the_first_update() {
+    let _server_test_guard = SERVER_TEST_LOCK.lock().unwrap();
+    let file = build_fixture("from_base");
+    let port = free_port();
+    let server = spawn_server_env(&file, port, &[], &[("RETE_LOCAL_LAZY_ABOVE_MB", "0")]);
+
+    let all = "SELECT ?s ?n WHERE { ?s <http://ex/name> ?n } ORDER BY ?n";
+    assert_eq!(select_rows(port, all).len(), 2);
+    let info = ureq::get(&format!("http://127.0.0.1:{port}/"))
+        .call()
+        .unwrap()
+        .into_string()
+        .unwrap();
+    assert!(info.contains("2 quads (clean;"), "{info}");
+    assert_eq!(
+        snapshot(port),
+        std::fs::read(&file).unwrap(),
+        "an unmodified snapshot is the base file itself"
+    );
+
+    assert_eq!(
+        post_update(
+            port,
+            "INSERT DATA { <http://ex/c> <http://ex/name> \"Carol\" }"
+        ),
+        Ok(204)
+    );
+    assert_eq!(select_rows(port, all).len(), 3);
+    let snap = snapshot(port);
+    assert_ne!(snap, std::fs::read(&file).unwrap());
+    let snap = rete_core::Rete::open(&snap).expect("snapshot opens");
+    assert_eq!(rete_core::eval_sparql(&snap, all).unwrap().1.len(), 3);
+    // A bad update after materializing is still a 400, not a 503.
+    assert_eq!(post_update(port, "INSERT DATA { nonsense"), Err(400));
+
+    stop_server(server);
     let _ = std::fs::remove_file(format!("{}.changes", file.display()));
 }
 

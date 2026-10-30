@@ -293,11 +293,7 @@ fn try_merge_join(
     // graph. The hybrid loop handles that shape strictly better (scan the
     // pinpoint side, probe the fat one per surviving row), so leave the merge
     // seed to comparably-sized sides.
-    let (lo, hi) = {
-        let (a, b) = (pattern_scan_bytes(index, ta), pattern_scan_bytes(index, tb));
-        (a.min(b), a.max(b))
-    };
-    if hi >= FAT_SCAN_BYTES && hi / 4 >= lo {
+    if merge_seed_lopsided(ctx, index, ta, tb) {
         return None;
     }
     let lower = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Option<Pattern> {
@@ -398,6 +394,44 @@ fn probe_beats_scan(rows: usize, scan_est: f64) -> bool {
     scan_est >= limits().probe_floor && (rows as f64) * PROBE_RATIO <= scan_est
 }
 
+/// The most rows that may probe a BGP whose cheapest pattern is estimated at
+/// `est` triples while probing still beats evaluating it whole
+/// ([`probe_beats_scan`]); `None` below the probe floor, where the BGP is
+/// cheap to evaluate either way.
+pub(crate) fn probe_row_budget(est: f64) -> Option<usize> {
+    (est >= limits().probe_floor).then(|| (est / PROBE_RATIO) as usize)
+}
+
+/// The smallest tile-directory estimate ([`GraphIndex::estimate_matches`])
+/// among a BGP's patterns — a floor on what evaluating it whole would scan.
+/// `None` when a constant is not in the file (the BGP matches nothing).
+pub(crate) fn bgp_min_estimate(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    patterns: &[TriplePattern],
+) -> Option<f64> {
+    let lowered = lower(patterns, ctx)?;
+    tile_estimates(ctx, index, &lowered, &std::collections::HashSet::new())
+        .into_iter()
+        .reduce(f64::min)
+}
+
+/// Run `f` with the probe floor set to `floor` (tests only), so a join's
+/// probe paths can be driven over a graph small enough to check by hand.
+#[cfg(test)]
+pub(crate) fn with_probe_floor<T>(floor: f64, f: impl FnOnce() -> T) -> T {
+    let saved = TEST_LIMITS.with(|c| c.get());
+    TEST_LIMITS.with(|c| {
+        c.set(Some(PlanLimits {
+            probe_floor: floor,
+            ..limits()
+        }))
+    });
+    let out = f();
+    TEST_LIMITS.with(|c| c.set(saved));
+    out
+}
+
 /// The planner's size thresholds, gathered so tests can shrink them and drive
 /// every join path over a graph small enough to check by hand.
 #[derive(Clone, Copy)]
@@ -454,6 +488,25 @@ fn tile_estimates(
     let dict = ctx.rete.dictionary();
     let total = ctx.rete.header().quad_count;
     let seeded = |x: &SlotTerm| matches!(x, SlotTerm::Var(v) if seed.contains(v));
+    // A seeded subject/object of a constant predicate takes that predicate's
+    // MEASURED selectivity from `query_stats` (the SCHEMA section, kind 9, or
+    // a resident pyramid-meta) instead of the fixed default. The tile
+    // directory cannot see a value that only exists at run time, so this is
+    // the one estimate here the statistics improve. They are read only when
+    // some pattern needs them: one small range, once per session, on a lazy
+    // open — never for a query whose patterns have no seeded position.
+    let needs_stats = lowered
+        .iter()
+        .any(|t| matches!(t.1, SlotTerm::Pred(_)) && (seeded(&t.0) || seeded(&t.2)));
+    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> = if needs_stats {
+        ctx.rete
+            .planner_stats(true)
+            .iter()
+            .map(|s| (s.predicate, s))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
     lowered
         .iter()
         .map(|t| {
@@ -468,14 +521,24 @@ fn tile_estimates(
             if est == 0.0 {
                 return 0.0;
             }
+            let st = match t.1 {
+                SlotTerm::Pred(pid) => stats.get(&pid).copied(),
+                _ => None,
+            };
             if seeded(&t.0) {
-                est *= SEL_SUBJECT;
+                est *= match st {
+                    Some(st) if st.distinct_subjects > 0 => 1.0 / st.distinct_subjects as f64,
+                    _ => SEL_SUBJECT,
+                };
             }
             if seeded(&t.1) {
                 est *= SEL_PREDICATE;
             }
             if seeded(&t.2) {
-                est *= SEL_OBJECT;
+                est *= match st {
+                    Some(st) if st.distinct_objects > 0 => 1.0 / st.distinct_objects as f64,
+                    _ => SEL_OBJECT,
+                };
             }
             est.max(1.0)
         })
@@ -688,10 +751,15 @@ fn pattern_estimates(
     for e in &pyr.summary {
         *pred.entry(e.predicate).or_insert(0) += e.count as u64;
     }
-    // Measured per-predicate distinct subjects/objects (query_stats block; empty
-    // on files built before it existed → fall back to the default selectivities).
-    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> = pyr
-        .predicate_stats
+    // Measured per-predicate distinct subjects/objects: the SCHEMA section
+    // (kind 9) — where a file built since it existed keeps them, its
+    // pyramid-meta holding only the community summary — else the pyramid-meta's
+    // query-stats block; empty on files built before either → the default
+    // selectivities. The pyramid is resident here, so the (small) section is
+    // too on a resident open, and costs one range once on a lazy one.
+    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> = ctx
+        .rete
+        .planner_stats(true)
         .iter()
         .map(|s| (s.predicate, s))
         .collect();
@@ -751,49 +819,92 @@ pub(crate) fn bgp_min_scan_bytes(
     patterns: &[TriplePattern],
 ) -> Option<u64> {
     let lowered = lower(patterns, ctx)?;
-    lowered.iter().map(|t| pattern_scan_bytes(index, t)).min()
+    lowered
+        .iter()
+        .map(|t| pattern_scan_bytes(ctx, index, t))
+        .min()
 }
 
-/// One pattern's cheapest scan extent in BYTES: for each permutation, sum the
+/// One pattern's cheapest scan extent in BYTES — what `rete cost` previews
+/// (the planner's gates use row estimates instead): for each permutation, sum the
 /// encoded lengths of the tiles a scan of this pattern would route to (all
 /// tiles covering the bound leading key, or the whole section when the leading
 /// key is unbound), and take the minimum. Tile *counts* are useless here — a
 /// broad predicate can sit inside one giant tile — but the directory's byte
 /// lengths expose it. Reads only resident metadata, never tile data.
-fn pattern_scan_bytes(index: &GraphIndex, t: &(SlotTerm, SlotTerm, SlotTerm)) -> u64 {
+///
+/// A bound term routes by its id **in the role its position has**: a tile's
+/// leading range is in subject-, predicate- or object-id space, not in the
+/// unified node space a lowered constant carries. Routing the node id instead
+/// was off by one for subjects and off by the whole subject-only block for an
+/// object-only term (every literal), so `?id :value "10.1234/x"` could cost
+/// "0 bytes" and pass the merge-join gate against a fat partner, which the
+/// merge then materialized in full. A constant that has no id in the role
+/// (never a subject, say) matches nothing: 0 bytes is then exact.
+fn pattern_scan_bytes(ctx: &Ctx, index: &GraphIndex, t: &(SlotTerm, SlotTerm, SlotTerm)) -> u64 {
+    let dict = ctx.rete.dictionary();
+    match (
+        const_subject(&t.0, dict),
+        const_predicate(&t.1),
+        const_object(&t.2, dict),
+    ) {
+        (Some(s), Some(p), Some(o)) => routed_scan_bytes(index, (s, p, o)),
+        _ => 0,
+    }
+}
+
+/// [`pattern_scan_bytes`] for a pattern already in role-id space.
+pub(crate) fn routed_scan_bytes(index: &GraphIndex, pattern: Pattern) -> u64 {
     let sections = index.tile_sections();
-    let comp = |role: usize| match role {
-        0 => &t.0,
-        1 => &t.1,
-        _ => &t.2,
-    };
     let mut best = u64::MAX;
     // Only the permutations the FILE carries: an absent section is an empty
     // `Vec<Tile>`, and summing its (zero) tile lengths would report a free scan
     // for the one permutation that cannot be scanned at all.
     for perm in index.perms().iter() {
         let tiles = sections[perm.section_index()];
-        best = best.min(match comp(perm.roles()[0]) {
-            SlotTerm::Node(id) | SlotTerm::Pred(id) => tiles
+        best = best.min(match perm.order_pattern(pattern)[0] {
+            Some(id) => tiles
                 .iter()
                 .filter(|tile| {
                     let (lo, hi) = tile.leading_range();
-                    lo <= *id && *id <= hi
+                    lo <= id && id <= hi
                 })
                 .map(Tile::encoded_len)
                 .sum(),
-            SlotTerm::Var(_) => tiles.iter().map(Tile::encoded_len).sum(),
+            None => tiles.iter().map(Tile::encoded_len).sum(),
         });
     }
     best
 }
 
-/// Scan extent above which a join side counts as "fat": materializing (or, on
-/// a remote index, fetching) ≥2 MiB of encoded tiles to build a hash/merge
-/// side is past the point where probing it per surviving row wins. Shared by
-/// the merge-seed asymmetry gate here and the left-join force-probe gate in
-/// `sparql::eval`.
-pub(crate) const FAT_SCAN_BYTES: u64 = 2 << 20;
+/// Estimated matches above which a join side counts as "fat": materializing
+/// (or, on a remote index, fetching) a million rows to build a hash/merge side
+/// is past the point where probing it per surviving row wins. Shared by the
+/// merge-seed asymmetry gate here and the force-probe gates in `sparql::eval`.
+///
+/// A ROW estimate ([`GraphIndex::estimate_matches`]: routed tiles × rows per
+/// tile), not a byte figure. Tiles are cut by their encoded size before
+/// compression, so the estimate does not move when only the compression does;
+/// the compressed tile bytes this gate used to read did — at zstd level 19,
+/// two OpenCitations queries crossed the old 2 MiB line and ran 3–7× slower
+/// with up to 6× the memory — and they differed between a resident open
+/// (decoded sizes) and a lazy one (compressed sizes) of the same file.
+pub(crate) const FAT_SCAN_ROWS: f64 = (1u64 << 20) as f64;
+
+/// Would a merge join of `ta` and `tb` materialize a fat side next to a
+/// pinpoint one? (One side above [`FAT_SCAN_ROWS`] and at least four times the
+/// other.) Then the hybrid loop — scan the small side, probe the fat one — is
+/// strictly better, and the merge seed is declined.
+fn merge_seed_lopsided(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    ta: &(SlotTerm, SlotTerm, SlotTerm),
+    tb: &(SlotTerm, SlotTerm, SlotTerm),
+) -> bool {
+    let est = tile_estimates(ctx, index, &[*ta, *tb], &std::collections::HashSet::new());
+    let (lo, hi) = (est[0].min(est[1]), est[0].max(est[1]));
+    hi >= FAT_SCAN_ROWS && hi / 4.0 >= lo
+}
 
 /// Order pattern indices for a left-deep join: cheapest (smallest estimated
 /// cardinality) first, always preferring a pattern that shares a variable with
@@ -1670,6 +1781,129 @@ mod tests {
             s: PatternTerm::parse(s),
             p: PatternTerm::parse(p),
             o: PatternTerm::parse(o),
+        }
+    }
+
+    /// The scan-bytes figure (`rete cost`'s preview, and through 0.3.7 the
+    /// merge-join and fat-side gates) routes a bound term by its id IN ITS
+    /// ROLE. It used to route the unified node id,
+    /// which for an object-only term (any literal) is shifted past the whole
+    /// subject-only block: `?s :value "lit"` found no OPS tile at all, cost
+    /// "0 bytes", and so let a merge join materialize its partner in full —
+    /// on OpenCitations, every DOI identifier of a 2.9 B-triple file, behind
+    /// `?id :hasLiteralValue "10.…" ; :usesIdentifierScheme :doi`.
+    #[test]
+    fn scan_bytes_route_a_literal_by_its_object_id() {
+        let value = "<http://ex/value>";
+        let owned: Vec<(String, String)> = (0..400)
+            .map(|i| (format!("<http://ex/s{i:03}>"), format!("\"lit {i:03}\"")))
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, o) in &owned {
+            db.observe(s, value, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, o) in &owned {
+            ib.push(dict.encode(s, value, o).unwrap());
+        }
+        let rete = Rete::open(&write_file(&dict, &ib.build(), false, &[], 0)).unwrap();
+        let index = rete.default_index();
+        // The whole predicate, the most a bound object could ever cost.
+        let whole = routed_scan_bytes(index, (None, rete.dictionary().predicate_id(value), None));
+        for (_, lit) in owned.iter().step_by(57) {
+            let q = [pat("?s", value, lit)];
+            let mut slots = Slots::new();
+            collect_pattern_slots(&q, &mut slots);
+            let ctx = Ctx::new(&rete, slots);
+            let got = bgp_min_scan_bytes(&ctx, index, &q).unwrap();
+            assert!(got > 0, "{lit} routed to no tile");
+            assert!(
+                got < whole,
+                "{lit} routed to the whole predicate ({got} of {whole})"
+            );
+        }
+    }
+
+    /// The planner's size gates read ROW estimates, which do not depend on how
+    /// the tiles are compressed. The same file opened resident (tile sizes are
+    /// the decoded images) and lazily (tile sizes are the compressed frames)
+    /// reports different bytes but must take the same decisions — the byte
+    /// gates this replaced flipped plans when only the zstd level changed.
+    #[test]
+    fn plan_gates_do_not_move_with_the_compression() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..3000 {
+            let s = format!("<http://ex/s{i}>");
+            owned.push((
+                s.clone(),
+                "<http://ex/kind>".into(),
+                format!("<http://ex/K{}>", i % 7),
+            ));
+            owned.push((s.clone(), "<http://ex/value>".into(), format!("\"v {i}\"")));
+            if i % 50 == 0 {
+                owned.push((s, "<http://ex/rare>".into(), "<http://ex/R>".into()));
+            }
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(1024);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+        let resident = Rete::open(&bytes).unwrap();
+        let lazy = Rete::open_ranged_lazy(crate::reader::SliceReader::new(leaked)).unwrap();
+        let shapes: Vec<Vec<TriplePattern>> = vec![
+            vec![
+                pat("?s", "<http://ex/rare>", "<http://ex/R>"),
+                pat("?s", "<http://ex/value>", "?v"),
+            ],
+            vec![
+                pat("?s", "<http://ex/kind>", "<http://ex/K3>"),
+                pat("?s", "<http://ex/value>", "?v"),
+            ],
+            vec![
+                pat("?s", "<http://ex/kind>", "?k"),
+                pat("?s", "<http://ex/value>", "?v"),
+            ],
+            vec![
+                pat("?s", "<http://ex/value>", "\"v 7\""),
+                pat("?s", "<http://ex/kind>", "?k"),
+            ],
+        ];
+        let decisions = |rete: &Rete| -> Vec<(Vec<u64>, bool, Option<u64>)> {
+            shapes
+                .iter()
+                .map(|q| {
+                    let mut slots = Slots::new();
+                    collect_pattern_slots(q, &mut slots);
+                    let ctx = Ctx::new(rete, slots);
+                    let index = rete.default_index();
+                    let lowered = lower(q, &ctx).unwrap();
+                    let est = tile_estimates(&ctx, index, &lowered, &Default::default());
+                    let lopsided = merge_seed_lopsided(&ctx, index, &lowered[0], &lowered[1]);
+                    let min = bgp_min_estimate(&ctx, index, q).map(|e| e as u64);
+                    (est.iter().map(|e| *e as u64).collect(), lopsided, min)
+                })
+                .collect()
+        };
+        assert_eq!(decisions(&resident), decisions(&lazy));
+        // ... while the byte figures the gates used to read do differ.
+        #[cfg(feature = "compression")]
+        {
+            let bytes_of = |rete: &Rete| {
+                let q = &shapes[2];
+                let mut slots = Slots::new();
+                collect_pattern_slots(q, &mut slots);
+                let ctx = Ctx::new(rete, slots);
+                bgp_min_scan_bytes(&ctx, rete.default_index(), q)
+            };
+            assert_ne!(bytes_of(&resident), bytes_of(&lazy));
         }
     }
 

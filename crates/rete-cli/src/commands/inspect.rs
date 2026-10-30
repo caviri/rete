@@ -5,7 +5,7 @@
 //! from the summary alone, never touching the triple index.
 
 use crate::commands::range_source::{open_local, LocalRangeReader};
-use rete_core::{SliceReader, SummaryView, CODEC_ZSTD};
+use rete_core::{SummaryView, CODEC_ZSTD};
 
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
 /// Dataset Card catalog when the file carries one.
@@ -25,8 +25,10 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     // than of anything the card claims.
     let permutations = crate::commands::card::PermutationsSignal::probe(&header);
     println!("permutations: {}", permutations.describe());
+    let label_index = crate::commands::card::LabelIndexSignal::probe(&reader, &header);
     if let Some(mut card) = crate::commands::card::load_card_ranged(&reader)? {
         card.observe_text_index(text_index);
+        card.observe_label_index(label_index);
         card.observe_permutations(permutations);
         println!();
         println!(
@@ -40,6 +42,60 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// How a file's statements split between the default graph and its named
+/// graphs, and where the split came from.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct GraphSplit {
+    /// Every statement in the file: the header's `quad_count`.
+    pub(crate) statements: u64,
+    pub(crate) named_graphs: u64,
+    /// Default-graph triples; `None` when they could not be counted cheaply.
+    pub(crate) default_triples: Option<u64>,
+    pub(crate) source: &'static str,
+}
+
+impl GraphSplit {
+    pub(crate) fn named_quads(&self) -> Option<u64> {
+        self.default_triples
+            .map(|d| self.statements.saturating_sub(d))
+    }
+}
+
+/// Split the header's statement count (default graph + every named graph)
+/// into its two parts without reading the named graphs: free when there are
+/// none; from the Dataset Card's build-time counts when it carries them and
+/// they agree with the header; else by counting the default graph's SPO
+/// tiles, which a lazy open faults in (the default graph only).
+pub(crate) fn graph_split(
+    rete: &rete_core::Rete,
+    card: Option<&rete_core::card::DatasetCard>,
+) -> GraphSplit {
+    let statements = rete.header().quad_count;
+    let named_graphs = rete.named_graph_count() as u64;
+    let (default_triples, source) = if named_graphs == 0 {
+        (Some(statements), "header")
+    } else if let Some(c) = card.filter(|c| {
+        c.quad_count == statements
+            && c.named_graph_count == named_graphs
+            && c.triple_count <= statements
+    }) {
+        (Some(c.triple_count), "dataset card")
+    } else if statements <= u64::from(u32::MAX) {
+        (
+            Some(u64::from(rete.default_index().triple_count())),
+            "default-graph index",
+        )
+    } else {
+        (None, "unknown")
+    };
+    GraphSplit {
+        statements,
+        named_graphs,
+        default_triples,
+        source,
+    }
+}
+
 /// Human-friendly overview: size, counts, graphs, pyramid, top predicates. The
 /// per-predicate totals + community count come from the summary alone (the
 /// triple index is never read).
@@ -47,10 +103,30 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     let rete = open_local(file)?;
     let h = rete.header();
     let file_len = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+    // The card is two small range reads; it carries the build-time split.
+    let card = crate::commands::card::load_card_ranged(&LocalRangeReader::open(file)?)
+        .ok()
+        .flatten();
+    let split = graph_split(&rete, card.as_ref());
+    let show = |n: Option<u64>| n.map_or_else(|| "unknown".to_string(), |n| n.to_string());
     println!("{file} — {file_len} bytes");
-    println!("  default-graph triples : {}", h.quad_count);
+    println!(
+        "  statements            : {} (all graphs)",
+        split.statements
+    );
+    println!("  default-graph triples : {}", show(split.default_triples));
+    println!("  named graphs          : {}", split.named_graphs);
+    if split.named_graphs > 0 {
+        println!(
+            "  named-graph quads     : {} (split from the {})",
+            show(split.named_quads()),
+            split.source
+        );
+    }
     println!("  distinct terms        : {}", h.term_count);
-    println!("  named graphs          : {}", rete.graph_names().len());
+    if h.has_quad_index() {
+        println!("  named-graph layout    : quad index (graph-leading permutations, kind 10)");
+    }
     println!("  pyramid levels        : {}", h.pyramid_levels);
     if h.has_tile_synopsis() {
         println!("  tile synopsis         : yes (range readers prune tiles by a bound secondary)");
@@ -152,7 +228,16 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Label index: how many entries are searchable by prefix (`rete search`).
+    // Label index: how many entries are searchable by prefix (`rete search`) —
+    // the LABEL_INDEX section, else the legacy pyramid-meta block.
+    if let Some(li) = rete.label_index_section() {
+        println!(
+            "  label index: {} labels, {} bytes (LABEL_INDEX — `rete search {} <prefix>`)",
+            li.entry_count(),
+            li.section_len(),
+            file
+        );
+    }
     let labels = rete.label_index();
     if !labels.is_empty() {
         println!(
@@ -165,16 +250,23 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     // Full-text index (TEXT_INDEX section): word/CONTAINS search over literals.
     if rete.has_text_index() {
         println!(
-            "  text index: {} bytes (full-text — `rete search {} --contains <word>`)",
-            h.text_index_len, file
+            "  text index: {} bytes (full-text — `rete search {} --contains <word>`){}",
+            h.text_index_len,
+            file,
+            if h.text_index_partial {
+                "; some predicates only (section kind 11)"
+            } else {
+                ""
+            }
         );
     }
     Ok(())
 }
 
 /// Prefix-search the label index: print the subjects whose label starts with
-/// `prefix` (case-insensitive), as `label  <iri>`. Reads the bounded label-index
-/// block in the pyramid-meta — no literal scan. `--json` emits a versioned
+/// `prefix` (case-insensitive), as `label  <iri>`. Reads the LABEL_INDEX section
+/// (or, on an older file, the bounded label block of the pyramid-meta) — no
+/// literal scan. `--json` emits a versioned
 /// `{schemaVersion, matches:[{label, subject}]}` envelope.
 pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyhow::Result<()> {
     let rete = open_local(file)?;
@@ -198,8 +290,8 @@ pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyh
         return Ok(());
     }
     if hits.is_empty() {
-        if rete.label_index().is_empty() {
-            eprintln!("(this file has no label index — rebuild with a recent `rete build`)");
+        if !rete.has_label_index() && rete.label_index().is_empty() {
+            eprintln!("(this file has no label index — rebuild with `rete build --label-index`)");
         } else {
             println!("(no labels match \"{prefix}\")");
         }
@@ -253,6 +345,11 @@ pub(crate) fn search_contains(
             terms.push(format!("{p}*"));
         }
         println!("(no entities contain {})", terms.join(" + "));
+        // An index of some graphs or predicates finds only their words; say
+        // which, so "nothing" is not read as "nowhere in the file".
+        if let Some(scope) = rete.text_index_scope().filter(|s| !s.is_default()) {
+            eprintln!("(the text index covers: {})", scope.describe());
+        }
         return Ok(());
     }
     for iri in &hits {
@@ -305,7 +402,9 @@ pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
         println!("OK — content hash matches");
         Ok(())
     } else {
-        anyhow::bail!("FAILED — content hash mismatch (file corrupted or truncated)");
+        anyhow::bail!(
+            "FAILED — content hash mismatch, or a section digest mismatch (file corrupted or truncated)"
+        );
     }
 }
 
@@ -314,9 +413,20 @@ pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
 /// levels, leaves as you zoom in). All read **index-free** from the pyramid-meta
 /// via [`SummaryView`]. With `--level k`, print just level `k`'s type histogram.
 pub(crate) fn summary(file: &str, level: Option<usize>) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let Some(view) = SummaryView::open_ranged(&SliceReader::new(&bytes))? else {
-        eprintln!("file has no pyramid");
+    // Positional reads of the sections the view needs, not the whole file.
+    let reader = LocalRangeReader::open(file)?;
+    let Some(view) = SummaryView::open_ranged(&reader)? else {
+        // No pyramid: the schema may still have its own section (kind 9).
+        match SummaryView::open_schema_ranged(&reader)? {
+            Some(view) => {
+                if let Some(k) = level {
+                    return render_schema_level(&view, k);
+                }
+                println!("file has no pyramid; its SCHEMA section:");
+                render_schema_overview(&view);
+            }
+            None => eprintln!("file has no pyramid"),
+        }
         return Ok(());
     };
 
@@ -456,8 +566,7 @@ pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
 /// Exact per-predicate triple counts, computed from the summary alone (the triple
 /// index is never read).
 pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let reader = SliceReader::new(&bytes);
+    let reader = LocalRangeReader::open(file)?;
     match SummaryView::open_ranged(&reader)? {
         Some(view) => {
             println!(

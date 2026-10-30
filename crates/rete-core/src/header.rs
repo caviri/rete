@@ -69,6 +69,30 @@ pub const FLAG_TILE_SYNOPSIS: u8 = 0b0000_0010;
 /// this needs no format-version bump and old readers stay forward-compatible.
 pub const FLAG_HAS_QUOTED_TRIPLES: u8 = 0b0000_0100;
 
+/// Flag bit: the named graphs live in the **quad index** — the QUAD_INDEX
+/// section ([`SectionKind::QuadIndex`], kind 10) holds every named-graph quad as
+/// the fourth column of graph-leading permutations, the NAMED_GRAPHS section
+/// (kind 5) is absent, and the index container carries one trailing **seal**
+/// section (see `quad.rs`). Readers before this flag do not check it; they
+/// refuse the file anyway, on the seal (the container's section count), so a
+/// quad-index file never opens as one without named graphs
+/// (`docs/compatibility.md`).
+pub const FLAG_QUAD_INDEX: u8 = 0b0000_1000;
+
+/// Flag bit: the full-text index also covers the **named graphs'** literals
+/// (`rete build --text-index-graphs all`, Rete 0.4.0). It lets a query inside
+/// `GRAPH`, under `FROM` or over the union default graph decide from the
+/// header alone whether the index can prune its `FILTER(CONTAINS(…))`: without
+/// the bit it scans and never faults the index's token table. Bit 3
+/// (`0b0000_1000`) belongs to the quad index. Older readers ignore unknown bits.
+pub const FLAG_TEXT_INDEX_NAMED_GRAPHS: u8 = 0b0001_0000;
+
+/// Length of the BLAKE3 self-digest that heads a predicate-restricted text
+/// index section ([`SectionKind::TextIndexPartial`], kind 11):
+/// `digest = blake3(section[16..])[..16]`, the same rule as the LABEL_INDEX and
+/// SCHEMA sections.
+pub const TEXT_INDEX_PARTIAL_DIGEST_LEN: u64 = 16;
+
 /// A top-level file section, addressed by [`SectionKind`] in the header directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionKind {
@@ -84,6 +108,20 @@ pub enum SectionKind {
     NamedGraphs,
     /// Full-text (word) index over literals — `token → subjects`.
     TextIndex,
+    /// A full-text index that covers **only some predicates**
+    /// (`rete build --text-index-include/--text-index-exclude`): the same
+    /// layout as [`SectionKind::TextIndex`], under its own kind so that a
+    /// reader which predates text-index scopes does not see it at all. Such a
+    /// reader prunes `FILTER(CONTAINS(…))` with any text index it finds, as if
+    /// the index covered every literal; with this one it would silently drop
+    /// the rows of the predicates left out. Not seeing it, it scans instead.
+    /// The header maps it onto the same `text_index_*` fields, with
+    /// [`Header::text_index_partial`] set. Like kinds 8 and 9 it is **outside
+    /// the content hash** — an older `verify`, which cannot see it, must not
+    /// call the file corrupt — and starts with its own 16-byte digest
+    /// ([`TEXT_INDEX_PARTIAL_DIGEST_LEN`]) instead; the kind-6 layout follows
+    /// it ([`Header::text_index_payload`]).
+    TextIndexPartial,
     /// Build-conditions record (timestamp, builder version, build parameters,
     /// measured starter-query costs), stored as an opaque JSON blob owned by the
     /// application layer (the CLI). **Deliberately excluded from the content
@@ -91,6 +129,23 @@ pub enum SectionKind {
     /// section is exactly the per-build facts (when, by which binary, how fast)
     /// that differ between them. `verify` therefore does not cover it.
     BuildInfo,
+    /// The range-readable **label index** (`rete build --label-index`): every
+    /// labelled subject's display label, sorted for prefix search, as a
+    /// multi-level table a reader walks with a few small range reads. See
+    /// [`crate::label_index`]. Optional; outside the content hash and
+    /// self-digested (SPEC §6.4).
+    LabelIndex,
+    /// The **schema** section: the class hierarchy, the per-level type rollups
+    /// and lateral class links, the coherence axioms, the planner's
+    /// `query_stats` and the characteristic sets — computed without the
+    /// community dendrogram. See [`crate::schema_section`]. Optional; outside
+    /// the content hash and self-digested (SPEC §7.5).
+    Schema,
+    /// The quad index (kind 10): every named-graph quad in graph-leading
+    /// permutations behind a sorted graph directory. Present exactly when the
+    /// header has [`FLAG_QUAD_INDEX`]. Kept in [`Header::extra_sections`] like
+    /// an unknown kind (it has no named convenience fields).
+    QuadIndex,
     /// A section kind this build doesn't know — preserved verbatim on round-trip
     /// so a newer writer's sections survive an older reader.
     Unknown(u16),
@@ -106,6 +161,10 @@ impl SectionKind {
             SectionKind::NamedGraphs => 5,
             SectionKind::TextIndex => 6,
             SectionKind::BuildInfo => 7,
+            SectionKind::LabelIndex => 8,
+            SectionKind::Schema => 9,
+            SectionKind::QuadIndex => 10,
+            SectionKind::TextIndexPartial => 11,
             SectionKind::Unknown(k) => k,
         }
     }
@@ -119,6 +178,10 @@ impl SectionKind {
             5 => SectionKind::NamedGraphs,
             6 => SectionKind::TextIndex,
             7 => SectionKind::BuildInfo,
+            8 => SectionKind::LabelIndex,
+            9 => SectionKind::Schema,
+            10 => SectionKind::QuadIndex,
+            11 => SectionKind::TextIndexPartial,
             other => SectionKind::Unknown(other),
         }
     }
@@ -187,6 +250,10 @@ pub struct Header {
     /// `rete build --text-index`). See [`SectionKind::TextIndex`].
     pub text_index_offset: u64,
     pub text_index_len: u64,
+    /// The full-text index covers only some predicates: it is written (and was
+    /// read) as [`SectionKind::TextIndexPartial`] rather than
+    /// [`SectionKind::TextIndex`]. `false` for every file without one.
+    pub text_index_partial: bool,
     /// Build-conditions section (0 if absent). See [`SectionKind::BuildInfo`]:
     /// an opaque per-build record that is **not** covered by the content hash.
     pub build_info_offset: u64,
@@ -203,8 +270,10 @@ pub struct Header {
     ///
     /// [`PermSet::ALL`]: crate::index::PermSet::ALL
     pub perms: crate::index::PermSet,
-    /// Directory entries whose [`SectionKind`] this build doesn't recognize,
-    /// preserved verbatim. Empty for a file this crate wrote.
+    /// Directory entries of the kinds added after the generation-1 freeze —
+    /// [`SectionKind::LabelIndex`] (8), [`SectionKind::Schema`] (9) — and of
+    /// any kind this build doesn't recognize, preserved verbatim in directory
+    /// order. None of them is covered by the header content hash.
     pub extra_sections: Vec<Section>,
 }
 
@@ -269,7 +338,11 @@ impl Header {
         ];
         if self.text_index_len > 0 {
             entries.push(entry(
-                SectionKind::TextIndex,
+                if self.text_index_partial {
+                    SectionKind::TextIndexPartial
+                } else {
+                    SectionKind::TextIndex
+                },
                 self.text_index_offset,
                 self.text_index_len,
             ));
@@ -353,6 +426,7 @@ impl Header {
             perms,
             text_index_offset: 0,
             text_index_len: 0,
+            text_index_partial: false,
             build_info_offset: 0,
             build_info_len: 0,
             extra_sections: Vec::new(),
@@ -386,12 +460,21 @@ impl Header {
                 SectionKind::TextIndex => {
                     h.text_index_offset = offset;
                     h.text_index_len = length;
+                    h.text_index_partial = false;
+                }
+                SectionKind::TextIndexPartial => {
+                    h.text_index_offset = offset;
+                    h.text_index_len = length;
+                    h.text_index_partial = true;
                 }
                 SectionKind::BuildInfo => {
                     h.build_info_offset = offset;
                     h.build_info_len = length;
                 }
-                SectionKind::Unknown(_) => h.extra_sections.push(Section {
+                SectionKind::LabelIndex
+                | SectionKind::Schema
+                | SectionKind::QuadIndex
+                | SectionKind::Unknown(_) => h.extra_sections.push(Section {
                     kind,
                     flags: u16_at(p + 2),
                     offset,
@@ -400,6 +483,17 @@ impl Header {
             }
         }
         Ok(h)
+    }
+
+    /// The LABEL_INDEX section (kind 8), if the file carries a non-empty one.
+    pub fn label_index_section(&self) -> Option<Section> {
+        self.section(SectionKind::LabelIndex)
+            .filter(|s| s.length > 0)
+    }
+
+    /// The SCHEMA section (kind 9), if the file carries a non-empty one.
+    pub fn schema_section(&self) -> Option<Section> {
+        self.section(SectionKind::Schema).filter(|s| s.length > 0)
     }
 
     pub fn has_quads(&self) -> bool {
@@ -453,6 +547,29 @@ impl Header {
         self.flags & FLAG_TILE_SYNOPSIS != 0
     }
 
+    /// Does the full-text index cover the named graphs' literals too
+    /// ([`FLAG_TEXT_INDEX_NAMED_GRAPHS`])? Known from the header alone.
+    pub fn text_index_covers_named_graphs(&self) -> bool {
+        self.flags & FLAG_TEXT_INDEX_NAMED_GRAPHS != 0
+    }
+
+    /// The `(offset, length)` of the text index's payload — the token-table
+    /// varint, the token table and the postings. That is the whole section for
+    /// kind 6; a kind-11 section starts with its 16-byte self-digest, which this
+    /// skips. `(offset, 0)` past a kind-11 section too short for its digest.
+    pub fn text_index_payload(&self) -> (u64, u64) {
+        if self.text_index_partial {
+            (
+                self.text_index_offset
+                    .saturating_add(TEXT_INDEX_PARTIAL_DIGEST_LEN),
+                self.text_index_len
+                    .saturating_sub(TEXT_INDEX_PARTIAL_DIGEST_LEN),
+            )
+        } else {
+            (self.text_index_offset, self.text_index_len)
+        }
+    }
+
     /// The directory entry for a section kind, or `None` if absent. Known kinds
     /// read from the named convenience fields; unknown kinds from
     /// [`extra_sections`](Self::extra_sections).
@@ -463,9 +580,18 @@ impl Header {
             SectionKind::Index => (self.root_dir_offset, self.root_dir_len),
             SectionKind::PyramidMeta => (self.pyramid_meta_offset, self.pyramid_meta_len),
             SectionKind::NamedGraphs => (self.named_graphs_offset, self.named_graphs_len),
-            SectionKind::TextIndex => (self.text_index_offset, self.text_index_len),
+            SectionKind::TextIndex if !self.text_index_partial => {
+                (self.text_index_offset, self.text_index_len)
+            }
+            SectionKind::TextIndexPartial if self.text_index_partial => {
+                (self.text_index_offset, self.text_index_len)
+            }
+            SectionKind::TextIndex | SectionKind::TextIndexPartial => (0, 0),
             SectionKind::BuildInfo => (self.build_info_offset, self.build_info_len),
-            SectionKind::Unknown(_) => {
+            SectionKind::LabelIndex
+            | SectionKind::Schema
+            | SectionKind::QuadIndex
+            | SectionKind::Unknown(_) => {
                 return self.extra_sections.iter().find(|s| s.kind == kind).copied()
             }
         };
@@ -505,10 +631,31 @@ impl Header {
             SectionKind::TextIndex => {
                 self.text_index_offset = offset;
                 self.text_index_len = length;
+                self.text_index_partial = false;
+            }
+            SectionKind::TextIndexPartial => {
+                self.text_index_offset = offset;
+                self.text_index_len = length;
+                self.text_index_partial = true;
             }
             SectionKind::BuildInfo => {
                 self.build_info_offset = offset;
                 self.build_info_len = length;
+            }
+            SectionKind::LabelIndex | SectionKind::Schema | SectionKind::QuadIndex => {
+                // A known post-freeze kind appears at most once: overwrite.
+                match self.extra_sections.iter_mut().find(|s| s.kind == kind) {
+                    Some(s) => {
+                        s.offset = offset;
+                        s.length = length;
+                    }
+                    None => self.extra_sections.push(Section {
+                        kind,
+                        flags: 0,
+                        offset,
+                        length,
+                    }),
+                }
             }
             SectionKind::Unknown(_) => self.extra_sections.push(Section {
                 kind,
@@ -518,6 +665,23 @@ impl Header {
             }),
         }
         self
+    }
+
+    /// Are the named graphs stored in the quad index ([`FLAG_QUAD_INDEX`])?
+    pub fn has_quad_index(&self) -> bool {
+        self.flags & FLAG_QUAD_INDEX != 0
+    }
+
+    /// The QUAD_INDEX section, when the directory lists a non-empty one.
+    pub fn quad_index_section(&self) -> Option<Section> {
+        self.section(SectionKind::QuadIndex)
+            .filter(|s| s.length > 0)
+    }
+
+    /// How many sections the index container (kind 3) holds: one per stored
+    /// permutation, plus the quad-index seal when [`FLAG_QUAD_INDEX`] is set.
+    pub fn index_container_sections(&self) -> usize {
+        self.perms.len() + usize::from(self.has_quad_index())
     }
 }
 
@@ -549,6 +713,7 @@ mod tests {
             schema_meta_len: 99,
             text_index_offset: 0,
             text_index_len: 0,
+            text_index_partial: false,
             build_info_offset: 0,
             build_info_len: 0,
             extra_sections: Vec::new(),
@@ -739,6 +904,90 @@ mod tests {
     }
 
     #[test]
+    fn label_index_and_schema_sections_are_known_extras() {
+        // Absent: the directory is unchanged (5 entries), so a file without
+        // them is byte-identical to one built before they existed.
+        assert!(sample().label_index_section().is_none());
+        assert!(sample().schema_section().is_none());
+
+        let h = sample()
+            .with_section(SectionKind::LabelIndex, 8000, 300)
+            .with_section(SectionKind::Schema, 8300, 40);
+        let bytes = h.to_bytes();
+        assert_eq!(u16::from_le_bytes(bytes[44..46].try_into().unwrap()), 7);
+        // entries 5 and 6 carry kinds 8 and 9 at the directory's byte layout
+        assert_eq!(
+            u16::from_le_bytes(bytes[64 + 5 * 24..][..2].try_into().unwrap()),
+            8
+        );
+        assert_eq!(
+            u16::from_le_bytes(bytes[64 + 6 * 24..][..2].try_into().unwrap()),
+            9
+        );
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h, back);
+        assert_eq!(back.extra_sections.len(), 2, "stored with the extras");
+        let l = back.label_index_section().unwrap();
+        assert_eq!((l.offset, l.length), (8000, 300));
+        let s = back.schema_section().unwrap();
+        assert_eq!((s.offset, s.length), (8300, 40));
+        assert_eq!(back.expected_file_len(), Some(8340 + 4));
+
+        // A known post-freeze kind is overwritten, never duplicated.
+        let again = back.with_section(SectionKind::Schema, 9000, 10);
+        assert_eq!(again.extra_sections.len(), 2);
+        assert_eq!(again.schema_section().unwrap().offset, 9000);
+
+        // A zero-length entry reads as absent.
+        let empty = sample().with_section(SectionKind::LabelIndex, 0, 0);
+        assert!(empty.label_index_section().is_none());
+    }
+
+    #[test]
+    fn quad_index_flag_and_section_round_trip() {
+        // Absent: no flag, no kind-10 entry, the container is the permutations.
+        let plain = sample();
+        assert!(!plain.has_quad_index());
+        assert!(plain.quad_index_section().is_none());
+        assert_eq!(plain.index_container_sections(), 6);
+
+        // Present: flag bit 3, a kind-10 entry kept with the extra sections,
+        // and one more container section (the seal).
+        let mut h = sample().with_section(SectionKind::QuadIndex, 7000, 900);
+        h.flags |= FLAG_QUAD_INDEX;
+        h.named_graphs_offset = 0;
+        h.named_graphs_len = 0;
+        let bytes = h.to_bytes();
+        assert_eq!(bytes[5] & 0b1000, 0b1000, "flag bit 3");
+        let n = u16::from_le_bytes(bytes[44..46].try_into().unwrap()) as usize;
+        let kinds: Vec<u16> = (0..n)
+            .map(|i| {
+                let p = SECTION_DIR_OFFSET + i * SECTION_ENTRY_LEN;
+                u16::from_le_bytes(bytes[p..p + 2].try_into().unwrap())
+            })
+            .collect();
+        assert!(kinds.contains(&10), "a kind-10 directory entry: {kinds:?}");
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(back, h);
+        assert!(back.has_quad_index());
+        let s = back.quad_index_section().unwrap();
+        assert_eq!(
+            (s.kind, s.offset, s.length),
+            (SectionKind::QuadIndex, 7000, 900)
+        );
+        assert_eq!(back.index_container_sections(), 7);
+        assert_eq!(back.expected_file_len(), Some(7000 + 900 + 4));
+        // Three permutations + seal = four: never the 3 or 6 an old reader wants.
+        let mut lean = back.clone();
+        lean.perms = crate::index::PermSet::CORE;
+        assert_eq!(lean.index_container_sections(), 4);
+        // Re-attaching overwrites rather than duplicating.
+        let again = back.with_section(SectionKind::QuadIndex, 8000, 10);
+        assert_eq!(again.extra_sections.len(), 1);
+        assert_eq!(again.quad_index_section().unwrap().offset, 8000);
+    }
+
+    #[test]
     fn text_index_section_round_trips_and_is_optional() {
         // Absent (len 0): only the 5 always-present sections, so a file without a
         // text index is byte-identical to one built before this section existed.
@@ -757,5 +1006,37 @@ mod tests {
         let s = back.section(SectionKind::TextIndex).unwrap();
         assert_eq!((s.offset, s.length), (5000, 4096));
         assert!(back.extra_sections.is_empty(), "TextIndex is a known kind");
+        assert!(!back.text_index_partial);
+    }
+
+    /// A predicate-restricted text index is written as kind 11, maps onto the
+    /// same `text_index_*` fields, and a reader that only knows kind 6 sees an
+    /// unknown section — no text index at all — rather than a full one.
+    #[test]
+    fn partial_text_index_is_kind_11_and_invisible_as_kind_6() {
+        let h = sample().with_section(SectionKind::TextIndexPartial, 5000, 4096);
+        assert!(h.text_index_partial);
+        let bytes = h.to_bytes();
+        assert_eq!(u16::from_le_bytes(bytes[44..46].try_into().unwrap()), 6);
+        // The 6th entry, at 64 + 5 × 24, carries kind 11.
+        let p = SECTION_DIR_OFFSET + 5 * SECTION_ENTRY_LEN;
+        assert_eq!(u16::from_le_bytes(bytes[p..p + 2].try_into().unwrap()), 11);
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h, back);
+        assert!(back.text_index_partial);
+        assert_eq!((back.text_index_offset, back.text_index_len), (5000, 4096));
+        let s = back.section(SectionKind::TextIndexPartial).unwrap();
+        assert_eq!((s.offset, s.length), (5000, 4096));
+        assert_eq!(back.section(SectionKind::TextIndex).unwrap().length, 0);
+        assert!(back.extra_sections.is_empty(), "kind 11 is known here");
+
+        // What a reader that predates kind 11 decodes: an unknown kind, which
+        // it preserves, and empty text-index fields — so it neither searches
+        // nor prunes with the partial index.
+        let mut old_view = bytes;
+        old_view[p..p + 2].copy_from_slice(&0x7777u16.to_le_bytes());
+        let old = Header::from_bytes(&old_view).unwrap();
+        assert_eq!(old.text_index_len, 0);
+        assert_eq!(old.extra_sections.len(), 1);
     }
 }

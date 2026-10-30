@@ -104,6 +104,27 @@ docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
 (`RETE_SOURCE_REVISION` is only needed from a git worktree, whose `.git` file
 points at a host path the container cannot follow.)
 
+**Nothing is downloaded at build time.** The dev image carries the wasm-bindgen
+CLI at exactly the `wasm-bindgen` version in `Cargo.lock`
+(`WASM_BINDGEN_VERSION` and `WASM_BINDGEN_REV` in `.devcontainer/Dockerfile`),
+and the script runs `wasm-pack --mode no-install`, so a missing or mismatched
+CLI stops the build with both versions named instead of wasm-pack fetching one
+from GitHub. When `Cargo.lock` moves wasm-bindgen, bump both ARGs in the same
+commit (`WASM_BINDGEN_REV` is the release tag's commit, first 9 hex digits:
+wasm-bindgen writes it into every wasm's `producers` section, and it is what
+makes the image's CLI emit the same bytes as the official binary).
+`RETE_WASM_ALLOW_DOWNLOAD=1` restores the old download for a machine without
+the image.
+
+**Which engine is in `web/pkg*`?** Those packages are gitignored, so the build
+stamps each one with `rete-build.json`: the content hash of the engine source it
+compiled (the workspace manifests, `Cargo.lock`, and `Cargo.toml` + `src/` of
+rete-wasm and every crate it reaches by path), the commit, and the wasm's
+sha256. `node scripts/engine_stamp.mjs check` compares them with the checkout,
+and the gate's G0 fails on a stale or unstamped package, so a gate can no
+longer vouch for an engine built from other source. `docs/wasm-build.json`
+records the same `engineSource` for the tracked artifacts.
+
 Four things make that byte diff go red, all presenting as the same
 `Binary files … differ`. Two are handled by the script; the other two are the
 check doing its job:
@@ -276,7 +297,7 @@ and `pmtiles` (a tippecanoe vector-tile basemap for the "Tiles" output; can also
 inside the `.rete` as a section). See `docs/browser.md` and `docs/federation.md`.
 
 **Build + publish** (details in `skills/`): `rete build <in.nt> -o <out.rete>
---pyramid-algo types --card` (Docker: the binary is `/work/target/release/rete`, not on
+--pyramid-algo types --label-index --card` (Docker: the binary is `/work/target/release/rete`, not on
 `PATH`), then upload to the R2 bucket `rete` under `<key>/<key>.rete`. R2 S3 credentials
 (`ACCESS_KEY_ID` / `SECRET_ACCESS_KEY` / `S3_API_ENDPOINT`) live in the gitignored
 `.env`; upload via boto3 (`dev/r2_s3.py put rete <local> <key>`). Bulk HF-bucket → R2
@@ -303,9 +324,13 @@ rebuilt in lockstep, and two of the largest published files have no local source
 to rebuild from at all.
 
 **R2 rules of the road:**
-- **CORS is required and MUST ExposeHeaders `Content-Range`** — rete's open probe reads
-  the total file length from `Content-Range: bytes 0-0/N`; without exposing it the file
-  will not open in a browser (curl/CLI ignore CORS, so ALWAYS verify in a browser).
+- **CORS is required; keep `ExposeHeaders` listing `Content-Range`** (the catalog
+  contract, `scripts/check_dataset_catalog.py`, checks it). The browser readers do not
+  need it to open a `.rete`: the length comes from the file's own 1 KiB header,
+  confirmed by a 4-byte footer read, and a visible `Content-Range` that agrees only
+  saves that read. That is why a host that hides it, like Zenodo's file API, opens
+  fine (`docs/hosting.md`, `tests/gate/checks/check_zenodo_host.mjs`). curl/CLI ignore
+  CORS, so ALWAYS verify in a browser.
   Policy: `AllowedOrigins ["*"]`, `AllowedMethods ["GET","HEAD"]`, `AllowedHeaders
   ["Range"]`, `ExposeHeaders ["Content-Range","Content-Length","Accept-Ranges","ETag"]`.
 - **Cost:** egress is **free** (no per-request / per-user bandwidth charge — R2's whole
@@ -336,32 +361,40 @@ Before touching a `.rete` that is already published. Full lifecycle in
 - **A card is written at build time.** Fixing the card generator fixes the
   *next* build, never a published file. The card is inside the content hash, so
   there is no in-place patch — the file is rewritten or nothing changes.
+  `rete recard` is that rewrite at its cheapest: only the card and the build
+  record change, every other section is copied byte for byte.
 - **Survey before you re-card.** `bash scripts/recard/survey.sh` reads the CARD
   tier only: 0.6 MB for the whole 98-file catalog. Re-carding it blind is
   248 GB down and 248 GB back up. Re-decide from cards already on disk with
   `--cards <dir>` (zero network). Skip `geoadmin-tiles` — its card range is
   117 MB, not 6 KB.
-- **Pick the path by statement count, not file size.** `repyramid` costs
-  ~350–700 B per statement (17–35× the file, so bytes mislead): ceiling
-  **~80 M statements** on a 48 GB machine. Past that, stage through text
-  (`rete export --format nq` → `rete build --card-file …`): ~2.5× the wall
-  clock, 9–15× the `.rete` in scratch disk, ceiling **~150 M**. Past *that*,
-  stop — it is engine work. Exceeding a ceiling is an OOM kill mid-rebuild, not
-  an error message.
-- **`rete build --memory-budget-mb` cannot re-card.** It writes a counts-only
-  card with no profile and no starter queries. It *does* build named graphs
-  (#139) — `--collapse-graphs` is now a modelling choice (fold a TriG export's
-  graphs into the default graph when that is what the dump means), not a
-  requirement. `--text-index` is still refused there.
+- **To change only the card, `rete recard` at any size.** It derives the
+  profile by streaming the file's sorted sections — about one byte per subject
+  plus `--memory-budget-mb` of caches, not the statement count — and is what
+  `scripts/recard/recard.sh` runs by default. The rebuild paths are for when the
+  pyramid or the text index must change too, and they are priced by
+  **statement count, not file size**: `repyramid` costs ~350–700 B per
+  statement (17–35× the file, so bytes mislead), ceiling **~80 M statements** on
+  a 48 GB machine; staging through text (`rete export --format nq` →
+  `rete build --card-file …`) reaches **~150 M** at ~2.5× the wall clock and
+  9–15× the `.rete` in scratch disk. Exceeding a ceiling is an OOM kill
+  mid-rebuild, not an error message.
+- **`rete build --memory-budget-mb` writes a counts-only card** (no profile, no
+  starter queries) — then `rete recard` the result to give it a full one. It
+  *does* build named graphs (#139) — `--collapse-graphs` is now a modelling
+  choice (fold a TriG export's graphs into the default graph when that is what
+  the dump means), not a requirement. `--text-index` works there too (0.4.0),
+  in any scope, and writes the same TEXT_INDEX bytes as the in-RAM build.
 - **Feed the external build the dump as it ships.** It reads
   N-Triples/N-Quads/Turtle/TriG, gzipped or not, straight from the compressed
   file — so a `dump.ttl.gz` never has to be expanded to `.nt` first. That
   expansion is not a rounding error: SemOpenAlex measures 146.8 N-Quads bytes
   per triple, which turns an 8.5 GiB dump into ~400 GB of scratch.
 - **Carry the curated fields explicitly.** A bare `repyramid --card` silently
-  drops `title`/`license`/`source`/`description`. Use
-  `scripts/recard/card_tools.py curated` to lift them, and its `verify` to fail
-  the run if one goes missing.
+  drops `title`/`license`/`source`/`description`; `rete recard` refuses instead
+  unless it is given `--keep-curated` (verbatim) or `--card-file`. Use
+  `scripts/recard/card_tools.py curated` to lift them into a document, and its
+  `verify` to fail the run if one goes missing.
 - **Never edit a publisher's prose.** `description` travels verbatim, stale
   figures included. If it genuinely must be corrected, a human does it, and
   proves it surgical by expecting `verify` to report *exactly one* difference.

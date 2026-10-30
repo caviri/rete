@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.6</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -636,11 +636,25 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <tr><td><strong>Property paths</strong></td><td><code>p+</code>, <code>p*</code>, <code>p?</code> (zero-length included for <code>*</code>/<code>?</code>), reverse <code>^p</code>, sequence <code>a/b</code>, alternative <code>a|b</code> — evaluated goal-directed from a bound endpoint</td></tr>
 <tr><td><strong>Solution modifiers</strong></td><td><code>DISTINCT</code>, <code>ORDER BY</code> (ASC/DESC), <code>LIMIT</code>, <code>OFFSET</code>, <code>VALUES</code>, <code>BIND</code></td></tr>
 <tr><td><strong>Aggregation</strong></td><td><code>GROUP BY</code>, <code>HAVING</code>, <code>COUNT</code>/<code>SUM</code>/<code>AVG</code>/<code>MIN</code>/<code>MAX</code> (incl. <code>COUNT(DISTINCT …)</code>)</td></tr>
-<tr><td><strong>Datasets</strong></td><td><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code>, <code>FROM</code> (RDF-merge default graph), <code>FROM NAMED</code> (scope which graphs <code>GRAPH</code> sees); <code>EXISTS</code> honors the active graph. Plus an <strong>opt-in, non-standard</strong> <a href="#union-default-graph">union default graph</a> mode for named-graph-heavy files.</td></tr>
+<tr><td><strong>Datasets</strong></td><td><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code>, <code>FROM</code> (RDF-merge default graph), <code>FROM NAMED</code> (scope which graphs <code>GRAPH</code> sees); <code>EXISTS</code>, sub-<code>SELECT</code>s and <code>DESCRIBE</code> honor the active graph. The full-text index (<code>--text-index</code>) covers the default graph only, so it speeds up <code>FILTER(CONTAINS(…))</code> there and is not used inside <code>GRAPH</code>, under <code>FROM</code> or over the union default graph, where the filter scans. Plus an <strong>opt-in, non-standard</strong> <a href="#union-default-graph">union default graph</a> mode for named-graph-heavy files.</td></tr>
 <tr><td><strong>Output</strong></td><td>SPARQL Results JSON (<code>--json</code>), with correct <code>uri</code>/<code>literal</code>/<code>bnode</code> typing, datatype, and <code>xml:lang</code>; literal values are properly unescaped</td></tr>
 <tr><td><strong>RDF-star</strong></td><td>Quoted triples <code>&lt;&lt; s p o &gt;&gt;</code> in subject/object position — ingest (N-Triples-star &amp; Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables <code>&lt;&lt; ?s :p ?o &gt;&gt;</code>) and the <code>isTRIPLE</code> / <code>TRIPLE</code> / <code>SUBJECT</code> / <code>PREDICATE</code> / <code>OBJECT</code> built-ins. See <a href="#rdf-star">below</a>.</td></tr>
 <tr><td><strong>Reasoning (OWL 2 QL)</strong></td><td>Opt-in ontology-mediated answering by <strong>query rewriting</strong> — no materialization: <code>rdfs:subClassOf</code> / <code>subPropertyOf</code> hierarchy + <code>rdfs:domain</code> / <code>range</code> type inference, computed over the raw data. <code>rete sparql … --entail</code>, or the playground <strong>🧠 Reason</strong> toggle. See <a href="#reasoning-owl-2-ql">below</a>.</td></tr>
 </tbody></table>
+<p><strong><code>REGEX</code> and non-ASCII text.</strong> A pattern without metacharacters is a substring
+test, with full Unicode case folding under the <code>i</code> flag, in every build. Any
+other pattern goes to a regex engine, and which one depends on the build:</p>
+<table><thead><tr><th>Build</th><th>Engine</th><th><code>\b</code> <code>\w</code> <code>\d</code> and the <code>i</code> flag</th></tr></thead><tbody>
+<tr><td>native — the CLI, <code>rete serve</code>, Python, R, the File Explorer</td><td><code>regex</code> (feature <code>unicode-regex</code>, on by default)</td><td>Unicode: <code>REGEX(?name, "\\bsvobodová\\b", "i")</code> finds "Jitka Svobodová" and "SVOBODOVÁ"</td></tr>
+<tr><td>the npm package <code>rete-graph</code> (<code>rete-wasm</code>, built by <code>clients/js/build-wasm.sh</code>) and the Claude Desktop extension <code>rete.mcpb</code> built on it</td><td><code>regex</code> (<code>rete-wasm</code> built with <code>--features unicode-regex</code>)</td><td>Unicode, as native</td></tr>
+<tr><td>the browser playground and the other packages <code>scripts/build_wasm.sh</code> builds (<code>docs/engine/</code>, <code>web/pkg*</code>, the release's browser bundle)</td><td><code>regex-lite</code> (<code>rete-wasm</code>'s default)</td><td>ASCII only: no boundary after "á", so the same pattern misses both names (and finds one <em>inside</em> "Svobodováová"); <code>(?i)</code> does not fold "Á"</td></tr>
+</tbody></table>
+<p>The playground's engine keeps <code>regex-lite</code> for its size: the Unicode engine adds
+about 489 KB to the 4.74 MB wasm module (162 KB of its 1.33 MB gzipped), which
+every visitor downloads. The npm package and the extension run mostly in Node,
+where that size matters less than an answer that agrees with the CLI.
+Neither engine knows <code>\p{…}</code> classes. XPath regular expressions, which SPARQL
+names, have no <code>\b</code> at all; rete follows the Perl meaning, as Oxigraph does.</p>
 <h2 id="property-paths">Property paths</h2>
 <p>Property paths are evaluated goal-directed from a bound endpoint and support
 <code>p+</code>, <code>p*</code>, <code>p?</code>, reverse <code>^p</code>, sequence <code>a/b</code>, and alternative <code>a|b</code>.</p>
@@ -701,6 +715,13 @@ variable stream through a merge join. Nothing proportional to the large
 pattern is held;</li>
 <li>otherwise the small side is materialized and hash-joined, as before.</li>
 </ul>
+<p>The same rule applies between a basic graph pattern and what joins it from the
+outside — a property path, an <code>OPTIONAL</code>, another block: the outside rows are
+pulled first, and if there are few of them next to the pattern's most selective
+triple pattern (16 times fewer, that pattern above 65,536 triples), the pattern
+is looked up once per row instead of being evaluated whole and hash-joined.
+<code>&lt;work&gt; frbr:partOf+ ?j . ?j a fabio:Journal ; dcterms:title ?t</code> reads the
+three containers of one work, not every journal of the file.</p>
 <p>A sub-select's rows enter the outer query as dictionary ids, never resolved to
 strings in between. It is still not a cost-based optimizer over the whole
 algebra (only within a basic graph pattern), and the benchmark page separates
@@ -749,6 +770,64 @@ and <code>GROUP BY</code> / <code>ORDER BY</code> / <code>LIMIT</code> / <code>D
 rows. A query is refused only when nothing in it can split (no BGP with a
 variable subject — the strategy would add nothing) or under <code>FROM</code> / <code>FROM NAMED</code>. The playground's "Split by community" strategy uses this; natively
 the per-star, per-community partials are the seam for parallel evaluation.</p>
+<h3 id="partition">Splitting a query by a variable</h3>
+<p>A long extraction — title, venue and year of every work citing a paper, over
+a remote graph where each scattered work is a network round trip — can run as
+many short queries instead of one long one, each finished, retried or resumed
+on its own. <code>partition_plan(query, var)</code> plans that and
+<code>eval_query_partitioned(query, opts, var, keys)</code> runs one chunk (JS:
+<code>g.partitionPlan(q, "?work")</code> and <code>g.queryRaw(q, { partition: { var, keys } })</code>;
+the Claude Desktop extension's <code>partition_by</code> drives both).</p>
+<ul>
+<li>
+<p><strong>Exact, or refused.</strong> Every solution must bind the variable: then each
+solution belongs to exactly one chunk, the one holding its value, and the
+chunks' rows together are the query's rows. The plan is refused, with the
+reason, for ASK and DESCRIBE, an <code>ORDER BY</code> (it needs every row at once), an
+aggregate not grouped by the variable (it would be computed per chunk), a
+variable a select expression computes, and a variable some solution may
+leave unbound (matched only inside <code>OPTIONAL</code>, one side of a <code>UNION</code>, a
+<code>BIND</code>, a <code>SERVICE</code>, or a sub-SELECT that does not project it).</p>
+</li>
+<li>
+<p><strong>The keys.</strong> The plan's <code>keys_query</code> lists the variable's values, and
+<code>keys_from</code> says from where:</p>
+<ul>
+<li><code>values</code>: a required <code>VALUES</code> list on the variable (bound in every row),
+taken as it stands — the solutions can take no other value, and listing
+them reads nothing. The shortest one when there are several.</li>
+<li><code>pattern</code>: the one required triple pattern that binds it with constants
+alone (<code>?work cx:cites &lt;paper&gt;</code>), the one whose tiles are smallest
+according to the tile directory — one range scan, where the query is a
+read per entity.</li>
+<li><code>where</code>: the whole WHERE clause, when neither exists; listing them may
+cost as much as the query.</li>
+</ul>
+<p>Either way that is a superset of the values the solutions take; a key with
+no solution makes an empty chunk. A caller may also run chunks for keys it
+got elsewhere — the works a query listed in another graph: the chunks then
+answer the query for those values only.</p>
+</li>
+<li>
+<p><strong>A chunk</strong> is the query without its top-level <code>OFFSET</code> / <code>LIMIT</code>, with its
+keys either cutting the query's own <code>VALUES</code> list on the variable down to
+them (when every key is in it as written), or joined in as <code>VALUES</code> on the
+first required pattern block that binds the variable, where the VALUES
+pushdown turns each key into an index lookup.</p>
+</li>
+<li>
+<p><strong>Merging</strong> is the caller's: the chunks' rows in key order, deduplicated when
+the plan says <code>dedupe</code> (a <code>DISTINCT</code> that does not project the variable, and
+every <code>CONSTRUCT</code>), then the plan's <code>offset</code> / <code>limit</code>. A <code>LIMIT</code> without
+<code>ORDER BY</code> asks for any rows, so a caller may stop starting chunks once the
+finished ones hold enough.</p>
+</li>
+<li>
+<p>Keys are term tokens as the keys query returns them (<code>&lt;https://…&gt;</code>,
+<code>"…"^^&lt;…&gt;</code>), matched against the dictionary as stored. A variable bound to
+blank nodes cannot be split by: a blank node cannot be named in a chunk.</p>
+</li>
+</ul>
 <h2 id="union-default-graph">Union default graph (⛁ All graphs)</h2>
 <p>Standard SPARQL scopes a pattern outside <code>GRAPH</code> to the <strong>default graph</strong>, and
 the engine keeps exactly that — the W3C conformance suite runs on it. But many
@@ -911,16 +990,39 @@ SELECT ?occ ?who WHERE {
 }
 </code></pre>
 <p><code>CONSTRUCT</code> (and <code>rete serve</code>'s SPARQL Update) may build quoted triples in their
-templates. Nested quoting (<code>&lt;&lt; &lt;&lt; … &gt;&gt; :p ?o &gt;&gt;</code>) works. rete follows the
-RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.</p>
+templates. Nested quoting (<code>&lt;&lt; &lt;&lt; … &gt;&gt; :p ?o &gt;&gt;</code>) works.</p>
+<p><strong>Query — SPARQL 1.2 triple terms.</strong> The ratified spelling <code>&lt;&lt;( s p o )&gt;&gt;</code> is a
+<strong>triple-term pattern</strong> in every query, with constants or inner variables, in a
+pattern, <code>VALUES</code>, <code>BIND</code> or a <code>CONSTRUCT</code> template. It matches the same stored
+token as <code>&lt;&lt; s p o &gt;&gt;</code>, so it finds triple terms written in either surface:</p>
+<pre><code class="language-sparql">SELECT ?s ?t WHERE { ?snapshot oc:inserted &lt;&lt;( ?s dcterms:title ?t )&gt;&gt; }
+</code></pre>
+<p>SPARQL 1.2 also changed what <code>&lt;&lt; s p o &gt;&gt;</code> means: it is a <strong>reified triple</strong> — a
+reifier <code>?r</code> with <code>?r rdf:reifies &lt;&lt;( s p o )&gt;&gt;</code> — not a quoted triple. rete
+reads it that way <strong>only when the query starts with <code>VERSION "1.2"</code></strong>; without
+the declaration it keeps its SPARQL-star meaning, so existing queries and the
+starter queries in published cards answer as before:</p>
+<pre><code class="language-sparql">VERSION "1.2"
+# the source recorded on a reifier of the statement (RDF 1.2 data)
+SELECT ?src WHERE { &lt;&lt; :a :b :c &gt;&gt; :source ?src }
+# = SELECT ?src WHERE { ?r rdf:reifies &lt;&lt;( :a :b :c )&gt;&gt; ; :source ?src }
+</code></pre>
+<p>Under the declaration a reified triple is refused where SPARQL 1.2 forbids it
+(an expression, <code>VALUES</code>), and two 1.2 forms are refused by name rather than
+read in their SPARQL-star sense: a named reifier <code>&lt;&lt; s p o ~ ?r &gt;&gt;</code> and the
+annotation syntax <code>s p o {| … |}</code> — write <code>?r rdf:reifies &lt;&lt;( s p o )&gt;&gt;</code>
+instead. The parser is <code>spargebra</code> 0.3 (SPARQL-star); rete translates the
+SPARQL 1.2 surface before parsing. A SPARQL 1.2 engine (Oxigraph 0.5, Jena 5)
+reads <code>&lt;&lt; s p o &gt;&gt;</code> as a reifier too, so a query meant to run on both should
+spell triple terms <code>&lt;&lt;( s p o )&gt;&gt;</code>.</p>
 <p><strong>You do not have to write the first one.</strong> A dataset built with <code>--card</code> whose
 statements quote other statements ships a <code>qt-*</code> family of starter queries in
 its <a href="dataset-cards.html#querying-the-star-layer">dataset card</a>, instantiated with
 its own annotation vocabulary — what gets said about statements, who says it,
 and how much of the data is qualified — and every one of them is run against the
 finished file at build time, so a shipped query is one that answers. Note that
-those bodies are written in the <code>&lt;&lt; s p o &gt;&gt;</code> surface above: the ratified RDF 1.2
-<code>&lt;&lt;( s p o )&gt;&gt;</code> is an <strong>export</strong> spelling and does not parse in a query.</p>
+those bodies are written in the <code>&lt;&lt; s p o &gt;&gt;</code> SPARQL-star surface, which rete
+reads as a quoted triple when the query has no <code>VERSION "1.2"</code> declaration.</p>
 <p><strong>RDF 1.2 interop.</strong> rete's <strong>N-Triples/N-Quads</strong> reader also accepts the
 ratified RDF 1.2 object triple-term syntax <code>&lt;&lt;( s p o )&gt;&gt;</code>, mapped to the <em>same</em>
 canonical token as <code>&lt;&lt; s p o &gt;&gt;</code> — so an RDF 1.2 N-Triples file and an RDF-star
@@ -929,8 +1031,10 @@ the RDF-star surface only; the export prints a note when it writes a TriG dump
 rete itself could not read back.) RDF 1.2
 <strong>base-direction strings</strong> (<code>"…"@lang--dir</code>) are modelled: <code>DATATYPE</code> reports
 <code>rdf:dirLangString</code> and <code>LANG</code> returns the language subtag; a leading SPARQL 1.2
-<code>VERSION "1.2"</code> declaration is accepted. RDF 1.2 reification (<code>rdf:reifies</code>) and
-the new SPARQL 1.2 direction functions are not yet supported — see
+<code>VERSION "1.2"</code> declaration is accepted, and switches <code>&lt;&lt; … &gt;&gt;</code> to the reified
+triple described above. RDF 1.2 reification is otherwise ordinary data
+(<code>?r rdf:reifies &lt;&lt;( s p o )&gt;&gt;</code>); the new SPARQL 1.2 direction functions are not
+yet supported — see
 <a href="compatibility.html#is-it-compatible-with-rdf">Compatibility</a>.</p>
 <h2 id="reasoning-owl-2-ql">Reasoning (OWL 2 QL)</h2>
 <p>rete answers ontology-mediated queries by <strong>rewriting the query</strong>, not by
@@ -959,13 +1063,31 @@ query touches are fetched.</p>
 # WITH --entail it returns real occurrences via the taxonomy — no hand-written path.
 SELECT ?o WHERE { ?o a &lt;https://w3id.org/rete/gbif/taxon/class/Aves&gt; } LIMIT 20
 </code></pre>
-<p><strong>How</strong> — a hierarchy atom is lowered to the property path that already walks the
-hierarchy: <code>?x a C</code> becomes <code>?x a ?c . ?c rdfs:subClassOf* C</code> (reflexive, so a
-direct type still matches), and likewise <code>subPropertyOf*</code> for roles; <code>domain</code> /
-<code>range</code> add <code>UNION</code> branches. A small TBox read gates the rewrite, so an atom
-whose class/property has no sub-terms — and every non-reasoned query — is
-untouched. The reasoning reaches nested patterns (<code>UNION</code> / <code>OPTIONAL</code> /
-subqueries).</p>
+<p><strong>How</strong> — the TBox is read from the file's <strong>default graph</strong> (the
+<code>subClassOf</code> / <code>subPropertyOf</code> / <code>domain</code> / <code>range</code> / <code>inverseOf</code> statements,
+a few scans of small predicates) and its hierarchies are closed before the query
+runs. An atom then becomes the <strong>distinct union</strong> of the asserted patterns that
+entail it: <code>?x a C</code> → <code>?x a D</code> for every <code>D ⊑* C</code>, plus <code>?x p ?_</code> for every
+property <code>p</code> whose domain is <code>⊑* C</code>, plus <code>?_ q ?x</code> for every <code>q</code> whose range
+is; <code>?x P ?y</code> → <code>?x Q ?y</code> for every <code>Q ⊑* P</code>, plus <code>?y R ?x</code> for the inverses.
+The TBox applies inside <code>GRAPH</code> and under <code>FROM</code> too.</p>
+<ul>
+<li><strong>One row per entailed triple.</strong> A work typed both <code>fabio:Expression</code> and
+<code>fabio:JournalArticle</code> is an Expression once: <code>COUNT(?s)</code> over
+<code>?s a fabio:Expression</code> gives the number of works, not of type statements
+(on OpenCitations' sample, 258,268 rather than 508,044). Each source is read
+in subject order and the sources are merged, so the duplicates are dropped
+without holding the answer set; <code>LIMIT</code> still stops early. A class with many
+subclasses that cover most of the typed nodes is read as one scan of
+<code>rdf:type</code>. Joined with rows that already bind the subject, the atom is a
+check: the subject's own types are read once per row.</li>
+<li><strong>Gated per atom.</strong> A class gets a domain (range) branch only for the
+properties whose domain (range) is <code>⊑* C</code>, and a class or property the file
+never uses adds nothing. An atom reasoning cannot extend is left exactly as
+written, so one unrelated <code>rdfs:domain</code> axiom no longer slows every class
+atom of every reasoned query.</li>
+</ul>
+<p>The reasoning reaches nested patterns (<code>UNION</code> / <code>OPTIONAL</code> / subqueries).</p>
 <p>The existential rewrite is <strong>sound by construction</strong>: it fires only when the
 object variable is purely existential — it occurs exactly once in the whole query
 and is not returned — because an anonymous <code>∃P</code> successor can neither be projected
@@ -1040,6 +1162,12 @@ What a string's text looks like never matters: a string is not a number.</p>
 </tbody></table>
 <p><code>IN</code> is a chain of <code>=</code>. <code>sameTerm</code> is term identity, with no value
 comparison: <code>sameTerm(1, 1.0)</code> is false.</p>
+<p><code>"x"</code> and <code>"x"^^xsd:string</code> are <strong>one term</strong> (RDF 1.1), so they are equal,
+<code>sameTerm</code>, and match each other in a pattern, a join or <code>VALUES</code>. rete stores,
+computes and returns the plain spelling. A file built before 0.4.0 from
+N-Triples/N-Quads may store the typed one: a plain constant still matches it,
+and results show it plain. Only a file that stores <em>both</em> spellings of the same
+string keeps them apart (as two dictionary terms) until it is rebuilt.</p>
 <p><code>ORDER BY</code> puts no value first, then blank nodes, IRIs, literals and quoted
 triples (§15.1). Among literals: first text — simple, <code>xsd:string</code>,
 language-tagged literals, literals of an unknown datatype and ill-typed values

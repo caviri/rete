@@ -1,0 +1,73 @@
+name: Claude Desktop extension tests
+
+# The extension's stdio suites used to run only in release.yml, so a change to
+# clients/mcpb reached a tag without any check. Runs when the extension, the
+# JS client it bundles, or the engine under both changes: build the engine
+# fresh, the client, then the bundle, and drive it over stdio as Claude
+# Desktop does.
+on:
+  push:
+    branches: [main, "release-*"]
+    paths:
+      - "clients/mcpb/**"
+      - "clients/js/**"
+      - "crates/rete-wasm/**"
+      - "crates/rete-core/**"
+      - "web/playground-src/catalog.js"
+      - ".github/workflows/mcpb-test.yml"
+  pull_request:
+    paths:
+      - "clients/mcpb/**"
+      - "clients/js/**"
+      - "crates/rete-wasm/**"
+      - "crates/rete-core/**"
+      - "web/playground-src/catalog.js"
+      - ".github/workflows/mcpb-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcpb-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: bundle + stdio suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      # The repo's rust-toolchain.toml pins the toolchain + wasm target.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            clients/js/package-lock.json
+            clients/mcpb/package-lock.json
+      - name: Build the wasm engine from the checked-out crates
+        run: bash clients/js/build-wasm.sh
+      - name: Build the JS client, then the bundle
+        run: |
+          npm --prefix clients/js ci --no-audit --no-fund
+          node clients/js/build.mjs
+          npm --prefix clients/mcpb ci --no-audit --no-fund
+          node clients/mcpb/build.mjs
+      - name: Drive the bundle over stdio
+        run: node --test --test-timeout=180000 clients/mcpb/test/*.test.mjs
+      - name: Validate the manifest
+        run: npx --yes @anthropic-ai/mcpb@2 validate clients/mcpb/build/manifest.json
+      # The bundle targets node18; run the same suites on that runtime (built
+      # above on 22, as the release builds it). Node 18's runner has no
+      # --test-timeout.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 18
+      - name: Node 18 (the engines floor)
+        run: node --test clients/mcpb/test/*.test.mjs

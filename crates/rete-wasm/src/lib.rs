@@ -629,6 +629,28 @@ impl Graph {
         query_json_with(&self.rete, query, format, "", reason, union_default)
     }
 
+    /// Plan running `query` as chunks split by the values of `var` — see
+    /// `rete_core::partition_plan`. JSON `{var, form, keys_query,
+    /// keys_from_where, offset, limit, dedupe}`, or an error saying why the
+    /// split would change the answer.
+    pub fn partition_plan(&self, query: &str, var: &str) -> Result<String, JsValue> {
+        partition_plan_json(&self.rete, query, var)
+    }
+
+    /// One chunk of a split query: the solutions whose `var` is one of `keys`
+    /// (term tokens, as the plan's keys query returned them), without the
+    /// query's top-level OFFSET/LIMIT. Same envelope as [`Graph::query`].
+    pub fn query_partition(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        var: &str,
+        keys: Vec<String>,
+    ) -> Result<String, JsValue> {
+        query_partition_json(&self.rete, query, format, reason, var, &keys)
+    }
+
     /// See [`query_triples`].
     pub fn query_triples(
         &self,
@@ -1270,6 +1292,30 @@ impl RemoteGraph {
         Ok(s)
     }
 
+    /// See [`Graph::partition_plan`]. Reads the dictionary entries of the
+    /// query's constants and the resident tile directory — no tile data.
+    pub fn partition_plan(&self, query: &str, var: &str) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
+        let s = partition_plan_json(&self.rete, query, var)?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(s)
+    }
+
+    /// See [`Graph::query_partition`].
+    pub fn query_partition(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        var: &str,
+        keys: Vec<String>,
+    ) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
+        let s = query_partition_json(&self.rete, query, format, reason, var, &keys)?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(s)
+    }
+
     /// See [`prefix_search`] — over the resident, cached remote handle. Faults the
     /// pyramid (where the label index lives) on the first call, then serves the
     /// search from memory.
@@ -1627,8 +1673,8 @@ pub fn query(bytes: &[u8], query: &str, format: &str) -> Result<String, JsValue>
 
 /// Prefix-search the label index of an embedded `.rete` image: the subjects whose
 /// label starts with `prefix` (case-insensitive), as `[{"label":…,"subject":…}]`,
-/// capped at `limit`. Answers from the bounded label-index block in the
-/// pyramid-meta — no literal scan. Empty array when the file has no label index.
+/// capped at `limit`. Answers from the LABEL_INDEX section, else from an older
+/// file's pyramid-meta label block, with no literal scan. Empty array without one.
 #[wasm_bindgen]
 pub fn prefix_search(bytes: &[u8], prefix: &str, limit: usize) -> Result<String, JsValue> {
     let rete = open(bytes)?;
@@ -1706,16 +1752,51 @@ fn query_json_with(
         },
     )
     .map_err(err)?;
-    // The expression type errors FILTER absorbed (CONTAINS on an IRI, …): an
-    // optional `warnings` member, present only when there is one, so an
-    // envelope without diagnostics is byte-identical to before.
+    write_with_warnings(&out, &warnings, format, extra)
+}
+
+/// The envelope plus, when there are any, the expression type errors FILTER
+/// absorbed (CONTAINS on an IRI, …): an optional `warnings` member, present
+/// only when there is one, so an envelope without diagnostics is
+/// byte-identical to before.
+fn write_with_warnings(
+    out: &QueryOutput,
+    warnings: &[rete_core::QueryWarning],
+    format: &str,
+    extra: &str,
+) -> Result<String, JsValue> {
     if warnings.is_empty() {
-        return write_query_json(&out, format, extra).map_err(js_error);
+        return write_query_json(out, format, extra).map_err(js_error);
     }
     let mut extra = extra.to_string();
     extra.push_str(r#","warnings":"#);
-    extra.push_str(&rete_core::warnings_json(&warnings));
-    write_query_json(&out, format, &extra).map_err(js_error)
+    extra.push_str(&rete_core::warnings_json(warnings));
+    write_query_json(out, format, &extra).map_err(js_error)
+}
+
+/// [`rete_core::partition_plan`] as JSON.
+fn partition_plan_json(rete: &Rete, query: &str, var: &str) -> Result<String, JsValue> {
+    let plan = rete_core::partition_plan(rete, query, var).map_err(err)?;
+    serde_json::to_string(&plan).map_err(err)
+}
+
+/// One chunk of a split query ([`rete_core::eval_query_partitioned`]), as the
+/// envelope [`query_json_with`] writes.
+fn query_partition_json(
+    rete: &Rete,
+    query: &str,
+    format: &str,
+    reason: bool,
+    var: &str,
+    keys: &[String],
+) -> Result<String, JsValue> {
+    let opts = QueryOpts {
+        reason,
+        union_default_graph: false,
+    };
+    let (out, warnings) =
+        rete_core::eval_query_partitioned(rete, query, opts, var, keys).map_err(err)?;
+    write_with_warnings(&out, &warnings, format, "")
 }
 
 /// Serialize an already-evaluated [`QueryOutput`] into the playground JSON
@@ -1937,6 +2018,63 @@ struct XhrRangeReader {
     /// are served from memory, which is what keeps the CARD tier at its
     /// advertised two requests.
     head: std::sync::OnceLock<Vec<u8>>,
+    /// The **whole** resource, when the host answered a range request with
+    /// `200` and the full body: it ignores `Range` (no `Accept-Ranges`, a proxy
+    /// that strips it, a CDN that serves a cached full object). That body has
+    /// already crossed the network by the time we see it, and every later range
+    /// request would download it again, so it is kept and every read is served
+    /// from it — the file then behaves like an in-memory one. Only bodies up to
+    /// [`WHOLE_BODY_CAP`] are kept; a larger one is refused with the reason.
+    whole: std::sync::OnceLock<Vec<u8>>,
+}
+
+/// The largest full-body answer to a range request that [`XhrRangeReader`]
+/// keeps and serves reads from. The playground loads a local file whole below
+/// 128 MiB; past this cap a range-ignoring host is refused by name rather than
+/// risking the wasm32 heap on a body the reader never asked for.
+const WHOLE_BODY_CAP: u64 = 256 << 20;
+
+/// One read served from a whole-resource body (see [`XhrRangeReader::whole`]),
+/// bounds-checked: the body is whatever the host sent, so a read past its end
+/// is a clean error, never a panic.
+fn slice_whole(whole: &[u8], offset: u64, len: u64, url: &str) -> std::io::Result<Vec<u8>> {
+    let end = offset
+        .checked_add(len)
+        .filter(|&end| end <= whole.len() as u64)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "range {offset}+{len} is past the end of the {} bytes {url} sent",
+                whole.len()
+            ))
+        })?;
+    Ok(whole[offset as usize..end as usize].to_vec())
+}
+
+/// Whether a `200` full body to a range request can stand in for the file:
+/// not empty, within [`WHOLE_BODY_CAP`], and — when its first KiB is a `.rete`
+/// header — exactly the length that header derives (anything else is a
+/// truncated file or a representation whose bytes are not the file's).
+#[cfg_attr(feature = "asyncify", allow(dead_code))] // the async build keeps whole bodies on the JS side
+fn accept_whole_body(body_len: u64, derived: Option<u64>, url: &str) -> Result<(), String> {
+    if body_len == 0 {
+        return Err(format!("probe {url}: 200 with an empty body"));
+    }
+    if body_len > WHOLE_BODY_CAP {
+        return Err(format!(
+            "the host ignored the Range header and sent all {body_len} bytes of {url} \
+             (status 200 instead of 206 Partial Content); a full body over {} MiB is \
+             not kept in memory — host the file where HTTP range requests work",
+            WHOLE_BODY_CAP >> 20
+        ));
+    }
+    match derived {
+        Some(d) if d != body_len => Err(format!(
+            "the host ignored the Range header and sent {body_len} bytes of {url}, \
+             but the file's own header says it is {d} bytes — the file is truncated, \
+             or the host sends a different representation"
+        )),
+        _ => Ok(()),
+    }
 }
 
 // Asyncify variant only (feature = "asyncify"): one dedicated async import in
@@ -2073,6 +2211,49 @@ mod async_range_tests {
         assert!(!is_local_url("file:///tmp/x.rete"));
         assert!(!is_local_url(""));
     }
+
+    // A host that ignores Range sends the whole file with a 200. The reader keeps
+    // that body and serves reads as slices of it; these pin the two decisions
+    // that have no browser in them: which bodies are kept, and the slicing.
+    #[test]
+    fn a_whole_body_is_kept_only_when_it_can_be_the_file() {
+        use super::{accept_whole_body, WHOLE_BODY_CAP};
+        let url = "https://host/f.rete";
+        assert!(accept_whole_body(4096, Some(4096), url).is_ok());
+        // Not a .rete header (a polyglot, say): its own length is all there is.
+        assert!(accept_whole_body(4096, None, url).is_ok());
+        assert!(accept_whole_body(WHOLE_BODY_CAP, None, url).is_ok());
+        let empty = accept_whole_body(0, None, url).unwrap_err();
+        assert!(empty.contains("empty body"), "{empty}");
+        // Too big to hold: refused by name, with the cap, not kept.
+        let big = accept_whole_body(WHOLE_BODY_CAP + 1, Some(WHOLE_BODY_CAP + 1), url).unwrap_err();
+        assert!(
+            big.contains("ignored the Range header") && big.contains("256 MiB"),
+            "{big}"
+        );
+        // A body that is not the length the file's header derives is not the file.
+        let short = accept_whole_body(4000, Some(4096), url).unwrap_err();
+        assert!(short.contains("header says it is 4096 bytes"), "{short}");
+    }
+
+    #[test]
+    fn reads_from_a_whole_body_are_bounds_checked_slices() {
+        use super::slice_whole;
+        let body: Vec<u8> = (0..=255u8).collect();
+        assert_eq!(slice_whole(&body, 10, 3, "u").unwrap(), vec![10, 11, 12]);
+        assert_eq!(
+            slice_whole(&body, 250, 6, "u").unwrap(),
+            vec![250, 251, 252, 253, 254, 255]
+        );
+        assert!(slice_whole(&body, 0, 0, "u").unwrap().is_empty());
+        let past = slice_whole(&body, 250, 7, "u").unwrap_err();
+        assert!(
+            past.to_string().contains("past the end of the 256 bytes"),
+            "{past}"
+        );
+        // An overflowing offset is an error, never a wrapped index.
+        assert!(slice_whole(&body, u64::MAX, 2, "u").is_err());
+    }
 }
 
 #[cfg(feature = "asyncify")]
@@ -2139,6 +2320,7 @@ impl XhrRangeReader {
                 url: url.to_string(),
                 len: len as u64,
                 head: std::sync::OnceLock::new(),
+                whole: std::sync::OnceLock::new(),
             });
         }
         // Asyncify build: probe the length via the async import — no sync XHR.
@@ -2156,10 +2338,13 @@ impl XhrRangeReader {
             }
             // The async length probe reads the window on the JS side and only
             // hands back the length, so the first `head_window()` pays for it.
+            // (A range-ignoring host's full body is kept on the JS side too:
+            // `__reteDoLen` stores it and `__reteDoFetch` slices from it.)
             Ok(Self {
                 url: url.to_string(),
                 len,
                 head: std::sync::OnceLock::new(),
+                whole: std::sync::OnceLock::new(),
             })
         }
         #[cfg(not(feature = "asyncify"))]
@@ -2171,18 +2356,26 @@ impl XhrRangeReader {
             let mut last = format!("could not determine length of {url}");
             for _ in 0..4 {
                 match Self::probe_len(url) {
-                    Ok((len, head)) => {
+                    Ok(probe) => {
                         let cached = std::sync::OnceLock::new();
-                        if !head.is_empty() {
-                            let _ = cached.set(head);
+                        if !probe.head.is_empty() {
+                            let _ = cached.set(probe.head);
+                        }
+                        let whole = std::sync::OnceLock::new();
+                        if let Some(body) = probe.whole {
+                            let _ = whole.set(body);
                         }
                         return Ok(Self {
                             url: url.to_string(),
-                            len,
+                            len: probe.len,
                             head: cached,
+                            whole,
                         });
                     }
-                    Err(e) => last = e,
+                    // A refusal that a retry would only repeat — at the cost of
+                    // downloading a whole body again — is final.
+                    Err(e) if !e.retry => return Err(js_error(e.msg)),
+                    Err(e) => last = e.msg,
                 }
             }
             Err(js_error(last))
@@ -2239,11 +2432,18 @@ impl XhrRangeReader {
             .filter(|&n| n > 0)
     }
 
-    /// One ranged `GET bytes=first-last`, returning `(status, total from a
-    /// visible Content-Range, body)`. The total is `None` when the header is
-    /// absent, hidden by CORS, or `bytes a-b/*`.
+    /// One ranged `GET bytes=first-last`. The total is `None` when
+    /// `Content-Range` is absent, hidden by CORS (no
+    /// `Access-Control-Expose-Headers` entry: GitHub Pages, Zenodo), or
+    /// `bytes a-b/*`.
+    ///
+    /// A `200` is a host that ignored `Range` and sent the whole resource. Its
+    /// size is read from the response itself, and the body is copied into wasm
+    /// memory only when it is small enough to keep ([`WHOLE_BODY_CAP`]): a
+    /// multi-GB body must not be pulled across into the wasm32 heap just to be
+    /// refused.
     #[cfg(not(feature = "asyncify"))]
-    fn ranged_get(url: &str, first: u64, last: u64) -> Result<(u16, Option<u64>, Vec<u8>), String> {
+    fn ranged_get(url: &str, first: u64, last: u64) -> Result<Ranged, String> {
         let err = |m: &str| m.to_string();
         let xhr = web_sys::XmlHttpRequest::new().map_err(|_| err("xhr"))?;
         xhr.open_with_async("GET", url, false)
@@ -2264,12 +2464,28 @@ impl XhrRangeReader {
                     .next()
                     .and_then(|t| t.trim().parse::<u64>().ok())
             });
-        let body = xhr
-            .response()
-            .ok()
-            .map(|r| js_sys::Uint8Array::new(&r).to_vec())
-            .unwrap_or_default();
-        Ok((status, total, body))
+        let array = xhr.response().ok().map(|r| js_sys::Uint8Array::new(&r));
+        let full_len = array.as_ref().map(|a| u64::from(a.length())).unwrap_or(0);
+        if status == 200 && full_len > WHOLE_BODY_CAP {
+            // Keep only the requested window (the header parse still wants it).
+            let end = (last.saturating_add(1)).min(full_len) as u32;
+            let body = array
+                .map(|a| a.subarray(first.min(full_len) as u32, end).to_vec())
+                .unwrap_or_default();
+            return Ok(Ranged {
+                status,
+                total: None,
+                body,
+                full_len,
+            });
+        }
+        let body = array.map(|a| a.to_vec()).unwrap_or_default();
+        Ok(Ranged {
+            status,
+            total,
+            body,
+            full_len,
+        })
     }
 
     /// One length probe. Reads the resource's first KiB over a ranged `GET`;
@@ -2278,87 +2494,168 @@ impl XhrRangeReader {
     /// the file ends with the 4-byte `RETE` footer) and, unless a visible
     /// `Content-Range` already confirms it, **validated** by reading those 4
     /// footer bytes — one extra tiny request, only on hosts whose headers are
-    /// unusable. Non-`.rete` resources fall back to `Content-Range`, then
-    /// HEAD. A 206's `Content-Length` is never believed (it is the size of
-    /// the partial body, and taking it as the file size made every later read
-    /// "range out of bounds").
+    /// unusable. Non-`.rete` resources fall back to `Content-Range`, then to
+    /// HEAD's `Content-Length` (CORS-safelisted, so readable on a host that
+    /// hides `Content-Range`). A 206's `Content-Length` is never believed (it
+    /// is the size of the partial body, and taking it as the file size made
+    /// every later read "range out of bounds").
+    ///
+    /// A host that ignores `Range` answers with `200` and the whole file. That
+    /// body is kept (up to [`WHOLE_BODY_CAP`]) and the reader serves every read
+    /// from it; a larger one is refused, finally, so the open does not retry
+    /// and download it again.
     ///
     /// Returns the length **and the head window it read** — the caller keeps it
     /// so polyglot detection costs no second request.
     #[cfg(not(feature = "asyncify"))]
-    fn probe_len(url: &str) -> Result<(u64, Vec<u8>), String> {
-        let (status, cr_total, body) = Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1)?;
+    fn probe_len(url: &str) -> Result<Probe, ProbeFail> {
+        let Ranged {
+            status,
+            total: cr_total,
+            body,
+            full_len,
+        } = Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1).map_err(ProbeFail::retry)?;
         // Only a genuine header window is worth keeping (a Range-ignoring host
         // may have sent the whole file here).
-        let head = |body: &Vec<u8>| {
-            if body.len() <= rete_core::HEADER_LEN {
-                body.clone()
-            } else {
-                body[..rete_core::HEADER_LEN].to_vec()
-            }
+        let head = |body: &[u8]| body[..body.len().min(rete_core::HEADER_LEN)].to_vec();
+        let derived_of = |body: &[u8]| {
+            rete_core::Header::from_bytes(body)
+                .ok()
+                .and_then(|h| h.expected_file_len())
         };
         if status == 200 {
-            // Host ignored Range and sent the whole (decoded) body. Range
-            // reads are rejected loudly in read_at anyway; report the honest
-            // decoded length so the failure names the real problem there.
-            if !body.is_empty() {
-                return Ok((body.len() as u64, head(&body)));
-            }
-            return Err(format!("probe {url}: 200 with an empty body"));
+            accept_whole_body(full_len, derived_of(&body), url).map_err(ProbeFail::final_)?;
+            // The whole file crossed the network: say so, or the open's byte
+            // count would claim a bounded read (docs/architecture.md).
+            report_progress(body.len(), &[(0, full_len)]);
+            return Ok(Probe {
+                len: full_len,
+                head: head(&body),
+                whole: Some(body),
+            });
         }
         if status != 206 {
-            return Err(format!("probe {url}: status {status}"));
+            return Err(ProbeFail::retry(format!("probe {url}: status {status}")));
         }
 
         // A `.rete` self-describes its length; that is the only signal a
         // compressing/CORS-hiding host cannot skew (issue #95).
-        if let Ok(header) = rete_core::Header::from_bytes(&body) {
-            if let Some(derived) = header.expected_file_len() {
-                if cr_total == Some(derived) {
-                    return Ok((derived, head(&body))); // transport agrees — no extra request
-                }
-                // Ask the file: its last 4 bytes are the `RETE` footer. A 206
-                // with exactly those bytes proves `derived` addresses real
-                // identity bytes; anything else means the file is truncated
-                // or the host's ranges don't address the file's bytes.
-                let (ts, _, tail) = Self::ranged_get(url, derived - 4, derived - 1)?;
-                if ts == 206 && tail == rete_core::MAGIC {
-                    return Ok((derived, head(&body)));
-                }
-                return Err(format!(
-                    "length probe disagrees with the file: its header derives \
-                     {derived} bytes but the host{} has no RETE footer at \
-                     {}..{} (tail probe: status {ts}) — the file is truncated, \
-                     or the host serves ranges over a compressed representation",
-                    match cr_total {
-                        Some(t) => format!(" reports {t} bytes and"),
-                        None => String::from(" hides Content-Range and"),
-                    },
-                    derived - 4,
-                    derived,
-                ));
+        if let Some(derived) = derived_of(&body) {
+            if cr_total == Some(derived) {
+                // transport agrees — no extra request
+                return Ok(Probe {
+                    len: derived,
+                    head: head(&body),
+                    whole: None,
+                });
             }
+            // Ask the file: its last 4 bytes are the `RETE` footer. A 206
+            // with exactly those bytes proves `derived` addresses real
+            // identity bytes; anything else means the file is truncated
+            // or the host's ranges don't address the file's bytes.
+            let tail = Self::ranged_get(url, derived - 4, derived - 1).map_err(ProbeFail::retry)?;
+            if tail.status == 206 && tail.body == rete_core::MAGIC {
+                return Ok(Probe {
+                    len: derived,
+                    head: head(&body),
+                    whole: None,
+                });
+            }
+            if tail.status == 200 {
+                // Ranges honoured for the head, ignored for the tail: the
+                // body is the whole file, so keep it like any other 200.
+                accept_whole_body(tail.full_len, Some(derived), url).map_err(ProbeFail::final_)?;
+                if tail.body.ends_with(&rete_core::MAGIC) {
+                    report_progress(tail.body.len(), &[(0, tail.full_len)]);
+                    return Ok(Probe {
+                        len: derived,
+                        head: head(&body),
+                        whole: Some(tail.body),
+                    });
+                }
+            }
+            return Err(ProbeFail::retry(format!(
+                "length probe disagrees with the file: its header derives \
+                 {derived} bytes but the host{} has no RETE footer at \
+                 {}..{} (tail probe: status {}) — the file is truncated, \
+                 or the host serves ranges over a compressed representation",
+                match cr_total {
+                    Some(t) => format!(" reports {t} bytes and"),
+                    None => String::from(" hides Content-Range and"),
+                },
+                derived - 4,
+                derived,
+                tail.status,
+            )));
         }
         if body.starts_with(&[0x1f, 0x8b]) {
             // The ranged body is a slice of a GZIP stream: the host applied
             // `Content-Encoding` to the range response, so byte offsets do not
             // address the file's bytes at all. No length can fix that.
-            return Err(format!(
+            return Err(ProbeFail::retry(format!(
                 "the host serves HTTP ranges over a gzip-compressed representation \
                  of {url}; range offsets cannot address the file's bytes"
-            ));
+            )));
         }
 
         // Not a `.rete` header: fall back to the transport's signals. A POLYGLOT
         // lands here — its byte 0 is `<`, so the header parse above failed — and the
         // head we keep is exactly what `polyglot_base` needs to find the graph.
         if let Some(total) = cr_total {
-            return Ok((total, head(&body)));
+            return Ok(Probe {
+                len: total,
+                head: head(&body),
+                whole: None,
+            });
         }
         if let Some(len) = Self::head_len(url) {
-            return Ok((len, head(&body)));
+            return Ok(Probe {
+                len,
+                head: head(&body),
+                whole: None,
+            });
         }
-        Err(format!("could not determine length of {url}"))
+        Err(ProbeFail::retry(format!(
+            "could not determine length of {url}"
+        )))
+    }
+}
+
+/// One ranged response (see [`XhrRangeReader::ranged_get`]).
+#[cfg(not(feature = "asyncify"))]
+struct Ranged {
+    status: u16,
+    /// From a readable `Content-Range`; `None` when hidden or absent.
+    total: Option<u64>,
+    /// The body — for a `200` over [`WHOLE_BODY_CAP`], only the requested window.
+    body: Vec<u8>,
+    /// The byte length of the whole response body as the browser received it.
+    full_len: u64,
+}
+
+/// What a length probe learnt: the length, the header window, and — when the
+/// host ignored `Range` — the whole file.
+#[cfg(not(feature = "asyncify"))]
+struct Probe {
+    len: u64,
+    head: Vec<u8>,
+    whole: Option<Vec<u8>>,
+}
+
+/// A failed probe, and whether another attempt could change the answer.
+#[cfg(not(feature = "asyncify"))]
+struct ProbeFail {
+    msg: String,
+    retry: bool,
+}
+
+#[cfg(not(feature = "asyncify"))]
+impl ProbeFail {
+    fn retry(msg: String) -> Self {
+        Self { msg, retry: true }
+    }
+    fn final_(msg: String) -> Self {
+        Self { msg, retry: false }
     }
 }
 
@@ -2376,7 +2673,8 @@ impl RangeReader for XhrRangeReader {
         // freely as the concurrent HTTP readers do — and a wider batch means
         // fewer crossings of the wasm↔JS boundary, which is the only real cost
         // here. Same number as the asyncify reader and the CLI's fan-out.
-        if is_local_url(&self.url) {
+        // A range-ignoring host's whole body is memory now, the same case.
+        if is_local_url(&self.url) || self.whole.get().is_some() {
             return 16;
         }
         #[cfg(feature = "asyncify")]
@@ -2405,6 +2703,9 @@ impl RangeReader for XhrRangeReader {
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
+        }
+        if let Some(whole) = self.whole.get() {
+            return slice_whole(whole, offset, len, &self.url);
         }
         if let Some(head) = self.head.get() {
             if let Some(end) = offset.checked_add(len) {
@@ -2437,6 +2738,11 @@ impl RangeReader for XhrRangeReader {
         #[cfg(not(feature = "asyncify"))]
         {
             let (_, _, total) = checked_async_layout(ranges)?;
+            // The host ignored Range and its whole body is in memory: every
+            // range is a slice of it, and the pool would only download it again.
+            if self.whole.get().is_some() {
+                return ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect();
+            }
             if ranges.len() > 1 {
                 if let Some(buf) = self.read_many_via_pool(ranges) {
                     if buf.len() == total {
@@ -2482,9 +2788,28 @@ impl XhrRangeReader {
                 .map_err(js)?;
             xhr.send().map_err(js)?;
             let status = xhr.status().map_err(js)?;
-            // Same contract as the CLI's HttpRangeReader: a 200 means the server
-            // ignored Range and is returning the whole body — reject it loudly
-            // rather than silently mis-slicing.
+            // A 200 means the server ignored Range and sent the whole body. It is
+            // never mis-sliced as if it were the range: when it is exactly the
+            // file (the length the probe established) and small enough to keep,
+            // it is kept and this and every later read become slices of it;
+            // otherwise it is refused loudly, as the CLI's HttpRangeReader does.
+            if status == 200 {
+                let array = js_sys::Uint8Array::new(&xhr.response().map_err(js)?);
+                let got = u64::from(array.length());
+                if got == self.len && accept_whole_body(got, None, &self.url).is_ok() {
+                    let whole = array.to_vec();
+                    let out = slice_whole(&whole, offset, len, &self.url)?;
+                    // Report the whole body: it is what crossed the network.
+                    report_progress(whole.len(), &[(0, got)]);
+                    let _ = self.whole.set(whole);
+                    return Ok(out);
+                }
+                return Err(std::io::Error::other(format!(
+                    "server ignored Range (status 200 with {got} bytes, expected 206 Partial \
+                     Content) for {}; the host must support HTTP range requests",
+                    self.url
+                )));
+            }
             if status != 206 {
                 return Err(std::io::Error::other(format!(
                     "server ignored Range (status {status}, expected 206 Partial Content) for {}; \

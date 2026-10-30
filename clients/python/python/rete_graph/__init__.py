@@ -910,7 +910,7 @@ class Builder:
         keyword is a publisher-defined custom field** and lands in the card's
         ``extra`` bag — pass ``extra={...}`` to merge a whole dict (structured
         values included). The bag is bounded (8 KB serialized, ≤64 keys,
-        ≤128-byte keys, nesting ≤2 levels — enforced by the ``rete build``
+        ≤128-byte keys, nesting ≤3 levels — enforced by the ``rete build``
         CLI; this client writes the card it is given) and folds into the
         file's content hash like every curated field.
 
