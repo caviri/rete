@@ -68,6 +68,9 @@ fn quads() -> Vec<RawQuad> {
     q
 }
 
+/// With a full-text index: its token table is the one payload the external
+/// build compresses from disk (`compress_to`), so every knob must keep that
+/// path byte-identical to the in-memory one too.
 fn build_mem(quads: &[RawQuad]) -> Vec<u8> {
     let (bytes, _) = ingest::assemble_dataset_streaming(
         |visit: &mut dyn FnMut(RawQuad)| {
@@ -77,7 +80,7 @@ fn build_mem(quads: &[RawQuad]) -> Vec<u8> {
             Ok(())
         },
         false,
-        false,
+        true,
         None,
         |_, _, _| Vec::new(),
     )
@@ -100,6 +103,7 @@ fn build_ext(quads: &[RawQuad], tag: &str) -> Vec<u8> {
         ExternalBuildOptions {
             memory_budget: 0,
             tmp_dir: Some(dir.clone()),
+            text_index: Some(rete_core::TextIndexScope::default()),
             ..Default::default()
         },
     )

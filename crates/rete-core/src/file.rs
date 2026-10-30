@@ -437,27 +437,44 @@ pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
     }
 }
 
-/// The streaming twin of [`compress`]: the same codec at the same level, read
-/// from `src` and written to `dst`, for a payload the memory-bounded build
-/// keeps on disk (the TEXT_INDEX token table). [`compress`] is itself a
-/// streaming encode (`zstd::encode_all` drives the same `Encoder`), and the
-/// encoder cuts blocks from its own input buffer, not from how the input was
-/// handed to it — so the bytes are the same. `text_index_spill` pins that.
+/// The streaming twin of [`compress`]: the same codec, level and frame shape,
+/// read from `src` (exactly `src_len` bytes) and written to `dst`, for a
+/// payload the memory-bounded build keeps on disk (the TEXT_INDEX token
+/// table). A streaming frame is what `zstd::encode_all` writes, through the
+/// same `Encoder`. A sized frame is what `zstd::bulk::compress` writes: the
+/// encoder is told the source size up front (`set_pledged_src_size`), so it
+/// picks the same small-input parameters and records the same content size,
+/// without holding the payload. In both cases the encoder cuts blocks from its
+/// own input buffer, not from how the input was handed to it, so the bytes are
+/// [`compress`]'s. `text_index_spill` pins that, for both frame shapes.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn compress_to(
     codec: u8,
+    src_len: u64,
     src: &mut dyn std::io::Read,
     dst: &mut dyn std::io::Write,
 ) -> std::io::Result<()> {
     match codec {
         #[cfg(feature = "compression")]
         CODEC_ZSTD => {
-            let mut enc = zstd::stream::Encoder::new(dst, ZSTD_LEVEL)?;
-            std::io::copy(src, &mut enc)?;
+            let mut enc = zstd::stream::Encoder::new(dst, crate::write_opts::zstd_level())?;
+            if crate::write_opts::frame_shape() == crate::write_opts::FrameShape::Sized {
+                enc.set_pledged_src_size(Some(src_len))?;
+                enc.include_contentsize(true)?;
+            }
+            let copied = std::io::copy(src, &mut enc)?;
+            if copied != src_len {
+                return Err(std::io::Error::other(format!(
+                    "compress_to: {copied} bytes read, {src_len} announced"
+                )));
+            }
             enc.finish()?;
             Ok(())
         }
-        _ => std::io::copy(src, dst).map(|_| ()),
+        _ => {
+            let _ = src_len;
+            std::io::copy(src, dst).map(|_| ())
+        }
     }
 }
 
