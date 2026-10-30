@@ -5,6 +5,83 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
+**Where 0.4.0 is published: every channel, from the one `v0.4.0` tag.**
+crates.io (`rete-core`, `rete-graph`, `rete-cli`, `rete-wasm`), PyPI and npm
+(`rete-graph`), the GitHub release with its native archives, browser bundle,
+Blender add-on, the Claude Desktop extension (`rete-0.4.0.mcpb`, and
+`rete.mcpb` behind the `releases/latest/download/rete.mcpb` link) and the
+Pyodide wheels, the container images on GHCR (`rete-cli`, `rete-relay`,
+`rete-dev`), and the desktop File Explorer installers.
+
+**The file format stays `0x05`, stable generation 1.** 0.4.0 adds optional
+sections and header flags inside it (`docs/SPEC.md`, `docs/compatibility.md`):
+
+| addition | written by | in the content hash? | what a 0.3.x reader does |
+|---|---|---|---|
+| kind 8, LABEL_INDEX | `rete build --label-index` | no: a 16-byte BLAKE3 self-digest | ignores it; finds no label index |
+| kind 9, SCHEMA | every `rete build` (`--no-schema` omits it) | no: self-digest | ignores it; no schema levels or planner statistics |
+| kind 10, QUAD_INDEX, header flag bit 3, and a seal in the index container | `rete build --named-graphs quad` (opt-in) | by reference: the seal, inside the hashed index container, carries its digest | **refuses the file** on every query path (the seal changes the container's section count); `info`, `verify` and `card-url` still work |
+| kind 11, a TEXT_INDEX restricted to some predicates | `--text-index-include` / `--text-index-exclude` | no: self-digest | ignores it: `CONTAINS` scans, `search --contains` finds no index |
+| header flag bit 4: the text index covers the named graphs | `--text-index-graphs all` | (header) | ignores the bit |
+
+The rule behind the content hash: **a new section kind never makes an older
+`verify` call a valid file corrupt.** The hash still covers the metadata, the
+dictionary, the index (with the quad-index seal), the pyramid-meta, a kind-6
+text index and the per-graph named graphs; kinds 8, 9 and 11 are checked by
+their own digests and kind 10 against the seal, by the current `verify`. The
+released 0.3.7 `verify` says OK on files carrying each of them. Every file
+0.4.0 writes also uses single-segment zstd frames, which every `0x05` reader
+reads.
+
+**Before publishing files written by 0.4.0:**
+
+- A quad-index file must not reach a reader older than 0.4.0, so
+  `--named-graphs per-graph` stays the default: use `quad` only where the
+  playground, the clients, the Pyodide wheels and the HF Space already run
+  0.4.0.
+- `rete build` writes no label index without `--label-index`, and its
+  pyramid-meta no longer carries the labels, the schema or the planner
+  statistics, so a 0.3.x reader finds none of them in a 0.4.0 file. The publish
+  recipe is now `--pyramid-algo types --label-index --card`; rebuild the
+  bundled engines first.
+- Rebuilding from N-Triples/N-Quads that contain `^^xsd:string` changes the
+  content hash (`"x"` and `"x"^^xsd:string` are one term now), and so does the
+  zstd frame change for every rebuilt file.
+
+What 0.4.0 changes on top of 0.3.7:
+
+- **Storage.** Labels and the schema leave the community pyramid for sections
+  of their own, with no 8,192-entry cap and in `--no-pyramid` and
+  memory-bounded files too. The opt-in quad index stores named graphs as a
+  fourth column: on the OpenCitations sample (1.5 M provenance graphs) the
+  named graphs take 102 MB instead of 974 MB, the build 77 s instead of
+  33 min, and one graph's provenance over HTTP 3.7 MB instead of 414 MB.
+  Single-segment zstd frames make files 6–8% smaller at the same level, and
+  `--tile-kib`, `--dict-chunk-kib`, `--zstd-level` and `--frequent-objects`
+  expose the writer's choices.
+- **Build.** `--text-index` works in the memory-bounded build, byte-identical
+  to the in-RAM one, with scopes (`--text-index-graphs`, `-include`,
+  `-exclude`). `rete recard` gives a file a new Dataset Card without a rebuild
+  (a 26.5 GB, 2.9 B-statement file in 19 min at a 1.78 GiB peak). Starter
+  queries are bounded past 2 M statements, so the starter sets of such
+  datasets change; `card-audit` audits the curated examples too.
+- **SPARQL.** SPARQL 1.2 triple terms; `FILTER(CONTAINS(…))` inside `GRAPH`
+  answers; `REGEX` is Unicode-aware natively and in the npm package and
+  extension (the browser playground keeps ASCII classes for its size);
+  `--entail` answers each entailed triple once; `"x"` and `"x"^^xsd:string`
+  are one term; planner fixes for literal starts, small outside sides and
+  row-based size gates.
+- **CLI runtime.** A local file is read whole only when it is small next to
+  the free memory; `rete serve` answers from the file until the first update;
+  remote reads go out in parallel over kept-alive connections (wall time −25%
+  at 80 ms); `rete stats` reports the default and the named graphs apart.
+- **Browser.** Hosts that hide `Content-Range` or ignore `Range` (Zenodo) open;
+  the playground's cross-source join sends each pattern to every source that
+  can answer it; the wasm build downloads nothing and is reproducible
+  (pinned wasm-bindgen CLI, engine-source stamps).
+
 ### Added
 
 - **The build record says how the file was made, in full.** Every carded
@@ -150,6 +227,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - `Rete::named_graph_quad_count` and `Rete::named_quad_count`: a graph's (or all
   named graphs') quad count from a quad-index file's directory, without reading
   any index.
+- **Writer knobs on `rete build`: `--tile-kib`, `--dict-chunk-kib`,
+  `--zstd-level` and `--frequent-objects`**, each with an environment variable
+  (`RETE_TILE_KIB`, `RETE_DICT_CHUNK_KIB`, `RETE_ZSTD_LEVEL`,
+  `RETE_FREQUENT_OBJECTS`), which is also how `merge` and `repyramid` take
+  them. None changes the file format and every one changes the bytes, never an
+  answer. `--zstd-level 19` makes a file about 5% smaller than the default 9
+  for about 14× the compression CPU; `--frequent-objects 64` moves the most
+  frequent object-only terms (classes, statuses) into the shared dictionary
+  section and made the OpenCitations samples 4.8–6.5% smaller (refused with
+  `--memory-budget-mb`). The tile budget applies to quad-index tiles too. A
+  card build records the settings in its build info (`params.write`). The
+  measurements are in `docs/BENCHMARK.md` ("Compression (0.4)"), the tool
+  behind them is the `compression_lab` example.
 
 ### Changed
 
@@ -316,6 +406,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - `dump_batch` over a graph whose subjects are sparse jumps from one subject to
   the next through the tile's group directory instead of probing every id in
   between.
+- **Tiles and dictionary chunks are single-segment zstd frames that record
+  their size.** zstd then uses its small-input parameters: at the same level
+  (9) the OpenCitations sample is 7.0% smaller (6.0% data only), encoding is
+  about twice as fast per core, and remote queries fetch 5–6% fewer bytes in
+  the same number of requests; `ruzstd` (wasm) decodes 5–10% slower per tile.
+  Not a format change: the released 0.3.5 and 0.3.7 readers open such files
+  and answer identically. `RETE_ZSTD_FRAME=stream` writes the 0.3 frames,
+  byte for byte. Dictionary chunks are now compressed on every core.
 
 ### Fixed
 
