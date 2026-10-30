@@ -5,7 +5,7 @@
 //! from the summary alone, never touching the triple index.
 
 use crate::commands::range_source::{open_local, LocalRangeReader};
-use rete_core::{SliceReader, SummaryView, CODEC_ZSTD};
+use rete_core::{SummaryView, CODEC_ZSTD};
 
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
 /// Dataset Card catalog when the file carries one.
@@ -40,6 +40,60 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// How a file's statements split between the default graph and its named
+/// graphs, and where the split came from.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct GraphSplit {
+    /// Every statement in the file: the header's `quad_count`.
+    pub(crate) statements: u64,
+    pub(crate) named_graphs: u64,
+    /// Default-graph triples; `None` when they could not be counted cheaply.
+    pub(crate) default_triples: Option<u64>,
+    pub(crate) source: &'static str,
+}
+
+impl GraphSplit {
+    pub(crate) fn named_quads(&self) -> Option<u64> {
+        self.default_triples
+            .map(|d| self.statements.saturating_sub(d))
+    }
+}
+
+/// Split the header's statement count (default graph + every named graph)
+/// into its two parts without reading the named graphs: free when there are
+/// none; from the Dataset Card's build-time counts when it carries them and
+/// they agree with the header; else by counting the default graph's SPO
+/// tiles, which a lazy open faults in (the default graph only).
+pub(crate) fn graph_split(
+    rete: &rete_core::Rete,
+    card: Option<&rete_core::card::DatasetCard>,
+) -> GraphSplit {
+    let statements = rete.header().quad_count;
+    let named_graphs = rete.named_graph_count() as u64;
+    let (default_triples, source) = if named_graphs == 0 {
+        (Some(statements), "header")
+    } else if let Some(c) = card.filter(|c| {
+        c.quad_count == statements
+            && c.named_graph_count == named_graphs
+            && c.triple_count <= statements
+    }) {
+        (Some(c.triple_count), "dataset card")
+    } else if statements <= u64::from(u32::MAX) {
+        (
+            Some(u64::from(rete.default_index().triple_count())),
+            "default-graph index",
+        )
+    } else {
+        (None, "unknown")
+    };
+    GraphSplit {
+        statements,
+        named_graphs,
+        default_triples,
+        source,
+    }
+}
+
 /// Human-friendly overview: size, counts, graphs, pyramid, top predicates. The
 /// per-predicate totals + community count come from the summary alone (the
 /// triple index is never read).
@@ -47,10 +101,27 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     let rete = open_local(file)?;
     let h = rete.header();
     let file_len = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+    // The card is two small range reads; it carries the build-time split.
+    let card = crate::commands::card::load_card_ranged(&LocalRangeReader::open(file)?)
+        .ok()
+        .flatten();
+    let split = graph_split(&rete, card.as_ref());
+    let show = |n: Option<u64>| n.map_or_else(|| "unknown".to_string(), |n| n.to_string());
     println!("{file} — {file_len} bytes");
-    println!("  default-graph triples : {}", h.quad_count);
+    println!(
+        "  statements            : {} (all graphs)",
+        split.statements
+    );
+    println!("  default-graph triples : {}", show(split.default_triples));
+    println!("  named graphs          : {}", split.named_graphs);
+    if split.named_graphs > 0 {
+        println!(
+            "  named-graph quads     : {} (split from the {})",
+            show(split.named_quads()),
+            split.source
+        );
+    }
     println!("  distinct terms        : {}", h.term_count);
-    println!("  named graphs          : {}", rete.graph_names().len());
     println!("  pyramid levels        : {}", h.pyramid_levels);
     if h.has_tile_synopsis() {
         println!("  tile synopsis         : yes (range readers prune tiles by a bound secondary)");
@@ -314,8 +385,8 @@ pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
 /// levels, leaves as you zoom in). All read **index-free** from the pyramid-meta
 /// via [`SummaryView`]. With `--level k`, print just level `k`'s type histogram.
 pub(crate) fn summary(file: &str, level: Option<usize>) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let Some(view) = SummaryView::open_ranged(&SliceReader::new(&bytes))? else {
+    // Positional reads of the sections the view needs, not the whole file.
+    let Some(view) = SummaryView::open_ranged(&LocalRangeReader::open(file)?)? else {
         eprintln!("file has no pyramid");
         return Ok(());
     };
@@ -456,8 +527,7 @@ pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
 /// Exact per-predicate triple counts, computed from the summary alone (the triple
 /// index is never read).
 pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let reader = SliceReader::new(&bytes);
+    let reader = LocalRangeReader::open(file)?;
     match SummaryView::open_ranged(&reader)? {
         Some(view) => {
             println!(

@@ -1177,3 +1177,156 @@ fn hostile_named_graph_count_is_refused() {
     assert_eq!(lazy.named_graph_count(), 0);
     assert!(lazy.index_incomplete());
 }
+
+/// A reader that reports a fan-out (as the CLI's HTTP reader does) and logs
+/// every `read_many` call as one batch, so a test can see which reads the
+/// engine handed over together.
+struct BatchRecordingReader {
+    data: Vec<u8>,
+    batches: Mutex<Vec<Vec<(u64, u64)>>>,
+    reads: Mutex<Vec<(u64, u64)>>,
+    fan_out: usize,
+}
+
+impl BatchRecordingReader {
+    fn new(data: Vec<u8>, fan_out: usize) -> Self {
+        Self {
+            data,
+            batches: Mutex::new(Vec::new()),
+            reads: Mutex::new(Vec::new()),
+            fan_out,
+        }
+    }
+}
+
+impl RangeReader for BatchRecordingReader {
+    fn len(&self) -> u64 {
+        self.data.len() as u64
+    }
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.reads.lock().unwrap().push((offset, len));
+        let start = offset as usize;
+        let end = start
+            .checked_add(len as usize)
+            .filter(|&e| e <= self.data.len())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "oob"))?;
+        Ok(self.data[start..end].to_vec())
+    }
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.batches.lock().unwrap().push(ranges.to_vec());
+        ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
+    }
+    fn concurrency(&self) -> usize {
+        self.fan_out
+    }
+}
+
+/// Subject-only IRIs pointing at object-only literals: decoding a row needs a
+/// chunk of two different dictionary sections.
+fn two_section_image() -> Vec<u8> {
+    let p = "<http://ex/p>";
+    // Pseudo-random text, so front coding and zstd leave each section many
+    // chunks (64 KiB of terms per chunk).
+    let mix = |x: u64| {
+        let mut z = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    };
+    let triples: Vec<(String, String)> = (0..20000u64)
+        .map(|i| {
+            (
+                format!("<http://ex/subject/{:016x}{:016x}>", mix(i), mix(i + 1)),
+                format!("\"value {:016x} {:016x}\"", mix(i + 7), mix(i + 9)),
+            )
+        })
+        .collect();
+    let mut db = DictionaryBuilder::new();
+    for (s, o) in &triples {
+        db.observe(s, p, o);
+    }
+    let dict = db.build();
+    let mut ib = GraphIndexBuilder::new();
+    for (s, o) in &triples {
+        ib.push(dict.encode(s, p, o).unwrap());
+    }
+    write_file(&dict, &ib.build(), false, &[], 0)
+}
+
+/// Decoding a result touches several dictionary sections; their missing
+/// chunks must go out as ONE batch, not one batch per section (each batch is a
+/// round trip on a remote file).
+#[test]
+fn result_decoding_batches_chunks_across_sections() {
+    let image = two_section_image();
+    let h = Rete::open(&image).unwrap().header().clone();
+    let dict = (h.dictionary_offset, h.dictionary_offset + h.dictionary_len);
+    // The dictionary batches one query's result decoding issued: (count,
+    // bytes of the first), checked against the resident answer.
+    let decode_batches = |q: &str| -> (usize, u64) {
+        let expected = match eval_query(&Rete::open(&image).unwrap(), q).unwrap() {
+            QueryOutput::Select(_, rows) => rows,
+            other => panic!("unexpected output {other:?}"),
+        };
+        assert_eq!(expected.len(), 20000);
+        let reader = std::sync::Arc::new(BatchRecordingReader::new(image.clone(), 4));
+        let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let opened = reader.batches.lock().unwrap().len();
+        let got = match eval_query(&rete, q).unwrap() {
+            QueryOutput::Select(_, rows) => rows,
+            other => panic!("unexpected output {other:?}"),
+        };
+        assert_eq!(got, expected);
+        assert!(!rete.index_incomplete());
+        let batches = reader.batches.lock().unwrap();
+        let dict_batches: Vec<&Vec<(u64, u64)>> = batches[opened..]
+            .iter()
+            .filter(|b| b.iter().all(|r| overlaps(*r, dict)))
+            .collect();
+        let bytes = dict_batches
+            .first()
+            .map_or(0, |b| b.iter().map(|&(_, l)| l).sum());
+        (dict_batches.len(), bytes)
+    };
+    // Subjects only: the subject-only section's chunks, one batch.
+    let (n_s, bytes_s) = decode_batches("SELECT ?s WHERE { ?s <http://ex/p> ?o }");
+    // Subjects and objects: two sections — still ONE batch, now carrying both
+    // (before, each section sent its own).
+    let (n_so, bytes_so) = decode_batches("SELECT ?s ?o WHERE { ?s <http://ex/p> ?o }");
+    assert_eq!(n_s, 1, "subject chunks in one batch");
+    assert_eq!(n_so, 1, "subject and object chunks share one batch");
+    assert!(
+        bytes_so > bytes_s,
+        "the shared batch carries the object section too ({bytes_so} vs {bytes_s} bytes)"
+    );
+}
+
+/// With a reader that keeps several reads in flight the open walks the
+/// dictionary and index containers at the same time. It must read exactly
+/// what the one-at-a-time open reads, and answer exactly the same.
+#[test]
+fn concurrent_open_reads_and_answers_like_the_sequential_one() {
+    let image = multi_tile_image();
+    let q = "SELECT ?s ?o WHERE { ?s <http://ex/knows> ?o } ORDER BY ?s ?o LIMIT 50";
+    let run = |fan_out: usize| {
+        let reader = std::sync::Arc::new(BatchRecordingReader::new(image.clone(), fan_out));
+        let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let mut open_reads = reader.reads.lock().unwrap().clone();
+        open_reads.sort_unstable();
+        let rows = match eval_query(&rete, q).unwrap() {
+            QueryOutput::Select(_, rows) => rows,
+            other => panic!("unexpected output {other:?}"),
+        };
+        assert!(!rete.index_incomplete());
+        (open_reads, rows, rete.dump(None))
+    };
+    let (seq_reads, seq_rows, seq_dump) = run(1);
+    let (par_reads, par_rows, par_dump) = run(8);
+    assert_eq!(
+        par_reads, seq_reads,
+        "same reads, only their overlap differs"
+    );
+    assert_eq!(par_rows, seq_rows);
+    assert_eq!(par_dump, seq_dump);
+    assert_eq!(par_dump, Rete::open(&image).unwrap().dump(None));
+}

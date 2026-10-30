@@ -243,8 +243,8 @@ fn compute_label_index(
 /// string-literal object: tokenize each literal into words and record the
 /// subject that carries it. Empty when the graph has no literals. Opt-in
 /// (`rete build --text-index`); O(literal bytes) transient. The token table is
-/// compressed with [`writer_codec`] (the reader decompresses with `block_codec`).
-pub(crate) fn compute_text_index(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Vec<u8> {
+/// compressed with `writer_codec` (the reader decompresses with `block_codec`).
+pub fn compute_text_index(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Vec<u8> {
     use crate::terms::{is_literal, literal_lexical};
     let mut b = crate::text_index::TextIndexBuilder::new();
     for &(s, _p, o) in triples {
@@ -4067,23 +4067,35 @@ impl Rete {
         // Lazily-chunked dictionary: locate the four sections, fetch each
         // section's header + restart table + chunk directory (small), and
         // fault the chunk bodies in on first term lookup.
-        let dict = ranged_chunked_dictionary(&reader, &header, [true; 4])?;
+        let open_dict = || ranged_chunked_dictionary(&reader, &header, [true; 4]);
 
         // Locate the six index section payloads (container framing only) and
         // fetch just their tile directories — shared with the per-named-graph
         // lazy opener, which opens a large graph's container the same way.
         let reader_dyn: std::sync::Arc<dyn RangeReader + Send + Sync> = reader.clone();
-        let (index, index_section_ranges, tile_ranges) = open_index_container_lazy(
-            &reader_dyn,
-            ByteRange {
-                offset: header.root_dir_offset,
-                len: header.root_dir_len,
-            },
-            header.block_codec,
-            header.has_tile_synopsis(),
-            read_concurrency,
-            header.perms,
-        )?;
+        let open_index = || {
+            open_index_container_lazy(
+                &reader_dyn,
+                ByteRange {
+                    offset: header.root_dir_offset,
+                    len: header.root_dir_len,
+                },
+                header.block_codec,
+                header.has_tile_synopsis(),
+                read_concurrency,
+                header.perms,
+            )
+        };
+
+        // Each of the two is a chain of small dependent reads (a container's
+        // sections are found by walking their length prefixes), ~8 round trips
+        // apiece on a real file, and the header already says where both
+        // containers start. So a reader that can keep several reads in flight
+        // walks them at the same time: the open costs the longer chain, not
+        // the sum. Same reads, same result; only their overlap changes.
+        let (dict, index) = open_side_by_side(read_concurrency, open_dict, open_index);
+        let dict = dict?;
+        let (index, index_section_ranges, tile_ranges) = index?;
 
         // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
         // reads it, so defer its fetch: it faults in only if `pyramid()` is
@@ -4680,6 +4692,7 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
     // (section_index, chunk_index).
     let cache = crate::chunk_cache::ChunkCache::unlimited_arc();
     let mut dict_sections: Vec<crate::dict::ChunkedSection> = Vec::with_capacity(4);
+    let mut section_ranges: [std::sync::Arc<Vec<ByteRange>>; 4] = Default::default();
     for si in 0..4 {
         if !want[si] {
             dict_sections.push(crate::dict::ChunkedSection::from_parts(
@@ -4703,13 +4716,18 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
             4,
         )?;
         let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
-        let ranges: Vec<ByteRange> = entries
-            .iter()
-            .map(|e| ByteRange {
-                offset: section.offset + e.start,
-                len: (e.end - e.start),
-            })
-            .collect();
+        // One copy of the chunk ranges, shared by this section's loaders and
+        // the dictionary's cross-section batch loader.
+        let ranges: std::sync::Arc<Vec<ByteRange>> = std::sync::Arc::new(
+            entries
+                .iter()
+                .map(|e| ByteRange {
+                    offset: section.offset + e.start,
+                    len: (e.end - e.start),
+                })
+                .collect(),
+        );
+        section_ranges[si] = ranges.clone();
         let chunks: Vec<crate::dict::SectionChunk> = entries
             .into_iter()
             .map(|e| crate::dict::SectionChunk::new(e.first_run, e.key, e.body_start))
@@ -4745,7 +4763,53 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
     let dict_arr: [crate::dict::ChunkedSection; 4] = dict_sections
         .try_into()
         .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
-    Ok(Dictionary::from_chunked_sections(dict_arr))
+    // Decoding a result touches several sections at once; this fetches all
+    // their missing chunks in one batch (pairs arrive section by section in
+    // ascending chunk order, so ascending in the file, as coalescing wants).
+    let multi_reader = reader.clone();
+    let codec = header.dict_codec;
+    let multi: crate::dict::MultiChunkBulkLoader = Box::new(move |pairs| {
+        let want: Option<Vec<ByteRange>> = pairs
+            .iter()
+            .map(|&(si, ci)| section_ranges.get(si as usize)?.get(ci).copied())
+            .collect();
+        let blobs = read_coalesced(multi_reader.as_ref(), &want?, DICT_COALESCE_GAP)?;
+        blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+    });
+    Ok(Dictionary::from_chunked_sections(dict_arr).with_multi_bulk_loader(multi))
+}
+
+/// Run two independent steps of an open: at the same time when the reader can
+/// keep several reads in flight (`concurrency > 1`) on a target with threads,
+/// else one after the other. Either way both run to completion and their
+/// results come back as they would inline; a panic in either propagates.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_side_by_side<A, B: Send>(
+    concurrency: usize,
+    a: impl FnOnce() -> A,
+    b: impl FnOnce() -> B + Send,
+) -> (A, B) {
+    if concurrency <= 1 {
+        return (a(), b());
+    }
+    std::thread::scope(|scope| {
+        let hb = scope.spawn(b);
+        let ra = a();
+        let rb = hb
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        (ra, rb)
+    })
+}
+
+/// wasm32 has no threads here: always one after the other.
+#[cfg(target_arch = "wasm32")]
+fn open_side_by_side<A, B>(
+    _concurrency: usize,
+    a: impl FnOnce() -> A,
+    b: impl FnOnce() -> B,
+) -> (A, B) {
+    (a(), b())
 }
 
 /// The pyramid meta is large on real graphs (tens of MB) and SPARQL never reads
@@ -4848,6 +4912,15 @@ fn text_search_in(
     } else {
         ids.len()
     });
+    // The hits' subject IRIs are scattered over many dictionary chunks: fault
+    // the ones a page can return in one batch (on a remote file, one round
+    // trip instead of one per chunk). Only warms the cache.
+    let page = if limit > 0 {
+        limit.min(ids.len())
+    } else {
+        ids.len()
+    };
+    dict.prefetch_subject_terms(&ids[..page]);
     for id in ids {
         if let Some(iri) = dict.subject_term(id) {
             out.push(iri);

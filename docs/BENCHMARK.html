@@ -654,7 +654,12 @@ build (synthetic, <code>scripts</code>-style entities with type/label/edges):</p
 <p>Output is byte-identical. Reproduce the phase-by-phase heap profile with
 <code>cargo run --release -p rete-bench -- --build-mem &lt;file.nt&gt;</code> — it snapshots the
 live heap (exact, via a counting allocator) after parse, dictionary, encode,
-the drop, pyramid, index, and write.</p>
+the Dataset Card derivation, the drop, pyramid, the full-text index, index,
+write, and the starter-query costing that <code>rete build --card</code> runs against the
+written file (each query cold, as the build does; the five heaviest are listed
+under the phase row). That last phase is where a carded build peaks on a large
+graph, so it is the row to watch. <code>--no-card</code>, <code>--no-card-costs</code> and
+<code>--no-text-index</code> leave those phases out, mirroring a build without them.</p>
 <h3 id="build-time-big-graphs">Build time (big graphs)</h3>
 <p>The build is dominated by the <strong>Louvain community pyramid</strong> — ~91% of wall-clock
 on the 3 M-triple build. Its local-moving inner loop now uses a reusable dense

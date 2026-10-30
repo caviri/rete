@@ -111,6 +111,12 @@ check "info"       "magic|version|pyramid"        -- "$B" info "$T/g.rete"
 check "stats"      "triples|terms|predicate"      -- "$B" stats "$T/g.rete"
 check "verify ok"  "OK|matches"     -- "$B" verify "$T/g.rete"
 check "graphs"     "g1|g2"                          -- "$B" graphs "$T/d.rete"
+# The header counts every statement; stats splits it (d.nq: 2 quads, 2 graphs).
+check "stats split"  "named-graph quads +: 2"        -- "$B" stats "$T/d.rete"
+check "stats dg"     "default-graph triples : 0"     -- "$B" stats "$T/d.rete"
+# The local open is memory-aware; RETE_OPEN_DEBUG says which way it went and why.
+check "open eager"   "threshold=[0-9]+ [(].+[)] -> EAGER" -- env RETE_OPEN_DEBUG=1 "$B" stats "$T/g.rete"
+check "open lazy"    "RETE_LOCAL_LAZY_ABOVE_MB=0[)] -> LAZY" -- env RETE_OPEN_DEBUG=1 RETE_LOCAL_LAZY_ABOVE_MB=0 "$B" stats "$T/g.rete"
 
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
@@ -300,6 +306,8 @@ check "sparql-url"  "Bob|solution" -- "$B" sparql-url "http://127.0.0.1:8099/web
 check "cost-url"    "full query open|range request" -- "$B" cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http://127.0.0.1:8099/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 check "why-url"     "index_permutation|POS|tile" -- "$B" why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
+# Same answer with the parallel batches off (one range at a time) and on.
+check "sparql-url seq" "Bob|solution" -- env RETE_HTTP_CONCURRENCY=1 RETE_HTTP_RETRIES=0 "$B" sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="

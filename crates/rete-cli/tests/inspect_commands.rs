@@ -203,6 +203,74 @@ fn oversized_or_top_level_custom_fields_fail_the_build_loudly() {
         .stderr(predicate::str::contains("\"extra\""));
 }
 
+/// `rete stats` reports the default graph and the named graphs apart: the
+/// header's count is every statement, so printing it as "default-graph
+/// triples" was wrong for any file with named graphs. Same split with and
+/// without a card (the card's build-time counts, or the default index), and
+/// over the eager and the lazy open.
+#[test]
+fn stats_splits_default_graph_and_named_graphs() {
+    let fixture = common::fixture();
+    // 3 default-graph triples, 4 quads in 2 named graphs (one statement in
+    // both the default graph and a named graph counts in each).
+    let nq = fixture.write(
+        "split.nq",
+        concat!(
+            "<http://ex/a> <http://ex/p> <http://ex/b> .\n",
+            "<http://ex/b> <http://ex/p> <http://ex/c> .\n",
+            "<http://ex/c> <http://ex/p> \"lit\" .\n",
+            "<http://ex/a> <http://ex/p> <http://ex/b> <http://ex/g1> .\n",
+            "<http://ex/x> <http://ex/q> <http://ex/y> <http://ex/g1> .\n",
+            "<http://ex/x> <http://ex/q> <http://ex/z> <http://ex/g2> .\n",
+            "<http://ex/y> <http://ex/q> \"w\" <http://ex/g2> .\n",
+        ),
+    );
+    let plain = fixture.path("split.rete");
+    common::build(&nq, &plain, &["--no-pyramid"]);
+    let carded = fixture.path("split-card.rete");
+    common::build(&nq, &carded, &["--no-pyramid", "--card", "--no-card-costs"]);
+    for (file, source) in [(&plain, "default-graph index"), (&carded, "dataset card")] {
+        for lazy in [false, true] {
+            let mut cmd = common::rete();
+            cmd.arg("stats").arg(file);
+            if lazy {
+                cmd.env("RETE_LOCAL_LAZY_ABOVE_MB", "0");
+            }
+            let out = cmd.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let text = String::from_utf8(out.stdout).unwrap();
+            assert!(
+                text.contains("statements            : 7 (all graphs)"),
+                "{text}"
+            );
+            assert!(text.contains("default-graph triples : 3\n"), "{text}");
+            assert!(text.contains("named graphs          : 2\n"), "{text}");
+            assert!(
+                text.contains(&format!(
+                    "named-graph quads     : 4 (split from the {source})"
+                )),
+                "{text}"
+            );
+        }
+    }
+    // No named graphs: the header says it all, and no quads line is printed.
+    let nt = fixture.write("dg.nt", "<http://ex/a> <http://ex/p> <http://ex/b> .\n");
+    let dg = fixture.path("dg.rete");
+    common::build(&nt, &dg, &["--no-pyramid"]);
+    common::rete()
+        .arg("stats")
+        .arg(&dg)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("default-graph triples : 1\n"))
+        .stdout(predicate::str::contains("named graphs          : 0\n"))
+        .stdout(predicate::str::contains("named-graph quads").not());
+}
+
 #[test]
 fn inspect_commands_report_the_fixture() {
     let fixture = common::fixture();

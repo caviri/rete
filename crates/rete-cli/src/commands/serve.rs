@@ -16,10 +16,17 @@
 //! *read* path stays serverless — and closes the federation loop: any rete
 //! client (CLI, browser) can `SERVICE <http://host:port/sparql>` against it.
 //!
-//! Scale note: the whole graph lives in memory and rebuilds on write — right
-//! for the living-dataset use case (annotation, curation, small/medium KGs, up
-//! to a few million triples), not for the multi-GB catalog files (their story
-//! remains offline rebuild/compaction; an engine-level overlay is future work).
+//! Scale note: until the first update the endpoint answers straight from the
+//! base file, opened like every local command opens it (read whole only when
+//! it is a small fraction of the free memory, lazily otherwise), so serving a
+//! multi-GB catalog file read-only costs what its queries touch. The first
+//! update (or a pending journal at startup) materializes the whole graph in
+//! memory and rebuilds it on write — right for the living-dataset use case
+//! (annotation, curation, small/medium KGs, up to a few million triples), not
+//! for the multi-GB catalog files (their story remains offline
+//! rebuild/compaction; an engine-level overlay is future work). An update that
+//! could not fit in the memory available is refused with `503` rather than
+//! letting the server be killed.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -36,7 +43,7 @@ use spargebra::term::{
 use spargebra::{GraphUpdateOperation, Query, Update};
 
 use super::service_http::HttpServiceClient;
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::{available_memory, open_local};
 
 /// One quad as term tokens; `None` graph = the default graph. `BTreeSet` gives
 /// set semantics (RDF graphs are sets) and a deterministic rebuild order.
@@ -44,16 +51,86 @@ type QuadSet = BTreeSet<RawQuad>;
 
 /// The server's whole state: the quad set (the truth), the current queryable
 /// image built from it, and the journal that makes the set durable.
+///
+/// Until the first update there is no quad set: `rete` is the base file
+/// itself, `quads` and `image` are `None`, and `/snapshot.rete` streams the
+/// base file from disk.
 struct Store {
-    quads: QuadSet,
-    /// The serialized `.rete` of the current state (served by `/snapshot.rete`).
-    image: Vec<u8>,
+    /// `None` while the server still answers from the unmodified base file.
+    quads: Option<QuadSet>,
+    /// The serialized `.rete` of the current state (served by
+    /// `/snapshot.rete`); `None` while that state is the base file.
+    image: Option<Vec<u8>>,
     rete: Rete,
+    /// The base `.rete` (not a manifest) the server answers from until the
+    /// first update.
+    base: Option<std::path::PathBuf>,
     /// Set by updates; the next read rebuilds `image`/`rete` from `quads`.
     dirty: bool,
     journal: std::path::PathBuf,
     /// Counter for minting fresh blank nodes in INSERT templates.
     bnode_seq: u64,
+}
+
+/// What materializing a served graph costs per quad at its peak: the quad set
+/// of owned term strings plus the rebuild of an image from it. Measured: 646
+/// MiB for 1 M OpenCitations quads (127 B per N-Triples line); 1 KiB leaves
+/// room for longer terms. Only used to refuse an update that could not fit,
+/// never to size anything, and an estimate: a graph of very long literals
+/// costs more.
+const MATERIALIZE_BYTES_PER_QUAD: u64 = 1024;
+
+/// Why an update could not be taken: the request was bad (`400`), or the
+/// server cannot hold the graph it would have to materialize (`503`).
+enum UpdateError {
+    Bad(anyhow::Error),
+    TooLarge(String),
+}
+
+impl From<anyhow::Error> for UpdateError {
+    fn from(e: anyhow::Error) -> Self {
+        UpdateError::Bad(e)
+    }
+}
+
+impl From<std::io::Error> for UpdateError {
+    fn from(e: std::io::Error) -> Self {
+        UpdateError::Bad(e.into())
+    }
+}
+
+/// Can `quads` statements be materialized in `available` bytes? `Err` carries
+/// the refusal the client gets. Unknown memory (not Linux) never refuses.
+fn materialize_fits(quads: u64, available: Option<u64>) -> Result<(), String> {
+    let need = quads.saturating_mul(MATERIALIZE_BYTES_PER_QUAD);
+    match available {
+        Some(avail) if need > avail => Err(format!(
+            "this update would load all {quads} quads into memory (about {} MiB) and only \
+             {} MiB is available; the endpoint stays read-only for this file. Apply the \
+             change offline (rete export, edit, rete build) or serve a smaller file",
+            need >> 20,
+            avail >> 20
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Every quad of an opened `.rete`, default graph and named graphs.
+fn all_quads(rete: &Rete) -> QuadSet {
+    let mut quads: QuadSet = rete
+        .dump(None)
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    for i in 0..rete.named_graph_count() {
+        let Some(g) = rete.named_graph_name_at(i).map(str::to_string) else {
+            continue;
+        };
+        for (s, p, o) in rete.dump(Some(&g)) {
+            quads.insert((s, p, o, Some(g.clone())));
+        }
+    }
+    quads
 }
 
 /// Render a quad back to one N-Quads line (terms are already canonical tokens).
@@ -86,25 +163,36 @@ fn parse_nq_line(line: &str) -> anyhow::Result<RawQuad> {
 
 impl Store {
     /// Open the source — one `.rete` file, or a **manifest** (`.json`, see
-    /// `commands::manifest`) whose visible fold becomes the initial state —
-    /// extract every quad, replay the journal, build the first image.
+    /// `commands::manifest`) whose visible fold becomes the initial state.
+    ///
+    /// A plain `.rete` with no pending journal is served as it is: opened with
+    /// [`open_local`]'s memory-aware rule, no quad set, no rebuild. A manifest,
+    /// or a file with journal lines to replay, is materialized: every quad
+    /// extracted, the journal replayed, the first image built.
     fn open(base: &str, journal: std::path::PathBuf) -> anyhow::Result<Store> {
-        let mut quads: QuadSet = if super::manifest::is_manifest_path(base) {
+        let is_manifest = super::manifest::is_manifest_path(base);
+        let pending = match std::fs::read_to_string(&journal) {
+            Ok(j) => j.lines().any(|l| !l.trim().is_empty()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => anyhow::bail!("{}: {e}", journal.display()),
+        };
+        if !is_manifest && !pending {
+            let mut rete = open_local(base)?;
+            rete.set_service_client(Box::new(HttpServiceClient));
+            return Ok(Store {
+                quads: None,
+                image: None,
+                rete,
+                base: Some(std::path::PathBuf::from(base)),
+                dirty: false,
+                journal,
+                bnode_seq: 0,
+            });
+        }
+        let mut quads: QuadSet = if is_manifest {
             super::manifest::visible_quads(base)?
         } else {
-            let rete = open_local(base)?;
-            let mut quads: QuadSet = rete
-                .dump(None)
-                .into_iter()
-                .map(|(s, p, o)| (s, p, o, None))
-                .collect();
-            let graphs: Vec<String> = rete.graph_names().iter().map(|g| g.to_string()).collect();
-            for g in graphs {
-                for (s, p, o) in rete.dump(Some(&g)) {
-                    quads.insert((s, p, o, Some(g.clone())));
-                }
-            }
-            quads
+            all_quads(&open_local(base)?)
         };
 
         // Replay the journal (if any): each line is `+ <nq>` or `- <nq>`.
@@ -141,9 +229,10 @@ impl Store {
         let (empty_image, _) =
             assemble_dataset_with_opts(Vec::new(), false, false, None, |_, _| Vec::new());
         let mut store = Store {
-            quads,
-            image: Vec::new(),
+            quads: Some(quads),
+            image: None,
             rete: Rete::open(&empty_image)?,
+            base: None,
             dirty: true,
             journal,
             bnode_seq: 0,
@@ -155,25 +244,51 @@ impl Store {
         Ok(store)
     }
 
+    /// How many quads the served state holds.
+    fn quad_count(&self) -> u64 {
+        match &self.quads {
+            Some(q) => q.len() as u64,
+            None => self.rete.header().quad_count,
+        }
+    }
+
     /// Rebuild the queryable image from the quad set if updates are pending.
     fn ensure_current(&mut self) -> anyhow::Result<()> {
         if !self.dirty {
             return Ok(());
         }
-        let (image, rete) = build_image(&self.quads)?;
-        self.image = image;
+        let Some(quads) = &self.quads else {
+            return Ok(()); // still the base file: nothing to rebuild
+        };
+        let (image, rete) = build_image(quads)?;
+        self.image = Some(image);
         self.rete = rete;
         self.dirty = false;
+        Ok(())
+    }
+
+    /// The first update turns the served base file into an in-memory quad
+    /// set. It is refused, before anything is read, when its estimated peak
+    /// would not fit in the memory still available.
+    fn materialize(&mut self) -> Result<(), UpdateError> {
+        if self.quads.is_some() {
+            return Ok(());
+        }
+        let n = self.rete.header().quad_count;
+        materialize_fits(n, available_memory()).map_err(UpdateError::TooLarge)?;
+        eprintln!("  first update: loading all {n} quads into memory");
+        self.quads = Some(all_quads(&self.rete));
         Ok(())
     }
 
     /// Apply one change to the set; journal it only if it actually changed
     /// something (set semantics: double-inserts and misses are no-ops).
     fn apply(&mut self, add: bool, quad: RawQuad, journal: &mut Vec<String>) {
+        let quads = self.quads.as_mut().expect("materialized before any change");
         let changed = if add {
-            self.quads.insert(quad.clone())
+            quads.insert(quad.clone())
         } else {
-            self.quads.remove(&quad)
+            quads.remove(&quad)
         };
         if changed {
             journal.push(format!(
@@ -188,8 +303,9 @@ impl Store {
     /// Execute a SPARQL UPDATE request: operations run in order, each seeing
     /// the previous one's effects; every net change is journaled. Returns the
     /// number of changes applied.
-    fn update(&mut self, text: &str) -> anyhow::Result<usize> {
+    fn update(&mut self, text: &str) -> Result<usize, UpdateError> {
         let parsed = Update::parse(text, None).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+        self.materialize()?;
         let mut journal: Vec<String> = Vec::new();
         for op in &parsed.operations {
             self.run_op(op, &mut journal)?;
@@ -284,6 +400,7 @@ impl Store {
                 let doomed: Vec<RawQuad> = self
                     .quads
                     .iter()
+                    .flatten()
                     .filter(|q| match graph {
                         GraphTarget::DefaultGraph => q.3.is_none(),
                         GraphTarget::NamedNode(n) => q.3.as_deref() == Some(n.to_string().as_str()),
@@ -583,7 +700,21 @@ fn respond_with(
     body: Vec<u8>,
     extra: &[(&str, String)],
 ) -> anyhow::Result<()> {
-    let mut resp = tiny_http::Response::from_data(body).with_status_code(status);
+    send(
+        req,
+        tiny_http::Response::from_data(body).with_status_code(status),
+        content_type,
+        extra,
+    )
+}
+
+/// Send `resp` with the CORS headers, the content type and `extra`.
+fn send<R: std::io::Read>(
+    req: tiny_http::Request,
+    mut resp: tiny_http::Response<R>,
+    content_type: &str,
+    extra: &[(&str, String)],
+) -> anyhow::Result<()> {
     let fixed = [
         ("Content-Type", content_type),
         ("Access-Control-Allow-Origin", "*"),
@@ -635,8 +766,13 @@ pub(crate) fn serve(
     let mut store = Store::open(file, journal_path.clone())?;
     let server = tiny_http::Server::http(bind).map_err(|e| anyhow::anyhow!("bind {bind}: {e}"))?;
     eprintln!(
-        "serving {file} ({} quads) at http://{bind}/sparql\n  updates: POST query=/update= (SPARQL 1.1 Protocol){}\n  journal: {}\n  snapshot: GET /snapshot.rete",
-        store.quads.len(),
+        "serving {file} ({} quads{}) at http://{bind}/sparql\n  updates: POST query=/update= (SPARQL 1.1 Protocol){}\n  journal: {}\n  snapshot: GET /snapshot.rete",
+        store.quad_count(),
+        if store.quads.is_none() {
+            ", answered from the file until the first update"
+        } else {
+            ""
+        },
         if token.is_some() { " — Bearer token required" } else { "" },
         journal_path.display(),
     );
@@ -669,14 +805,32 @@ pub(crate) fn serve(
             Action::Info => {
                 let body = format!(
                     "rete SPARQL endpoint\n  {} quads ({} pending journal file: {})\n  GET/POST /sparql   query= (SPARQL 1.1 Protocol; results JSON)\n  POST /sparql|/update  update= or application/sparql-update\n  GET /snapshot.rete    the current state as a .rete file\n",
-                    store.quads.len(),
+                    store.quad_count(),
                     if store.dirty { "dirty;" } else { "clean;" },
                     store.journal.display(),
                 );
                 respond(req, 200, "text/plain; charset=utf-8", body.into_bytes())
             }
             Action::Snapshot => match store.ensure_current() {
-                Ok(()) => respond(req, 200, "application/octet-stream", store.image.clone()),
+                Ok(()) => match (&store.image, &store.base) {
+                    (Some(image), _) => {
+                        respond(req, 200, "application/octet-stream", image.clone())
+                    }
+                    // Unmodified: the base file is the current state, streamed
+                    // from disk rather than read into memory.
+                    (None, Some(base)) => match std::fs::File::open(base) {
+                        Ok(f) => send(
+                            req,
+                            tiny_http::Response::from_file(f),
+                            "application/octet-stream",
+                            &[],
+                        ),
+                        Err(e) => respond(req, 500, "text/plain", format!("{e}\n").into_bytes()),
+                    },
+                    (None, None) => {
+                        respond(req, 500, "text/plain", b"no snapshot available\n".to_vec())
+                    }
+                },
                 Err(e) => respond(req, 500, "text/plain", format!("{e}\n").into_bytes()),
             },
             Action::Query(q) => match store.ensure_current() {
@@ -745,7 +899,13 @@ pub(crate) fn serve(
                             eprintln!("  update: {n} change(s)");
                             respond(req, 204, "text/plain", Vec::new())
                         }
-                        Err(e) => respond(req, 400, "text/plain", format!("{e}\n").into_bytes()),
+                        Err(UpdateError::Bad(e)) => {
+                            respond(req, 400, "text/plain", format!("{e}\n").into_bytes())
+                        }
+                        Err(UpdateError::TooLarge(msg)) => {
+                            eprintln!("  update refused: {msg}");
+                            respond(req, 503, "text/plain", format!("{msg}\n").into_bytes())
+                        }
                     }
                 }
             }
@@ -756,4 +916,23 @@ pub(crate) fn serve(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn materializing_is_refused_only_when_it_cannot_fit() {
+        let gib = 1u64 << 30;
+        assert!(materialize_fits(1_000, Some(gib)).is_ok());
+        // The OpenCitations sample (18.9 M quads) in a 4 GiB container.
+        let err = materialize_fits(18_869_242, Some(3 * gib)).unwrap_err();
+        assert!(err.contains("18869242 quads"), "{err}");
+        assert!(err.contains("read-only"), "{err}");
+        assert!(
+            materialize_fits(u64::MAX, None).is_ok(),
+            "unknown memory never refuses"
+        );
+    }
 }
