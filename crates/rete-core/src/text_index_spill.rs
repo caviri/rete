@@ -59,14 +59,29 @@ pub(crate) struct TextSection {
     pub(crate) table_len: u64,
     pub(crate) postings: PathBuf,
     pub(crate) postings_len: u64,
-    /// The scope leaves predicates out: the header lists it as kind 11.
+    /// The scope leaves predicates out: the header lists it as kind 11, and
+    /// the section starts with its 16-byte self-digest.
     pub(crate) partial: bool,
+    /// The scope covers the named graphs: the header's
+    /// `FLAG_TEXT_INDEX_NAMED_GRAPHS` bit.
+    pub(crate) named: bool,
 }
 
 impl TextSection {
-    /// Section length in the file.
-    pub(crate) fn len(&self) -> u64 {
+    /// Payload length: the token-table varint, the token table, the postings.
+    pub(crate) fn payload_len(&self) -> u64 {
         self.head.len() as u64 + self.table_len + self.postings_len
+    }
+
+    /// Section length in the file: the payload, behind a kind-11 section's
+    /// 16-byte digest.
+    pub(crate) fn len(&self) -> u64 {
+        let digest = if self.partial {
+            crate::header::TEXT_INDEX_PARTIAL_DIGEST_LEN
+        } else {
+            0
+        };
+        digest + self.payload_len()
     }
 }
 
@@ -274,6 +289,7 @@ impl TextSpill {
             postings: postings_path,
             postings_len,
             partial: self.scope.restricts_predicates(),
+            named: self.scope.covers_named_graphs(),
         };
         eprintln!(
             "extbuild: text index — {} token(s) from {} record(s), {} byte(s) ({}{})",
@@ -570,7 +586,7 @@ mod tests {
                 let mut out = sec.head.clone();
                 out.extend(std::fs::read(&sec.table).unwrap());
                 out.extend(std::fs::read(&sec.postings).unwrap());
-                assert_eq!(out.len() as u64, sec.len());
+                assert_eq!(out.len() as u64, sec.payload_len());
                 out
             }
         };

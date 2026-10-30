@@ -336,6 +336,17 @@ impl TextIndexScope {
     }
 }
 
+/// A predicate-restricted section as written (kind 11): the 16-byte
+/// self-digest `blake3(payload)[..16]`, then the payload — the kind-6 layout.
+/// The digest keeps the section verifiable although it is outside the content
+/// hash (an older `verify`, which cannot see kind 11, must not fail on it).
+pub(crate) fn with_partial_digest(payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(payload.len() + 16);
+    out.extend_from_slice(&blake3::hash(payload).as_bytes()[..16]);
+    out.extend_from_slice(payload);
+    out
+}
+
 /// What a build's `with_text_index` argument may be: `false` / `true` (no
 /// index / the default scope — the spelling every caller used before scopes),
 /// a [`TextIndexScope`], or an `Option` of one.

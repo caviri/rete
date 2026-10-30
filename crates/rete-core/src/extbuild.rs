@@ -121,7 +121,7 @@ pub struct ExternalBuildOptions {
     pub type_override: Option<String>,
     /// Build the full-text index over the literals of this scope (`None` = no
     /// TEXT_INDEX section). A second external sort, on the literal words, inside
-    /// the same budget; see [`crate::text_index_spill`].
+    /// the same budget; see `text_index_spill`.
     pub text_index: Option<crate::text_index::TextIndexScope>,
 }
 
@@ -2094,7 +2094,8 @@ fn write_final_file(
     perms: crate::index::PermSet,
 ) -> Result<(), ExtBuildError> {
     use crate::header::{
-        Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN,
+        Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TEXT_INDEX_NAMED_GRAPHS,
+        FLAG_TILE_SYNOPSIS, HEADER_LEN,
     };
 
     // container framings are tiny; build them in RAM
@@ -2185,11 +2186,24 @@ fn write_final_file(
     // pyramid section is empty (hash update of nothing = no-op, same as the
     // in-RAM writer pushing an empty slice).
 
-    // text index: `varint table_len | token table | postings`
+    // text index: `varint table_len | token table | postings`. A kind-11
+    // (predicate-restricted) section is outside the content hash and starts
+    // with its own digest, patched in below once the payload has gone past —
+    // the bytes `write_dataset_from_parts` writes.
+    let mut text_digest: Option<blake3::Hash> = None;
     if let Some(t) = text {
-        write_hashed(&mut out, &mut hasher, &t.head)?;
-        copy_hashed(&t.table, &mut out, &mut hasher)?;
-        copy_hashed(&t.postings, &mut out, &mut hasher)?;
+        if t.partial {
+            out.write_all(&[0u8; crate::header::TEXT_INDEX_PARTIAL_DIGEST_LEN as usize])?;
+            let mut digest = blake3::Hasher::new();
+            write_hashed(&mut out, &mut digest, &t.head)?;
+            copy_hashed(&t.table, &mut out, &mut digest)?;
+            copy_hashed(&t.postings, &mut out, &mut digest)?;
+            text_digest = Some(digest.finalize());
+        } else {
+            write_hashed(&mut out, &mut hasher, &t.head)?;
+            copy_hashed(&t.table, &mut out, &mut hasher)?;
+            copy_hashed(&t.postings, &mut out, &mut hasher)?;
+        }
     }
 
     // named-graphs container
@@ -2210,6 +2224,11 @@ fn write_final_file(
             | if named_len > 0 { FLAG_HAS_QUADS } else { 0 }
             | if dict.has_quoted {
                 FLAG_HAS_QUOTED_TRIPLES
+            } else {
+                0
+            }
+            | if text.is_some_and(|t| t.named) {
+                FLAG_TEXT_INDEX_NAMED_GRAPHS
             } else {
                 0
             },
@@ -2245,6 +2264,10 @@ fn write_final_file(
     let mut f = out.into_inner().map_err(|e| e.into_error())?;
     f.seek(SeekFrom::Start(0))?;
     f.write_all(&header.to_bytes())?;
+    if let Some(d) = text_digest {
+        f.seek(SeekFrom::Start(text_offset))?;
+        f.write_all(&d.as_bytes()[..crate::header::TEXT_INDEX_PARTIAL_DIGEST_LEN as usize])?;
+    }
     f.flush()?;
     Ok(())
 }
@@ -2778,17 +2801,18 @@ mod tests {
             let table_len = std::fs::metadata(&table).unwrap().len();
             let mut head = Vec::new();
             write_uvarint(&mut head, table_len);
-            // The scope block in the token table decides kind 6 or 11.
+            // The scope block in the token table decides kind 6 or 11, and
+            // the header's named-graphs bit.
             let mut prefix = head.clone();
             prefix.extend(std::fs::read(&table).unwrap());
-            let partial = crate::text_index::TextIndex::from_token_table(
+            let scope = crate::text_index::TextIndex::from_token_table(
                 &prefix,
                 codec,
                 Box::new(|_, _| None),
             )
             .expect("tok.table parses")
             .scope()
-            .restricts_predicates();
+            .clone();
             eprintln!("resume: reusing the text index");
             Some(crate::text_index_spill::TextSection {
                 head,
@@ -2796,7 +2820,8 @@ mod tests {
                 table_len,
                 postings_len: std::fs::metadata(&postings).unwrap().len(),
                 postings,
-                partial,
+                partial: scope.restricts_predicates(),
+                named: scope.covers_named_graphs(),
             })
         } else {
             None
@@ -3273,6 +3298,10 @@ mod tests {
                 "{scope:?}: the fixture must index something"
             );
             assert_eq!(rh.text_index_partial, scope.restricts_predicates());
+            assert_eq!(
+                rh.text_index_covers_named_graphs(),
+                scope.covers_named_graphs()
+            );
             for split in [None, Some((4 * 1024, 1024))] {
                 let bytes = build_ext_text(&quads, &scope, split);
                 assert_eq!(

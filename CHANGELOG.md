@@ -96,7 +96,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - rete-core: `TextIndexScope` (with `TextIndexGraphs`,
   `TextIndexPredicates`), `TextIndex::scope`, `Rete::text_index_scope` and
   `ExternalBuildOptions::text_index`. The build functions' `with_text_index`
-  argument takes a `bool` as before, or a scope (`IntoTextIndex`).
+  argument takes a `bool` as before, or a scope (`IntoTextIndex`), and
+  `AssembleOptions` carries it as `text_index_scope`.
 
 ### Changed
 
@@ -248,13 +249,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   predicate is `--type-predicate` or `rdf:type` (the pyramid's
   "behaves like instance-of" auto-detection applies to its descriptors only).
   `query_stats` now counts deduplicated statements.
-- **File format, within `0x05`: section kind 11.** A predicate-restricted
-  text index is written as kind 11 instead of 6, with the same payload.
-  Readers older than 0.4.0 prune `FILTER(CONTAINS(…))` with any text index
-  they find; with one that left a predicate out they would drop that
-  predicate's rows. They do not know kind 11, so they keep it unopened and
-  scan instead. A default-scope or `--text-index-graphs all` index stays
-  kind 6. See [compatibility.md](docs/compatibility.md).
+- **File format, within `0x05`: section kind 11 and header flag bit 4.** A
+  predicate-restricted text index is written as kind 11 instead of 6, with the
+  same payload behind a 16-byte self-digest. Readers older than 0.4.0 prune
+  `FILTER(CONTAINS(…))` with any text index they find; with one that left a
+  predicate out they would drop that predicate's rows. They do not know kind
+  11, so they keep it unopened and scan instead. Like kinds 8 and 9 it is
+  outside the content hash, so their `verify` still passes (checked with
+  0.3.7); the new `verify` checks its digest. A default-scope or
+  `--text-index-graphs all` index stays kind 6 and hashed. `all` also sets
+  header flag bit 4, so a `CONTAINS` inside `GRAPH` or under `FROM` knows from
+  the header whether the index covers it: without the bit it scans and reads
+  no byte of the index. See [compatibility.md](docs/compatibility.md).
 
 ### Fixed
 
@@ -304,9 +310,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   on a file built with `--text-index`, even when the graph's literals
   contained the string (`STRSTARTS`, `REGEX` and `BIND(CONTAINS(…))` were
   right). The full-text pushdown seeded the scan with subjects from the
-  default graph's words; it now runs only when the active graph is the
-  default graph, and `CONTAINS` scans elsewhere (inside `GRAPH`, under
-  `FROM`, over the union default graph). Two more places read the default
+  default graph's words, whatever graph was active. It now runs only where the
+  index covers the active graph and the pattern's predicate — the default
+  graph, or any graph for an index built with `--text-index-graphs all` — and
+  `CONTAINS` scans elsewhere (inside `GRAPH`, under `FROM`, over the union
+  default graph). Found on OpenCitations
+  (`GRAPH <…/prov/> { … CONTAINS(…, "06270426") }`). Two more places read the default
   graph whatever the query said: a sub-`SELECT` inside `GRAPH <g>`, under
   `FROM` or under the union-default toggle now reads that active graph, and
   `DESCRIBE … FROM <g>` describes from `<g>`.
@@ -348,12 +357,6 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `xsd:date`/`dateTime`/`dateTimeStamp`/`gYear`/`gYearMonth` or the value of a
   known date predicate. The extent is in calendar order across the three
   OpenCitations date datatypes of one predicate, negative years by value.
-- **`FILTER(CONTAINS(…))` inside `GRAPH`, under `FROM`, or over the union
-  default graph returned no rows on a file with a text index.** The pushdown
-  seeded the pattern with the subjects of the default graph's literals,
-  whatever graph was active. It now runs only where the index covers the
-  active graph and the pattern's predicate; elsewhere the filter scans.
-  Found on OpenCitations (`GRAPH <…/prov/> { … CONTAINS(…, "06270426") }`).
 
 ## [0.3.7] - 2026-10-28
 

@@ -69,6 +69,20 @@ pub const FLAG_TILE_SYNOPSIS: u8 = 0b0000_0010;
 /// this needs no format-version bump and old readers stay forward-compatible.
 pub const FLAG_HAS_QUOTED_TRIPLES: u8 = 0b0000_0100;
 
+/// Flag bit: the full-text index also covers the **named graphs'** literals
+/// (`rete build --text-index-graphs all`, Rete 0.4.0). It lets a query inside
+/// `GRAPH`, under `FROM` or over the union default graph decide from the
+/// header alone whether the index can prune its `FILTER(CONTAINS(…))`: without
+/// the bit it scans and never faults the index's token table. Bit 3
+/// (`0b0000_1000`) belongs to the quad index. Older readers ignore unknown bits.
+pub const FLAG_TEXT_INDEX_NAMED_GRAPHS: u8 = 0b0001_0000;
+
+/// Length of the BLAKE3 self-digest that heads a predicate-restricted text
+/// index section ([`SectionKind::TextIndexPartial`], kind 11):
+/// `digest = blake3(section[16..])[..16]`, the same rule as the LABEL_INDEX and
+/// SCHEMA sections.
+pub const TEXT_INDEX_PARTIAL_DIGEST_LEN: u64 = 16;
+
 /// A top-level file section, addressed by [`SectionKind`] in the header directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionKind {
@@ -92,7 +106,11 @@ pub enum SectionKind {
     /// the index covered every literal; with this one it would silently drop
     /// the rows of the predicates left out. Not seeing it, it scans instead.
     /// The header maps it onto the same `text_index_*` fields, with
-    /// [`Header::text_index_partial`] set.
+    /// [`Header::text_index_partial`] set. Like kinds 8 and 9 it is **outside
+    /// the content hash** — an older `verify`, which cannot see it, must not
+    /// call the file corrupt — and starts with its own 16-byte digest
+    /// ([`TEXT_INDEX_PARTIAL_DIGEST_LEN`]) instead; the kind-6 layout follows
+    /// it ([`Header::text_index_payload`]).
     TextIndexPartial,
     /// Build-conditions record (timestamp, builder version, build parameters,
     /// measured starter-query costs), stored as an opaque JSON blob owned by the
@@ -509,6 +527,29 @@ impl Header {
     /// Do the tiled index sections carry a [`FLAG_TILE_SYNOPSIS`] trailer?
     pub fn has_tile_synopsis(&self) -> bool {
         self.flags & FLAG_TILE_SYNOPSIS != 0
+    }
+
+    /// Does the full-text index cover the named graphs' literals too
+    /// ([`FLAG_TEXT_INDEX_NAMED_GRAPHS`])? Known from the header alone.
+    pub fn text_index_covers_named_graphs(&self) -> bool {
+        self.flags & FLAG_TEXT_INDEX_NAMED_GRAPHS != 0
+    }
+
+    /// The `(offset, length)` of the text index's payload — the token-table
+    /// varint, the token table and the postings. That is the whole section for
+    /// kind 6; a kind-11 section starts with its 16-byte self-digest, which this
+    /// skips. `(offset, 0)` past a kind-11 section too short for its digest.
+    pub fn text_index_payload(&self) -> (u64, u64) {
+        if self.text_index_partial {
+            (
+                self.text_index_offset
+                    .saturating_add(TEXT_INDEX_PARTIAL_DIGEST_LEN),
+                self.text_index_len
+                    .saturating_sub(TEXT_INDEX_PARTIAL_DIGEST_LEN),
+            )
+        } else {
+            (self.text_index_offset, self.text_index_len)
+        }
     }
 
     /// The directory entry for a section kind, or `None` if absent. Known kinds

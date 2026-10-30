@@ -124,17 +124,30 @@ change.
 use any text index they find to prune `FILTER(CONTAINS(…))`, as if it covered
 every literal of the default graph; with an index that left a predicate out,
 they would drop that predicate's matching rows without a word. So such an index
-is written as section kind **11** rather than 6, with the same payload
+is written as section kind **11** rather than 6, with the same payload behind a
+16-byte self-digest
 ([SPEC §6.3](SPEC.md#63-full-text-index-text_index-section-optional)). An older
 reader keeps the unknown entry and never opens it: the file reads normally,
 `CONTAINS` scans and returns every row, and `rete search --contains` reports
 that the file has no text index. A current reader opens either kind and prunes
 only where the index covers the query.
 
+Kind 11 is **outside the content hash**, like kinds 8 and 9, and its digest is
+what a current `verify` checks. An older `verify` hashes only the kinds it
+knows, so a hashed kind 11 would make it report every such file as corrupt.
+Verified against the released 0.3.7 binary (`ghcr.io/caviri/rete-cli:0.3.7`) on
+a `--text-index-exclude` file: `verify` says "content hash matches", and `info`,
+`sparql` and `search` work (the last finds no text index, as above). The rule
+for 0.4.0: a new section kind never makes an older `verify` call a valid file
+corrupt.
+
 The other scope change stays kind 6. `--text-index-graphs all` adds the named
 graphs' literals, so the index covers everything an older reader assumes it
 covers, plus more. Its extra candidates are re-checked by the filter and fall
-away. A default-scope index (no scope flags) is the same bytes as before 0.4.0.
+away. It also sets header flag bit 4, which tells a current reader, from the
+header alone, that a `CONTAINS` inside `GRAPH` or under `FROM` may use the
+index; older readers ignore the bit. A default-scope index (no scope flags) is
+the same bytes as before 0.4.0.
 
 ## Is it compatible with RDF?
 

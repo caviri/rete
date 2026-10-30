@@ -151,3 +151,169 @@ fn default_scope_is_the_unscoped_index() {
     let h = rete_core::Header::from_bytes(&unscoped).unwrap();
     assert!(h.text_index_len > 0 && !h.text_index_partial);
 }
+
+// ---------------------------------------------------------------------------
+// Kind 11 outside the content hash; the named-graphs bit decides coverage
+// ---------------------------------------------------------------------------
+
+use rete_core::format::content_hash_parts;
+use rete_core::{verify, verify_ranged, Header, RangeReader, SectionKind, SliceReader};
+use std::sync::{Arc, Mutex};
+
+fn exclude_desc() -> TextIndexScope {
+    let none: [&str; 0] = [];
+    TextIndexScope::from_options(TextIndexGraphs::Default, none, ["http://ex/desc"]).unwrap()
+}
+
+/// A predicate-restricted index (kind 11) is outside the content hash, like
+/// kinds 8 and 9, and carries its own leading digest: a reader older than 0.4.0
+/// cannot see kind 11, and a hashed one would make its `verify` call the file
+/// corrupt. The hash is that of the same build without a text index; the new
+/// `verify` still catches a flipped byte in the section.
+#[test]
+fn a_restricted_text_index_is_self_digested_not_hashed() {
+    let bytes = build(Some(exclude_desc()));
+    let h = Header::from_bytes(&bytes).unwrap();
+    assert!(h.text_index_partial);
+    let k11 = h.section(SectionKind::TextIndexPartial).unwrap();
+    assert!(h
+        .section(SectionKind::TextIndex)
+        .is_none_or(|s| s.length == 0));
+    assert!(
+        content_hash_parts(&h)
+            .iter()
+            .all(|&(off, _)| off != k11.offset),
+        "kind 11 is not folded into the content hash"
+    );
+    let plain = Header::from_bytes(&build(None)).unwrap();
+    assert_eq!(h.content_hash, plain.content_hash);
+    // The section is `digest | kind-6 payload`.
+    let (p_off, p_len) = h.text_index_payload();
+    assert_eq!((p_off, p_len), (k11.offset + 16, k11.length - 16));
+    let section = &bytes[k11.offset as usize..(k11.offset + k11.length) as usize];
+    assert_eq!(
+        &section[..16],
+        &blake3::hash(&section[16..]).as_bytes()[..16]
+    );
+    assert!(verify(&bytes).unwrap());
+    assert!(verify_ranged(&SliceReader::new(&bytes)).unwrap());
+    for at in [k11.offset + 3, k11.offset + 20, k11.offset + k11.length - 1] {
+        let mut bad = bytes.clone();
+        bad[at as usize] ^= 0x40;
+        assert!(!verify(&bad).unwrap(), "a flipped byte at {at} in kind 11");
+        assert!(!verify_ranged(&SliceReader::new(&bad)).unwrap());
+    }
+    // ... and it still answers: the digest is skipped on every open path.
+    let rete = Rete::open(&bytes).unwrap();
+    assert_eq!(
+        rows(
+            &rete,
+            r#"SELECT ?s WHERE { ?s ex:title ?t FILTER(CONTAINS(?t, "Glucose")) }"#
+        ),
+        ["<http://ex/e1>"]
+    );
+    let lazy = Rete::open_ranged_lazy(Recorded::new(bytes.clone())).unwrap();
+    assert!(lazy.text_index_scope().unwrap().restricts_predicates());
+    assert_eq!(
+        rows(
+            &lazy,
+            r#"SELECT ?s WHERE { ?s ex:title ?t FILTER(CONTAINS(?t, "Glucose")) }"#
+        ),
+        ["<http://ex/e1>"]
+    );
+}
+
+/// The header says whether the index covers the named graphs (flag bit 4), so
+/// coverage off the default graph is decided without the token table.
+#[test]
+fn the_named_graphs_bit_follows_the_scope() {
+    for (name, scope) in scopes() {
+        let h = Header::from_bytes(&build(Some(scope.clone()))).unwrap();
+        assert_eq!(
+            h.text_index_covers_named_graphs(),
+            scope.covers_named_graphs(),
+            "{name}"
+        );
+        assert_eq!(h.text_index_partial, scope.restricts_predicates(), "{name}");
+    }
+    assert!(!Header::from_bytes(&build(None))
+        .unwrap()
+        .text_index_covers_named_graphs());
+}
+
+/// Records every range a lazy open reads.
+#[derive(Clone)]
+struct Recorded {
+    data: Arc<Vec<u8>>,
+    reads: Arc<Mutex<Vec<(u64, u64)>>>,
+}
+
+impl Recorded {
+    fn new(data: Vec<u8>) -> Self {
+        Recorded {
+            data: Arc::new(data),
+            reads: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+    fn take(&self) -> Vec<(u64, u64)> {
+        std::mem::take(&mut *self.reads.lock().unwrap())
+    }
+}
+
+impl RangeReader for Recorded {
+    fn len(&self) -> u64 {
+        self.data.len() as u64
+    }
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.reads.lock().unwrap().push((offset, len));
+        SliceReader::new(&self.data).read_at(offset, len)
+    }
+}
+
+fn touches(reads: &[(u64, u64)], (off, len): (u64, u64)) -> bool {
+    reads.iter().any(|&(o, l)| o < off + len && off < o + l)
+}
+
+/// `FILTER(CONTAINS(…))` inside `GRAPH` on a lazily opened default-scope file
+/// scans, and reads **no byte** of the text index to find that out: the
+/// header's named-graphs bit is absent. With `--text-index-graphs all` the
+/// same query uses the index, and both answer the same rows.
+#[test]
+fn contains_inside_graph_reads_the_text_index_only_when_it_covers_the_graphs() {
+    let q = r#"SELECT ?s WHERE { GRAPH ex:g1 { ?s ex:desc ?d FILTER(CONTAINS(?d, "created")) } }"#;
+    for (scope, uses_index) in [
+        (TextIndexScope::default(), false),
+        (scopes()[1].1.clone(), true),
+    ] {
+        assert_eq!(scope.covers_named_graphs(), uses_index);
+        let bytes = build(Some(scope));
+        let h = Header::from_bytes(&bytes).unwrap();
+        let text = (h.text_index_offset, h.text_index_len);
+        let rec = Recorded::new(bytes);
+        let rete = Rete::open_ranged_lazy(rec.clone()).unwrap();
+        rec.take();
+        assert_eq!(rows(&rete, q), ["<http://ex/p1>"]);
+        assert_eq!(
+            touches(&rec.take(), text),
+            uses_index,
+            "GRAPH + CONTAINS, uses_index = {uses_index}"
+        );
+    }
+    // On the default graph a default-scope index is used, as before.
+    let bytes = build(Some(TextIndexScope::default()));
+    let h = Header::from_bytes(&bytes).unwrap();
+    let rec = Recorded::new(bytes);
+    let rete = Rete::open_ranged_lazy(rec.clone()).unwrap();
+    rec.take();
+    assert_eq!(
+        rows(
+            &rete,
+            r#"SELECT ?s WHERE { ?s ex:title ?t FILTER(CONTAINS(?t, "Glucose")) }"#
+        ),
+        ["<http://ex/e1>"]
+    );
+    assert!(touches(
+        &rec.take(),
+        (h.text_index_offset, h.text_index_len)
+    ));
+}

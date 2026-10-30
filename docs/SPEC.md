@@ -144,7 +144,7 @@ addressing — *how many* of those six a given file actually stores is its
 |---|---|---|
 | 0 | 4 | magic `RETE` |
 | 4 | 1 | format version (`0x05`, stable generation 1) |
-| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples) |
+| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples; bit4: the text index also covers the named graphs' literals, `--text-index-graphs all`, §6.3 — Rete 0.4.0, ignored by older readers) |
 | 6 | 2 | header length (= 1024) |
 | 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
 | 24 | 8 | total quad count |
@@ -215,6 +215,12 @@ that predates them keeps their directory entries verbatim, shifts them on every
 header rewrite like any unknown kind, and never reads them; it answers every query
 with the same rows, but finds no label index, no schema and no planner statistics
 in a file whose pyramid-meta no longer carries them (§7.3).
+
+A **predicate-restricted text index** (kind `11`, §6.3) follows the same rule,
+although it sits where a kind-`6` index does: it is outside the content hash and
+starts with the same 16-byte self-digest, which a current `verify` checks. A
+reader older than 0.4.0 does not know kind `11`, so a hashed one would make its
+`verify` call the file corrupt. A kind-`6` index is hashed, as it always was.
 
 ---
 
@@ -505,6 +511,12 @@ under a kind they do not know: they preserve it, never open it, and answer
 `CONTAINS` by scanning and `rete search --contains` with "no text index". The
 header maps either kind onto the same text-index offset and length.
 
+A kind-`11` section is `digest(16) | payload`, where `digest =
+blake3(payload)[..16]` and the payload is the kind-`6` layout above. It is outside
+the content hash (§4.1) and verified by that digest instead, so a reader that
+cannot see it still verifies the file; a reader skips the digest to reach the
+`token_table_len` varint. A kind-`6` section has no digest and is hashed.
+
 The **token table** is small (distinct words, front-coded) and read whole; the
 **postings blob** is the bulk and is fetched one posting at a time. A remote
 search reads the leading `token_table_len` varint + the compressed token table as
@@ -521,8 +533,11 @@ only inside the scope, so the engine applies it only when the active graph is
 covered (the default graph; any graph under `graphs = 1`) and the pattern's
 predicate is covered (a variable predicate only when every predicate is).
 Elsewhere — inside `GRAPH` over a default-scope index, under `FROM`, on a
-predicate left out — the filter scans. A query that uses no such filter neither
-fetches nor pays for the section.
+predicate left out — the filter scans. Whether the index covers the named graphs
+is header flag bit 4 (§4.1), written with `graphs = 1`, so a query off the
+default graph on a file without the bit decides from the header and fetches no
+byte of the section. A query that uses no such filter neither fetches nor pays
+for the section.
 
 **Discoverability.** Because a file *without* the section answers the same
 `FILTER(CONTAINS(…))` with the same rows — by full scan — the capability cannot
@@ -546,7 +561,8 @@ whole.
 `0x05` (Rete 0.4.0): a default-scope index is the same bytes as before, a
 `graphs = 1` kind-`6` index is read by older readers as a plain index (they find
 more subjects than they expect, which their re-verifying filter discards), and a
-kind-`11` index is invisible to them.
+kind-`11` index is invisible to them — outside the content hash, so their
+`verify` still passes. Header flag bit 4 is unknown to them and ignored.
 
 ### 6.4 Label index (LABEL_INDEX section, optional)
 

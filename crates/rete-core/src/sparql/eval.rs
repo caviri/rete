@@ -1518,12 +1518,14 @@ fn text_contains_pushdown(
     inner: &Plan,
 ) -> Option<Vec<Row>> {
     use std::collections::BTreeSet;
-    let ti = ctx.rete.text_index()?;
-    // The index bounds the subjects only over what it covers (its scope).
-    let scope = ti.scope();
-    if !text_index_covers(ctx, index, scope) {
+    // Decided from the header, before anything faults the token table.
+    if !text_index_covers(ctx, index) {
         return None;
     }
+    let ti = ctx.rete.text_index()?;
+    // The predicates it covers come from its scope block, in the token table
+    // the pushdown reads anyway.
+    let scope = ti.scope();
     let mut needles: Vec<(String, String)> = Vec::new();
     required_contains(expr, &mut needles);
 
@@ -1615,21 +1617,20 @@ fn text_contains_pushdown(
 /// May the TEXT_INDEX bound a scan of `index`? Its candidate subjects are a
 /// sound over-approximation only over the literals it indexed. Every index
 /// covers the file's **default graph**; the named graphs only when it was built
-/// with `--text-index-graphs all` (its `scope`). Inside `GRAPH <g> { … }`,
+/// with `--text-index-graphs all`, which the header says
+/// ([`crate::header::FLAG_TEXT_INDEX_NAMED_GRAPHS`]). Inside `GRAPH <g> { … }`,
 /// under `FROM <g>`, or over the union default graph, a default-scope index
 /// leaves out every subject whose literal lives in a named graph, and seeding
 /// the scan with its candidates silently returns nothing (`FILTER(CONTAINS(…))`
 /// inside `GRAPH` answered 0 rows while `BIND(CONTAINS(…))` found them). The
 /// active index is the file's default index exactly when the active graph is
 /// the default graph (a `FROM`/union merge, or a named graph, is a different
-/// object). The predicates the scope covers are checked per pattern, by the
-/// caller.
-fn text_index_covers(
-    ctx: &Ctx,
-    index: &GraphIndex,
-    scope: &crate::text_index::TextIndexScope,
-) -> bool {
-    std::ptr::eq(index, ctx.rete.default_index()) || scope.covers_named_graphs()
+/// object). Decided from the header alone, so a declined pushdown never faults
+/// the token table; the predicates the scope covers are checked per pattern,
+/// by the caller.
+fn text_index_covers(ctx: &Ctx, index: &GraphIndex) -> bool {
+    std::ptr::eq(index, ctx.rete.default_index())
+        || ctx.rete.header().text_index_covers_named_graphs()
 }
 
 /// The required-spine `Bgp` that [`inject_contains_seed`] will wrap — same

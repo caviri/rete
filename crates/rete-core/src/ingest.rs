@@ -1378,6 +1378,9 @@ fn finish_assembly<M: IntoMetadata>(
     let text_index_partial = with_text_index
         .as_ref()
         .is_some_and(crate::text_index::TextIndexScope::restricts_predicates);
+    let text_index_named = with_text_index
+        .as_ref()
+        .is_some_and(crate::text_index::TextIndexScope::covers_named_graphs);
 
     // The LABEL_INDEX and SCHEMA sections are computed over the DEDUPLICATED
     // default graph in SPO order (and the schema's second pass in POS order),
@@ -1468,6 +1471,7 @@ fn finish_assembly<M: IntoMetadata>(
         &blob,
         &text_index,
         text_index_partial,
+        text_index_named,
         codec,
     );
     // Kinds 8 and 9 go after everything else: they are outside the content
