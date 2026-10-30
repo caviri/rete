@@ -79,6 +79,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::build_trace::{self as trace, note_merge, Phase};
 use crate::dict::env_restart_interval;
 
 use crate::extbuild_sections::{ExtLabels, ExtSchema};
@@ -277,6 +278,9 @@ where
         chunks.len(),
         statements
     );
+    trace::add("chunks", chunks.len() as u64);
+    note_scratch(&tmp);
+    trace::lap(Phase::ParseChunk);
 
     // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
     let schema_preds = crate::extbuild_sections::schema_predicates(opts.type_override.as_deref());
@@ -284,6 +288,8 @@ where
     if let Some(x) = ext_schema.as_mut() {
         x.set_merge_facts(&merged.schema_facts);
     }
+    note_scratch(&tmp);
+    trace::lap(Phase::Dictionary);
     eprintln!(
         "extbuild: merged dictionary — {} term(s)",
         merged.term_count
@@ -369,11 +375,18 @@ where
         }
     }
     drop(remaps); // free the remap tables before the sort phase
+    note_scratch(&tmp);
+    trace::lap(Phase::Encode);
 
     // ---- Phase 3b: the full-text index (`--text-index`) -----------------------
     let codec = crate::file::writer_codec();
     let text_section = match text {
-        Some(t) => t.finish(&|name| tmp.path(name), text_run_bytes, codec)?,
+        Some(t) => {
+            let s = t.finish(&|name| tmp.path(name), text_run_bytes, codec)?;
+            note_scratch(&tmp);
+            trace::lap(Phase::TextIndex);
+            s
+        }
         None => None,
     };
 
@@ -419,6 +432,7 @@ where
             n
         );
         perm_sections.push(section);
+        trace::lap(Phase::IndexPermutations);
     }
     let _ = std::fs::remove_file(&global_tri);
     let default_count = deduped_count.unwrap_or(0);
@@ -473,6 +487,9 @@ where
     } else {
         None
     };
+    if has_named {
+        trace::lap(Phase::NamedGraphs);
+    }
     let named_triples = named.as_ref().map(|n| n.triples).unwrap_or(0)
         + quad.as_ref().map(|q| q.quad_count).unwrap_or(0);
     let named_graphs = named.as_ref().map(|n| n.count).unwrap_or(0)
@@ -494,6 +511,7 @@ where
         pyramid_levels: 0,
     };
     let metadata = (opts.metadata)(&stats);
+    trace::lap(Phase::CardDerive);
     write_final_file(
         output,
         &metadata,
@@ -508,6 +526,8 @@ where
         opts.perms,
     )?;
     stats.pyramid_levels = 0;
+    note_scratch(&tmp);
+    trace::lap(Phase::Write);
 
     // ---- Phase 6: LABEL_INDEX / SCHEMA, appended (outside the content hash) --
     let schema_section = match ext_schema {
@@ -539,8 +559,32 @@ where
         }
         crate::file::append_sections_to_file(output, &sections)
             .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?;
+        trace::lap(Phase::LabelsSchema);
     }
     Ok(stats)
+}
+
+/// Raise the `scratch_peak_bytes` counter to what the spill directory holds
+/// now. Sampled at phase boundaries (and once each external sort has written
+/// its runs, its high-water mark), so it is a lower bound on the true peak.
+/// Skipped — no directory walk — when no build trace is recording.
+fn note_scratch(tmp: &TmpDir) {
+    if !trace::active() {
+        return;
+    }
+    fn walk(dir: &Path) -> u64 {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        rd.flatten()
+            .map(|e| match e.metadata() {
+                Ok(m) if m.is_dir() => walk(&e.path()),
+                Ok(m) => m.len(),
+                Err(_) => 0,
+            })
+            .sum()
+    }
+    trace::max("scratch_peak_bytes", walk(&tmp.dir));
 }
 
 // ---------------------------------------------------------------------------
@@ -993,6 +1037,7 @@ struct KWayTerms {
 
 impl KWayTerms {
     fn new(mut streams: Vec<SpaceStream>) -> Result<Self, std::io::Error> {
+        note_merge(streams.len());
         let mut heap = BinaryHeap::new();
         for (ci, s) in streams.iter_mut().enumerate() {
             if let Some((term, id)) = s.next()? {
@@ -1555,6 +1600,8 @@ fn build_permutation_section_observed(
     }
 
     // 2. k-way merge (dedup) feeding the streaming tiler
+    note_scratch(tmp);
+    note_merge(runs.len());
     let mut tiler = StreamingTiler::new(tmp, &format!("{prefix}{}", perm.name()), codec)?;
     {
         let mut readers: Vec<RunReader> = runs
@@ -1739,6 +1786,8 @@ fn build_named_graphs(
     }
 
     // 2. k-way merge (dedup) → one contiguous run per graph
+    note_scratch(tmp);
+    note_merge(runs.len());
     let body_path = tmp.path("named.body");
     let mut body = BufWriter::with_capacity(1 << 20, File::create(&body_path)?);
     let mut names = TermFileReader::open(graph_names)?;
@@ -2001,6 +2050,7 @@ fn merge_quad_runs(
     runs: &[PathBuf],
     mut f: impl FnMut(IdQuad) -> Result<(), ExtBuildError>,
 ) -> Result<(), ExtBuildError> {
+    note_merge(runs.len());
     let mut readers: Vec<QuadRunReader> = runs
         .iter()
         .map(|p| QuadRunReader::open(p))

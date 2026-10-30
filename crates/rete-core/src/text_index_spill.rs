@@ -513,6 +513,7 @@ fn merge_runs<E: Write, P: Write>(
     writer: &mut SectionWriter<E, P>,
     overflow_path: &Path,
 ) -> Result<(), ExtBuildError> {
+    crate::build_trace::note_merge(runs.len());
     let mut readers: Vec<BufReader<File>> = runs
         .iter()
         .map(|p| File::open(p).map(|f| BufReader::with_capacity(READ_BUF, f)))
