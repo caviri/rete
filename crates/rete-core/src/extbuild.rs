@@ -38,6 +38,10 @@
 //! labels: (`--label-index`) the remap tees (object, slot, subject) ids; once
 //!           the file is written its own dictionary names them, and the
 //!           LABEL_INDEX and SCHEMA sections are appended (`extbuild_sections`)
+//! card:   (the CLI, `rete build --memory-budget-mb --card…`) the full card is
+//!           derived by streaming the finished file's sorted sections and
+//!           appended after them (`crate::recard::plan_card_append`); this
+//!           module then writes no metadata at all
 //! ```
 //!
 //! Spill: the merge deletes each chunk's term files once it has read them,
@@ -486,7 +490,11 @@ where
         pyramid_levels: 0,
     };
     let metadata = (opts.metadata)(&stats);
-    trace::lap(Phase::CardDerive);
+    if !metadata.is_empty() {
+        // A caller that derives its card from the finished file (the CLI's
+        // full card, appended after the data) laps the phase itself, later.
+        trace::lap(Phase::CardDerive);
+    }
     write_final_file(
         output,
         &metadata,

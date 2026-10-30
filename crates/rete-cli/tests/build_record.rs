@@ -240,6 +240,15 @@ fn memory_bounded_build_records_spill_and_the_same_digest() {
         .collect();
     assert_eq!(phases.first(), Some(&"parse+chunk"), "{phases:?}");
     assert!(phases.contains(&"write"));
+    // The full card is derived from the written file, after it: its phases
+    // come last, and the record carries what its starter queries cost.
+    assert_eq!(
+        &phases[phases.len() - 3..],
+        ["card_derive", "starter_queries", "content_hash"],
+        "{phases:?}"
+    );
+    assert!(e["query_costs"]["queries"].is_array(), "{e}");
+    assert_eq!(e["params"]["card_top_n"], r["params"]["card_top_n"]);
 
     // stdin: hashed as it streams, named `stdin`.
     let stdin_out = s.p("stdin.rete");

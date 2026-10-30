@@ -5,6 +5,31 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **The memory-bounded build writes the full Dataset Card.**
+  `rete build --memory-budget-mb` with a card used to write counts only (no
+  profile, no starter queries), and the full card took a `rete recard`
+  afterwards: a second copy of the whole file on disk and the time to write
+  it. It now runs the same derivation `rete recard` runs — the profile
+  streamed from the finished file's sorted sections, every starter query run
+  against the file — inside the build's own budget, and writes the card and
+  the build record **after the data** instead of in front of it. The card is
+  byte for byte the one `rete recard` writes for the same file, and the content
+  hash the one the same card at the front gives (the hash folds the card
+  first, wherever it lies). `--no-card-costs` skips the queries. The build
+  record times the derivation (`card_derive`, with its own peak RSS),
+  the queries (`starter_queries`, likewise) and the extra read of the file that
+  folds the hash (`content_hash`).
+- **`rete recard --in-place`** replaces the card of an existing file without
+  copying it: the new card and build record are appended after the last
+  section, synced, and the 1 KiB header is rewritten last. A crash before the
+  header write leaves the old file intact; after it, the new one. The old card
+  and build record remain as dead bytes until a copying re-card (which now
+  drops them). Every reader since the format froze — 0.3.7 and 0.4.0 `card`,
+  `card-url`, `verify` and queries, and the 0.4.0 Python and JavaScript
+  packages — reads a card placed after the data.
+
 ### Fixed
 
 - **The memory-bounded build no longer grows with the dataset.**

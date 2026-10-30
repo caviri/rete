@@ -131,6 +131,9 @@ pub(crate) struct Recarded {
 pub(crate) struct RecardParams {
     #[serde(default)]
     pub keep_curated: bool,
+    /// `--in-place`: the card was appended to the file itself, not copied.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub in_place: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_file: Option<FileDigest>,
     #[serde(default)]
@@ -255,11 +258,17 @@ pub(crate) struct RunRecord {
     pub cpus: Option<u64>,
 }
 
-/// One phase's wall time.
+/// One phase's wall time — and, for the phases measured on their own (the
+/// card's derivation and its starter queries), that phase's peak RSS.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PhaseTime {
     pub phase: String,
     pub ms: u64,
+    /// The peak resident set size **during this phase alone** (`VmHWM`, reset
+    /// when the phase began). Only on the phases measured that way; the run's
+    /// own `peak_rss_bytes` is the peak over every phase. Absent before 0.4.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_rss_bytes: Option<u64>,
 }
 
 /// The memory-bounded build's external sort.
@@ -636,6 +645,83 @@ pub(crate) struct Recorder {
     reproducible: bool,
     pub taps: Vec<InputTap>,
     pub statements_read: std::rc::Rc<std::cell::Cell<u64>>,
+    /// The peak RSS of each phase measured on its own ([`Self::lap_measured`]).
+    phase_peaks: std::cell::RefCell<Vec<(rete_core::build_trace::Phase, u64)>>,
+    /// The sampler watching the phase being measured, if one is.
+    sampler: std::cell::RefCell<Option<RssSampler>>,
+}
+
+/// Watches one phase's resident set size: `VmHWM` when the phase began, and a
+/// thread reading `VmRSS` every few milliseconds until it ends.
+///
+/// The kernel's high-water mark is never reset (`/proc/self/clear_refs` would
+/// do it, and would also make `/usr/bin/time` and every other observer of the
+/// process report the wrong peak). So the phase's peak is the high-water mark
+/// when the phase raised it — then it is exact — and the sampled maximum
+/// otherwise, which a spike shorter than the interval can escape.
+struct RssSampler {
+    hwm_before: Option<u64>,
+    max: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RssSampler {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+    fn start() -> Self {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+        let max = Arc::new(AtomicU64::new(current_rss_bytes().unwrap_or(0)));
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = current_rss_bytes().is_some().then(|| {
+            let (max, stop) = (max.clone(), stop.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Some(rss) = current_rss_bytes() {
+                        max.fetch_max(rss, Ordering::Relaxed);
+                    }
+                    std::thread::sleep(Self::INTERVAL);
+                }
+            })
+        });
+        RssSampler {
+            hwm_before: peak_rss_bytes(),
+            max,
+            stop,
+            thread,
+        }
+    }
+
+    /// The phase's peak, or `None` where there is no `/proc`.
+    fn finish(mut self) -> Option<u64> {
+        use std::sync::atomic::Ordering;
+        self.stop.store(true, Ordering::Relaxed);
+        let sampled = self
+            .thread
+            .take()
+            .and_then(|t| t.join().ok())
+            .map(|()| self.max.load(Ordering::Relaxed))?;
+        let sampled = sampled.max(current_rss_bytes().unwrap_or(0));
+        match (self.hwm_before, peak_rss_bytes()) {
+            (Some(before), Some(after)) if after > before => Some(after),
+            _ => Some(sampled),
+        }
+    }
+}
+
+impl Drop for RssSampler {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Resident set size of this process now: `VmRSS` from `/proc/self/status`.
+fn current_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
 }
 
 impl Recorder {
@@ -648,12 +734,44 @@ impl Recorder {
             reproducible: reproducible(),
             taps: inputs.iter().map(|(p, f)| InputTap::new(p, f)).collect(),
             statements_read: Default::default(),
+            phase_peaks: Default::default(),
+            sampler: Default::default(),
         }
     }
 
     /// End `phase` (see [`rete_core::build_trace::lap`]).
     pub(crate) fn lap(&self, phase: rete_core::build_trace::Phase) {
         rete_core::build_trace::lap(phase);
+    }
+
+    /// Begin a phase whose own peak RSS is to be recorded ([`RssSampler`]).
+    pub(crate) fn begin_measured(&self) {
+        *self.sampler.borrow_mut() = Some(RssSampler::start());
+    }
+
+    /// End `phase` like [`Self::lap`] and record its own peak RSS (since
+    /// [`Self::begin_measured`]); the next phase starts measured too.
+    pub(crate) fn lap_measured(&self, phase: rete_core::build_trace::Phase) {
+        self.lap(phase);
+        if let Some(peak) = self
+            .sampler
+            .borrow_mut()
+            .take()
+            .and_then(RssSampler::finish)
+        {
+            self.phase_peaks.borrow_mut().push((phase, peak));
+        }
+        self.begin_measured();
+    }
+
+    /// The peak RSS recorded for `phase`, if it was measured on its own.
+    fn phase_peak(&self, phase: rete_core::build_trace::Phase) -> Option<u64> {
+        self.phase_peaks
+            .borrow()
+            .iter()
+            .filter(|(p, _)| *p == phase)
+            .map(|&(_, b)| b)
+            .max()
     }
 
     /// Stamp the parts of `info` known when the build starts: `started_at`,
@@ -708,6 +826,7 @@ impl Recorder {
                 .map(|(p, d)| PhaseTime {
                     phase: p.as_str().into(),
                     ms: d.as_millis() as u64,
+                    peak_rss_bytes: self.phase_peak(p),
                 })
                 .collect(),
             peak_rss_bytes: peak_rss_bytes(),
@@ -804,25 +923,25 @@ impl BuildInfo {
     /// no more.
     ///
     /// A record is written into the file before the run it describes has
-    /// finished — the memory-bounded build writes it mid-stream, and every
-    /// build's last phase is writing the file — so the writer reserves this
-    /// many bytes and [`patch_build_info`] fills them in place once the run is
-    /// over: no second copy of the file, and the wall time and peak RSS cover
-    /// the write itself. Every measured number is a `u64` and every measured
-    /// string has a bounded width (a phase name from a closed set, a 64-digit
-    /// hex digest, `gzip`), so the bound is exact, not a guess.
+    /// finished — an in-RAM build's and a copying re-card's last phase is
+    /// writing the file — so the writer reserves this many bytes and
+    /// [`patch_build_info`] fills them in place once the run is over: no second
+    /// copy of the file, and the wall time and peak RSS cover the write
+    /// itself. Every measured number is a `u64` and every measured string has
+    /// a bounded width (a phase name from a closed set), so the bound is
+    /// exact, not a guess.
     ///
-    /// `pending` says what is still to come: [`Pending::Everything`] for the
-    /// memory-bounded build, which writes the section before it has read its
-    /// input; [`Pending::Write`] when only the final write remains, so the run's
-    /// phases are those already timed plus `write`. A reproducible record
-    /// ([`reproducible`]) has no run block to reserve. Fields already final are
-    /// left as they are, which is what keeps the padding small.
+    /// `pending` says what is still to come: [`Pending::Write`], the final
+    /// write, so the run's phases are those already timed plus `write`. (The
+    /// memory-bounded build does not reserve: its record goes after the data
+    /// with its card, sealed, once everything else is on disk.) A
+    /// reproducible record ([`reproducible`]) has no run block to reserve.
+    /// Fields already final are left as they are, which is what keeps the
+    /// padding small.
     pub(crate) fn widest(&self, pending: Pending, rec: &Recorder) -> BuildInfo {
         use rete_core::build_trace::Phase;
         const MAX: u64 = u64::MAX;
         let phases: Vec<Phase> = match pending {
-            Pending::Everything => Phase::ALL.to_vec(),
             Pending::Write => {
                 let mut p: Vec<Phase> = rec
                     .collector
@@ -844,6 +963,8 @@ impl BuildInfo {
                 .map(|p| PhaseTime {
                     phase: p.as_str().into(),
                     ms: MAX,
+                    // Only a phase already measured on its own has a peak.
+                    peak_rss_bytes: rec.phase_peak(*p).map(|_| MAX),
                 })
                 .collect(),
             peak_rss_bytes: Some(MAX),
@@ -859,37 +980,6 @@ impl BuildInfo {
                 r.run = Some(widest_run());
             }
             return w;
-        }
-        if matches!(pending, Pending::Everything) {
-            for i in &mut w.inputs {
-                i.compression = Some("gzip".into());
-                i.bytes = Some(MAX);
-                i.blake3 = Some("f".repeat(64));
-            }
-            w.counts = Some(Counts {
-                statements_read: MAX,
-                statements_inferred: Some(MAX),
-                statements_unique: MAX,
-                duplicates_dropped: MAX,
-                default_graph_triples: MAX,
-                named_graphs: MAX,
-                named_graph_quads: MAX,
-                terms: MAX,
-                invalid_iris: Some(InvalidIris {
-                    statements: MAX,
-                    occurrences: MAX,
-                    repairable: MAX,
-                    unrepairable: MAX,
-                }),
-            });
-            w.spill = Some(SpillRecord {
-                chunks: MAX,
-                merge_passes: MAX,
-                sort_runs: MAX,
-                scratch_peak_bytes: MAX,
-            });
-            // The codec is read off the finished file's header.
-            w.params.codec = Some("unknown".into());
         }
         if run {
             w.run = Some(widest_run());
@@ -908,8 +998,6 @@ impl BuildInfo {
 pub(crate) enum Pending {
     /// Only the final write: the inputs, counts and costs are final.
     Write,
-    /// Everything (the memory-bounded build reserves before it reads).
-    Everything,
 }
 
 /// Write a finished in-memory `image` to `path` with `info` spliced in as its
@@ -1702,7 +1790,10 @@ fn format_run(out: &mut String, run: &RunRecord, indent: &str) {
         let phases: Vec<String> = run
             .phases
             .iter()
-            .map(|p| format!("{} {}", p.phase, human_ms(p.ms)))
+            .map(|p| match p.peak_rss_bytes {
+                Some(b) => format!("{} {} (peak {})", p.phase, human_ms(p.ms), human_bytes(b)),
+                None => format!("{} {}", p.phase, human_ms(p.ms)),
+            })
             .collect();
         // Several per line: a record has up to a dozen phases.
         for (i, chunk) in phases.chunks(4).enumerate() {
@@ -1971,18 +2062,26 @@ mod tests {
         use rete_core::build_trace::{lap, Phase};
         let rec = Recorder::start(&[("/home/someone/data/in.nq.gz", "nq"), ("-", "nq")]);
         let mut info = new_build_info(BuildParams {
-            command: Some("build --memory-budget-mb".into()),
+            command: Some("build".into()),
             ..Default::default()
         });
         rec.begin(&mut info);
-        let reserve = info.reserve_bytes(Pending::Everything, &rec);
-        for p in Phase::ALL.iter().rev() {
-            lap(*p);
+        // Everything but the final write has run — two phases measured on
+        // their own, as a card's derivation and starter queries are — and the
+        // inputs and counts are final when the section is reserved.
+        for p in Phase::ALL.iter().rev().filter(|p| **p != Phase::Write) {
+            if matches!(p, Phase::CardDerive | Phase::StarterQueries) {
+                rec.begin_measured();
+                rec.lap_measured(*p);
+            } else {
+                lap(*p);
+            }
         }
         for t in &rec.taps {
             t.bytes.set(u64::MAX);
             t.gzip.set(true);
         }
+        info.inputs = rec.inputs();
         info.counts = Some(Counts {
             statements_read: u64::MAX,
             statements_inferred: Some(u64::MAX),
@@ -1999,13 +2098,9 @@ mod tests {
                 unrepairable: u64::MAX,
             }),
         });
-        info.spill = Some(SpillRecord {
-            chunks: u64::MAX,
-            merge_passes: u64::MAX,
-            sort_runs: u64::MAX,
-            scratch_peak_bytes: u64::MAX,
-        });
         info.params.codec = Some("zstd".into());
+        let reserve = info.reserve_bytes(Pending::Write, &rec);
+        lap(Phase::Write);
         rec.seal(&mut info);
         if let Some(r) = info.run.as_mut() {
             r.wall_ms = u64::MAX;
@@ -2014,6 +2109,9 @@ mod tests {
             r.cpus = Some(u64::MAX);
             for p in &mut r.phases {
                 p.ms = u64::MAX;
+                if p.peak_rss_bytes.is_some() {
+                    p.peak_rss_bytes = Some(u64::MAX);
+                }
             }
         }
         let sealed = info.to_json_bytes();

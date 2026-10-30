@@ -242,16 +242,19 @@ enum Command {
         created: Option<String>,
         /// Skip measuring the starter queries' cost figures (bytes / range
         /// requests / reference timing) into the build-info section. Card
-        /// builds measure them by default; each starter query is run once,
-        /// cold, against the finished image.
+        /// builds measure them by default, the memory-bounded build too; each
+        /// starter query is run once, cold, against the finished file.
         #[arg(long = "no-card-costs")]
         no_card_costs: bool,
         /// **Memory-bounded external build**: assemble the file within roughly
         /// this many MiB of RAM by cutting the input into disk-spilled chunks
         /// and merging them (the budget decides the number of chunks and the
         /// external-sort run sizes). For graphs too large for the in-RAM build.
-        /// Output is byte-identical to a standard `--no-pyramid` build, the
-        /// SCHEMA section and `--label-index` included.
+        /// Its sections are byte-identical to a standard `--no-pyramid`
+        /// build's, the SCHEMA section and `--label-index` included. A card is
+        /// the full one: derived from the finished file by streaming its
+        /// sorted sections (what `rete recard` runs, inside this budget) and
+        /// written after the data, with the build record.
         /// Named graphs are carried through the same spill (the graph leads the
         /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
         /// `--text-index` (any scope) is a second external sort over the
@@ -584,8 +587,8 @@ enum Command {
         max_mb: f64,
         /// Record the measurement in the file's build-info section. Implies
         /// `--measure`; local files only. Build info sits **outside** the
-        /// content hash, so the file keeps its identity — but the section is
-        /// near the front, so the file is rewritten end to end to make room.
+        /// content hash, so the file keeps its identity — but the section sits
+        /// beside the card, so the file is rewritten end to end to make room.
         #[arg(long)]
         write_costs: bool,
         /// Let `--write-costs` proceed even though a starter query measured
@@ -605,12 +608,30 @@ enum Command {
     /// flags, as `rete build --card-file` takes them, or from the input card
     /// verbatim with `--keep-curated`; an input card with curated fields and
     /// neither option is refused, never silently stripped.
+    ///
+    /// `--in-place` skips the copy: the new card and build record are written
+    /// after the file's last section, then its header is rewritten — one read
+    /// of the file to hash it, a few KB of writes, no second file. The old card
+    /// and build record stay behind as dead bytes until the file is next
+    /// rewritten (a re-card without `--in-place` drops them).
     Recard {
-        /// The `.rete` to re-card (read only; never written).
+        /// The `.rete` to re-card (read only, unless `--in-place`).
         file: String,
-        /// Output path. Must not exist.
-        #[arg(short, long)]
-        output: String,
+        /// Output path. Must not exist. Not with `--in-place`.
+        #[arg(
+            short,
+            long,
+            required_unless_present = "in_place",
+            conflicts_with = "in_place"
+        )]
+        output: Option<String>,
+        /// Re-card the file itself instead of writing a new one: append the
+        /// new card and build record after its last section, sync, then
+        /// rewrite its 1 KiB header and sync. A crash before the header write
+        /// leaves the old file, readable as it was; after it, the new one. The
+        /// old card's bytes become dead space.
+        #[arg(long = "in-place")]
+        in_place: bool,
         /// JSON file of curated card fields (same document as `build --card-file`).
         #[arg(long = "card-file", conflicts_with = "keep_curated")]
         card_file: Option<String>,
@@ -1576,6 +1597,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     text_index,
                     collapse_graphs,
                     card_args,
+                    !no_card_costs,
                     perms,
                     graphs,
                     strict,
@@ -1728,6 +1750,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Recard {
             file,
             output,
+            in_place,
             card_file,
             keep_curated,
             title,
@@ -1742,6 +1765,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             &file,
             &commands::card::RecardOptions {
                 output,
+                in_place,
                 card: commands::card::CardArgs {
                     enabled: false,
                     file: card_file,
