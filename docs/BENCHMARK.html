@@ -922,7 +922,9 @@ Released 0.3.5 and 0.3.7 readers open the new files and answer identically.</p>
 and 8–18% slower decoding. It also changed two of the 12 query plans for the
 worse on B: the evaluator chooses a merge join over a hash/probe join from the
 <em>compressed</em> size of the tiles a pattern spans, so a denser file can look
-cheaper to materialize than it is. With the old streaming frames level 19 took 676
+cheaper to materialize than it is. (Fixed in 0.4.0: the planner's size gates
+now read the tile directory's row estimates, which only the data changes, so a
+level no longer moves a plan.) With the old streaming frames level 19 took 676
 CPU-s for the same size (7× a 0.3 level-9 build), and every level from 12 up
 encoded below 8 MB/s per core, because each 64 KiB frame initialised zstd's
 large-input tables.</p>
