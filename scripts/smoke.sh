@@ -161,6 +161,7 @@ check "quad graphs"   "g1|g2"                       -- "$B" graphs "$T/dq.rete"
 check "quad GRAPH <g>" "Bob"                        -- "$B" sparql "$T/dq.rete" 'SELECT ?o WHERE { GRAPH <http://ex/g1> { ?s <http://ex/knows> ?o } }'
 check "quad verify"   "OK|matches"                  -- "$B" verify "$T/dq.rete"
 check "quad export"   "<http://ex/g2>"              -- "$B" export "$T/dq.rete"
+check "quad external = in-memory" "^same$"     -- bash -c "$B build '$T/d.nq' -o '$T/dqr.rete' --no-pyramid --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; $B build '$T/d.nq' -o '$T/dqx.rete' --memory-budget-mb 64 --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; cmp -s '$T/dqr.rete' '$T/dqx.rete' && echo same || echo differ"
 
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
