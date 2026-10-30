@@ -644,10 +644,14 @@ object carries bounded publisher-defined custom fields (no flag — see
 <strong>build-info section</strong> (build timestamp, builder version, parameters, measured
 starter-query costs — kept <em>outside</em> the content hash so identical data still
 hashes identically). That same run is what proves each starter query answers:
-one measured at zero rows (or returning a row that binds nothing) is <strong>dropped
-from the card</strong>, loudly and with the reason recorded — see
-<a href="dataset-cards.html">dataset-cards.md</a>. <code>--no-card-costs</code> skips the run, and so
-skips that check as well. <code>--text-index</code> adds a
+one measured at zero rows (or returning a row that binds nothing), or one that
+does not finish inside the 64 MiB starter byte budget (counted past the open),
+is <strong>dropped from the
+card</strong>, loudly and with the reason recorded. The starters themselves are
+bounded before they are run: past 2,000,000 statements a template ships a
+<code>LIMIT</code>ed form or, when the card's own profile answers it, nothing — see
+<a href="dataset-cards.html#bounded-by-construction">Bounded by construction</a>.
+<code>--no-card-costs</code> skips the run, and so skips that check as well. <code>--text-index</code> adds a
 full-text (word/CONTAINS) index over the literals for <code>rete search --contains</code>
 (see below). <code>--type-predicate &lt;IRI&gt;</code> overrides the predicate that types subjects
 with classes for the schema pyramid (default <code>rdf:type</code>, else auto-detected) —
@@ -729,6 +733,49 @@ default six), and <a href="#rete-merge-inputs--o-outrete---memory-budget-mb-n---
 writes the <strong>union</strong> of its inputs' sets — one full shard is enough to keep the
 merge-join orders its queries relied on. To change a file's set, rebuild it from
 its RDF source.</p>
+<h3 id="rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard &lt;file&gt; -o &lt;out.rete&gt; [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]</code></h3>
+<p>Give a finished <code>.rete</code> a new Dataset Card <strong>without rebuilding it</strong> — the
+re-card path for a file of any size.</p>
+<p>The card is derived by <strong>streaming the file's own sorted sections</strong>: the
+<code>rdf:type</code> range of POS gives every typed subject its class, SPO gives each
+subject's out-degree and namespace the moment the subject changes, and OSP each
+object's in-degree and every literal object, decoded once with the multiplicity
+of each predicate that uses it. Every tally is kept per <em>vocabulary</em> term
+(predicates, classes, datatypes, languages, namespaces), never per statement;
+the one per-term structure is a class code per subject id — <strong>one byte per
+subject</strong> below 255 classes, two above. Memory is that plus the reader's caches
+(<code>--memory-budget-mb</code>, default 1024), not the statement count.</p>
+<p>Then the starter queries are generated, each is run against the file inside the
+starter byte budget (64 MiB past the open, see <a href="dataset-cards.html#bounded-by-construction">Dataset Cards</a>),
+the ones that do not answer within it are dropped and recorded, and the file is
+<strong>rewritten with only the card (metadata section) and the build record
+(build-info section) replaced</strong>: every other section — dictionary, index,
+pyramid, named graphs, text index, any section kind this binary does not know —
+is copied byte for byte, the header's offsets are fixed, and the content hash is
+recomputed while the bytes go past (the card is inside it). One read of the file
+to derive, one to copy; <code>--verify</code> adds a third to check the written hash before
+the file is moved into place.</p>
+<p>The curated half comes from <code>--card-file</code> and the curated flags exactly as
+<code>rete build --card-file</code> takes them, or with <code>--keep-curated</code> from the input's
+card, <strong>verbatim</strong> — description, example queries and <code>extra</code> bag included. With
+neither, an input card that carries curated fields is <strong>refused</strong> rather than
+silently stripped (the defect of a bare <code>repyramid --card</code>). The output must not
+exist: a re-card writes a new file and never over its input.</p>
+<p>The build record keeps the original build's timestamp, builder and parameters —
+the sections they describe were copied, not rebuilt — and gains a <code>recarded</code>
+entry (<code>at</code>, <code>by</code>, <code>from_content_hash</code>); its <code>query_costs</code> and
+<code>dropped_queries</code> are the re-card's own measurement.</p>
+<p>Two differences from the card a build derives, both because a finished file is
+read rather than its input: counts are over the <strong>deduplicated</strong> statements the
+file holds, and a subject typed more than once is classified by its class with
+the highest dictionary id (index order). On input with neither, the two cards
+are identical, byte for byte.</p>
+<pre><code class="language-sh">rete recard old.rete -o new.rete --keep-curated --verify
+rete recard old.rete -o new.rete --card-file curated.json     # curated fields from a document
+bash scripts/recard/recard.sh --source /work/old.rete --out /work/new.rete   # with both proofs
+</code></pre>
+<p>Measured on an OpenCitations Meta part (26.5 GB, 2,904,375,666 statements,
+978,932,751 terms): see <a href="dataset-cards.html#which-re-card-path">Maintaining a published card</a>.</p>
 <h3 id="rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-"><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--pyramid-algo louvain|types] [--text-index] [--card …]</code></h3>
 <p>Rebuild a file's pyramid <strong>in place</strong>, reading the triples straight from the
 existing <code>.rete</code> — no <code>export | build</code> N-Quads round-trip. Use it to add a schema
@@ -741,13 +788,15 @@ publisher's <code>title</code>/<code>license</code>/<code>source</code>/<code>de
 defaults to <code>louvain</code> rather than to whatever the file was built with.</p>
 <p>It loads and materializes every quad, so its RAM tracks the <strong>statement count</strong>
 (~350–700 B each), not the file size — roughly <strong>80 M statements</strong> on a 48 GB
-machine, past which the staged <code>export --format nq | build</code> route is the one
-that fits. See
-<a href="dataset-cards.html#maintaining-a-published-card">Maintaining a published card</a>.</p>
+machine. <strong>To change only the card, use <a href="#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a></strong>,
+which copies every other section instead of rebuilding it and has no such
+ceiling; <code>repyramid</code> is for when the pyramid or the text index must change too.
+See <a href="dataset-cards.html#maintaining-a-published-card">Maintaining a published card</a>.</p>
 <pre><code class="language-sh">rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
 rete repyramid old.rete -o new.rete --text-index    # add full-text search to an existing file
 
-# re-card a published file, carrying its curated fields across
+# re-card AND re-pyramid a published file, carrying its curated fields across
+# (to change only the card, `rete recard old.rete -o new.rete --keep-curated`)
 rete card old.rete --json &gt; old-card.json
 python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
 rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
@@ -1658,8 +1707,20 @@ and <code>revision</code> says what a re-card would do to the body (<code>curren
 <p>The judgement is the query generator's own (<code>Cap::joint_with</code>, <code>NonEmpty</code>,
 <code>provably_empty</code>), not a second copy of it. Input is a <code>.rete</code> (local path or
 URL) or a card JSON document from <code>rete card --json</code> / <code>rete card-url --json</code>.</p>
+<p><strong>The curated <code>example_queries</code> are audited too, and reported apart</strong> — under
+<code>example_findings</code> in the JSON and in a section of their own in the text, with
+the ids <code>example-1</code>, <code>example-2</code>, … and <code>revision: "curated"</code>. A curated query
+makes no claim, so the card decides only what it can show: <code>invalid</code> (it does
+not parse), <code>empty</code> (it reads only the default graph of a file whose default
+graph the card records as empty), <code>suspect</code> (it names a predicate the card's
+complete predicate list does not contain — not <code>empty</code>, since the predicate may
+sit in an <code>OPTIONAL</code> or <code>UNION</code> branch), and otherwise <code>undecidable</code>.
+<code>--measure</code> runs them like the starters (and <code>--only example-2</code> picks one);
+their costs are reported beside, never stored by <code>--write-costs</code>, whose cost
+list is the starters'.</p>
 <pre><code class="language-sh">rete card-audit https://host/data.rete
 rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+rete card-audit data.rete --json | jq '.example_findings[] | select(.verdict!="undecidable")'
 </code></pre>
 <h4 id="--measure-run-them-instead-of-reasoning-about-them"><code>--measure</code>: run them instead of reasoning about them</h4>
 <p>The static pass has a hard ceiling. Some templates are undecidable <strong>by
@@ -1705,19 +1766,16 @@ after the card, so making room for it shifts everything behind it and the file
 is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
 by rename, but it is still one full pass of I/O and — for a published file — a
 full re-upload.</p>
-<p>Where that is worth it: when the alternative is a re-card. A re-card rewrites
-the file too, and additionally costs 17–35× the file in RAM (<code>repyramid</code>) or
-9–15× in staged N-Quads on disk (<code>--mode stream</code>, see <code>scripts/recard</code>), which
-puts anything past ~150 M statements out of reach. Attaching costs is one pass
-with no staging.</p>
-<p><strong>The RAM goes into the measurement, not the rewrite</strong>, and it is not free
-either: the engine evaluates eagerly, so a starter query with a big result
-materializes it. <code>switzerland-fedlex</code> (1.04 GB, 56.3 M quads) took 381 s and
-peaked at <strong>14.2 GiB</strong> for <code>--measure --write-costs</code> — <code>ng-list</code> alone, which
-returns 497,905 rows, accounts for 3.2 GiB of that; the rewrite of the 1.04 GB
-file that followed is a bounded-buffer copy. Against <code>repyramid</code>'s ≈36 GiB
-prediction and the staged path's ≤19.1 GiB for the same file, it is the cheaper
-route, but budget for the queries, not for the file.</p>
+<p>Where that is worth it: when the queries answer and only the record is
+missing. When they do not, re-card instead — <a href="#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a>
+is the same single rewrite with a new card in it, at any size.</p>
+<p><strong>The RAM goes into the measurement, not the rewrite</strong>: the engine evaluates
+eagerly, so a starter query with a big result materializes it. A card written
+by an older build can carry unbounded starters — <code>switzerland-fedlex</code> (1.04 GB,
+56.3 M quads) peaked at <strong>14.2 GiB</strong> for <code>--measure --write-costs</code>, 3.2 GiB of
+it <code>ng-list</code>'s 497,905 rows — so budget for those queries (or <code>--max-mb</code> them),
+not for the file. A card generated since 0.4.0 carries only bounded starters
+(<a href="dataset-cards.html#bounded-by-construction">Dataset Cards</a>).</p>
 <p>So: if the audit says the queries are stale or broken, re-card — same rewrite,
 more value. If the queries answer and the only gap is the missing record, write
 the costs. The command enforces that split: it refuses when a query measured

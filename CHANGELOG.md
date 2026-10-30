@@ -23,6 +23,27 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   the written file, the five heaviest listed), which is where a carded
   build peaks on a large graph. `--no-card`, `--no-card-costs` and
   `--no-text-index` leave them out.
+- **`rete recard <file> -o <out>`: a new Dataset Card without a rebuild, at any
+  size.** The profile and the starter queries are derived by streaming the
+  file's own sorted sections (`rete_core::card::derive_card_streaming`): one
+  byte per subject plus the reader's caches, where `repyramid --card` holds
+  every statement (a ceiling of about 80 M). The file is then rewritten with
+  only the card and the build record replaced — every other section copied
+  byte for byte, the header offsets fixed, the content hash recomputed while
+  the bytes go past (`rete_core::format::rewrite_card`). Curated fields come
+  from `--card-file` as `build` takes them, or verbatim from the input card
+  with `--keep-curated`; an input card with curated fields and neither option
+  is refused, never stripped. The build record keeps the original build's
+  provenance and gains `recarded` (`at`, `by`, `from_content_hash`).
+  On a 26.5 GB OpenCitations Meta part (2,904,375,666 statements) it ran in 19 min 27 s at a 1.78 GiB peak inside a 4 GiB container, where the rebuild it replaces takes about 3 h at 15 GB. `scripts/recard/recard.sh` uses it by default
+  (`--mode recard`), with a byte-identity proof of every data section
+  (`card_tools.py sections-equal`) in place of the N-Quads comparison.
+- **`rete card-audit` audits the curated `example_queries` too**, reported
+  apart from the generated ones (`example_findings`, ids `example-1`, …):
+  `invalid` when one does not parse, `empty` when it reads only an empty
+  default graph, `suspect` when it names a predicate the card's complete
+  predicate list lacks. `--measure` runs them; `--write-costs` still stores
+  the starters' costs only.
 
 ### Changed
 
@@ -135,6 +156,30 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
     source carries typed strings (the dictionary holds the plain spelling);
     sources without them, and Turtle/TriG/RDF-XML sources, store exactly the
     terms they stored before.
+- **Every generated starter query is bounded.** Each template declares what
+  its body reads, and the card's counts turn that into statements: within
+  2,000,000 the exact body ships unchanged; past it the template ships a
+  bounded form (a `LIMIT`ed sample — 1,000 instances, 1,000 statements — or an
+  exact lookup-sized question, titled as such), or nothing when the card's own
+  profile already answers the question (`ov-triples`, `ov-pred-*`, the hub
+  lists, `top-class-graph`, the histograms and extents, `ng-sizes`). On the
+  OpenCitations sample the eight whole-file starters that were killed in a
+  4 GiB client are gone or bounded. On that sample's A layout (1.07 GB) every starter now reads at most 4 MB and peaks at 121 MB RSS, where the old set read up to 992 MB and peaked at 9.4 GB; on a 2.9 B-statement OpenCitations part each reads ~44 MB (the open) at ~225 MB RSS.
+- **The build's starter-query measurement is bounded too**: every starter runs
+  through a 64 MiB byte budget, and one that asks for more is dropped and
+  recorded ("did not finish") instead of finishing — the cost phase is no
+  longer the build's memory peak: on the OpenCitations M=5000 pilot (5.2 M
+  quads) it went from 77 s at a 2.59 GiB peak (the build's, 1.6× the
+  serialization's 1.61 GiB) to ~4 s at 0.53 GiB. A run whose range reads failed is now
+  reported as not finished rather than graded on its partial rows (this also
+  makes `card-audit --max-mb` honest).
+- **`top-dangling` is written `OPTIONAL … FILTER(!BOUND(…))`** instead of
+  `FILTER NOT EXISTS`: the same rows, 18 MB and 0.02 s instead of 3.4 GB and
+  4.8 s on a 6 M-statement graph. Published cards with the old body audit as
+  `superseded`.
+- **The card `extra` bag allows three container levels** (was two), so a list
+  of objects holding a word list fits; size limits unchanged, and an over-deep
+  bag's error names the path to flatten.
 
 ### Fixed
 
@@ -222,6 +267,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - **`rete cost` no longer reads the whole file.** It performed the eager open
   to report that open's size; on a 26 GB file it was killed at 2 GB. The
   figure is now computed from the header, and is the same.
+- **The auto `temporal_extent` no longer reads ORCIDs, page numbers and titles
+  as years.** A literal is a date only when it is date-shaped (four year
+  digits, month 01–12, day 01–31, an optional time and zone) and either typed
+  `xsd:date`/`dateTime`/`dateTimeStamp`/`gYear`/`gYearMonth` or the value of a
+  known date predicate. The extent is in calendar order across the three
+  OpenCitations date datatypes of one predicate, negative years by value.
 
 ## [0.3.7] - 2026-10-28
 

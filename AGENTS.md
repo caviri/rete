@@ -361,32 +361,39 @@ Before touching a `.rete` that is already published. Full lifecycle in
 - **A card is written at build time.** Fixing the card generator fixes the
   *next* build, never a published file. The card is inside the content hash, so
   there is no in-place patch — the file is rewritten or nothing changes.
+  `rete recard` is that rewrite at its cheapest: only the card and the build
+  record change, every other section is copied byte for byte.
 - **Survey before you re-card.** `bash scripts/recard/survey.sh` reads the CARD
   tier only: 0.6 MB for the whole 98-file catalog. Re-carding it blind is
   248 GB down and 248 GB back up. Re-decide from cards already on disk with
   `--cards <dir>` (zero network). Skip `geoadmin-tiles` — its card range is
   117 MB, not 6 KB.
-- **Pick the path by statement count, not file size.** `repyramid` costs
-  ~350–700 B per statement (17–35× the file, so bytes mislead): ceiling
-  **~80 M statements** on a 48 GB machine. Past that, stage through text
-  (`rete export --format nq` → `rete build --card-file …`): ~2.5× the wall
-  clock, 9–15× the `.rete` in scratch disk, ceiling **~150 M**. Past *that*,
-  stop — it is engine work. Exceeding a ceiling is an OOM kill mid-rebuild, not
-  an error message.
-- **`rete build --memory-budget-mb` cannot re-card.** It writes a counts-only
-  card with no profile and no starter queries. It *does* build named graphs
-  (#139) — `--collapse-graphs` is now a modelling choice (fold a TriG export's
-  graphs into the default graph when that is what the dump means), not a
-  requirement. `--text-index` is still refused there.
+- **To change only the card, `rete recard` at any size.** It derives the
+  profile by streaming the file's sorted sections — about one byte per subject
+  plus `--memory-budget-mb` of caches, not the statement count — and is what
+  `scripts/recard/recard.sh` runs by default. The rebuild paths are for when the
+  pyramid or the text index must change too, and they are priced by
+  **statement count, not file size**: `repyramid` costs ~350–700 B per
+  statement (17–35× the file, so bytes mislead), ceiling **~80 M statements** on
+  a 48 GB machine; staging through text (`rete export --format nq` →
+  `rete build --card-file …`) reaches **~150 M** at ~2.5× the wall clock and
+  9–15× the `.rete` in scratch disk. Exceeding a ceiling is an OOM kill
+  mid-rebuild, not an error message.
+- **`rete build --memory-budget-mb` writes a counts-only card** (no profile, no
+  starter queries) — then `rete recard` the result to give it a full one. It
+  *does* build named graphs (#139) — `--collapse-graphs` is now a modelling
+  choice (fold a TriG export's graphs into the default graph when that is what
+  the dump means), not a requirement. `--text-index` is still refused there.
 - **Feed the external build the dump as it ships.** It reads
   N-Triples/N-Quads/Turtle/TriG, gzipped or not, straight from the compressed
   file — so a `dump.ttl.gz` never has to be expanded to `.nt` first. That
   expansion is not a rounding error: SemOpenAlex measures 146.8 N-Quads bytes
   per triple, which turns an 8.5 GiB dump into ~400 GB of scratch.
 - **Carry the curated fields explicitly.** A bare `repyramid --card` silently
-  drops `title`/`license`/`source`/`description`. Use
-  `scripts/recard/card_tools.py curated` to lift them, and its `verify` to fail
-  the run if one goes missing.
+  drops `title`/`license`/`source`/`description`; `rete recard` refuses instead
+  unless it is given `--keep-curated` (verbatim) or `--card-file`. Use
+  `scripts/recard/card_tools.py curated` to lift them into a document, and its
+  `verify` to fail the run if one goes missing.
 - **Never edit a publisher's prose.** `description` travels verbatim, stale
   figures included. If it genuinely must be corrected, a human does it, and
   proves it surgical by expecting `verify` to report *exactly one* difference.

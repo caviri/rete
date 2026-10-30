@@ -696,7 +696,7 @@ newlines.</p>
 <tr><td><code>languages</code></td><td>derived</td><td><code>LANG(o)</code> histogram over literal objects (<code>""</code> = untagged/typed), descending.</td></tr>
 <tr><td><code>class_links</code></td><td>derived</td><td>The <strong>effective schema</strong>: <code>(s_class, predicate, o_class, count)</code> rows — the class-to-class quotient (same as <code>rete schema</code> / <code>schema_summary</code>, with <code>(literal)</code>/<code>(untyped)</code> sentinels).</td></tr>
 <tr><td><code>top_hubs</code>, <code>in_hubs</code></td><td>derived</td><td>Top subjects by out-degree and top non-literal objects by in-degree.</td></tr>
-<tr><td><code>signals</code></td><td>derived</td><td>Detected <strong>affordances</strong>: <code>label_predicate</code>, <code>base_iri</code>, <code>default_lang</code>, ranked <code>time_predicates</code> / <code>numeric_predicates</code>, present <code>link_predicates</code>, <code>geo_wkt</code> / <code>geo_latlong</code>, <code>temporal_extent</code>, <code>spatial_bbox</code> (CRS84 lon/lat).</td></tr>
+<tr><td><code>signals</code></td><td>derived</td><td>Detected <strong>affordances</strong>: <code>label_predicate</code>, <code>base_iri</code>, <code>default_lang</code>, ranked <code>time_predicates</code> / <code>numeric_predicates</code>, present <code>link_predicates</code>, <code>geo_wkt</code> / <code>geo_latlong</code>, <code>temporal_extent</code>, <code>spatial_bbox</code> (CRS84 lon/lat). See <a href="#time-dates-not-digits">Time: dates, not digits</a> for what counts as a date.</td></tr>
 <tr><td><code>signals.text_index</code></td><td><strong>measured</strong></td><td>Whether the file carries a <strong>full-text (TEXT_INDEX) section</strong> — <code>{present, bytes, token_table_bytes}</code>. Derived from the file's <em>sections</em> rather than its triples, and never written into the file. See <a href="#the-full-text-signal-measured-not-stored">The full-text signal</a>.</td></tr>
 <tr><td><code>signals.permutations</code></td><td><strong>measured</strong></td><td>Which <strong>index permutations</strong> the file stores — <code>{count, names, merge_join}</code>. Also derived, from the header's permutation mask, and also never written. See <a href="#the-permutation-signal-measured-not-stored">The permutation signal</a>.</td></tr>
 <tr><td><code>signals.quoted_triples</code></td><td><strong>measured</strong></td><td>Whether the dataset holds <strong>quoted triples</strong>, and which surfaces an export can write them in — <code>{present, export_surfaces, export_default}</code>. Derived from header flag bit 2, and also never written. See <a href="#the-quoted-triple-signal-measured-not-stored">The quoted-triple signal</a>.</td></tr>
@@ -841,6 +841,35 @@ cardinality. Counting would mean decoding the dictionary, which is outside the
 CARD tier's budget (header + metadata, never the dictionary) — and a count could
 only ever be written by builds newer than this signal, which is exactly the
 <code>null</code>-on-every-published-file failure above.</p>
+<h3 id="time-dates-not-digits">Time: dates, not digits</h3>
+<p><code>signals.time_predicates</code> ranks the predicates whose objects are dates, and
+<code>temporal_extent</code> is the earliest and latest value of the top one — what
+<code>ti-extent</code> and <code>ti-histogram</code> are written against. A literal counts as a date
+only when it is <strong>shaped like one</strong> (<code>YYYY</code>, <code>YYYY-MM</code>, <code>YYYY-MM-DD</code> or a
+date-time, an optional time zone, exactly four year digits, month 01–12, day
+01–31) <strong>and</strong> either</p>
+<ul>
+<li>it carries a calendar datatype — <code>xsd:date</code>, <code>xsd:dateTime</code>,
+<code>xsd:dateTimeStamp</code>, <code>xsd:gYear</code>, <code>xsd:gYearMonth</code> (a typed value that is not
+date-shaped is malformed, and malformed values are no evidence), or</li>
+<li>it is the value of a <strong>known date predicate</strong> (<code>dct:date</code>, <code>dct:issued</code>,
+<code>dct:created</code>, <code>dct:modified</code>, <code>prism:publicationDate</code>, <code>schema:datePublished</code>,
+<code>prov:generatedAtTime</code>, <code>time:inXSDDate</code>, Wikidata's dates, … — a closed list
+in <code>card_derive.rs</code>), as a plain string or an integer year.</li>
+</ul>
+<p>Until 0.4.0 any value whose first four characters were digits counted, which
+read an ORCID (<code>0000-0001-5001-3721</code>), a page number (<code>9999880</code>) and a title
+starting with a year as years: the OpenCitations card reported a "temporal
+extent" from one to the other. Identifier- and page-shaped values now fail the
+shape test by construction — a fifth digit makes a number, a second four-digit
+group cannot be a month. <code>xsd:gMonthDay</code> and <code>xsd:gDay</code> are recurring dates
+with no year, so they have no extent and do not count.</p>
+<p>The extent is in <strong>calendar order</strong> across the calendar datatypes of one
+predicate: OpenCitations publishes <code>prism:publicationDate</code> as <code>xsd:date</code>,
+<code>xsd:gYearMonth</code> and <code>xsd:gYear</code> side by side, and the extent spans all three
+(<code>1950</code> … <code>2021-03</code>), with negative years ordered by value (<code>-0100</code> before
+<code>-0044</code>). A year typed as a plain integer on a predicate that is not a known
+date predicate is a number, and joins <code>numeric_predicates</code> instead.</p>
 <h3 id="querying-the-star-layer">Querying the star layer</h3>
 <p>Presence answers <em>will I meet triple terms here</em>. It cannot answer <em>what do I
 ask</em>, and for exactly the reason that makes it work on every published file: a
@@ -1122,8 +1151,21 @@ bounded, and the bounds are checked at build time:</p>
 <tr><td>serialized size (whole bag, compact JSON)</td><td><strong>8,192 B</strong></td><td>Exceeds the smallest whole published card (NKOD, 6,649 B) — generous for <em>metadata</em>. The worst realistic case — the largest published card (Hugging Face, 53,580 B) + a maxed bag + its ~1 KB build info ≈ 62.8 KB — still travels in the same single coalesced range.</td></tr>
 <tr><td>keys</td><td><strong>64</strong></td><td>A key costs ≥ 8 serialized bytes; needing more fields than this means the bag is being used as a data store, and the graph is the data store.</td></tr>
 <tr><td>key length</td><td><strong>128 bytes</strong></td><td>Keys are identifiers, not values.</td></tr>
-<tr><td>nesting depth</td><td><strong>2</strong></td><td>An object of objects-of-scalars, no deeper. Deep structures invite storing <em>records</em> in the card — Parquet companions exist for records.</td></tr>
+<tr><td>nesting depth</td><td><strong>3</strong></td><td>A list of objects whose fields may be lists of scalars — <code>[{"query": "…", "words": ["a", "b"]}]</code> — no deeper. An array or an object is one level.</td></tr>
 </tbody></table>
+<p><strong>Why three, and why not more.</strong> The cap was 2 until 0.4.0, and that refused
+the first natural shape a real card needed: the OpenCitations full-text
+examples — a list of objects, each holding a word list — had to be flattened
+into joined strings. Raising it to 3 is safe on every axis the cap exists for.
+<em>Size</em> is bounded by the byte and key caps above, unchanged; depth never was
+the binding constraint on how much a card carries. <em>Records</em> still do not fit:
+three levels holds a list of small structured examples, not a table, and 8 KiB
+holds no table worth the name (Parquet companions exist for records). <em>Parser
+recursion</em> stays bounded at a depth no browser or mobile stack notices.
+<em>Compatibility</em> is untouched: the cap is enforced when a card is written,
+never when it is read, so every reader already accepts a depth-3 bag. Past it
+the build fails with the path to the deepest point (<code>at examples[0].words</code>)
+and how to flatten it.</p>
 <p>The CARD tier's <strong>request count cannot change</strong>: <code>rete card-url</code> still costs
 the 1 KiB header plus one coalesced metadata+build-info range, bag or no bag —
 pinned by test. The one cost worth knowing: on the smallest cards a maxed-out
@@ -1229,16 +1271,27 @@ removed from the card before the file is written, and the fact is recorded in
 <code>dropped_queries</code> (<code>id</code>, <code>why</code>, and a <code>contradicts_claim</code> flag). Two shapes are
 caught:</p>
 <ul>
-<li><strong>zero rows</strong> (or a false <code>ASK</code>, or nothing constructed) — the failure the
+<li>
+<p><strong>zero rows</strong> (or a false <code>ASK</code>, or nothing constructed) — the failure the
 query library exists to prevent: <em>a starter query that answers nothing is
 worse than no starter query, because the reader concludes the file is
-broken</em>;</li>
-<li><strong>a row that binds no variable at all</strong> — the un-grouped aggregate over an
+broken</em>;</p>
+</li>
+<li>
+<p><strong>a row that binds no variable at all</strong> — the un-grouped aggregate over an
 empty solution sequence. SPARQL returns exactly one row there no matter what,
 so no row count can catch it, and the row carries no information: <code>sp-bbox</code>
 on a file where no single subject holds both <code>wgs:lat</code> and <code>wgs:long</code> returns
 one row of four unbound variables. That template's own note says the card
-"cannot do better" than shipping it. The measurement can.</li>
+"cannot do better" than shipping it. The measurement can.</p>
+</li>
+<li>
+<p><strong>a run that did not finish inside the starter byte budget</strong> (64 MiB past
+the open) —
+a query too expensive to be anyone's first query. The record says "did not
+finish", and it never counts as a contradiction of the template's claim: it
+says nothing about the query's rows.</p>
+</li>
 </ul>
 <p><strong>Dropped, not fatal.</strong> Refusing to build is the right answer for <em>authored</em>
 content — an oversized <code>extra</code> bag is the publisher's text, and quietly
@@ -1351,6 +1404,70 @@ Each query carries:</p>
 <li>a <code>tier</code> tag (<code>card</code> / <code>summary</code> / <code>index</code>) — the cheapest tier that answers it;</li>
 <li>the <code>requires</code> capability keys that gated its emission.</li>
 </ul>
+<h3 id="bounded-by-construction">Bounded by construction</h3>
+<p>A starter query is the first thing a newcomer runs, often in a browser tab, so
+its cost has to be bounded <strong>whatever the size of the dataset it greets</strong>. It
+used to be bounded by nothing: on the OpenCitations sample (18.9 M quads,
+1.5 M named graphs, 1.07 GB) eight starters scanned the whole file —
+<code>ov-triples</code>, <code>ov-pred-list</code>, <code>ov-pred-hist</code>, <code>top-out-hubs</code>, <code>top-in-hubs</code>,
+<code>top-dangling</code>, <code>ng-list</code>, <code>ng-sizes</code> — and every one was killed in a 4 GiB
+client (<code>top-dangling</code> peaked at 8.7 GiB), and the build's own run of them was
+its memory peak.</p>
+<p>Every template now declares what its body <strong>reads</strong> — everything, every
+<code>rdf:type</code> statement, one predicate's statements, one class's instances (and
+their statements), the named graphs, or nothing beyond a <code>LIMIT</code> — and the
+card's own counts turn that into a number of statements before the body is
+written:</p>
+<ul>
+<li><strong>within the budget (2,000,000 statements)</strong> the exact body ships, byte for
+byte as before. A dataset at or under the budget keeps every exact query;</li>
+<li><strong>past it</strong>, the template ships its <strong>bounded form</strong> — the same question over
+a fixed slice, read through a <code>LIMIT</code>ed sub-select the engine evaluates
+lazily, with a title and question that say so ("… (1,000 instances)") — or a
+weaker question with an exact, bounded answer;</li>
+<li><strong>past it with no honest bounded form</strong>, the template is not shipped. Those
+are exactly the questions the card already answers from its own profile,
+index-free: how many statements (<code>triple_count</code>), which predicates and how
+often (<code>predicates</code>), which classes (<code>classes</code>), which hubs (<code>top_hubs</code>,
+<code>in_hubs</code>), the schema graph (<code>class_links</code>), datatypes, languages, extents.
+A sample of them would be a worse copy of a number the reader already has.</li>
+</ul>
+<table><thead><tr><th>template</th><th>past the budget</th></tr></thead><tbody>
+<tr><td><code>ov-one-row</code>, <code>ov-ask-pred</code>, <code>id-sample</code>, <code>lb-labels</code>, <code>top-reach</code>, <code>ng-sample</code>, <code>qt-sample</code>, <code>qt-quoted-object</code></td><td>unchanged — already bounded by their own <code>LIMIT</code> or <code>ASK</code></td></tr>
+<tr><td><code>ty-class-shape</code></td><td>the predicates of <strong>1,000 instances</strong> of the top class</td></tr>
+<tr><td><code>cmp-coverage</code></td><td>labelling coverage over <strong>1,000 instances</strong> of the labelled class</td></tr>
+<tr><td><code>top-dangling</code></td><td>undescribed IRIs among the objects of <strong>1,000 statements</strong></td></tr>
+<tr><td><code>lk-external</code></td><td>outward links among <strong>1,000 statements</strong></td></tr>
+<tr><td><code>sp-within</code></td><td><strong>1,000 geometries</strong> tested against the box</td></tr>
+<tr><td><code>qt-coverage</code></td><td>annotation coverage over <strong>1,000 assertions</strong></td></tr>
+<tr><td><code>lk-sameas</code></td><td><em>which</em> alignment predicates are used (<code>FILTER EXISTS</code>, four lookups), not how often</td></tr>
+<tr><td><code>ng-list</code></td><td>the <strong>first 100</strong> named graphs</td></tr>
+<tr><td><code>ov-triples</code>, <code>ov-pred-list</code>, <code>ov-pred-hist</code>, <code>ty-class-hist</code>, <code>ty-entities</code>, <code>top-class-graph</code>, <code>top-out-hubs</code>, <code>top-in-hubs</code>, <code>lt-datatypes</code>, <code>lt-langs</code>, <code>lt-numrange</code>, <code>ti-extent</code>, <code>ti-histogram</code>, <code>sp-bbox</code>, <code>ng-sizes</code>, <code>qt-about</code>, <code>qt-qualifiers</code></td><td>not shipped — the card's profile answers it</td></tr>
+</tbody></table>
+<p><strong>The static class stays honest.</strong> A bounded form carries its own claim: a
+sample of a graph that has dangling IRIs need not contain one, so
+<code>top-dangling</code>, <code>lk-external</code> and <code>sp-within</code>'s bounded forms are
+<code>undecidable</code>, while <code>ty-class-shape</code>'s (a class instance always has its
+<code>rdf:type</code> statement) and the aggregates still cannot come back empty.
+<code>claim_of_query</code> reads the claim off the body that shipped, so a measured zero
+on an undecidable sample is news, never a "generator defect".</p>
+<p><strong>One body got cheaper for everyone.</strong> <code>top-dangling</code>'s exact body was
+<code>FILTER NOT EXISTS { ?o ?p2 ?o2 }</code>, which the engine answers by materializing
+its whole inner pattern; it is now <code>OPTIONAL { ?o ?p2 ?o2 } FILTER(!BOUND(?p2))</code>
+— the same rows, probed once per streamed row and stopped at the <code>LIMIT</code>: on
+the sample's 5.97 M-statement default graph, 18 MB and 0.02 s instead of
+3.4 GB and 4.8 s. (Published cards carrying the old body audit as
+<code>superseded</code>.)</p>
+<p><strong>The estimate is backed by a measurement.</strong> A build (and <code>rete recard</code>) runs
+every emitted starter through a <strong>64 MiB byte budget</strong>, counted from the moment
+the file is open — opening a 26 GB file reads ~44 MB of section directories
+whatever is asked of it, which no starter can change; a query that asks for
+more is dropped from the card and recorded in <code>dropped_queries</code> as "did not
+finish". The cost phase therefore stops being the build's memory peak: the
+image and one bounded query are all it holds. On the OpenCitations M=5000
+pilot (5.2 M quads, an in-memory build in a 4 GiB container) it took 77 s and
+peaked at 2.59 GiB before — the build's peak, 1.6× serializing the file — and
+takes ~4 s at 0.53 GiB now; the build's peak is the 1.61 GiB of serialization.</p>
 <h3 id="presence-is-not-co-occurrence">Presence is not co-occurrence</h3>
 <p>"The required signal is present" is not enough on its own, and getting that
 wrong is how a starter query comes back empty. <code>{{TOP_CLASS}}</code> is the class with
@@ -1401,7 +1518,10 @@ body for <strong>where the data actually lives</strong>:</p>
 </tbody></table>
 <p>A named-graph file also gets the <code>graphs</code> dimension: which graphs exist
 (<code>ng-list</code>), which are biggest (<code>ng-sizes</code>), and a sample of quads with <code>?g</code>
-projected so each row says where it lives (<code>ng-sample</code>). Graph-scoped bodies
+projected so each row says where it lives (<code>ng-sample</code>). Past the starter
+budget <code>ng-list</code> lists the first 100 graphs and <code>ng-sizes</code> is not shipped (see
+<a href="#bounded-by-construction">Bounded by construction</a>) — on the OpenCitations
+sample the exact <code>ng-list</code> returned 1,494,934 rows. Graph-scoped bodies
 need the triple index, so they are tagged <code>index</code> — the <code>summary</code> fast path
 covers the default graph only.</p>
 <h3 id="fixing-the-card-on-an-existing-named-graph-rete">Fixing the card on an existing named-graph <code>.rete</code></h3>
@@ -1410,15 +1530,17 @@ covers the default graph only.</p>
 starter queries until its publisher re-embeds a card. (That is the named-graph
 instance of a general problem — <a href="#maintaining-a-published-card">Maintaining a published card</a>
 below is how you find every affected file and pick a path that fits its size.)
-Fixing it does <strong>not</strong> require going back to the source RDF — <code>rete repyramid</code>
-reads every statement (default graph and named graphs) straight out of the
-existing file and re-assembles it, deriving a fresh card on the way:</p>
-<pre><code class="language-sh"># One command, no source RDF needed — data is carried over losslessly:
-rete repyramid catalog.rete -o catalog-fixed.rete \
-  --card --title "National Open Data Catalog" --license "CC0-1.0"
+Fixing it does <strong>not</strong> require going back to the source RDF, nor rebuilding
+anything — <code>rete recard</code> derives a fresh card by streaming the existing file's
+sections and rewrites only the card, copying every other section byte for
+byte:</p>
+<pre><code class="language-sh"># One command, no source RDF needed, the data sections untouched:
+rete recard catalog.rete -o catalog-fixed.rete --keep-curated
 
 rete card catalog-fixed.rete --json   # the queries are now GRAPH-scoped
 </code></pre>
+<p>(<code>rete repyramid … --card</code> does the same while also rebuilding every section,
+which is what you want when the pyramid must change too.)</p>
 <p>The equivalent round-trip through text works too (<code>nq</code> export is lossless,
 named graphs included), and is the place to add curated fields or your own
 <code>example_queries</code> via <code>--card-file</code>:</p>
@@ -1487,6 +1609,12 @@ of it:</p>
 </code></pre>
 <p>The verdict worth acting on is <code>empty</code>: the card <em>refuting</em> a query it ships.
 <code>suspect</code> and <code>undecidable</code> are the honest middle.</p>
+<p>The publisher's own <code>example_queries</code> are audited too — <strong>reported apart</strong>,
+under ids <code>example-1</code>, <code>example-2</code>, …, because they answer to a different
+author. A curated query makes no claim, so the card can decide less about it:
+<code>invalid</code> (it does not parse), <code>empty</code> (it reads only an empty default graph),
+<code>suspect</code> (it names a predicate the card's complete predicate list does not
+contain), otherwise <code>undecidable</code>. <code>--measure</code> runs both halves.</p>
 <p><strong>The static pass has a ceiling, and it is structural.</strong> Nothing in a card ties
 a specific subject to a specific predicate, and nothing records which objects
 are also subjects — so <code>top-reach</code> and <code>top-dangling</code> cannot be decided from a
@@ -1499,18 +1627,33 @@ the published <code>lombardi.rete</code>, both undecidables come back <code>answ
 and 1 row); the whole 22-query audit reads 3.58 MB in 1,447 range requests,
 cold. <code>--write-costs</code> then records the run in the file's build record, so the
 next reader gets the numbers from the CARD tier instead of re-measuring.</p>
-<h3 id="which-rebuild-path--the-ceiling-is-statements-not-bytes">Which rebuild path — the ceiling is statements, not bytes</h3>
-<p>There are three tools, and choosing between them by file size is the mistake.
-<code>repyramid</code> materializes <strong>every quad as owned strings</strong> before re-assembling,
+<h3 id="which-re-card-path">Which re-card path</h3>
+<p>Since 0.4.0 there is one path for every size: <strong><code>rete recard</code></strong>, a card-only
+rewrite. It derives the profile by streaming the file's own sorted sections —
+a byte per subject plus the reader's caches, not hundreds of bytes per
+statement — runs the starter queries inside the starter byte budget, and
+rewrites the file with only the card and the build record replaced: every other
+section copied byte for byte, the offsets fixed, the content hash recomputed.
+Nothing is rebuilt, so nothing about the data can change, and the proof of that
+is byte identity of every data section (<code>card_tools.py sections-equal</code>), not a
+comparison of N-Quads exports.</p>
+<table><thead><tr><th>the file's problem</th><th>command</th><th>ceiling</th></tr></thead><tbody>
+<tr><td>only the build record is missing; the queries answer</td><td><code>rete card-audit &lt;file&gt; --measure --write-costs</code></td><td>none from the rewrite — but an old card's <em>queries</em> need the RAM (below)</td></tr>
+<tr><td>the card is stale or its queries are broken</td><td><code>rete recard &lt;in&gt; -o &lt;out&gt; --keep-curated</code> (or <code>--card-file &lt;curated&gt;</code>)</td><td><strong>none from the statement count</strong>: memory is ~1 B per subject + <code>--memory-budget-mb</code> (1 GiB)</td></tr>
+<tr><td>the card <em>and</em> the pyramid or text index must change</td><td><code>rete repyramid &lt;in&gt; -o &lt;out&gt; --card --card-file &lt;curated&gt;</code></td><td><strong>~80 M statements</strong> (~70–100 M; ≈ 2 GB of a typically dense <code>.rete</code>)</td></tr>
+<tr><td>same, but past that</td><td><code>rete export &lt;in&gt; --format nq</code> → <code>rete build … --card-file &lt;curated&gt;</code></td><td><strong>~150 M statements</strong>, at ~2.5× the wall clock and 9–15× the <code>.rete</code> in staged text on disk</td></tr>
+</tbody></table>
+<p>Measured on an OpenCitations Meta part — 26.5 GB, 2,904,375,666 statements,
+978,932,751 terms, built by the memory-bounded external build with a
+counts-only card — <code>rete recard</code> derived the full profile and wrote the new
+file inside a 4 GiB container: <strong>19 min 27 s end to end at a peak of 1.78 GiB RSS</strong> — 8 min 49 s to derive the profile (724,122,750 subjects, a 690 MiB class map, 196,602,045 literal objects decoded once), about 4 s to run its 10 starter queries (each ~44 MB, nearly all of it the open of a 26 GB file), 7 min 9 s to copy 26.5 GB while folding the new content hash, and the rest <code>--verify</code> re-reading it. The rebuild it replaces
+takes about 3 hours and 15 GB per part.</p>
+<p>The rest of this section is about the two rebuild paths, which remain the tools
+when more than the card has to change.</p>
+<p><code>repyramid</code> materializes <strong>every quad as owned strings</strong> before re-assembling,
 so its RAM tracks the <strong>statement count</strong>: ~350–700 bytes per statement on
 ordinary graphs. As a ratio of file size that lands anywhere between <strong>17× and
 35×</strong>, which is why bytes are the wrong planning variable.</p>
-<table><thead><tr><th>the file's problem</th><th>command</th><th>ceiling on a 48 GB machine</th></tr></thead><tbody>
-<tr><td>only the build record is missing; the queries answer</td><td><code>rete card-audit &lt;file&gt; --measure --write-costs</code></td><td>none from the rewrite — but the <em>queries</em> need the RAM (below)</td></tr>
-<tr><td>the card is stale or its queries are broken</td><td><code>rete repyramid &lt;in&gt; -o &lt;out&gt; --card --card-file &lt;curated&gt;</code></td><td><strong>~80 M statements</strong> (~70–100 M; ≈ 2 GB of a typically dense <code>.rete</code>)</td></tr>
-<tr><td>same, but past that</td><td><code>rete export &lt;in&gt; --format nq</code> → <code>rete build … --card-file &lt;curated&gt;</code></td><td><strong>~150 M statements</strong>, at ~2.5× the wall clock and 9–15× the <code>.rete</code> in staged text on disk</td></tr>
-<tr><td>past <em>that</em></td><td>—</td><td>nothing today; it is engine work, not scripting</td></tr>
-</tbody></table>
 <p><strong>The failure mode when you exceed the ceiling is an OOM kill mid-rebuild</strong>,
 after however long the read took — not a diagnostic. Predict before you start:
 statement count × ~500 B is the working estimate for <code>repyramid</code>, × ~300 B for
@@ -1523,16 +1666,15 @@ whether it is producing 679 MB or 6.88 GB of N-Quads. What it buys with that is
 disk — the staged text runs <strong>9–15× the <code>.rete</code></strong> — and the two paths land in
 the same place: on <code>nkod</code> they produce the <strong>same content hash</strong>, differing only
 in the four unhashed bytes that say <code>repyramid</code> rather than <code>build</code>.</p>
-<p><strong><code>rete build --memory-budget-mb</code> is still not the third option</strong>, even though
-it is the genuinely bounded builder — and even now that it builds named graphs
-(#139), which used to rule out exactly the named-graph population this work
-exists for. Where it runs it writes a <strong>counts-only card</strong>, roughly a hundred
-bytes of <code>triple_count</code> / <code>quad_count</code> / <code>term_count</code> / <code>named_graph_count</code> with
-no profile and <strong>no starter queries</strong>, because deriving the profile lists needs
-unbounded RAM. Ten of the largest published datasets — <code>crossref</code>, <code>datacite</code>,
-<code>dblp</code>, <code>deps-dev</code>, <code>epfl-graph</code>, <code>gharchive</code>, <code>gharchive-2026-06</code>,
-<code>opencitations</code>, <code>orcid</code>, <code>wikiart</code> — carry exactly that, and report <code>0 starter queries</code> in the survey. That is <em>why</em> they do. They are also the files no
-rebuild path above can reach.</p>
+<p><strong><code>rete build --memory-budget-mb</code> writes a counts-only card</strong>, roughly a
+hundred bytes of <code>triple_count</code> / <code>quad_count</code> / <code>term_count</code> /
+<code>named_graph_count</code> with no profile and <strong>no starter queries</strong>, because deriving
+the profile lists from unsorted input needs unbounded RAM. Ten of the largest
+published datasets — <code>crossref</code>, <code>datacite</code>, <code>dblp</code>, <code>deps-dev</code>, <code>epfl-graph</code>,
+<code>gharchive</code>, <code>gharchive-2026-06</code>, <code>opencitations</code>, <code>orcid</code>, <code>wikiart</code> — carry
+exactly that, and report <code>0 starter queries</code> in the survey. The file it writes
+is sorted, though, and that is all <code>rete recard</code> needs: build memory-bounded,
+then re-card the result to give it a full card.</p>
 <p><strong>Measurement RAM is in the queries, not in the file.</strong> Attaching costs to an
 existing file rewrites it through a bounded buffer, but running the starter
 queries to get those costs does not: the engine evaluates eagerly, so a query
@@ -1546,13 +1688,24 @@ the profile, the signals, the class-link quotient, and the starter-query
 library with every generator fix since the file was built. It <strong>adds the build
 record</strong>. It <strong>carries the curated half across verbatim</strong> — and only if you
 hand it back:</p>
-<pre><code class="language-sh">rete card old.rete --json &gt; old-card.json
+<pre><code class="language-sh">rete recard old.rete -o new.rete --keep-curated          # verbatim, in one step
+
+# or through a document you can review or enrich first
+rete card old.rete --json &gt; old-card.json
 python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
-rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
+rete recard old.rete -o new.rete --card-file curated.json
 </code></pre>
-<p>A bare <code>rete repyramid --card</code> <strong>silently drops</strong> <code>title</code>, <code>license</code>, <code>source</code>
-and <code>description</code>: the card flags take the curated half from flags or
-<code>--card-file</code> and nowhere else. <code>card_tools.py verify --old … --new …</code> exists to
+<p><code>rete recard</code> <strong>refuses</strong> an input whose card carries curated fields when it is
+given neither <code>--keep-curated</code> nor <code>--card-file</code>. A bare <code>rete repyramid --card</code>
+<strong>silently drops</strong> <code>title</code>, <code>license</code>, <code>source</code> and <code>description</code>: its card
+flags take the curated half from flags or <code>--card-file</code> and nowhere else.</p>
+<p>A card derived by <code>rete recard</code> differs from the one a build derives from the
+same data in two places only, both because a finished file is read rather than
+its input: its counts are over the <strong>deduplicated</strong> statements the file holds,
+and a subject typed more than once is classified by the class with the highest
+dictionary id (index order) rather than the last type in input order. On input
+with neither — no duplicate statements, no multi-typed subjects — the two
+cards are identical, byte for byte, which the test suite holds it to. <code>card_tools.py verify --old … --new …</code> exists to
 fail the run when a curated field goes missing, and the two proofs a re-card
 owes — identical N-Quads out of both files, and every new starter query
 returning rows — are what <code>scripts/recard/recard.sh</code> runs before it moves
