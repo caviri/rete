@@ -63,11 +63,16 @@ pub enum Phase {
     StarterQueries,
     /// Writing the file to disk.
     Write,
+    /// Folding the content hash over the written sections for a card placed
+    /// after the data (the memory-bounded build, `rete recard --in-place`):
+    /// the card is hashed first, so the rest of the hash can only be folded
+    /// once it exists — one read of every hashed section.
+    ContentHash,
 }
 
 impl Phase {
     /// Every phase, in declaration order.
-    pub const ALL: [Phase; 18] = [
+    pub const ALL: [Phase; 19] = [
         Phase::Read,
         Phase::Parse,
         Phase::Reason,
@@ -86,6 +91,7 @@ impl Phase {
         Phase::Serialize,
         Phase::StarterQueries,
         Phase::Write,
+        Phase::ContentHash,
     ];
 
     /// The name the build record stores.
@@ -109,6 +115,7 @@ impl Phase {
             Phase::Serialize => "serialize",
             Phase::StarterQueries => "starter_queries",
             Phase::Write => "write",
+            Phase::ContentHash => "content_hash",
         }
     }
 }

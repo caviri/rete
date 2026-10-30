@@ -709,12 +709,26 @@ statements, 186 chunks at 400 MiB) peak at 391 MiB, where 0.4.0 needed
 1,084 MiB. The spill peaks at the end of the dictionary merge, while every
 chunk's statements are still on disk; <code>--label-index</code> adds nothing to it,
 because the label pass works on ids and reads its strings back from the
-finished file. The
-file is byte-identical to the in-RAM <code>--no-pyramid</code> build of the same input,
-except for the card, which carries counts only (<code>rete recard</code> writes a full
-one). Up to 0.4.0 the merge also kept every chunk's id remap table until the
-last chunk was rewritten, 4 B per chunk-local term: 15.0 GB for half of
-OpenCitations Meta, which is why that graph had to be split.</p>
+finished file. Up to 0.4.0 the merge also kept every chunk's id remap table
+until the last chunk was rewritten, 4 B per chunk-local term: 15.0 GB for half
+of OpenCitations Meta, which is why that graph had to be split.</p>
+<p>Its sections are byte-identical to the in-RAM <code>--no-pyramid</code> build's of the same
+input. With a card (<code>--card</code>, <code>--card-file</code>, a curated flag) it writes the
+<strong>full</strong> card — the derived profile and the starter queries, not counts alone:
+once the index sections are on disk, it streams them into the profile and runs
+every starter query against the file, exactly as
+<a href="#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a>
+does (one derivation, so the two write the same card for the same file), inside
+the same <code>--memory-budget-mb</code> (one byte per subject for the class map, the rest
+for the reader's caches). <code>--no-card-costs</code> skips the queries. The card and the
+build record are then written <strong>after the data</strong> rather than copied in front of
+it, which only means one more read of the file to fold the content hash (the card
+is hashed first wherever it lies; on input with no duplicate statements and no
+multi-typed subjects the card, and so the hash, is the in-RAM build's). The
+derivation's time and peak RSS are the <code>card_derive</code> and
+<code>starter_queries</code> phases of the build record, and the hash pass its
+<code>content_hash</code>. On the OpenCitations sample: see
+<a href="dataset-cards.html#which-re-card-path">Maintaining a published card</a>.</p>
 <p><code>--strict</code> refuses input carrying an IRI that the N-Triples/N-Quads <code>IRIREF</code>
 grammar and RFC 3987 disallow. It is <strong>off</strong> by default and the build only
 <em>counts</em> them — see <a href="#invalid-iris">Invalid IRIs</a> for what that means and why the
@@ -908,7 +922,7 @@ build records the settings in its build info (<code>params.write</code>).</p>
 size</strong>, which lets zstd use its small-input parameters: at the same level the
 four measured datasets came out 0.7–7.0% smaller, and the build used less CPU. <code>RETE_ZSTD_FRAME=stream</code> writes
 the streaming frames of 0.3 instead, byte for byte.</p>
-<h3 id="rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard &lt;file&gt; -o &lt;out.rete&gt; [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]</code></h3>
+<h3 id="rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard &lt;file&gt; (-o &lt;out.rete&gt; | --in-place) [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]</code></h3>
 <p>Give a finished <code>.rete</code> a new Dataset Card <strong>without rebuilding it</strong> — the
 re-card path for a file of any size.</p>
 <p>The card is derived by <strong>streaming the file's own sorted sections</strong>: the
@@ -919,35 +933,56 @@ of each predicate that uses it. Every tally is kept per <em>vocabulary</em> term
 (predicates, classes, datatypes, languages, namespaces), never per statement;
 the one per-term structure is a class code per subject id — <strong>one byte per
 subject</strong> below 255 classes, two above. Memory is that plus the reader's caches
-(<code>--memory-budget-mb</code>, default 1024), not the statement count.</p>
+(<code>--memory-budget-mb</code>, default 1024), not the statement count. The
+memory-bounded <code>rete build</code> runs this same derivation for its own card, so a
+re-card of its output writes the card it already has.</p>
 <p>Then the starter queries are generated, each is run against the file inside the
 starter byte budget (64 MiB past the open, see <a href="dataset-cards.html#bounded-by-construction">Dataset Cards</a>),
-the ones that do not answer within it are dropped and recorded, and the file is
-<strong>rewritten with only the card (metadata section) and the build record
-(build-info section) replaced</strong>: every other section — dictionary, index,
-pyramid, named graphs, text index, any section kind this binary does not know —
-is copied byte for byte, the header's offsets are fixed, and the content hash is
-recomputed while the bytes go past (the card is inside it). One read of the file
-to derive, one to copy; <code>--verify</code> adds a third to check the written hash before
-the file is moved into place.</p>
+and the ones that do not answer within it are dropped and recorded. With
+<code>-o</code>, the file is <strong>rewritten with only the card (metadata section) and the
+build record (build-info section) replaced</strong>: every other section — dictionary,
+index, pyramid, named graphs, text index, any section kind this binary does not
+know — is copied byte for byte, in its place in the file order, the header's
+offsets are fixed, and the content hash is recomputed while the bytes go past
+(the card is inside it). One read of the file to derive, one to copy;
+<code>--verify</code> adds a third to check the written hash before the file is moved into
+place. The output must not exist: a re-card writes a new file and never over
+its input.</p>
+<p><strong><code>--in-place</code></strong> skips the copy. The new card and build record are written
+<strong>after the file's last section</strong>, followed by a new footer; the file is
+synced; only then is its 1 KiB header rewritten to point at them, with the new
+content hash, and synced again. That costs one read of the hashed sections (the
+card is hashed first, so the hash can only be folded once it exists) and a few
+KB of writes, instead of a second copy of the file. Nothing the old header
+points at is written over, so a crash before the header write leaves the old
+file exactly as it was, readable by every reader, plus bytes past its end that
+the next run overwrites; a crash after it leaves the new one. The old card,
+build record and footer stay in the file as <strong>dead bytes</strong> — a few KB, more on a
+card with large curated fields — that no section points at; every reader
+ignores them, and a re-card with <code>-o</code> drops them. <code>--verify</code> re-reads the file
+after the header write. A file re-carded in place, or built memory-bounded with
+a card, keeps its card after the data; <a href="compatibility.html#a-card-after-the-data">every reader</a>
+since the format froze finds it there.</p>
 <p>The curated half comes from <code>--card-file</code> and the curated flags exactly as
 <code>rete build --card-file</code> takes them, or with <code>--keep-curated</code> from the input's
 card, <strong>verbatim</strong> — description, example queries and <code>extra</code> bag included. With
 neither, an input card that carries curated fields is <strong>refused</strong> rather than
-silently stripped (the defect of a bare <code>repyramid --card</code>). The output must not
-exist: a re-card writes a new file and never over its input.</p>
+silently stripped (the defect of a bare <code>repyramid --card</code>).</p>
 <p>The build record keeps the original build's timestamp, builder and parameters —
 the sections they describe were copied, not rebuilt — and gains a <code>recarded</code>
 entry (<code>at</code>, <code>by</code>, <code>from_content_hash</code>, and the re-card's own <code>engine</code>, <code>host</code>,
-<code>input</code> by file name, <code>params</code> and <code>run</code>); its <code>query_costs</code> and
-<code>dropped_queries</code> are the re-card's own measurement.</p>
-<p>Two differences from the card a build derives, both because a finished file is
-read rather than its input: counts are over the <strong>deduplicated</strong> statements the
-file holds, and a subject typed more than once is classified by its class with
-the highest dictionary id (index order). On input with neither, the two cards
-are identical, byte for byte.</p>
+<code>input</code> by file name, <code>params</code> — with <code>in_place</code> — and <code>run</code>); its
+<code>query_costs</code> and <code>dropped_queries</code> are the re-card's own measurement. In place,
+the record is sealed before the final write, so its <code>run</code> covers everything but
+those few KB.</p>
+<p>Two differences from the card an in-RAM build derives, both because a finished
+file is read rather than its input: counts are over the <strong>deduplicated</strong>
+statements the file holds, and a subject typed more than once is classified by
+its class with the highest dictionary id (index order). On input with neither,
+the two cards are identical, byte for byte.</p>
 <pre><code class="language-sh">rete recard old.rete -o new.rete --keep-curated --verify
 rete recard old.rete -o new.rete --card-file curated.json     # curated fields from a document
+rete recard big.rete --in-place --keep-curated                # no copy: card appended, header last
 bash scripts/recard/recard.sh --source /work/old.rete --out /work/new.rete   # with both proofs
 </code></pre>
 <p>Measured on an OpenCitations Meta part (26.5 GB, 2,904,375,666 statements,
@@ -964,7 +999,7 @@ publisher's <code>title</code>/<code>license</code>/<code>source</code>/<code>de
 defaults to <code>louvain</code> rather than to whatever the file was built with.</p>
 <p>It loads and materializes every quad, so its RAM tracks the <strong>statement count</strong>
 (~350–700 B each), not the file size — roughly <strong>80 M statements</strong> on a 48 GB
-machine. <strong>To change only the card, use <a href="#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a></strong>,
+machine. <strong>To change only the card, use <a href="#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a></strong>,
 which copies every other section instead of rebuilding it and has no such
 ceiling; <code>repyramid</code> is for when the pyramid or the text index must change too.
 See <a href="dataset-cards.html#maintaining-a-published-card">Maintaining a published card</a>.</p>
@@ -1958,7 +1993,7 @@ is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
 by rename, but it is still one full pass of I/O and — for a published file — a
 full re-upload.</p>
 <p>Where that is worth it: when the queries answer and only the record is
-missing. When they do not, re-card instead — <a href="#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a>
+missing. When they do not, re-card instead — <a href="#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a>
 is the same single rewrite with a new card in it, at any size.</p>
 <p><strong>The RAM goes into the measurement, not the rewrite</strong>: the engine evaluates
 eagerly, so a starter query with a big result materializes it. A card written

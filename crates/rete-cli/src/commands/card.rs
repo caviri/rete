@@ -1140,7 +1140,12 @@ fn write_costs(
 pub(crate) struct RecardOptions {
     /// The new file. Must not exist — a re-card writes a new file and never
     /// over its input (AGENTS.md: build to a new path, then move it in).
-    pub output: String,
+    /// `None` with [`in_place`](Self::in_place).
+    pub output: Option<String>,
+    /// `--in-place`: append the new card and build record to the input itself
+    /// and rewrite its header, instead of copying the file
+    /// ([`rete_core::format::plan_card_append`]).
+    pub in_place: bool,
     /// `--card-file` and the curated flags, exactly as `rete build` takes them.
     pub card: CardArgs,
     /// Carry the input card's curated fields verbatim instead.
@@ -1151,99 +1156,120 @@ pub(crate) struct RecardOptions {
     /// Cache budget for the derivation's lazy open, in MiB.
     pub memory_budget_mb: u64,
     /// Re-read the written file and check its content hash before moving it
-    /// into place.
+    /// into place (or, in place, after the header is rewritten).
     pub verify: bool,
 }
 
-/// `rete recard` — give a finished `.rete` a new Dataset Card **without
-/// rebuilding it**.
+/// How much memory the card derivation's reader may keep in caches.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DeriveMemory {
+    /// `rete recard --memory-budget-mb`: the caches alone; the class map (one
+    /// byte per subject) comes on top.
+    Caches(u64),
+    /// `rete build --memory-budget-mb`: everything the derivation holds, class
+    /// map included — the caches get what the class map leaves, at least
+    /// 64 MiB.
+    Total(u64),
+}
+
+/// The derived half of a full card, from a finished file — what
+/// [`derive_full_card`] returns.
+pub(crate) struct FullCard {
+    pub card: DatasetCard,
+    /// The starter queries' measured costs (`None` with `--no-card-costs`).
+    pub query_costs: Option<super::buildinfo::QueryCosts>,
+    /// The starter queries the measurement showed useless on this file.
+    pub dropped: Vec<super::buildinfo::DroppedQuery>,
+}
+
+/// Derive a **full** card from the finished `.rete` at `path` — the profile,
+/// streamed from its sorted sections ([`rete_core::card::derive_card_streaming`]),
+/// then each starter query run against the file inside the starter byte
+/// budget, the ones that do not answer dropped — with `curated` as its curated
+/// half and `coherence` carried over (a reasoning verdict is about the data,
+/// which a card does not change).
 ///
-/// The card is derived by streaming the file's own sorted sections
-/// ([`rete_core::card::derive_card_streaming`]) — the in-memory derivation
-/// `repyramid --card` uses holds every statement, ~80 M statements on a 48 GB
-/// machine, while this one holds a byte per subject — its starter queries are
-/// run against the file through the starter byte budget, and the file is then
-/// rewritten with only the card and the build record replaced
-/// ([`rete_core::format::rewrite_card`]): every other section byte for byte, the
-/// header's offsets fixed, the content hash recomputed (the card is inside it).
+/// This is the one derivation `rete recard` and the memory-bounded `rete build`
+/// share, so the two write the same card for the same file. Neither the card
+/// nor the queries' verdicts depend on where the file keeps its card or on
+/// whether it has one: the derivation reads the dictionary and the index, and
+/// a starter query's budget is counted past the open.
 ///
-/// The curated half comes from `--card-file` and the curated flags, as
-/// `rete build --card-file` takes it, or — with `--keep-curated` — from the
-/// input's card, verbatim. With neither, an input card that carries curated
-/// fields is refused: a re-card never drops or edits a publisher's prose by
-/// omission.
-pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()> {
+/// The phases go to `rec` as `card_derive` and `starter_queries`, each with its
+/// own peak RSS. `who` prefixes the progress lines.
+pub(crate) fn derive_full_card(
+    path: &str,
+    curated: CardInput,
+    coherence: Option<Coherence>,
+    measure_costs: bool,
+    memory: DeriveMemory,
+    rec: &super::buildinfo::Recorder,
+    who: &str,
+) -> anyhow::Result<FullCard> {
     use crate::commands::buildinfo::{
-        builder_version, cost_context, engine, file_name, host, keep_answering, measure_starter,
-        patch_build_info, timestamp, zero_debug_ms, BuildInfo, InputRecord, Pending, QueryCosts,
-        RecardParams, Recarded, Recorder, BUILD_INFO_SCHEMA,
+        cost_context, file_name, keep_answering, measure_starter, QueryCosts,
     };
     use crate::commands::range_source::LocalRangeReader;
     use rete_core::build_trace::Phase;
-    use std::io::Write;
 
+    rec.begin_measured();
     let started = std::time::Instant::now();
-    let rec = Recorder::start(&[]);
-    let out_path = std::path::Path::new(&opts.output);
-    if out_path.exists() {
-        anyhow::bail!(
-            "{}: already exists — re-card to a new path and move it in (and keep a dated \
-             recovery copy of whatever it replaces; see AGENTS.md)",
-            opts.output
-        );
-    }
-
-    // 1. What the file says about itself today: the CARD tier.
-    let reader = LocalRangeReader::open(input)?;
-    let file_len = rete_core::RangeReader::len(&reader);
-    let old = load_card_and_build_ranged(&reader)?;
-    let curated = curated_for_recard(old.card.as_ref(), opts)?;
-    rec.lap(Phase::Read);
-
-    // 2. The profile, streamed from the file's sections.
-    let budget = opts.memory_budget_mb.max(64) << 20;
-    let rete = crate::commands::range_source::open_local_ranged(input, Some(budget))?;
-    let derive_started = std::time::Instant::now();
+    let rete = match memory {
+        DeriveMemory::Caches(b) => {
+            crate::commands::range_source::open_local_ranged(path, Some(b.max(64 << 20)))?
+        }
+        DeriveMemory::Total(total) => {
+            let rete = crate::commands::range_source::open_local_ranged(path, Some(total))?;
+            let d = rete.dictionary();
+            // ClassMap: one byte per subject id below 255 classes.
+            let class_map = d.shared_count() as u64 + d.subject_only_count() as u64 + 1;
+            let caches = total.saturating_sub(class_map).max(64 << 20);
+            rete.set_memory_budget(Some(caches));
+            eprintln!(
+                "{who}: deriving the full card: {} MiB of reader caches + about {} MiB of class \
+                 map, within the {} MiB budget",
+                caches >> 20,
+                class_map >> 20,
+                total >> 20
+            );
+            rete
+        }
+    };
     let (mut card, report) = rete_core::card::derive_card_streaming(&rete, curated, &mut |phase| {
-        eprintln!(
-            "recard: {phase} ({:.0} s)",
-            derive_started.elapsed().as_secs_f64()
-        )
+        eprintln!("{who}: {phase} ({:.0} s)", started.elapsed().as_secs_f64())
     })
-    .map_err(|e| anyhow::anyhow!("{input}: {e}"))?;
+    .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
     drop(rete);
-    // The coherence verdict is about the data, which is unchanged: carry it.
-    if let Some(c) = old.card.as_ref().filter(|c| !c.coherence.is_empty()) {
-        card.coherence = c.coherence.clone();
+    if let Some(c) = coherence.filter(|c| !c.is_empty()) {
+        card.coherence = c;
     }
     eprintln!(
-        "recard: derived the profile of {} statements ({} subjects, {} literal objects, {} \
+        "{who}: derived the profile of {} statements ({} subjects, {} literal objects, {} \
          classes; class map {} MiB) in {:.0} s",
         report.statements,
         report.subjects,
         report.literal_objects,
         report.classes,
         report.class_map_bytes >> 20,
-        derive_started.elapsed().as_secs_f64()
+        started.elapsed().as_secs_f64()
     );
-    rec.lap(Phase::CardDerive);
+    rec.lap_measured(Phase::CardDerive);
 
-    // 3. Run every starter query against the file, inside the starter budget.
-    let mut info = old.build.clone().unwrap_or(BuildInfo {
-        schema: BUILD_INFO_SCHEMA,
-        ..Default::default()
-    });
-    info.params.card_top_n = Some(CARD_TOP_N as u32);
-    info.query_costs = None;
-    info.dropped_queries = Vec::new();
-    if opts.measure_costs && !card.queries.is_empty() {
+    let mut query_costs = None;
+    let mut dropped = Vec::new();
+    if measure_costs && !card.queries.is_empty() {
         let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
-            std::sync::Arc::new(LocalRangeReader::open(input)?);
-        // The file NAME, not its path: this string is stored in the file.
+            std::sync::Arc::new(LocalRangeReader::open(path)?);
+        // The file NAME, not its path: this string is stored in the file. A
+        // build measures the file it is writing, whose name says nothing (and
+        // would make two builds to different paths differ).
+        let which = match who {
+            "build" => "the file this build wrote, on local disk".to_string(),
+            _ => format!("local file {}", file_name(path)),
+        };
         let transport = format!(
-            "local file {}; cold lazy open per query; logical range reads, no block cache; \
+            "{which}; cold lazy open per query; logical range reads, no block cache; \
              reader fan-out {}; {} MiB budget per query past the open",
-            file_name(input),
             source.concurrency(),
             rete_core::card::STARTER_MAX_BYTES >> 20
         );
@@ -1251,7 +1277,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         for q in &card.queries {
             let m = measure_starter(source.clone(), q);
             eprintln!(
-                "recard: {:<16} {:>7} row(s) {:>12} B {:>5} req {:>7} ms{}",
+                "{who}: {:<16} {:>7} row(s) {:>12} B {:>5} req {:>7} ms{}",
                 q.id,
                 m.cost.rows,
                 m.cost.bytes,
@@ -1264,19 +1290,159 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
             );
             measured.push(m);
         }
-        let (kept, dropped) = keep_answering(&mut card, measured);
-        info.query_costs = Some(QueryCosts {
+        let (kept, gone) = keep_answering(&mut card, measured);
+        query_costs = Some(QueryCosts {
             context: cost_context(&transport),
             queries: kept,
         });
-        info.dropped_queries = dropped;
-        rec.lap(Phase::StarterQueries);
-    } else if !opts.measure_costs {
+        dropped = gone;
+        rec.lap_measured(Phase::StarterQueries);
+    } else if !measure_costs {
         eprintln!(
             "--no-card-costs: the starter queries were NOT run, so nothing checked that they \
              answer on this file"
         );
     }
+    Ok(FullCard {
+        card,
+        query_costs,
+        dropped,
+    })
+}
+
+/// Place `metadata` (a card) and the build record `seal` returns after the
+/// data of the file at `path`, without copying it: plan
+/// ([`rete_core::format::plan_card_append`]), fold the new content hash over
+/// the file's hashed sections (`content_hash`), then — the record sealed only
+/// now, so it times the hash too — commit: the new sections, a sync, the
+/// header, a sync. `in_place` is for a file readers may hold (its old footer
+/// is kept, see the plan); without it the file is one this process has just
+/// written. Returns the new header and the plan's dead bytes.
+pub(crate) fn append_card(
+    path: &str,
+    metadata: &[u8],
+    in_place: bool,
+    rec: &super::buildinfo::Recorder,
+    who: &str,
+    seal: impl FnOnce() -> Vec<u8>,
+) -> anyhow::Result<(Header, u64)> {
+    use crate::commands::range_source::LocalRangeReader;
+
+    let reader = LocalRangeReader::open(path)?;
+    let file_len = rete_core::RangeReader::len(&reader);
+    let head = reader.read_at(0, rete_core::HEADER_LEN as u64)?;
+    let plan =
+        rete_core::format::plan_card_append(&head, file_len, metadata.len() as u64, in_place)?;
+    if file_len > plan.old_len {
+        eprintln!(
+            "{who}: {path} holds {} byte(s) past the end its header records — what an \
+             interrupted in-place re-card leaves; they are overwritten",
+            file_len - plan.old_len
+        );
+    }
+    let started = std::time::Instant::now();
+    let mut last = 0u64;
+    let hash = rete_core::format::card_append_hash(&reader, &plan, metadata, &mut |n| {
+        if n - last >= 4 << 30 {
+            last = n;
+            eprintln!(
+                "{who}: hashed {:.1} of {:.1} GB",
+                n as f64 / 1e9,
+                plan.old_len as f64 / 1e9
+            );
+        }
+    })
+    .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+    drop(reader);
+    eprintln!(
+        "{who}: folded the content hash over {:.1} GB in {:.0} s",
+        plan.old_len as f64 / 1e9,
+        started.elapsed().as_secs_f64()
+    );
+    rec.lap(rete_core::build_trace::Phase::ContentHash);
+    let build_info = seal();
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("opening {path} for writing: {e}"))?;
+    let header =
+        rete_core::format::commit_card_append(&mut file, &plan, hash, metadata, &build_info)
+            .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+    Ok((header, plan.dead_bytes))
+}
+
+/// `rete recard` — give a finished `.rete` a new Dataset Card **without
+/// rebuilding it**.
+///
+/// The card is derived by [`derive_full_card`] — the profile streamed from the
+/// file's own sorted sections (the in-memory derivation `repyramid --card`
+/// uses holds every statement, ~80 M statements on a 48 GB machine, while this
+/// one holds a byte per subject), its starter queries run against the file
+/// through the starter byte budget. Then either the file is rewritten with
+/// only the card and the build record replaced
+/// ([`rete_core::format::rewrite_card`]): every other section byte for byte,
+/// the header's offsets fixed, the content hash recomputed (the card is inside
+/// it); or, `--in-place`, the two are appended to the file itself and its
+/// header rewritten ([`append_card`]), leaving the old ones as dead bytes.
+///
+/// The curated half comes from `--card-file` and the curated flags, as
+/// `rete build --card-file` takes it, or — with `--keep-curated` — from the
+/// input's card, verbatim. With neither, an input card that carries curated
+/// fields is refused: a re-card never drops or edits a publisher's prose by
+/// omission.
+pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()> {
+    use crate::commands::buildinfo::{
+        builder_version, engine, file_name, host, patch_build_info, timestamp, zero_debug_ms,
+        BuildInfo, InputRecord, Pending, RecardParams, Recarded, Recorder, BUILD_INFO_SCHEMA,
+    };
+    use crate::commands::range_source::LocalRangeReader;
+    use rete_core::build_trace::Phase;
+    use std::io::Write;
+
+    let started = std::time::Instant::now();
+    let rec = Recorder::start(&[]);
+    let output = match (&opts.output, opts.in_place) {
+        (Some(_), true) => anyhow::bail!("--in-place writes the input itself; drop -o"),
+        (None, false) => anyhow::bail!("give -o <out.rete>, or --in-place"),
+        (Some(o), false) => Some(o.as_str()),
+        (None, true) => None,
+    };
+    if let Some(o) = output {
+        if std::path::Path::new(o).exists() {
+            anyhow::bail!(
+                "{o}: already exists — re-card to a new path and move it in (and keep a dated \
+                 recovery copy of whatever it replaces; see AGENTS.md)"
+            );
+        }
+    }
+
+    // 1. What the file says about itself today: the CARD tier.
+    let reader = LocalRangeReader::open(input)?;
+    let file_len = rete_core::RangeReader::len(&reader);
+    let old = load_card_and_build_ranged(&reader)?;
+    let curated = curated_for_recard(old.card.as_ref(), opts)?;
+    rec.lap(Phase::Read);
+
+    // 2–3. The profile, streamed from the file's sections, and every starter
+    // query run against the file inside the starter budget.
+    let full = derive_full_card(
+        input,
+        curated,
+        old.card.as_ref().map(|c| c.coherence.clone()),
+        opts.measure_costs,
+        DeriveMemory::Caches(opts.memory_budget_mb << 20),
+        &rec,
+        "recard",
+    )?;
+    let card = full.card;
+    let mut info = old.build.clone().unwrap_or(BuildInfo {
+        schema: BUILD_INFO_SCHEMA,
+        ..Default::default()
+    });
+    info.params.card_top_n = Some(CARD_TOP_N as u32);
+    info.query_costs = full.query_costs;
+    info.dropped_queries = full.dropped;
     if rec.is_reproducible() {
         zero_debug_ms(&mut info);
     }
@@ -1294,19 +1460,54 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         }),
         params: Some(RecardParams {
             keep_curated: opts.keep_curated,
+            in_place: opts.in_place,
             card_file: card_file_digest(&opts.card),
             card_costs: opts.measure_costs,
             memory_budget_mb: opts.memory_budget_mb,
         }),
         run: None,
     });
+    let meta = card.to_json_bytes();
+
+    let Some(output) = output else {
+        // 4, in place: the card and the record after the data, the header last.
+        drop(reader);
+        let (header, dead) = append_card(input, &meta, true, &rec, "recard", || {
+            if let Some(r) = info.recarded.as_mut() {
+                r.run = rec.run();
+            }
+            info.to_json_bytes()
+        })?;
+        if opts.verify {
+            let check = LocalRangeReader::open(input)?;
+            if !rete_core::verify_ranged(&check)? {
+                anyhow::bail!("{input}: the re-carded file does not verify");
+            }
+            eprintln!("recard: verified the new content hash");
+        }
+        println!(
+            "{} (in place): {} starter quer{} ({} dropped), content hash {} → {}, {} B card \
+             after the data; the old card, build record and footer are {} dead byte(s) until \
+             the file is rewritten; {:.0} s",
+            input,
+            card.queries.len(),
+            if card.queries.len() == 1 { "y" } else { "ies" },
+            info.dropped_queries.len(),
+            hex16(&old.header.content_hash),
+            hex16(&header.content_hash),
+            meta.len(),
+            dead,
+            started.elapsed().as_secs_f64()
+        );
+        return Ok(());
+    };
 
     // 4. Rewrite: the card and the build record replaced, the rest copied. The
     // record is written at its widest and sealed in place once the copy is
     // done, so the re-card's own wall time covers the copy.
-    let meta = card.to_json_bytes();
+    let out_path = std::path::Path::new(output);
     let blob = info.reserve_bytes(Pending::Write, &rec);
-    let tmp = std::path::PathBuf::from(format!("{}.recard-tmp", opts.output));
+    let tmp = std::path::PathBuf::from(format!("{output}.recard-tmp"));
     let copy_started = std::time::Instant::now();
     let header = {
         let file = std::fs::File::create(&tmp)
@@ -1365,7 +1566,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     println!(
         "{} → {}: {} starter quer{} ({} dropped), content hash {} → {}, {:.0} s",
         input,
-        opts.output,
+        output,
         card.queries.len(),
         if card.queries.len() == 1 { "y" } else { "ies" },
         info.dropped_queries.len(),

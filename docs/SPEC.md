@@ -180,19 +180,43 @@ from the directory means that section is not present.
 > rather than a format break — the optional **text-index** section (kind `6`,
 > §6.3) was added exactly this way.
 
-The **metadata section** (offset 8 / length 16) sits between the header and the
-dictionary and is `0`-length by default. When present it carries an opaque,
-application-defined payload — the CLI stores a JSON [Dataset Card](dataset-cards.md)
-there. Its bytes are included in the content hash (so `verify` covers it), and a
-range-reading client never fetches it for a query (it reads sections by their
-header offsets). A reader that doesn't understand the payload simply skips it: the
-dictionary is always located via `dictionary offset`, which already accounts for
-the section's length.
+The **metadata section** (kind `1`) is `0`-length by default. When present it
+carries an opaque, application-defined payload — the CLI stores a JSON
+[Dataset Card](dataset-cards.md) there. Its bytes are included in the content
+hash (so `verify` covers it), and a range-reading client never fetches it for a
+query (it reads sections by their header offsets). A reader that doesn't
+understand the payload simply skips it: every section is located through the
+directory, never by its position relative to another.
+
+It sits in one of two places, and a reader must accept both:
+
+- **between the header and the dictionary** — what the in-RAM build, `repyramid`
+  and `merge` write;
+- **after every other section, just before the footer** — what the
+  memory-bounded build writes (its full card is derived from the finished
+  file's sorted sections, so it exists only once they are on disk) and what
+  `rete recard --in-place` writes (it appends the new card instead of copying
+  the file).
+
+The content hash does not depend on where it sits: it folds the metadata section
+**first**, then the other hashed sections in their fixed order, wherever each one
+lies — so the same card on the same data hashes the same at the front or at the
+end. A file re-carded in place can also hold **dead bytes**: the old card and
+build-info sections, and the old 4-byte footer, which no directory entry points
+at any more. They are not part of the file's content (no section, no hash) and a
+copying re-card drops them. The file's length is still the furthest
+`offset + length` in the directory plus the footer.
+
+Every reader since generation 1 locates the card this way: `rete card`,
+`card-url`, `verify` and queries of 0.3.7 and 0.4.0, and the 0.4.0 Python and
+JavaScript packages (local and remote), read a file whose card sits after the
+data the same as one whose card sits at the front.
 
 The **build-info section** (kind `7`) is an optional opaque payload laid out
-**immediately after the metadata section** — adjacent, so a card reader fetches
-metadata + build-info in one coalesced range and the CARD tier stays at one
-header read plus one range read. The CLI stores build-conditions JSON there:
+**immediately after the metadata section**, wherever that is — adjacent, so a
+card reader fetches metadata + build-info in one coalesced range and the CARD
+tier stays at one header read plus one range read. The CLI stores
+build-conditions JSON there:
 build timestamps, the engine (version, commit, target, features), the flags in
 force, the inputs (file names and BLAKE3 digests), statement counts, per-phase
 timings and peak memory, and measured starter-query costs (see

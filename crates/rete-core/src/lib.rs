@@ -112,7 +112,12 @@ pub mod format {
         parse_turtle, parse_turtle_surface, BuildStats, DeferredMetadata, FinalCounts, GraphLayout,
         IngestError, IntoMetadata, QuotedTripleSurface, RawQuad, RawTriple,
     };
-    pub use crate::recard::{plan_card_rewrite, rewrite_card, CardRewritePlan, REWRITE_CHUNK};
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::recard::commit_card_append;
+    pub use crate::recard::{
+        card_append_hash, plan_card_append, plan_card_rewrite, rewrite_card, CardAppendPlan,
+        CardRewritePlan, REWRITE_CHUNK,
+    };
 }
 
 /// Stable **Dataset Card** API — both halves of a card, so that every writer

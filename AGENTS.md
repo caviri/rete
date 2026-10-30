@@ -360,9 +360,13 @@ Before touching a `.rete` that is already published. Full lifecycle in
 
 - **A card is written at build time.** Fixing the card generator fixes the
   *next* build, never a published file. The card is inside the content hash, so
-  there is no in-place patch — the file is rewritten or nothing changes.
-  `rete recard` is that rewrite at its cheapest: only the card and the build
-  record change, every other section is copied byte for byte.
+  a new card is a new file identity. `rete recard` is the cheapest way there:
+  only the card and the build record change, every other section is copied
+  byte for byte — or, with `--in-place`, not copied at all: the new card and
+  record are appended after the data and the header is rewritten last (the old
+  card stays behind as dead bytes; a later copying re-card drops them). In
+  place still changes the file under its name, so the recovery-copy rule below
+  applies to it too, unless the old file is not needed back.
 - **Survey before you re-card.** `bash scripts/recard/survey.sh` reads the CARD
   tier only: 0.6 MB for the whole 98-file catalog. Re-carding it blind is
   248 GB down and 248 GB back up. Re-decide from cards already on disk with
@@ -379,12 +383,17 @@ Before touching a `.rete` that is already published. Full lifecycle in
   `rete build --card-file …`) reaches **~150 M** at ~2.5× the wall clock and
   9–15× the `.rete` in scratch disk. Exceeding a ceiling is an OOM kill
   mid-rebuild, not an error message.
-- **`rete build --memory-budget-mb` writes a counts-only card** (no profile, no
-  starter queries) — then `rete recard` the result to give it a full one. It
-  *does* build named graphs (#139) — `--collapse-graphs` is now a modelling
-  choice (fold a TriG export's graphs into the default graph when that is what
-  the dump means), not a requirement. `--text-index` works there too (0.4.0),
-  in any scope, and writes the same TEXT_INDEX bytes as the in-RAM build.
+- **`rete build --memory-budget-mb` writes the full card** (profile and
+  starter queries): it streams the finished file's sections exactly as
+  `rete recard` does, inside the same budget, and appends the card after the
+  data — no `recard` step, no second copy of the file. Files built before it
+  (every release up to 0.4.0) carry a counts-only card; `rete recard`
+  (`--in-place` for a big one) gives them a full one. It *does* build named
+  graphs (#139) —
+  `--collapse-graphs` is now a modelling choice (fold a TriG export's graphs
+  into the default graph when that is what the dump means), not a requirement.
+  `--text-index` works there too (0.4.0), in any scope, and writes the same
+  TEXT_INDEX bytes as the in-RAM build.
 - **Feed the external build the dump as it ships.** It reads
   N-Triples/N-Quads/Turtle/TriG, gzipped or not, straight from the compressed
   file — so a `dump.ttl.gz` never has to be expanded to `.nt` first. That
