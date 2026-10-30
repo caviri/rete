@@ -65,7 +65,7 @@ const main = async () => {
     ["a free-text theme", { theme: ["physics"] }, /not an IRI/],
     ["a theme, pointing at keywords", { theme: ["physics"] }, /keywords/],
     ["a stray top-level key", { title: "T", region: "CH" }, /unknown field .?region/],
-    ["an over-deep extra value", { extra: { a: { b: { c: { d: 1 } } } } }, /level cap/],
+    ["an over-deep extra value", { extra: { a: { b: { c: { d: { e: 1 } } } } } }, /level cap/],
   ]) {
     const msg = await typeCard(doc);
     if (!mustSay.test(msg)) failures.push(`editor did not report ${label} the way the CLI does: "${msg}"`);

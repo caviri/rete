@@ -515,6 +515,60 @@ enum Command {
         #[arg(long, requires = "write_costs")]
         allow_empty: bool,
     },
+    /// Give a finished `.rete` a new Dataset Card **without rebuilding it**.
+    ///
+    /// Derives the profile and the starter queries by streaming the file's own
+    /// sorted sections (memory: the reader's caches plus one byte per subject,
+    /// not the statements), runs each starter query against the file inside
+    /// the starter byte budget, then rewrites the file with only the card and
+    /// the build record replaced — every other section copied byte for byte,
+    /// the header's offsets fixed, the content hash recomputed (the card is
+    /// inside it). The curated fields come from `--card-file` and the curated
+    /// flags, as `rete build --card-file` takes them, or from the input card
+    /// verbatim with `--keep-curated`; an input card with curated fields and
+    /// neither option is refused, never silently stripped.
+    Recard {
+        /// The `.rete` to re-card (read only; never written).
+        file: String,
+        /// Output path. Must not exist.
+        #[arg(short, long)]
+        output: String,
+        /// JSON file of curated card fields (same document as `build --card-file`).
+        #[arg(long = "card-file", conflicts_with = "keep_curated")]
+        card_file: Option<String>,
+        /// Carry the input card's curated fields — title, licence, description,
+        /// creators, example queries, the `extra` bag, … — verbatim.
+        #[arg(long = "keep-curated")]
+        keep_curated: bool,
+        /// Card title (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        title: Option<String>,
+        /// Card license (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        license: Option<String>,
+        /// Card source URL (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        source: Option<String>,
+        /// Card description (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        description: Option<String>,
+        /// Card creation date (overrides `--card-file`).
+        #[arg(long, conflicts_with = "keep_curated")]
+        created: Option<String>,
+        /// Do not run the starter queries (nothing then checks that they
+        /// answer on this file, and the build record carries no costs).
+        #[arg(long = "no-card-costs")]
+        no_card_costs: bool,
+        /// Cache budget for reading the file while deriving the card, in MiB.
+        /// The derivation's own memory is one byte per subject on top of it
+        /// (two past 255 classes).
+        #[arg(long = "memory-budget-mb", default_value_t = 1024)]
+        memory_budget_mb: u64,
+        /// Re-read the written file and check its content hash before moving
+        /// it into place (one more read of the file).
+        #[arg(long)]
+        verify: bool,
+    },
     /// List the named graphs in a dataset.
     Graphs {
         /// Path to the `.rete` file.
@@ -1500,6 +1554,38 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 max_mb,
                 write_costs,
                 allow_empty,
+            },
+        ),
+        Command::Recard {
+            file,
+            output,
+            card_file,
+            keep_curated,
+            title,
+            license,
+            source,
+            description,
+            created,
+            no_card_costs,
+            memory_budget_mb,
+            verify,
+        } => commands::card::recard_cmd(
+            &file,
+            &commands::card::RecardOptions {
+                output,
+                card: commands::card::CardArgs {
+                    enabled: false,
+                    file: card_file,
+                    title,
+                    license,
+                    source,
+                    description,
+                    created,
+                },
+                keep_curated,
+                measure_costs: !no_card_costs,
+                memory_budget_mb,
+                verify,
             },
         ),
         Command::Graphs { file } => commands::inspect::graphs(&file),

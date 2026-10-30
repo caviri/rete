@@ -103,12 +103,26 @@ pub const CARD_EXTRA_MAX_KEY_BYTES: usize = 128;
 pub const CARD_DESCRIPTION_MAX_BYTES: usize = CARD_EXTRA_MAX_BYTES;
 
 /// Maximum container-nesting depth inside an `extra` value (see
-/// [`json_depth`]): an object of objects-of-scalars, no deeper. Deliberate —
-/// deep structures invite storing *records* in the card, and Parquet
-/// companions exist for records; it also hard-bounds recursion for every
-/// parser that will ever read the bag (browser wasm and iOS stacks are far
-/// smaller than a build machine's).
-pub const CARD_EXTRA_MAX_DEPTH: usize = 2;
+/// [`json_depth`]): three levels — a list of objects whose fields may be
+/// lists of scalars (`[{"query": "…", "words": ["a", "b"]}]`), no deeper.
+///
+/// It was 2 until 0.4.0, and that refused the first natural shape a real card
+/// needed: the OpenCitations full-text examples, a list of objects each
+/// holding a word list, had to be flattened into joined strings. Raising it to
+/// 3 is safe on every axis the cap exists for:
+///
+/// * **size** is bounded by [`CARD_EXTRA_MAX_BYTES`] and [`CARD_EXTRA_MAX_KEYS`],
+///   unchanged — depth never was the binding constraint on how much a card
+///   carries, bytes are;
+/// * **records** still do not fit: three levels holds a list of small
+///   structured examples, not a table, and 8 KiB holds no table worth the name
+///   (Parquet companions exist for records);
+/// * **recursion** stays hard-bounded at a depth no parser notices (browser
+///   wasm and iOS stacks are far smaller than a build machine's, and far larger
+///   than three);
+/// * **compatibility**: the cap is enforced when a card is *written*, never
+///   when it is read, so every reader already accepts a depth-3 bag.
+pub const CARD_EXTRA_MAX_DEPTH: usize = 3;
 
 /// Canonicalize a curated string list (`keywords`, `theme`) — the write-time
 /// gate every card-writing command funnels through (like [`normalize_extra`]).
@@ -262,8 +276,11 @@ pub fn normalize_extra(extra: Map<String, Value>) -> Result<Map<String, Value>, 
         let depth = json_depth(v);
         if depth > CARD_EXTRA_MAX_DEPTH {
             return Err(format!(
-                "card `extra` field {k:?} nests {depth} container levels deep, \
-                 over the {CARD_EXTRA_MAX_DEPTH}-level cap"
+                "card `extra` field {k:?} nests {depth} container levels deep (at {}), \
+                 over the {CARD_EXTRA_MAX_DEPTH}-level cap — an array or an object is one \
+                 level, so `[{{\"words\": [\"a\"]}}]` is three; flatten the innermost \
+                 level (join a list into one string), or put records in the graph itself",
+                deepest_path(k, v)
             ));
         }
     }
@@ -278,6 +295,33 @@ pub fn normalize_extra(extra: Map<String, Value>) -> Result<Map<String, Value>, 
         ));
     }
     Ok(extra)
+}
+
+/// A JSON-path-like spelling of the deepest point inside `v`
+/// (`examples[0].words`) — where an over-deep bag needs flattening.
+fn deepest_path(key: &str, v: &Value) -> String {
+    let mut path = key.to_string();
+    let mut cur = v;
+    while json_depth(cur) > 1 {
+        let next = match cur {
+            Value::Array(a) => a
+                .iter()
+                .enumerate()
+                .max_by_key(|(i, c)| (json_depth(c), std::cmp::Reverse(*i)))
+                .map(|(i, c)| (format!("[{i}]"), c)),
+            Value::Object(o) => o
+                .iter()
+                .max_by_key(|(_, c)| json_depth(c))
+                .map(|(k, c)| (format!(".{k}"), c)),
+            _ => None,
+        };
+        let Some((step, child)) = next else {
+            break;
+        };
+        path.push_str(&step);
+        cur = child;
+    }
+    path
 }
 
 /// Container-nesting depth of a JSON value: scalars are 0, an array/object is
@@ -560,15 +604,26 @@ mod tests {
 
     #[test]
     fn extra_limits_are_enforced_and_nested_keys_sorted() {
-        // Depth 2 is allowed, depth 3 is not.
+        // Depth 2 is allowed, and so is depth 3 since 0.4.0 — the list of
+        // objects holding a word list that the OpenCitations full-text
+        // examples needed. Depth 4 is not.
         let ok = validate_curated_card(&json!({"extra": {"review": {"z": 1, "a": 2}}})).unwrap();
         assert_eq!(
             serde_json::to_string(&ok["extra"]).unwrap(),
             r#"{"review":{"a":2,"z":1}}"#
         );
-        let e =
-            validate_curated_card(&json!({"extra": {"deep": {"a": {"b": {"c": 1}}}}})).unwrap_err();
-        assert!(e.contains("over the 2-level cap"), "{e}");
+        let ok = validate_curated_card(&json!({"extra": {"full_text_search": [
+            {"query": "svobodová", "words": ["svobodová", "agriculturae"]},
+            {"query": "neural", "words": ["neural"]}
+        ]}}))
+        .unwrap();
+        assert_eq!(json_depth(&ok["extra"]["full_text_search"]), 3);
+        let e = validate_curated_card(&json!({"extra": {"deep": {"a": {"b": {"c": [1]}}}}}))
+            .unwrap_err();
+        assert!(e.contains("nests 4 container levels"), "{e}");
+        assert!(e.contains("over the 3-level cap"), "{e}");
+        assert!(e.contains("(at deep.a.b.c)"), "{e}");
+        assert!(e.contains("flatten the innermost"), "{e}");
 
         let e = validate_curated_card(&json!({"extra": {"@context": "x"}})).unwrap_err();
         assert!(e.contains("reserved"), "{e}");
