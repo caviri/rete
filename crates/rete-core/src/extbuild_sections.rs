@@ -4,12 +4,17 @@
 //! hooks here and nothing else, so the label and schema passes stay one
 //! delimited unit.
 //!
-//! - **Labels** need only strings: each chunk, while its raw quads are
-//!   resident, emits `(subject, slot, value)` records for the label and name
-//!   predicates ([`ExtLabels::observe_chunk`]). After the input, one external
-//!   sort groups them by subject, the L1/L2 rules run per subject, a second
-//!   external sort orders the entries by `(key, subject)`, and the section's
-//!   data blocks stream to a spill file ([`ExtLabels::finish`]).
+//! - **Labels** follow the in-memory build's `entries_from_sorted_triples` on
+//!   global ids: the remap pass tees `(object, slot, subject)` for the label
+//!   and name predicates into a 12-byte id sort ([`ExtLabels::tee`]). Once
+//!   the file is written, its own dictionary resolves each object to its label
+//!   value in id order (one lookup per object, a bounded chunk cache), a sort
+//!   groups the values by subject, the L1/L2 rules run per subject, a third
+//!   sort orders the entries by `(key, subject)`, and the section's data
+//!   blocks stream to a spill file ([`ExtLabels::finish`]). Up to 0.4.0 the
+//!   pass spilled string candidates while the chunks were sealed and sorted
+//!   them before the dictionary merge, so its records sat on disk beside
+//!   every chunk's files at the spill's peak.
 //! - **Schema** follows the deduplicated permutation streams: the remap pass
 //!   tees the type statements into a `(subject, class)` sort
 //!   ([`ExtSchema::tee`]); the SPO and POS merges feed a
@@ -32,9 +37,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::extsort::{ExtSorter, Sorted};
-use crate::label_index::{
-    candidate_value, slot_of_predicate, LabelIndexWriter, Slot, SubjectCandidates,
-};
+use crate::label_index::{candidate_value, LabelIndexWriter, Slot, SubjectCandidates};
 use crate::schema_section::{
     ClassCursor, SchemaAccumulator, SchemaIds, Space, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS,
     RDFS_SUBCLASS_OF, UNTYPED,
@@ -67,11 +70,20 @@ impl crate::RangeReader for FileReader {
 // Labels
 // ---------------------------------------------------------------------------
 
-/// The label pass of the memory-bounded build.
+/// The label pass of the memory-bounded build, on global ids.
+///
+/// The remap tees `(object, slot, subject)` for every default-graph statement
+/// whose predicate is a label predicate (12 B each). Only after the file is
+/// written are the strings looked up — through the file's own dictionary, in
+/// id order, behind a bounded chunk cache — and the rules run, exactly as
+/// the in-memory build's `entries_from_sorted_triples` does. So nothing of
+/// this pass is on disk while the chunk files are, and its sorts run once
+/// the build's own spill is gone.
 pub(crate) struct ExtLabels {
     dir: PathBuf,
-    run_bytes: usize,
-    candidates: ExtSorter<(String, String, String)>,
+    /// global predicate id → slot, sorted by id; set after the merge
+    slots: Vec<(u32, Slot)>,
+    ids: ExtSorter<(u32, u32, u32)>,
 }
 
 /// A finished LABEL_INDEX, ready to append: `digest ++ head ++ body file`.
@@ -82,74 +94,110 @@ pub(crate) struct ExtLabelSection {
 }
 
 impl ExtLabels {
-    /// `run_bytes` bounds each sort run.
+    /// `run_bytes` bounds each sort run of the remap tee.
     pub(crate) fn new(dir: &Path, run_bytes: usize) -> Self {
         ExtLabels {
             dir: dir.to_path_buf(),
-            run_bytes,
-            candidates: ExtSorter::new(dir, "lab-cand", run_bytes),
+            slots: Vec::new(),
+            ids: ExtSorter::new(dir, "lab-ids", run_bytes),
         }
     }
 
-    /// Record the label candidates of one chunk's default-graph quads.
-    pub(crate) fn observe_chunk(
-        &mut self,
-        quads: &[(String, String, String)],
-    ) -> std::io::Result<()> {
-        for (s, p, o) in quads {
-            let Some(slot) = slot_of_predicate(p) else {
-                continue;
-            };
-            if let Some(v) = candidate_value(o) {
-                self.candidates
-                    .push((s.clone(), (slot as u8).to_string(), v))?;
-            }
+    /// The label predicates' global ids, from the dictionary merge.
+    pub(crate) fn set_predicates(&mut self, mut slots: Vec<(u32, Slot)>) {
+        slots.sort_unstable();
+        self.slots = slots;
+    }
+
+    /// The remap pass: one default-graph statement in global ids.
+    pub(crate) fn tee(&mut self, s: u32, p: u32, o: u32) -> std::io::Result<()> {
+        if let Ok(i) = self.slots.binary_search_by_key(&p, |&(id, _)| id) {
+            self.ids.push((o, self.slots[i].1 as u32, s))?;
         }
         Ok(())
     }
 
-    /// Run the rules and write the section's blocks to a spill file. `None`
-    /// when the graph has no label.
-    pub(crate) fn finish(self, codec: u8) -> std::io::Result<Option<ExtLabelSection>> {
-        if self.candidates.pushed() == 0 {
+    /// Run the rules over the finished file `output` and write the section's
+    /// blocks to a spill file. `run_bytes` bounds each sort run and
+    /// `cache_bytes` the dictionary chunks held while terms are looked up.
+    /// `None` when the graph has no label.
+    pub(crate) fn finish(
+        self,
+        output: &Path,
+        run_bytes: usize,
+        cache_bytes: u64,
+        codec: u8,
+    ) -> Result<Option<ExtLabelSection>, crate::file::FileError> {
+        if self.ids.pushed() == 0 {
             return Ok(None);
         }
-        // 1. grouped by subject → the rules → entries in a second sort
-        let mut entries: ExtSorter<(String, String, String)> =
-            ExtSorter::new(&self.dir, "lab-entry", self.run_bytes);
+        let f = File::open(output)?;
+        let len = f.metadata()?.len();
+        let dict = crate::file::open_dictionary_lazy(FileReader {
+            f: std::sync::Mutex::new(f),
+            len,
+        })?;
+        // Lookups come in id order, so a small cache decodes every chunk once.
+        dict.set_cache_cap(cache_bytes);
+
+        // 1. each object's label value, looked up once, onto its subjects
+        let mut by_subject: ExtSorter<(u32, u32, String)> =
+            ExtSorter::new(&self.dir, "lab-sv", run_bytes);
         {
-            let mut sorted = self.candidates.finish()?;
-            let mut cur: Option<String> = None;
+            let mut sorted = self.ids.finish()?;
+            let mut cur: Option<(u32, Option<String>)> = None;
+            while let Some((o, slot, s)) = sorted.next_record()? {
+                if cur.as_ref().map(|c| c.0) != Some(o) {
+                    cur = Some((o, dict.object_term(o).and_then(|t| candidate_value(&t))));
+                }
+                if let Some((_, Some(v))) = &cur {
+                    by_subject.push((s, slot, v.clone()))?;
+                }
+            }
+        }
+        // 2. grouped by subject → the rules → entries in (key, subject) order
+        let mut entries: ExtSorter<(String, String, String)> =
+            ExtSorter::new(&self.dir, "lab-entry", run_bytes);
+        {
+            let mut sorted = by_subject.finish()?;
+            let mut cur: Option<u32> = None;
             let mut cands = SubjectCandidates::default();
-            let flush = |subject: &str,
+            let flush = |s: u32,
                          cands: &mut SubjectCandidates,
                          entries: &mut ExtSorter<(String, String, String)>|
              -> std::io::Result<()> {
-                for (key, label) in cands.labels() {
-                    entries.push((key, subject.to_string(), label))?;
-                }
+                let labels = cands.labels();
                 *cands = SubjectCandidates::default();
+                if labels.is_empty() {
+                    return Ok(());
+                }
+                let Some(subject) = dict.subject_term(s) else {
+                    return Ok(());
+                };
+                for (key, label) in labels {
+                    entries.push((key, subject.clone(), label))?;
+                }
                 Ok(())
             };
             while let Some((s, slot, v)) = sorted.next_record()? {
-                if cur.as_deref() != Some(s.as_str()) {
+                if cur != Some(s) {
                     if let Some(prev) = cur.take() {
-                        flush(&prev, &mut cands, &mut entries)?;
+                        flush(prev, &mut cands, &mut entries)?;
                     }
                     cur = Some(s);
                 }
-                let slot = slot
-                    .parse::<u8>()
+                let slot = u8::try_from(slot)
                     .ok()
                     .and_then(Slot::from_u8)
                     .ok_or_else(|| std::io::Error::other("bad label slot in spill"))?;
                 cands.push(slot, v);
             }
             if let Some(prev) = cur {
-                flush(&prev, &mut cands, &mut entries)?;
+                flush(prev, &mut cands, &mut entries)?;
             }
         }
-        // 2. entries in (key, subject) order → the section writer
+        drop(dict);
+        // 3. entries in (key, subject) order → the section writer
         let body_path = self.dir.join("labels.body");
         let body = BufWriter::with_capacity(1 << 20, File::create(&body_path)?);
         let mut w = LabelIndexWriter::new(codec, body);
@@ -157,6 +205,7 @@ impl ExtLabels {
         while let Some((key, subject, label)) = sorted.next_record()? {
             w.push(&key, &subject, &label)?;
         }
+        drop(sorted);
         let parts = w.finish()?;
         let mut body = parts.body;
         body.flush()?;
@@ -202,11 +251,13 @@ pub(crate) fn schema_predicates(type_override: Option<&str>) -> Vec<String> {
     ]
 }
 
-/// What the dictionary merge learned for the schema pass.
+/// What the dictionary merge learned for the schema and label passes.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MergeFacts {
     /// Global predicate ids of [`schema_predicates`], in order.
     pub pred_ids: Vec<Option<u32>>,
+    /// Global ids of the label and name predicates, with their slots.
+    pub label_preds: Vec<(u32, Slot)>,
     pub n_shared: u32,
     pub shared_literals: u32,
     pub objonly_literals: u32,
@@ -506,15 +557,25 @@ mod tests {
     #[test]
     fn external_sections_are_byte_identical_to_the_in_memory_build() {
         let quads = section_quads(2_000);
-        // Tiny sort runs: every external sort spills and k-way merges.
-        crate::extsort::TEST_RUN_BYTES.with(|c| c.set(Some(4 * 1024)));
-        let ext = external(&quads, true, true, "both");
-        crate::extsort::TEST_RUN_BYTES.with(|c| c.set(None));
         let mem = reference(&quads, true, true);
+        // Tiny sort runs: every external sort spills and k-way merges; then
+        // the same with the input cut into many 4 KiB chunks, so the label
+        // and type statements of one subject arrive from several chunks.
+        let mut ext = Vec::new();
+        for split in [None, Some((4 * 1024, 1 << 10))] {
+            crate::extsort::TEST_RUN_BYTES.with(|c| c.set(Some(4 * 1024)));
+            crate::extbuild::TEST_SPLIT.with(|c| c.set(split));
+            ext = external(&quads, true, true, "both");
+            crate::extbuild::TEST_SPLIT.with(|c| c.set(None));
+            crate::extsort::TEST_RUN_BYTES.with(|c| c.set(None));
+            assert_eq!(ext.len(), mem.len(), "same length, split {split:?}");
+            assert!(
+                ext == mem,
+                "the external build writes the in-memory bytes, split {split:?}"
+            );
+        }
         let h = Header::from_bytes(&ext).unwrap();
         assert!(h.label_index_section().is_some() && h.schema_section().is_some());
-        assert_eq!(ext.len(), mem.len(), "same length");
-        assert!(ext == mem, "the external build writes the in-memory bytes");
 
         // And the sections stay outside the content hash.
         let plain = external(&quads, false, false, "plain");
