@@ -99,6 +99,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **`REGEX` / `REPLACE` / `sh:pattern` are Unicode-aware in native builds.**
+  `regex-lite` treats `\b`, `\w`, `\d` and `(?i)` as ASCII, so
+  `REGEX(?name, "\\bsvobodová\\b", "i")` found no "Svobodová" (no boundary
+  after "á") and did find one inside "Svobodováová". rete-core's new
+  `unicode-regex` feature (default on: the CLI, `rete serve`, Python, R, the
+  File Explorer) uses the `regex` crate with its Unicode Perl classes and case
+  folding. The browser/Node engine (`rete-wasm`) keeps `regex-lite` for its
+  size — the Unicode engine adds 489 KB raw / 162 KB gzip to a 4.74 MB /
+  1.33 MB module — and offers it behind its own `unicode-regex` feature.
 - **`"x"` and `"x"^^xsd:string` are one term.** RDF 1.1 says so, and rete
   compared them as two: a pipeline that wrote typed strings could not be
   matched by a plain constant (OpenCitations' pipelines carry rule R-ocdm-2 to

@@ -19,6 +19,16 @@ use std::rc::Rc;
 use crate::dictionary::Dictionary;
 use crate::file::Rete;
 
+/// The engine behind SPARQL `REGEX` / `REPLACE` and SHACL `sh:pattern`. With
+/// the `unicode-regex` feature (on by default) it is `regex`, whose `\b`,
+/// `\w`, `\d` and `(?i)` are Unicode-aware: `\bsvobodová\b` matches, and
+/// `(?i)á` matches "Á". Without it (a wasm build that keeps its size), it is
+/// `regex-lite`: the same syntax, ASCII-only classes and case folding.
+#[cfg(feature = "unicode-regex")]
+pub(crate) use regex::Regex;
+#[cfg(not(feature = "unicode-regex"))]
+pub(crate) use regex_lite::Regex;
+
 /// A bound solution value: a tagged dictionary id (node `>= 0`, predicate
 /// `-(p+1) < 0`) or a computed string not present in the dictionary.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -114,7 +124,7 @@ enum Matcher {
     /// Pattern pre-lowercased; the text is lowercased per match (full Unicode
     /// folding, same outcome as `(?i)` for the literal patterns this serves).
     SubstringCi(String),
-    Regex(regex_lite::Regex),
+    Regex(Regex),
     Never,
 }
 
@@ -141,7 +151,7 @@ impl Matcher {
         } else {
             format!("(?{on})")
         };
-        match regex_lite::Regex::new(&format!("{inline}{pattern}")) {
+        match Regex::new(&format!("{inline}{pattern}")) {
             Ok(re) => Matcher::Regex(re),
             Err(_) => Matcher::Never,
         }
@@ -223,7 +233,7 @@ impl<'a> Resolver<'a> {
         } else {
             format!("(?{on})")
         };
-        match regex_lite::Regex::new(&format!("{inline}{pattern}")) {
+        match Regex::new(&format!("{inline}{pattern}")) {
             Ok(_) => String::new(),
             Err(e) => e
                 .to_string()
@@ -256,7 +266,7 @@ impl<'a> Resolver<'a> {
         } else {
             format!("(?{on})")
         };
-        let re = regex_lite::Regex::new(&format!("{inline}{pattern}")).ok()?;
+        let re = Regex::new(&format!("{inline}{pattern}")).ok()?;
         Some(re.replace_all(text, replacement).into_owned())
     }
 

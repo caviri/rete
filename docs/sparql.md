@@ -39,6 +39,20 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 | **RDF-star** | Quoted triples `<< s p o >>` in subject/object position — ingest (N-Triples-star & Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables `<< ?s :p ?o >>`) and the `isTRIPLE` / `TRIPLE` / `SUBJECT` / `PREDICATE` / `OBJECT` built-ins. See [below](#rdf-star). |
 | **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated answering by **query rewriting** — no materialization: `rdfs:subClassOf` / `subPropertyOf` hierarchy + `rdfs:domain` / `range` type inference, computed over the raw data. `rete sparql … --entail`, or the playground **🧠 Reason** toggle. See [below](#reasoning-owl-2-ql). |
 
+**`REGEX` and non-ASCII text.** A pattern without metacharacters is a substring
+test, with full Unicode case folding under the `i` flag, in every build. Any
+other pattern goes to a regex engine, and which one depends on the build:
+
+| Build | Engine | `\b` `\w` `\d` and the `i` flag |
+|---|---|---|
+| native — the CLI, `rete serve`, Python, R, the File Explorer | `regex` (feature `unicode-regex`, on by default) | Unicode: `REGEX(?name, "\\bsvobodová\\b", "i")` finds "Jitka Svobodová" and "SVOBODOVÁ" |
+| browser / Node (`rete-wasm`) | `regex-lite`, unless built with `--features unicode-regex` | ASCII only: no boundary after "á", so the same pattern misses both names (and finds one *inside* "Svobodováová"); `(?i)` does not fold "Á" |
+
+The browser engine keeps `regex-lite` for its size: the Unicode engine adds
+about 489 KB to the 4.74 MB wasm module (162 KB of its 1.33 MB gzipped).
+Neither engine knows `\p{…}` classes. XPath regular expressions, which SPARQL
+names, have no `\b` at all; rete follows the Perl meaning, as Oxigraph does.
+
 ## Property paths
 
 Property paths are evaluated goal-directed from a bound endpoint and support

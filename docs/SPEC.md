@@ -730,7 +730,8 @@ extension.
 - **Rust core**, compiled to both **native** (CLI, server-side) and **WASM**
   (browser client) — identical query code in both.
 - Crates to lean on: `oxrdf` / `oxttl` / `spargebra` (RDF + SPARQL), `ureq`
-  (CLI HTTP range reads), `zstd`/`ruzstd`, `blake3`, `regex-lite`, `serde_json`,
+  (CLI HTTP range reads), `zstd`/`ruzstd`, `blake3`, `regex` (native, Unicode) /
+  `regex-lite` (wasm), `serde_json`,
   `rayon` behind native-only feature gates, and Louvain-style community
   detection.
 - **Everything runs in Docker dev containers.** No host execution. The container
