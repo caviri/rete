@@ -337,6 +337,27 @@ fn writer_knobs_change_bytes_not_answers() {
     // `<http://vocab/…>` class after the `<http://ex/item/…>` entities.
     assert_eq!(dict.object_id("\"published\""), Some(1));
     assert!(dict.object_id("<http://vocab/Book>").unwrap() > 6000);
+    // The card a re-card derives by streaming the promoted file (`rete
+    // recard`) is the card derived from the quads: a promoted literal in the
+    // shared section is still a literal, a promoted class still an
+    // object-only IRI (no duplicates, no multi-typed subject here).
+    let (streamed, _) = rete_core::card::derive_card_streaming(
+        &rete,
+        rete_core::card::CardInput::default(),
+        &mut |_| {},
+    )
+    .unwrap();
+    let in_memory = rete_core::card::derive_card(
+        &quads,
+        rete.header().term_count,
+        rete.named_graph_count() as u64,
+        rete_core::card::CardInput::default(),
+    );
+    assert_eq!(
+        String::from_utf8(streamed.to_json_bytes()).unwrap(),
+        String::from_utf8(in_memory.to_json_bytes()).unwrap(),
+        "promoted: the streamed card"
+    );
     // Promotion is an in-memory-build feature: chunk-local dictionaries of the
     // external build never promote, whatever the setting says.
     let ext = build_ext(&quads, "promoted");
