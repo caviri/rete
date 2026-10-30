@@ -42,7 +42,7 @@
 //! sized from `memory_budget`, never from the dataset:
 //!
 //! - a chunk is sealed at half the budget; its remap tables, 4 B per local id,
-//!   are at most a quarter of that ([`crate::extbuild_remap`]);
+//!   are at most a quarter of that (`extbuild_remap`);
 //! - the merge reads every chunk's term files at once and appends to every
 //!   chunk's remap files at once, so those buffers shrink as the chunk count
 //!   grows: an eighth and a sixteenth of the budget, floored at 64 KiB per
