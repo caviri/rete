@@ -111,9 +111,12 @@ jobs:
           # One universal binary rather than a job per architecture. The old
           # macos-13 (Intel) job sat queued for hours every run — that image is
           # being retired and its pool is thin — so every run stayed amber even
-          # though everything that mattered had passed. macos-14 cross-builds
-          # both arches into one .dmg that runs on Apple Silicon and Intel.
-          - platform: macos-14
+          # though everything that mattered had passed. An Apple Silicon runner
+          # cross-builds both arches into one .dmg that runs on Apple Silicon
+          # and Intel. macos-15, not macos-14: GitHub retires the macOS 14
+          # image on 2026-11-02, and its scheduled brownouts cancelled this job
+          # on the v0.4.1 tag (actions/runner-images#13518).
+          - platform: macos-15
             target: universal-apple-darwin
             label: macOS (universal)
           # Windows is the one target Docker could plausibly cross-compile
