@@ -13,7 +13,7 @@
 //! Surfaced by `rete card [--json]`, `rete card-audit`, and folded into
 //! `rete info`'s catalog view.
 
-use rete_core::Header;
+use rete_core::{Header, RangeReader};
 
 // The card schema and its derivation, re-exported under the name the rest of
 // the CLI has always used (`super::card::DatasetCard`, …). One import site to
@@ -653,12 +653,17 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
         return Ok(());
     };
     let mut findings = rete_core::card::audit(&card);
+    // The curated half, audited apart: a publisher's query answers to its
+    // author, not to the generator's templates, and folding the two together
+    // would let a curated failure pass for a generated one or the reverse.
+    let mut example_findings = rete_core::card::audit_examples(&card);
     let run = if opts.measure || opts.write_costs {
         Some(measure_card(
             path,
             &card,
             build.as_ref(),
             &mut findings,
+            &mut example_findings,
             opts,
         )?)
     } else {
@@ -683,6 +688,7 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
             "quads": card.quad_count,
             "named_graphs": card.named_graph_count,
             "queries": card.queries.len(),
+            "example_queries": card.example_queries.len(),
             "truncated": card.truncated,
             "text_index": text_index_json(measured, stored_ti),
             "measurement": run.as_ref().map(|r| serde_json::json!({
@@ -691,16 +697,25 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
                 "queries_run": r.costs.len(),
                 "total_bytes": r.costs.iter().map(|c| c.bytes).sum::<u64>(),
                 "total_requests": r.costs.iter().map(|c| c.requests).sum::<u64>(),
+                "examples_run": r.example_costs.len(),
+                "example_bytes": r.example_costs.iter().map(|c| c.bytes).sum::<u64>(),
+                "example_requests": r.example_costs.iter().map(|c| c.requests).sum::<u64>(),
                 "written": opts.write_costs,
                 "note": COST_NOTE,
             })),
             "findings": findings,
+            "example_findings": example_findings,
         });
         println!("{}", serde_json::to_string(&doc)?);
         return Ok(());
     }
 
-    println!("{}  ({} starter queries)", path, card.queries.len());
+    println!(
+        "{}  ({} starter queries, {} curated example queries)",
+        path,
+        card.queries.len(),
+        card.example_queries.len()
+    );
     // The full-text verdict leads the report: it is the one line that is true of
     // the FILE rather than of the card, and it is the question `FILTER(CONTAINS)`
     // cannot answer for you — the same query returns the same rows either way.
@@ -727,7 +742,54 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
             "card says", "run says", "query", "rows", "bytes", "req", "ms"
         );
     }
-    for f in &findings {
+    print_findings(&findings);
+    if !example_findings.is_empty() {
+        println!(
+            "  -- curated example_queries ({}) — the publisher's, audited apart from the \
+             generated ones; a curated query makes no claim, so the card decides only what \
+             parses, scope and the predicate list can show",
+            example_findings.len()
+        );
+        print_findings(&example_findings);
+    }
+    if let Some(run) = &run {
+        println!(
+            "  == {} quer{} run, {} bytes in {} range request(s){}",
+            run.costs.len(),
+            if run.costs.len() == 1 { "y" } else { "ies" },
+            run.costs.iter().map(|c| c.bytes).sum::<u64>(),
+            run.costs.iter().map(|c| c.requests).sum::<u64>(),
+            match findings
+                .iter()
+                .filter_map(|f| f.observed.as_ref()?.recorded.as_ref())
+                .filter(|r| !r.agrees)
+                .count()
+            {
+                0 => String::new(),
+                n => format!("  — {n} disagree with the file's own build record"),
+            }
+        );
+        if !run.example_costs.is_empty() {
+            println!(
+                "  == {} curated quer{} run, {} bytes in {} range request(s)",
+                run.example_costs.len(),
+                if run.example_costs.len() == 1 {
+                    "y"
+                } else {
+                    "ies"
+                },
+                run.example_costs.iter().map(|c| c.bytes).sum::<u64>(),
+                run.example_costs.iter().map(|c| c.requests).sum::<u64>(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// One audit table: a line per finding, with the run beside the verdict when
+/// there was one.
+fn print_findings(findings: &[rete_core::card::Finding]) {
+    for f in findings {
         match &f.observed {
             None => println!(
                 "  {:<12} {:<14} {:<11} {}",
@@ -767,25 +829,6 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
             }
         }
     }
-    if let Some(run) = &run {
-        println!(
-            "  == {} quer{} run, {} bytes in {} range request(s){}",
-            run.costs.len(),
-            if run.costs.len() == 1 { "y" } else { "ies" },
-            run.costs.iter().map(|c| c.bytes).sum::<u64>(),
-            run.costs.iter().map(|c| c.requests).sum::<u64>(),
-            match findings
-                .iter()
-                .filter_map(|f| f.observed.as_ref()?.recorded.as_ref())
-                .filter(|r| !r.agrees)
-                .count()
-            {
-                0 => String::new(),
-                n => format!("  — {n} disagree with the file's own build record"),
-            }
-        );
-    }
-    Ok(())
 }
 
 /// The audit's `text_index` verdict as JSON: the measured signal, `null` when
@@ -817,6 +860,7 @@ pub(crate) struct AuditOptions {
     /// Run the queries instead of only reasoning about them.
     pub measure: bool,
     /// Measure only these ids — the way to spend 3 MB instead of 8 GB.
+    /// Curated `example_queries` are named `example-1`, `example-2`, …
     pub only: Vec<String>,
     /// Give up on a query once it has asked for this many MB (0 = no cap).
     pub max_mb: f64,
@@ -831,7 +875,11 @@ use crate::commands::buildinfo::COST_NOTE;
 /// One measurement run: what it went through, and what each query cost.
 pub(crate) struct CostRun {
     pub transport: String,
+    /// The generated starter queries' figures — what `--write-costs` stores.
     pub costs: Vec<crate::commands::buildinfo::QueryCost>,
+    /// The curated `example_queries`' figures, reported, never stored: the
+    /// build record's cost list is the starters'.
+    pub example_costs: Vec<crate::commands::buildinfo::QueryCost>,
     /// True when only a subset of the card's queries was run (`--only`).
     pub partial: bool,
     /// Ids whose run did not finish — a byte budget bit, or the query failed.
@@ -851,6 +899,7 @@ fn measure_card(
     card: &DatasetCard,
     build: Option<&super::buildinfo::BuildInfo>,
     findings: &mut [rete_core::card::Finding],
+    example_findings: &mut [rete_core::card::Finding],
     opts: &AuditOptions,
 ) -> anyhow::Result<CostRun> {
     use crate::commands::buildinfo::{measure_query, BudgetReader};
@@ -863,32 +912,47 @@ fn measure_card(
              against) — pass the local path or the http(s):// URL"
         );
     }
+    // The curated queries as runnable items, under the positional ids the
+    // audit gave them.
+    let curated: Vec<ExampleQuery> = card
+        .example_queries
+        .iter()
+        .enumerate()
+        .map(|(i, sparql)| ExampleQuery {
+            id: rete_core::card::example_query_id(i),
+            title: String::new(),
+            dimension: "curated".to_string(),
+            question: String::new(),
+            sparql: sparql.clone(),
+            tier: Tier::Index,
+            requires: Vec::new(),
+        })
+        .collect();
     // A mistyped id must not quietly narrow the run: the report would then
     // describe fewer queries than the caller asked about, and say nothing.
     let unknown: Vec<&str> = opts
         .only
         .iter()
         .map(String::as_str)
-        .filter(|id| !card.queries.iter().any(|q| &q.id == id))
+        .filter(|id| !card.queries.iter().chain(&curated).any(|q| &q.id == id))
         .collect();
     if !unknown.is_empty() {
         anyhow::bail!(
-            "no starter query matches --only {} (the card ships: {})",
+            "no query matches --only {} (the card ships: {})",
             unknown.join(", "),
             card.queries
                 .iter()
+                .chain(&curated)
                 .map(|q| q.id.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
     }
-    let wanted: Vec<&ExampleQuery> = card
-        .queries
-        .iter()
-        .filter(|q| opts.only.is_empty() || opts.only.iter().any(|id| id == &q.id))
-        .collect();
-    if wanted.is_empty() {
-        anyhow::bail!("this card ships no starter queries to measure");
+    let pick = |q: &&ExampleQuery| opts.only.is_empty() || opts.only.iter().any(|id| id == &q.id);
+    let wanted: Vec<&ExampleQuery> = card.queries.iter().filter(pick).collect();
+    let wanted_examples: Vec<&ExampleQuery> = curated.iter().filter(pick).collect();
+    if wanted.is_empty() && wanted_examples.is_empty() {
+        anyhow::bail!("this card ships no queries to measure");
     }
     let budget = if opts.max_mb > 0.0 {
         (opts.max_mb * (1u64 << 20) as f64) as u64
@@ -927,11 +991,14 @@ fn measure_card(
     };
 
     let mut costs = Vec::with_capacity(wanted.len());
+    let mut example_costs = Vec::with_capacity(wanted_examples.len());
     let mut failed = Vec::new();
-    for q in &wanted {
+    let starters = wanted.len();
+    for (n, q) in wanted.iter().chain(wanted_examples.iter()).enumerate() {
         let src = source.clone();
         let m = measure_query(move || Ok(BudgetReader::new(src, budget)), q)?;
-        if m.error.is_some() {
+        let is_starter = n < starters;
+        if m.error.is_some() && is_starter {
             failed.push(q.id.clone());
         }
         let outcome = match (&m.error, m.cost.rows, m.vacuous) {
@@ -939,6 +1006,11 @@ fn measure_card(
             (None, 0, _) => "empty",
             (None, _, true) => "vacuous",
             _ => "answers",
+        };
+        let findings: &mut [rete_core::card::Finding] = if is_starter {
+            findings
+        } else {
+            example_findings
         };
         if let Some(f) = findings.iter_mut().find(|f| f.id == q.id) {
             f.observed = Some(rete_core::card::Observation {
@@ -958,11 +1030,16 @@ fn measure_card(
                 }),
             });
         }
-        costs.push(m.cost);
+        if is_starter {
+            costs.push(m.cost);
+        } else {
+            example_costs.push(m.cost);
+        }
     }
     Ok(CostRun {
         transport,
         costs,
+        example_costs,
         partial: wanted.len() != card.queries.len(),
         failed,
     })
@@ -1040,6 +1117,237 @@ fn write_costs(
         queries: run.costs.clone(),
     });
     write_build_info_streaming(std::path::Path::new(path), &info.to_json_bytes())
+}
+
+/// What `rete recard` was asked to do.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RecardOptions {
+    /// The new file. Must not exist — a re-card writes a new file and never
+    /// over its input (AGENTS.md: build to a new path, then move it in).
+    pub output: String,
+    /// `--card-file` and the curated flags, exactly as `rete build` takes them.
+    pub card: CardArgs,
+    /// Carry the input card's curated fields verbatim instead.
+    pub keep_curated: bool,
+    /// Run the starter queries against the file and drop the ones that do not
+    /// answer within budget (`--no-card-costs` turns it off).
+    pub measure_costs: bool,
+    /// Cache budget for the derivation's lazy open, in MiB.
+    pub memory_budget_mb: u64,
+    /// Re-read the written file and check its content hash before moving it
+    /// into place.
+    pub verify: bool,
+}
+
+/// `rete recard` — give a finished `.rete` a new Dataset Card **without
+/// rebuilding it**.
+///
+/// The card is derived by streaming the file's own sorted sections
+/// ([`rete_core::card::derive_card_streaming`]) — the in-memory derivation
+/// `repyramid --card` uses holds every statement, ~80 M statements on a 48 GB
+/// machine, while this one holds a byte per subject — its starter queries are
+/// run against the file through the starter byte budget, and the file is then
+/// rewritten with only the card and the build record replaced
+/// ([`rete_core::format::rewrite_card`]): every other section byte for byte, the
+/// header's offsets fixed, the content hash recomputed (the card is inside it).
+///
+/// The curated half comes from `--card-file` and the curated flags, as
+/// `rete build --card-file` takes it, or — with `--keep-curated` — from the
+/// input's card, verbatim. With neither, an input card that carries curated
+/// fields is refused: a re-card never drops or edits a publisher's prose by
+/// omission.
+pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()> {
+    use crate::commands::buildinfo::{
+        builder_version, cost_context, keep_answering, measure_starter, now_rfc3339, BuildInfo,
+        QueryCosts, Recarded, BUILD_INFO_SCHEMA,
+    };
+    use crate::commands::range_source::LocalRangeReader;
+    use std::io::Write;
+
+    let started = std::time::Instant::now();
+    let out_path = std::path::Path::new(&opts.output);
+    if out_path.exists() {
+        anyhow::bail!(
+            "{}: already exists — re-card to a new path and move it in (and keep a dated \
+             recovery copy of whatever it replaces; see AGENTS.md)",
+            opts.output
+        );
+    }
+
+    // 1. What the file says about itself today: the CARD tier.
+    let reader = LocalRangeReader::open(input)?;
+    let file_len = rete_core::RangeReader::len(&reader);
+    let old = load_card_and_build_ranged(&reader)?;
+    let curated = curated_for_recard(old.card.as_ref(), opts)?;
+
+    // 2. The profile, streamed from the file's sections.
+    let budget = opts.memory_budget_mb.max(64) << 20;
+    let rete = crate::commands::range_source::open_local_ranged(input, Some(budget))?;
+    let derive_started = std::time::Instant::now();
+    let (mut card, report) = rete_core::card::derive_card_streaming(&rete, curated, &mut |phase| {
+        eprintln!(
+            "recard: {phase} ({:.0} s)",
+            derive_started.elapsed().as_secs_f64()
+        )
+    })
+    .map_err(|e| anyhow::anyhow!("{input}: {e}"))?;
+    drop(rete);
+    // The coherence verdict is about the data, which is unchanged: carry it.
+    if let Some(c) = old.card.as_ref().filter(|c| !c.coherence.is_empty()) {
+        card.coherence = c.coherence.clone();
+    }
+    eprintln!(
+        "recard: derived the profile of {} statements ({} subjects, {} literal objects, {} \
+         classes; class map {} MiB) in {:.0} s",
+        report.statements,
+        report.subjects,
+        report.literal_objects,
+        report.classes,
+        report.class_map_bytes >> 20,
+        derive_started.elapsed().as_secs_f64()
+    );
+
+    // 3. Run every starter query against the file, inside the starter budget.
+    let mut info = old.build.clone().unwrap_or(BuildInfo {
+        schema: BUILD_INFO_SCHEMA,
+        ..Default::default()
+    });
+    info.params.card_top_n = Some(CARD_TOP_N as u32);
+    info.query_costs = None;
+    info.dropped_queries = Vec::new();
+    if opts.measure_costs && !card.queries.is_empty() {
+        let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
+            std::sync::Arc::new(LocalRangeReader::open(input)?);
+        let transport = format!(
+            "local file {input}; cold lazy open per query; logical range reads, no block cache; \
+             reader fan-out {}; {} MiB budget per query past the open",
+            source.concurrency(),
+            rete_core::card::STARTER_MAX_BYTES >> 20
+        );
+        let mut measured = Vec::with_capacity(card.queries.len());
+        for q in &card.queries {
+            let m = measure_starter(source.clone(), q);
+            eprintln!(
+                "recard: {:<16} {:>7} row(s) {:>12} B {:>5} req {:>7} ms{}",
+                q.id,
+                m.cost.rows,
+                m.cost.bytes,
+                m.cost.requests,
+                m.cost.debug_ms,
+                m.useless
+                    .as_ref()
+                    .map(|w| format!("  <- {w}"))
+                    .unwrap_or_default()
+            );
+            measured.push(m);
+        }
+        let (kept, dropped) = keep_answering(&mut card, measured);
+        info.query_costs = Some(QueryCosts {
+            context: cost_context(&transport),
+            queries: kept,
+        });
+        info.dropped_queries = dropped;
+    } else if !opts.measure_costs {
+        eprintln!(
+            "--no-card-costs: the starter queries were NOT run, so nothing checked that they \
+             answer on this file"
+        );
+    }
+    info.recarded = Some(Recarded {
+        at: Some(now_rfc3339()),
+        by: Some(builder_version()),
+        from_content_hash: hex16(&old.header.content_hash),
+    });
+
+    // 4. Rewrite: the card and the build record replaced, the rest copied.
+    let meta = card.to_json_bytes();
+    let blob = info.to_json_bytes();
+    let tmp = std::path::PathBuf::from(format!("{}.recard-tmp", opts.output));
+    let copy_started = std::time::Instant::now();
+    let header = {
+        let file = std::fs::File::create(&tmp)
+            .map_err(|e| anyhow::anyhow!("creating {}: {e}", tmp.display()))?;
+        let mut out = std::io::BufWriter::with_capacity(8 << 20, file);
+        let mut last = 0u64;
+        let written = rete_core::format::rewrite_card(&reader, &mut out, &meta, &blob, &mut |n| {
+            if n - last >= 4 << 30 {
+                last = n;
+                eprintln!(
+                    "recard: copied {:.1} of {:.1} GB",
+                    n as f64 / 1e9,
+                    file_len as f64 / 1e9
+                );
+            }
+        });
+        let written = match written {
+            Ok(h) => h,
+            Err(e) => {
+                drop(out);
+                let _ = std::fs::remove_file(&tmp);
+                return Err(anyhow::anyhow!("rewriting {input}: {e}"));
+            }
+        };
+        out.flush()?;
+        out.into_inner()
+            .map_err(|e| anyhow::anyhow!("flushing {}: {e}", tmp.display()))?
+            .sync_all()?;
+        written
+    };
+    eprintln!(
+        "recard: wrote {} ({} B card, {} B build record) in {:.0} s",
+        tmp.display(),
+        meta.len(),
+        blob.len(),
+        copy_started.elapsed().as_secs_f64()
+    );
+    if opts.verify {
+        let check = LocalRangeReader::open(&tmp.to_string_lossy())?;
+        if !rete_core::verify_ranged(&check)? {
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::bail!("refusing to commit: the rewritten file does not verify");
+        }
+        eprintln!("recard: verified the new content hash");
+    }
+    std::fs::rename(&tmp, out_path)?;
+    println!(
+        "{} → {}: {} starter quer{} ({} dropped), content hash {} → {}, {:.0} s",
+        input,
+        opts.output,
+        card.queries.len(),
+        if card.queries.len() == 1 { "y" } else { "ies" },
+        info.dropped_queries.len(),
+        hex16(&old.header.content_hash),
+        hex16(&header.content_hash),
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
+/// The curated half of a re-card — see [`recard_cmd`].
+fn curated_for_recard(
+    old: Option<&DatasetCard>,
+    opts: &RecardOptions,
+) -> anyhow::Result<CardInput> {
+    if opts.keep_curated {
+        let Some(old) = old else {
+            anyhow::bail!("--keep-curated: the input has no card to keep the curated fields of");
+        };
+        return CardInput::from_card(old)
+            .normalize()
+            .map_err(|e| anyhow::anyhow!("the input card's curated fields: {e}"));
+    }
+    if opts.card.requested() {
+        return load_curated(&opts.card);
+    }
+    if old.is_some_and(|c| !CardInput::from_card(c).is_empty()) {
+        anyhow::bail!(
+            "the input's card carries curated fields (title, licence, description, example \
+             queries, …); pass --keep-curated to carry them verbatim, or --card-file with the \
+             fields to write (scripts/recard/card_tools.py curated lifts them) — a re-card does \
+             not drop a publisher's fields by omission"
+        );
+    }
+    Ok(CardInput::default())
 }
 
 /// JSON-quote a string for the one hand-built object above.

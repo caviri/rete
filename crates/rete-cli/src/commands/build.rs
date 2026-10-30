@@ -6,7 +6,6 @@
 
 use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
-use rete_core::card::{claim_of, Claim};
 use rete_core::ingest;
 
 /// Run the card's starter queries against the finished image and **remove the
@@ -45,52 +44,8 @@ fn drop_measured_empty_queries(
         if measured.len() == 1 { "y" } else { "ies" }
     );
 
-    let mut kept = Vec::with_capacity(measured.len());
-    let mut dropped = Vec::new();
-    for m in measured {
-        match m.useless {
-            None => kept.push(m.cost),
-            Some(why) => {
-                // Only a zero-row result can contradict a template: the
-                // non-emptiness claims are about row *count*, and
-                // `NonEmpty::Aggregate` says outright that the row's values may
-                // be unbound. So a vacuous row is news, not a broken promise —
-                // and inside this arm "useless but not vacuous" is exactly
-                // "measured zero rows".
-                let contradicts_claim = !m.vacuous && claim_of(&m.cost.id) == Claim::CannotBeEmpty;
-                dropped.push(buildinfo::DroppedQuery {
-                    id: m.cost.id,
-                    why,
-                    contradicts_claim,
-                });
-            }
-        }
-    }
-
+    let (kept, dropped) = buildinfo::keep_answering(&mut card, measured);
     if !dropped.is_empty() {
-        eprintln!(
-            "dropping {} starter quer{} the build measured as useless on this file:",
-            dropped.len(),
-            if dropped.len() == 1 { "y" } else { "ies" }
-        );
-        for d in &dropped {
-            eprintln!("  {:<14} {}", d.id, d.why);
-            if d.contradicts_claim {
-                // The static rule and the measurement disagree, and the
-                // measurement is the one that ran. A template that declares its
-                // emitted query cannot be empty and then measures zero is a bug
-                // in `queries.rs`, not a property of this dataset.
-                eprintln!(
-                    "  {:<14} ^ GENERATOR DEFECT: its template claims this query cannot come back \
-                     empty. Fix the rule in crates/rete-cli/src/commands/queries.rs.",
-                    ""
-                );
-            }
-        }
-        let dropped_ids: std::collections::BTreeSet<&str> =
-            dropped.iter().map(|d| d.id.as_str()).collect();
-        card.queries
-            .retain(|q| !dropped_ids.contains(q.id.as_str()));
         // The card is inside the content hash, so this is a new file identity —
         // correctly: the card is part of what the file says about itself. The
         // splice reproduces the writer's layout exactly, so the result is

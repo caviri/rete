@@ -54,6 +54,29 @@ pub(crate) struct BuildInfo {
     /// evidence outlives the terminal the build scrolled past.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_queries: Vec<DroppedQuery>,
+    /// Set when `rete recard` replaced this file's card instead of a rebuild.
+    /// Every other field then still describes the **build** that wrote the
+    /// data sections — they were copied byte for byte, so its timestamp,
+    /// builder and parameters are still the truth about them — except
+    /// `query_costs` / `dropped_queries` and `params.card_top_n`, which belong
+    /// to the new card and were measured by the re-card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recarded: Option<Recarded>,
+}
+
+/// When, by what, and from which file a card was replaced in place of a
+/// rebuild.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Recarded {
+    /// RFC 3339 UTC, like [`BuildInfo::built_at`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    /// The binary that re-carded it, e.g. `rete-cli 0.4.0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// The content hash (hex) of the file it was re-carded from — the identity
+    /// the data sections had before the card changed it.
+    pub from_content_hash: String,
 }
 
 /// The flags in force for this build. `command` names the CLI path taken.
@@ -198,6 +221,7 @@ pub(crate) fn new_build_info(params: BuildParams) -> BuildInfo {
         params,
         query_costs: None,
         dropped_queries: Vec::new(),
+        recarded: None,
     }
 }
 
@@ -263,19 +287,82 @@ impl RangeReader for ImageReader {
 /// that card over HTTP unguarded is an 8 GB download nobody asked for. Past the
 /// budget the read fails, the query fails with it, and the failure is reported
 /// **with the bytes spent**: "costs more than N MB" is itself a usable answer.
+///
+/// Two ways to count. [`new`](Self::new) charges from the first byte — what
+/// `card-audit --max-mb` promises a remote caller. [`after_open`](Self::after_open)
+/// charges only what the query reads once the file is open, which is what the
+/// starter budget means: opening a 26 GB file reads ~44 MB of section
+/// directories whatever is asked of it, a cost every client pays once per
+/// session and no starter query can change, so charging it to the query would
+/// make every starter on a large enough file "too expensive".
 pub(crate) struct BudgetReader<R> {
     inner: R,
+    state: std::sync::Arc<BudgetState>,
+}
+
+struct BudgetState {
     budget: u64,
+    /// Reads are refused once `spent` would pass this; `u64::MAX` until a
+    /// [`Leash`] arms it.
+    limit: std::sync::atomic::AtomicU64,
     spent: std::sync::atomic::AtomicU64,
+}
+
+/// Arms an [`BudgetReader::after_open`] budget: from the moment of the call,
+/// the reader serves at most `budget` more bytes.
+pub(crate) struct Leash(std::sync::Arc<BudgetState>);
+
+impl Leash {
+    pub(crate) fn arm(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let spent = self.0.spent.load(Relaxed);
+        self.0
+            .limit
+            .store(spent.saturating_add(self.0.budget), Relaxed);
+    }
 }
 
 impl<R: RangeReader> BudgetReader<R> {
     pub(crate) fn new(inner: R, budget: u64) -> Self {
         Self {
             inner,
-            budget,
-            spent: std::sync::atomic::AtomicU64::new(0),
+            state: std::sync::Arc::new(BudgetState {
+                budget,
+                limit: std::sync::atomic::AtomicU64::new(budget),
+                spent: std::sync::atomic::AtomicU64::new(0),
+            }),
         }
+    }
+
+    /// A budget of `budget` bytes that starts counting when the returned
+    /// [`Leash`] is armed — after the open, see the type note.
+    pub(crate) fn after_open(inner: R, budget: u64) -> (Self, Leash) {
+        let state = std::sync::Arc::new(BudgetState {
+            budget,
+            limit: std::sync::atomic::AtomicU64::new(u64::MAX),
+            spent: std::sync::atomic::AtomicU64::new(0),
+        });
+        (
+            Self {
+                inner,
+                state: state.clone(),
+            },
+            Leash(state),
+        )
+    }
+
+    /// Charged BEFORE the read, so a single oversized range cannot slip
+    /// through by being the one that would have crossed the line.
+    fn charge(&self, len: u64) -> std::io::Result<()> {
+        use std::sync::atomic::Ordering::Relaxed;
+        let spent = self.state.spent.fetch_add(len, Relaxed) + len;
+        if spent > self.state.limit.load(Relaxed) {
+            return Err(std::io::Error::other(format!(
+                "byte budget exhausted: this query wanted more than {} bytes",
+                self.state.budget
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -285,33 +372,12 @@ impl<R: RangeReader> RangeReader for BudgetReader<R> {
     }
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
-        // Charged BEFORE the read, so a single oversized range cannot slip
-        // through by being the one that would have crossed the line.
-        let spent = self
-            .spent
-            .fetch_add(len, std::sync::atomic::Ordering::Relaxed)
-            + len;
-        if spent > self.budget {
-            return Err(std::io::Error::other(format!(
-                "byte budget exhausted: this query wanted more than {} bytes",
-                self.budget
-            )));
-        }
+        self.charge(len)?;
         self.inner.read_at(offset, len)
     }
 
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
-        let want: u64 = ranges.iter().map(|&(_, l)| l).sum();
-        let spent = self
-            .spent
-            .fetch_add(want, std::sync::atomic::Ordering::Relaxed)
-            + want;
-        if spent > self.budget {
-            return Err(std::io::Error::other(format!(
-                "byte budget exhausted: this query wanted more than {} bytes",
-                self.budget
-            )));
-        }
+        self.charge(ranges.iter().map(|&(_, l)| l).sum())?;
         self.inner.read_many(ranges)
     }
 
@@ -443,10 +509,26 @@ fn grade(out: &QueryOutput) -> Graded {
 fn measure_one<R: RangeReader + Send + Sync + 'static>(
     reader: std::sync::Arc<CountingReader<R>>,
     q: &ExampleQuery,
+    leash: Option<Leash>,
 ) -> Measured {
     let start = std::time::Instant::now();
-    let graded = match Rete::open_ranged_lazy(reader.clone()) {
+    let open = Rete::open_ranged_lazy(reader.clone());
+    // The open is paid whatever the query; a starter budget counts from here.
+    if let (Ok(_), Some(l)) = (&open, &leash) {
+        l.arm();
+    }
+    let graded = match open {
         Ok(rete) => match eval_query(&rete, &q.sparql) {
+            // A lazy open turns a failed range read into an empty tile and a
+            // flag, so the result of a run whose reads failed — a byte budget
+            // ran out, a request errored — is a partial answer that looks
+            // complete. It is a failed run, and saying so is what makes
+            // "costs more than N MB" an answer rather than a wrong row count.
+            Ok(_) if rete.index_incomplete() => Graded::failed(format!(
+                "did not finish: a range read was refused after {} bytes (byte budget \
+                 exhausted, or the source failed)",
+                reader.bytes_read()
+            )),
             Ok(result) => grade(&result),
             Err(e) => Graded::failed(format!("failed to run: {e}")),
         },
@@ -477,7 +559,24 @@ where
     Ok(measure_one(
         std::sync::Arc::new(CountingReader::new(open()?)),
         q,
+        None,
     ))
+}
+
+/// Measure one **starter** query cold over `src`, inside the starter byte
+/// budget ([`rete_core::card::STARTER_MAX_BYTES`]) counted from the moment the
+/// file is open — what `rete build` and `rete recard` decide a card's queries
+/// on. The reported `bytes` still include the open, as every cost figure does.
+pub(crate) fn measure_starter<R: RangeReader + Send + Sync + 'static>(
+    src: R,
+    q: &ExampleQuery,
+) -> Measured {
+    let (reader, leash) = BudgetReader::after_open(src, rete_core::card::STARTER_MAX_BYTES);
+    measure_one(
+        std::sync::Arc::new(CountingReader::new(reader)),
+        q,
+        Some(leash),
+    )
 }
 
 /// Measure every starter query **cold** against the finished image: a fresh
@@ -493,19 +592,87 @@ where
 /// nothing extra — the query had to run to be costed — and it is the whole
 /// point: for a carded build, "does this query answer?" is measured, not
 /// reasoned about.
+///
+/// Every run goes through [`measure_starter`]'s budget of
+/// [`rete_core::card::STARTER_MAX_BYTES`] past the open: a starter query that
+/// asks for more is a query that does not belong in a card, and the run stops
+/// there rather than finishing it. That cap is what keeps this phase from being the build's
+/// memory peak — measuring the old unbounded starters against the
+/// OpenCitations sample peaked at 8.7 GiB, above the 7.3 GiB of serializing it.
 pub(crate) fn measure_query_costs(
     image: std::sync::Arc<Vec<u8>>,
     queries: &[ExampleQuery],
 ) -> Vec<Measured> {
     queries
         .iter()
-        .map(|q| {
-            measure_one(
-                std::sync::Arc::new(CountingReader::new(ImageReader(image.clone()))),
-                q,
-            )
-        })
+        .map(|q| measure_starter(ImageReader(image.clone()), q))
         .collect()
+}
+
+/// Sort a measurement into the figures to record and the queries to drop, and
+/// remove the dropped ones from `card` — the one decision `rete build` and
+/// `rete recard` both make once every starter query has been run.
+///
+/// A query is dropped when the run shows it is worthless on this file: it
+/// answered nothing, it answered rows that bind nothing, or it did not finish
+/// inside [`rete_core::card::STARTER_MAX_BYTES`]. Only the first can
+/// contradict a template — the non-emptiness claims are about row *count*;
+/// `NonEmpty::Aggregate` says outright that the row's values may be unbound,
+/// and a run that ran out of budget says the query is too expensive to be a
+/// starter, nothing about its rows. The claim is read off the body that
+/// shipped ([`rete_core::card::claim_of_query`]), since a template's bounded
+/// form claims less than its exact one.
+pub(crate) fn keep_answering(
+    card: &mut super::card::DatasetCard,
+    measured: Vec<Measured>,
+) -> (Vec<QueryCost>, Vec<DroppedQuery>) {
+    use rete_core::card::{claim_of_query, Claim};
+    let mut kept = Vec::with_capacity(measured.len());
+    let mut dropped = Vec::new();
+    for m in measured {
+        match m.useless {
+            None => kept.push(m.cost),
+            Some(why) => {
+                let sparql = card
+                    .queries
+                    .iter()
+                    .find(|q| q.id == m.cost.id)
+                    .map(|q| q.sparql.as_str())
+                    .unwrap_or_default();
+                let contradicts_claim = !m.vacuous
+                    && m.error.is_none()
+                    && claim_of_query(&m.cost.id, sparql) == Claim::CannotBeEmpty;
+                dropped.push(DroppedQuery {
+                    id: m.cost.id,
+                    why,
+                    contradicts_claim,
+                });
+            }
+        }
+    }
+    if !dropped.is_empty() {
+        eprintln!(
+            "dropping {} starter quer{} the measurement showed useless on this file:",
+            dropped.len(),
+            if dropped.len() == 1 { "y" } else { "ies" }
+        );
+        for d in &dropped {
+            eprintln!("  {:<14} {}", d.id, d.why);
+            if d.contradicts_claim {
+                // The static rule and the measurement disagree, and the
+                // measurement is the one that ran. A template that declares its
+                // emitted query cannot be empty and then measures zero is a bug
+                // in `card_queries.rs`, not a property of this dataset.
+                eprintln!(
+                    "  {:<14} ^ GENERATOR DEFECT: its template claims this query cannot come back                      empty. Fix the rule in crates/rete-core/src/card_queries.rs.",
+                    ""
+                );
+            }
+        }
+        let ids: std::collections::BTreeSet<&str> = dropped.iter().map(|d| d.id.as_str()).collect();
+        card.queries.retain(|q| !ids.contains(q.id.as_str()));
+    }
+    (kept, dropped)
 }
 
 /// Wrap the kept per-query figures in the context that makes them
@@ -633,6 +800,15 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
     };
     opt(&mut out, "built at", &info.built_at);
     opt(&mut out, "builder", &info.builder);
+    if let Some(r) = &info.recarded {
+        let _ = writeln!(
+            out,
+            "      re-carded  : {} by {} (from content hash {})",
+            r.at.as_deref().unwrap_or("?"),
+            r.by.as_deref().unwrap_or("?"),
+            r.from_content_hash
+        );
+    }
     let p = &info.params;
     if !p.is_empty() {
         let mut flags: Vec<String> = Vec::new();

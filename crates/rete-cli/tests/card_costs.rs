@@ -186,7 +186,7 @@ fn only_measures_the_queries_it_was_given() {
         .args(["--measure", "--only", "not-a-query"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("no starter query matches --only"));
+        .stderr(predicate::str::contains("no query matches --only"));
 }
 
 /// A byte budget stops a query rather than letting it download the file, and
