@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "rete-core"
-version = "0.3.7"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
@@ -2692,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "rete-file-explorer"
-version = "0.3.7"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "rete-core",
