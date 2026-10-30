@@ -198,6 +198,25 @@ printf '%s\n' '{"title":"Smoke","example_queries":["SELECT ?s WHERE { ?s ?p ?o }
 $B build "$T/g.nt" -o "$T/gcx.rete" --card-file "$T/gcx.json" >/dev/null 2>&1
 check "card-audit curated" "curated example_queries \(2\)" -- "$B" card-audit "$T/gcx.rete"
 check "card-audit invalid" "invalid +example-2"   -- "$B" card-audit "$T/gcx.rete"
+
+# The build record: how the file was made — flags, engine, inputs by NAME (never
+# a path) with their BLAKE3, counts, wall time per phase, peak RAM.
+check "record engine"   "engine +: rete-cli"        -- "$B" card "$T/gcx.rete"
+check "record command"  "command +: rete build --permutations 6 --named-graphs per-graph" -- "$B" card "$T/gcx.rete"
+check "record inputs"   "inputs +: g\.nt \(nt\), [0-9,]+ B, blake3 [0-9a-f]{16}" -- "$B" card "$T/gcx.rete"
+check "record counts"   "statements +: 5 read, 5 unique"       -- "$B" card "$T/gcx.rete"
+check "record run"      "wall time +: .* on [0-9]+ CPU"        -- "$B" card "$T/gcx.rete"
+check "record card file" '"name": ?"gcx\.json"'               -- "$B" card "$T/gcx.rete" --json
+check "record no path"  "^clean$" -- bash -c "$B card '$T/gcx.rete' --json | grep -q '$T' && echo leaked || echo clean"
+check "record prov"     '"prov:startedAtTime"'                -- "$B" card "$T/gcx.rete" --format jsonld
+$B build "$T/g.nt" -o "$T/gcxe.rete" --card-file "$T/gcx.json" --memory-budget-mb 64 >/dev/null 2>&1
+check "record spill"    "spill +: 1 chunk"                     -- "$B" card "$T/gcxe.rete"
+# RETE_BUILD_RECORD=reproducible drops the volatile facts: two builds, one file.
+for n in 1 2; do
+  RETE_BUILD_RECORD=reproducible SOURCE_DATE_EPOCH=1785801600 \
+    "$B" build "$T/g.nt" -o "$T/repro$n.rete" --card-file "$T/gcx.json" >/dev/null 2>&1
+done
+check "record reproducible" "^same$" -- bash -c "cmp -s '$T/repro1.rete' '$T/repro2.rete' && echo same || echo differ"
 check "card-audit curated json" '"example_findings"' -- "$B" card-audit "$T/gcx.rete" --json
 check "card-audit curated run" "1 curated query run" -- "$B" card-audit "$T/gcx.rete" --measure --only example-1
 # A card-only rewrite: the card and the build record change, nothing else.

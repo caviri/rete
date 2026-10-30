@@ -12,7 +12,7 @@ readme = "README.md"
 keywords = ["rdf", "sparql", "cli", "graph"]
 categories = ["command-line-utilities", "database"]
 publish = ["crates-io"]
-include = ["src/**", "tests/**", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**", "tests/**", "build.rs", "Cargo.toml", "README.md", "LICENSE"]
 
 [[bin]]
 name = "rete"
@@ -54,6 +54,9 @@ tiny_http = "0.12"
 ctrlc = "3"
 # SPARQL *Update* parsing for `rete serve` (queries go through rete-core).
 spargebra.workspace = true
+# BLAKE3 of each build input, hashed while it streams (the build record). Already
+# in the tree: rete-core's content hash is BLAKE3.
+blake3.workspace = true
 
 [dev-dependencies]
 assert_cmd = "2.0"
