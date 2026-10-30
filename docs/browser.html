@@ -633,6 +633,12 @@ before its explicit, pinned Binaryen transform.</p>
 <p>zstd's C encoder isn't used on wasm; decoding uses the pure-Rust <code>ruzstd</code>, so the
 browser reads compressed files fine. <code>rete-wasm</code> depends on <code>rete-core</code> with
 <code>--no-default-features</code>.</p>
+<p>In these packages, SPARQL <code>REGEX</code> classes are ASCII-only. <code>rete-wasm</code> keeps the
+small <code>regex-lite</code> engine by default, whose <code>\b</code>, <code>\w</code>, <code>\d</code> and <code>(?i)</code> know
+only ASCII, because the Unicode engine adds about 162 KB gzipped to a module
+every playground visitor downloads. The npm package <code>rete-graph</code> (and the
+Claude Desktop extension built on it) is compiled with <code>--features unicode-regex</code> and answers like the CLI. The table is in
+<a href="sparql.html">SPARQL support</a>.</p>
 <h2 id="stable-js-api">Stable JS API</h2>
 <p>The 1.0 stable surface is <code>Graph</code>, <code>RemoteGraph</code>, <code>build</code>, <code>query</code>,
 <code>query_sparql</code>, <code>header_ranges</code>, <code>summary_overview</code>, and the validation and

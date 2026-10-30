@@ -646,10 +646,13 @@ test, with full Unicode case folding under the <code>i</code> flag, in every bui
 other pattern goes to a regex engine, and which one depends on the build:</p>
 <table><thead><tr><th>Build</th><th>Engine</th><th><code>\b</code> <code>\w</code> <code>\d</code> and the <code>i</code> flag</th></tr></thead><tbody>
 <tr><td>native — the CLI, <code>rete serve</code>, Python, R, the File Explorer</td><td><code>regex</code> (feature <code>unicode-regex</code>, on by default)</td><td>Unicode: <code>REGEX(?name, "\\bsvobodová\\b", "i")</code> finds "Jitka Svobodová" and "SVOBODOVÁ"</td></tr>
-<tr><td>browser / Node (<code>rete-wasm</code>)</td><td><code>regex-lite</code>, unless built with <code>--features unicode-regex</code></td><td>ASCII only: no boundary after "á", so the same pattern misses both names (and finds one <em>inside</em> "Svobodováová"); <code>(?i)</code> does not fold "Á"</td></tr>
+<tr><td>the npm package <code>rete-graph</code> (<code>rete-wasm</code>, built by <code>clients/js/build-wasm.sh</code>) and the Claude Desktop extension <code>rete.mcpb</code> built on it</td><td><code>regex</code> (<code>rete-wasm</code> built with <code>--features unicode-regex</code>)</td><td>Unicode, as native</td></tr>
+<tr><td>the browser playground and the other packages <code>scripts/build_wasm.sh</code> builds (<code>docs/engine/</code>, <code>web/pkg*</code>, the release's browser bundle)</td><td><code>regex-lite</code> (<code>rete-wasm</code>'s default)</td><td>ASCII only: no boundary after "á", so the same pattern misses both names (and finds one <em>inside</em> "Svobodováová"); <code>(?i)</code> does not fold "Á"</td></tr>
 </tbody></table>
-<p>The browser engine keeps <code>regex-lite</code> for its size: the Unicode engine adds
-about 489 KB to the 4.74 MB wasm module (162 KB of its 1.33 MB gzipped).
+<p>The playground's engine keeps <code>regex-lite</code> for its size: the Unicode engine adds
+about 489 KB to the 4.74 MB wasm module (162 KB of its 1.33 MB gzipped), which
+every visitor downloads. The npm package and the extension run mostly in Node,
+where that size matters less than an answer that agrees with the CLI.
 Neither engine knows <code>\p{…}</code> classes. XPath regular expressions, which SPARQL
 names, have no <code>\b</code> at all; rete follows the Perl meaning, as Oxigraph does.</p>
 <h2 id="property-paths">Property paths</h2>

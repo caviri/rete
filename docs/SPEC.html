@@ -1269,8 +1269,8 @@ path.)</li>
 <li><strong>Rust core</strong>, compiled to both <strong>native</strong> (CLI, server-side) and <strong>WASM</strong>
 (browser client) — identical query code in both.</li>
 <li>Crates to lean on: <code>oxrdf</code> / <code>oxttl</code> / <code>spargebra</code> (RDF + SPARQL), <code>ureq</code>
-(CLI HTTP range reads), <code>zstd</code>/<code>ruzstd</code>, <code>blake3</code>, <code>regex</code> (native, Unicode) /
-<code>regex-lite</code> (wasm), <code>serde_json</code>,
+(CLI HTTP range reads), <code>zstd</code>/<code>ruzstd</code>, <code>blake3</code>, <code>regex</code> (native and the npm package, Unicode) /
+<code>regex-lite</code> (the playground wasm), <code>serde_json</code>,
 <code>rayon</code> behind native-only feature gates, and Louvain-style community
 detection.</li>
 <li><strong>Everything runs in Docker dev containers.</strong> No host execution. The container
