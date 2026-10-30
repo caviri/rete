@@ -26,9 +26,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::dictionary::Dictionary;
 use crate::file::{compress, decompress, ByteRange, FileError, CODEC_NONE};
-use crate::index::{
-    GraphIndex, GroupSizer, IndexPermutation, PermSet, ALL_PERMS, INDEX_TILE_BUDGET, NUM_PERMS,
-};
+use crate::index::{GraphIndex, GroupSizer, IndexPermutation, PermSet, ALL_PERMS, NUM_PERMS};
 use crate::reader::RangeReader;
 use crate::triples::{Triple, TripleBlockBuilder};
 use crate::varint::{read_uvarint, write_uvarint};
@@ -120,8 +118,10 @@ pub(crate) struct QuadTiler {
 }
 
 impl QuadTiler {
+    /// A tiler at the index tile budget in force (`--tile-kib`,
+    /// `crate::write_opts`; 64 KiB by default), like the default graph's tiles.
     pub(crate) fn new() -> Self {
-        Self::with_budget(INDEX_TILE_BUDGET)
+        Self::with_budget(crate::write_opts::tile_budget())
     }
 
     pub(crate) fn with_budget(budget: usize) -> Self {
