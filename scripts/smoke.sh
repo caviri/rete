@@ -118,6 +118,26 @@ check "stats dg"     "default-graph triples : 0"     -- "$B" stats "$T/d.rete"
 check "open eager"   "threshold=[0-9]+ [(].+[)] -> EAGER" -- env RETE_OPEN_DEBUG=1 "$B" stats "$T/g.rete"
 check "open lazy"    "RETE_LOCAL_LAZY_ABOVE_MB=0[)] -> LAZY" -- env RETE_OPEN_DEBUG=1 RETE_LOCAL_LAZY_ABOVE_MB=0 "$B" stats "$T/g.rete"
 
+echo "== label index + schema sections (kinds 8, 9) =="
+cat > "$T/lab.nt" <<EOF
+<http://ex/w1> <http://purl.org/dc/terms/title> "Acta Universitatis Agriculturae" .
+<http://ex/w1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Journal> .
+<http://ex/w1> <http://ex/publisher> <http://ex/p1> .
+<http://ex/p1> <http://xmlns.com/foaf/0.1/familyName> "Svobodová" .
+<http://ex/p1> <http://xmlns.com/foaf/0.1/givenName> "Jana" .
+EOF
+check "build --label-index"    "5 triples"         -- "$B" build "$T/lab.nt" -o "$T/lab.rete" --no-pyramid --label-index
+check "search label section"   "Acta Universitatis" -- "$B" search "$T/lab.rete" "acta u"
+check "search composed name"   "Svobodová, Jana"   -- "$B" search "$T/lab.rete" "svobodová"
+check "stats label index"      "label index: 2 labels" -- "$B" stats "$T/lab.rete"
+check "stats schema, no pyramid" "planner stats"   -- "$B" stats "$T/lab.rete"
+check "summary schema section" "SCHEMA section"    -- "$B" summary "$T/lab.rete"
+check "verify sections"        "OK|matches"        -- "$B" verify "$T/lab.rete"
+check "no label index"         "no label index"    -- bash -c "$B search '$T/g.rete' ali 2>&1"
+check "memory-bounded labels"  "triples|quads"     -- "$B" build "$T/lab.nt" -o "$T/labx.rete" --memory-budget-mb 64 --label-index
+check "external = in-memory"   "^same$"            -- bash -c "cmp -s '$T/lab.rete' '$T/labx.rete' && echo same || echo differ"
+check "card label signal"      '"entries": ?2' -- bash -c "$B build '$T/lab.nt' -o '$T/labc.rete' --label-index --card >/dev/null 2>&1; $B card '$T/labc.rete' --json"
+
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
 check "card build"  "dataset card"                  -- bash -c "$B build '$T/g.nt' -o '$T/gc2.rete' --card 2>&1"
@@ -322,6 +342,7 @@ check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http
 check "why-url"     "index_permutation|POS|tile" -- "$B" why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
 # Same answer with the parallel batches off (one range at a time) and on.
 check "sparql-url seq" "Bob|solution" -- env RETE_HTTP_CONCURRENCY=1 RETE_HTTP_RETRIES=0 "$B" sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "search-url label index" "Svobodová, Jana" -- "$B" search-url "http://127.0.0.1:8099/lab.rete" "svob"
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="

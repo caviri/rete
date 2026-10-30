@@ -143,10 +143,11 @@ enum Command {
         no_pyramid: bool,
         /// Community algorithm for the pyramid: `louvain` (default — topological
         /// modularity, single-threaded, byte-identical) or `types` (partition by
-        /// `rdf:type` — deterministic, parallelizable, self-naming communities, and
-        /// it still emits the planner's `query_stats`; falls back to louvain when
-        /// the graph is untyped). `types` makes a pyramid feasible on graphs too
-        /// large for the single-threaded Louvain build.
+        /// `rdf:type` — deterministic, parallelizable, self-naming communities;
+        /// falls back to louvain when the graph is untyped). `types` makes a
+        /// pyramid feasible on graphs too large for the single-threaded Louvain
+        /// build. Neither decides the labels or the schema: those have sections
+        /// of their own (`--label-index`, `--no-schema`).
         #[arg(long = "pyramid-algo", value_parser = ["louvain", "types"], default_value = "louvain")]
         pyramid_algo: String,
         /// Build a **full-text index** over the literals: every string-literal
@@ -155,9 +156,25 @@ enum Command {
         /// section (off by default; the index can be large on text-heavy graphs).
         #[arg(long = "text-index")]
         text_index: bool,
-        /// Override the predicate that types subjects with classes for the schema
-        /// pyramid (default: `rdf:type`, else auto-detected). Use it where
-        /// `rdf:type` is structural noise — e.g. Wikidata's `wdt:P31`:
+        /// Build a **label index** (a LABEL_INDEX section, kind 8): the display
+        /// label of every labelled subject — `rdfs:label`, `skos:prefLabel`/
+        /// `altLabel`, `foaf:name`, `dc`/`dcterms:title`, `schema:name`, and
+        /// for people with only given/family names `"family, given"` — sorted
+        /// for `rete search <prefix>`. No cap; a remote prefix search reads a
+        /// few small ranges. Works with `--no-pyramid` and `--memory-budget-mb`.
+        /// Off by default: without it the file has no label index at all.
+        #[arg(long = "label-index")]
+        label_index: bool,
+        /// Leave out the **SCHEMA section** (kind 9) — the class hierarchy,
+        /// level rollups, coherence axioms, the planner's `query_stats` and the
+        /// characteristic sets, written by every build by default (a few
+        /// kilobytes, computed without the pyramid).
+        #[arg(long = "no-schema")]
+        no_schema: bool,
+        /// Override the predicate that types subjects with classes for the
+        /// schema (default: `rdf:type`; the pyramid's descriptors also fall back
+        /// to auto-detection). Use it where `rdf:type` is structural noise —
+        /// e.g. Wikidata's `wdt:P31`:
         /// `--type-predicate http://www.wikidata.org/prop/direct/P31`.
         #[arg(long = "type-predicate")]
         type_predicate: Option<String>,
@@ -197,7 +214,8 @@ enum Command {
         /// this many MiB of RAM by cutting the input into disk-spilled chunks
         /// and merging them (the budget decides the number of chunks and the
         /// external-sort run sizes). For graphs too large for the in-RAM build.
-        /// Output is byte-identical to a standard `--no-pyramid` build.
+        /// Output is byte-identical to a standard `--no-pyramid` build, the
+        /// SCHEMA section and `--label-index` included.
         /// Named graphs are carried through the same spill (the graph leads the
         /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
         /// Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or not — RDF/XML
@@ -761,6 +779,11 @@ enum Command {
         /// TEXT_INDEX section; same semantics as `build --text-index`.
         #[arg(long = "text-index")]
         text_index: bool,
+        /// Add a LABEL_INDEX section (same semantics as `build --label-index`).
+        /// An input that already has one keeps it either way. The rebuilt file
+        /// always carries a SCHEMA section.
+        #[arg(long = "label-index")]
+        label_index: bool,
         /// Embed a **Dataset Card** in the rebuilt file (same flags as `build`).
         #[arg(long)]
         card: bool,
@@ -1371,6 +1394,8 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             no_pyramid,
             pyramid_algo,
             text_index,
+            label_index,
+            no_schema,
             type_predicate,
             card,
             card_file,
@@ -1386,6 +1411,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             strict,
             quoted_triple_syntax,
         } => {
+            let sections = commands::build::BuildSections {
+                label_index,
+                schema: !no_schema,
+            };
             let perms = match permutations.as_str() {
                 "3" => rete_core::PermSet::CORE,
                 _ => rete_core::PermSet::ALL,
@@ -1415,6 +1444,8 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     perms,
                     strict,
                     surface,
+                    type_predicate.as_deref(),
+                    sections,
                 )
             } else {
                 commands::build::build(
@@ -1433,6 +1464,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     perms,
                     strict,
                     surface,
+                    sections,
                 )
             }
         }
@@ -1630,6 +1662,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             type_predicate,
             pyramid_algo,
             text_index,
+            label_index,
             card,
             card_file,
             title,
@@ -1652,6 +1685,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 description,
                 created,
             },
+            label_index,
         ),
         Command::Query {
             file,

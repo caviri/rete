@@ -8,6 +8,53 @@ use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
 use rete_core::ingest;
 
+/// The optional sections added after the generation-1 freeze that a build
+/// writes: the LABEL_INDEX (kind 8, `--label-index`) and the SCHEMA (kind 9,
+/// on unless `--no-schema`). Whatever is chosen, `rete build` keeps the labels
+/// and the schema out of the pyramid-meta, which carries only the community
+/// summary and descriptors.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BuildSections {
+    /// `--label-index`.
+    pub label_index: bool,
+    /// Not `--no-schema`.
+    pub schema: bool,
+}
+
+impl Default for BuildSections {
+    /// What `rete build` writes with neither flag: the SCHEMA section, no
+    /// label index.
+    fn default() -> Self {
+        BuildSections {
+            label_index: false,
+            schema: true,
+        }
+    }
+}
+
+impl BuildSections {
+    /// The in-memory assembly options for these sections.
+    fn assemble_options<'a>(
+        self,
+        with_pyramid: bool,
+        with_text_index: bool,
+        type_override: Option<&'a str>,
+        algo: rete_core::PyramidAlgo,
+        perms: rete_core::PermSet,
+    ) -> ingest::AssembleOptions<'a> {
+        ingest::AssembleOptions {
+            with_pyramid,
+            with_text_index,
+            type_override,
+            algo,
+            perms,
+            pyramid_layout: rete_core::PyramidLayout::CommunityOnly,
+            label_index: self.label_index,
+            schema: self.schema,
+        }
+    }
+}
+
 /// Run the card's starter queries against the finished image and **remove the
 /// ones the run proves worthless**, returning the (possibly re-carded) image
 /// and the rows to record.
@@ -83,6 +130,7 @@ fn attach_build_record(
     reason: bool,
     pyramid_algo: rete_core::PyramidAlgo,
     measure_costs: bool,
+    sections: BuildSections,
 ) -> anyhow::Result<Vec<u8>> {
     let header = rete_core::Header::from_bytes(&bytes)?;
     let mut info = buildinfo::new_build_info(buildinfo::BuildParams {
@@ -90,6 +138,8 @@ fn attach_build_record(
         format: format.map(str::to_string),
         no_pyramid,
         text_index,
+        label_index: sections.label_index,
+        no_schema: !sections.schema,
         materialize,
         reason,
         pyramid_algo: if no_pyramid {
@@ -399,7 +449,10 @@ pub(crate) fn build(
     perms: rete_core::PermSet,
     strict: bool,
     surface: ingest::QuotedTripleSurface,
+    sections: BuildSections,
 ) -> anyhow::Result<()> {
+    let opts =
+        sections.assemble_options(!no_pyramid, text_index, type_predicate, pyramid_algo, perms);
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
     // materializing every parsed quad. Peak RAM drops from the (huge, heavily
@@ -459,39 +512,34 @@ pub(crate) fn build(
             }
             Ok(())
         };
-        let (bytes, stats) = ingest::assemble_dataset_streaming_with_perms(
-            stream,
-            !no_pyramid,
-            text_index,
-            type_predicate,
-            pyramid_algo,
-            perms,
-            |stats, dict, triples| match curated {
-                Some(curated) => {
-                    // Derive NOW (the dictionary and id-triples are resident and
-                    // about to be consumed), stamp the counts LATER: the number
-                    // of quads the file actually holds is only known once the
-                    // indexes have deduplicated the input, and a card that
-                    // reports the ingested count instead over-states every
-                    // dataset built from overlapping harvest pages.
-                    let card = card::derive_card_encoded(
-                        dict,
-                        triples,
-                        stats.statements as u64,
-                        stats.terms as u64,
-                        stats.named_graphs as u64,
-                        curated,
-                    );
-                    rete_core::ingest::DeferredMetadata::new(move |counts| {
-                        let blob = card.with_final_counts(counts).to_json_bytes();
-                        eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                        blob
-                    })
+        let (bytes, stats) =
+            ingest::assemble_dataset_streaming_opts(stream, &opts, |stats, dict, triples| {
+                match curated {
+                    Some(curated) => {
+                        // Derive NOW (the dictionary and id-triples are resident and
+                        // about to be consumed), stamp the counts LATER: the number
+                        // of quads the file actually holds is only known once the
+                        // indexes have deduplicated the input, and a card that
+                        // reports the ingested count instead over-states every
+                        // dataset built from overlapping harvest pages.
+                        let card = card::derive_card_encoded(
+                            dict,
+                            triples,
+                            stats.statements as u64,
+                            stats.terms as u64,
+                            stats.named_graphs as u64,
+                            curated,
+                        );
+                        rete_core::ingest::DeferredMetadata::new(move |counts| {
+                            let blob = card.with_final_counts(counts).to_json_bytes();
+                            eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                            blob
+                        })
+                    }
+                    None => rete_core::ingest::DeferredMetadata::none(),
                 }
-                None => rete_core::ingest::DeferredMetadata::none(),
-            },
-        )
-        .map_err(|e| ingest_error(None, e))?;
+            })
+            .map_err(|e| ingest_error(None, e))?;
         let bytes = if card_requested {
             attach_build_record(
                 bytes,
@@ -503,6 +551,7 @@ pub(crate) fn build(
                 false,
                 pyramid_algo,
                 !no_card_costs,
+                sections,
             )?
         } else {
             bytes
@@ -572,14 +621,8 @@ pub(crate) fn build(
         None
     };
     let card_requested = curated.is_some();
-    let (bytes, stats) = ingest::assemble_dataset_with_perms(
-        quads,
-        !no_pyramid,
-        text_index,
-        type_predicate,
-        pyramid_algo,
-        perms,
-        |stats, quads| match curated {
+    let (bytes, stats) =
+        ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
             Some(curated) => {
                 let mut dataset_card = card::derive_card(
                     quads,
@@ -599,8 +642,7 @@ pub(crate) fn build(
                 })
             }
             None => rete_core::ingest::DeferredMetadata::none(),
-        },
-    );
+        });
     let bytes = if card_requested {
         attach_build_record(
             bytes,
@@ -612,6 +654,7 @@ pub(crate) fn build(
             reason,
             pyramid_algo,
             !no_card_costs,
+            sections,
         )?
     } else {
         bytes
@@ -625,7 +668,9 @@ pub(crate) fn build(
 /// `rete build --memory-budget-mb <N>`: the **memory-bounded external build** —
 /// chunk the input to disk, merge, and stream the final file, holding roughly the
 /// budget in RAM regardless of graph size (`rete_core::extbuild`). Output is
-/// byte-identical to a standard `--no-pyramid` build of the same input.
+/// byte-identical to a standard `--no-pyramid` build of the same input, the
+/// SCHEMA section and `--label-index` included (their passes are external sorts
+/// sized from the same budget).
 ///
 /// Named graphs are supported: the graph ordinal leads the external sort key, so
 /// each graph comes out as one contiguous run and is indexed from that run alone
@@ -651,6 +696,8 @@ pub(crate) fn build_external_cmd(
     perms: rete_core::PermSet,
     strict: bool,
     surface: ingest::QuotedTripleSurface,
+    type_predicate: Option<&str>,
+    sections: BuildSections,
 ) -> anyhow::Result<()> {
     if materialize || reason {
         anyhow::bail!(
@@ -713,6 +760,8 @@ pub(crate) fn build_external_cmd(
             command: Some("build --memory-budget-mb".to_string()),
             format: format.map(str::to_string),
             no_pyramid: true,
+            label_index: sections.label_index,
+            no_schema: !sections.schema,
             memory_budget_mb: Some(memory_budget_mb),
             ..Default::default()
         })
@@ -779,6 +828,9 @@ pub(crate) fn build_external_cmd(
             }),
             build_info,
             perms,
+            label_index: sections.label_index,
+            schema: sections.schema,
+            type_override: type_predicate.map(str::to_string),
         },
     )
     .map_err(|e| match e {
@@ -820,6 +872,7 @@ pub(crate) fn repyramid(
     type_predicate: Option<&str>,
     pyramid_algo: rete_core::PyramidAlgo,
     card_args: CardArgs,
+    label_index: bool,
 ) -> anyhow::Result<()> {
     let bytes = std::fs::read(input)?;
     let rete = rete_core::Rete::open(&bytes)?;
@@ -836,6 +889,12 @@ pub(crate) fn repyramid(
             perms.names().join(", ")
         );
     }
+    // The same rule for the label index: kept when the input has one, added
+    // with `--label-index`. The SCHEMA section is always written, as by `build`.
+    let sections = BuildSections {
+        label_index: label_index || rete.has_label_index(),
+        schema: true,
+    };
     // The decoded graph owns its sections, so the raw file image is done — free
     // it before building so the (large) assembly has the headroom.
     drop(bytes);
@@ -861,14 +920,9 @@ pub(crate) fn repyramid(
         None
     };
     let card_requested = curated.is_some();
-    let (out_bytes, stats) = ingest::assemble_dataset_with_perms(
-        quads,
-        true,
-        text_index,
-        type_predicate,
-        pyramid_algo,
-        perms,
-        |stats, quads| match curated {
+    let opts = sections.assemble_options(true, text_index, type_predicate, pyramid_algo, perms);
+    let (out_bytes, stats) =
+        ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
             Some(curated) => {
                 let card = card::derive_card(
                     quads,
@@ -883,8 +937,7 @@ pub(crate) fn repyramid(
                 })
             }
             None => rete_core::ingest::DeferredMetadata::none(),
-        },
-    );
+        });
     let out_bytes = if card_requested {
         attach_build_record(
             out_bytes,
@@ -896,6 +949,7 @@ pub(crate) fn repyramid(
             false,
             pyramid_algo,
             true,
+            sections,
         )?
     } else {
         out_bytes
@@ -955,6 +1009,7 @@ mod tests {
             rete_core::PermSet::ALL,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1146,6 +1201,7 @@ mod tests {
                 rete_core::PermSet::ALL,
                 false,
                 ingest::QuotedTripleSurface::default(),
+                BuildSections::default(),
             )
             .unwrap();
             std::fs::read(out).unwrap()
@@ -1240,6 +1296,7 @@ mod tests {
             rete_core::PermSet::ALL,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1279,6 +1336,7 @@ mod tests {
             rete_core::PermSet::ALL,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
 
@@ -1304,6 +1362,7 @@ mod tests {
             rete_core::PermSet::ALL,
             false,
             ingest::QuotedTripleSurface::default(),
+            BuildSections::default(),
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();

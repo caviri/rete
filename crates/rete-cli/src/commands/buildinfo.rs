@@ -91,6 +91,12 @@ pub(crate) struct BuildParams {
     pub no_pyramid: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub text_index: bool,
+    /// `--label-index`: a LABEL_INDEX section (kind 8) was written.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub label_index: bool,
+    /// `--no-schema`: the SCHEMA section (kind 9) was left out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_schema: bool,
     /// `--materialize`: OWL RL/RDFS entailments were baked into the file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub materialize: bool,

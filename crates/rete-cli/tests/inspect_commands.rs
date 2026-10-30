@@ -348,10 +348,18 @@ fn summary_schema_search_and_repyramid_paths_are_covered() {
         ),
     );
     let typed = fixture.path("typed.rete");
+    // Labels have their own section now: without `--label-index` a build has
+    // no label index at all, pyramid or not.
     common::build(
         &typed_source,
         &typed,
-        &["--text-index", "--card", "--title", "Typed fixture"],
+        &[
+            "--text-index",
+            "--label-index",
+            "--card",
+            "--title",
+            "Typed fixture",
+        ],
     );
 
     for (command, expected) in [

@@ -113,9 +113,13 @@ pub(crate) fn merge_cmd(
     // `--permutations` of its own — it consolidates shards, it does not
     // re-decide how they were built.
     let mut perms_bits = rete_core::PermSet::CORE.bits();
+    // Likewise the label index: kept when any input carries one. The merged
+    // file always carries a SCHEMA section, as `rete build` writes.
+    let mut label_index = false;
     for path in inputs {
         let rete = crate::commands::range_source::open_local(path)?;
         perms_bits |= rete.header().perms.bits();
+        label_index |= rete.has_label_index();
     }
 
     let curated = if card_args.requested() {
@@ -190,6 +194,9 @@ pub(crate) fn merge_cmd(
             }),
             build_info,
             perms,
+            label_index,
+            schema: true,
+            type_override: None,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

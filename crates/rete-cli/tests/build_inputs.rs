@@ -368,3 +368,45 @@ fn estimate_reads_gzipped_turtle() {
         .success()
         .stdout(predicates::str::contains("statements"));
 }
+
+/// `--label-index` and the default SCHEMA section are part of the external
+/// build's byte-identity promise: the memory-bounded build computes both with
+/// external sorts and must write exactly the in-RAM build's bytes.
+#[test]
+fn external_build_with_label_index_matches_in_ram() {
+    let f = fixture();
+    let nt = "<http://ex/w1> <http://purl.org/dc/terms/title> \"Acta  Universitatis\" .\n\
+              <http://ex/w1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Journal> .\n\
+              <http://ex/w1> <http://ex/editor> <http://ex/p1> .\n\
+              <http://ex/p1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Person> .\n\
+              <http://ex/p1> <http://xmlns.com/foaf/0.1/familyName> \"Svobodová\" .\n\
+              <http://ex/p1> <http://xmlns.com/foaf/0.1/givenName> \"Jana\" .\n\
+              <http://ex/Journal> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex/Venue> .\n";
+    let src = f.write("l.nt", nt);
+    let (out_ext, out_ram) = (f.path("ext.rete"), f.path("ram.rete"));
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--memory-budget-mb", "64", "--label-index", "-o"])
+        .arg(&out_ext)
+        .assert()
+        .success();
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--no-pyramid", "--label-index", "-o"])
+        .arg(&out_ram)
+        .assert()
+        .success();
+    let ext = std::fs::read(&out_ext).unwrap();
+    assert_eq!(ext, std::fs::read(&out_ram).unwrap());
+    let h = rete_core::Header::from_bytes(&ext).unwrap();
+    assert!(h.label_index_section().is_some() && h.schema_section().is_some());
+    rete()
+        .args(["search"])
+        .arg(&out_ext)
+        .arg("svob")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Svobodová, Jana"));
+}
