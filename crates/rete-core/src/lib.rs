@@ -36,6 +36,7 @@ pub mod dict;
 pub mod dictionary;
 #[doc(hidden)]
 pub mod extbuild;
+mod extbuild_remap;
 mod extbuild_sections;
 mod extsort;
 #[doc(hidden)]

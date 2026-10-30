@@ -19,10 +19,12 @@
 //!        └─ chunk K: …
 //! merge:  k-way term merge over all chunks
 //!           → global front-coded dict sections (streamed to disk)
-//!           → per-chunk id remap tables (local id → global id)
+//!           → per-chunk id remap tables (local id → global id), appended to
+//!             disk as the merge reaches each local id (`extbuild_remap`)
 //!           → k-way merge of the graph-name files → global graph ordinals
-//! remap:  each chunk's default triples remapped to global ids → global.tri
-//!         each chunk's named quads remapped → global.qtri (graph ordinal first)
+//! remap:  one chunk's remap tables loaded at a time:
+//!         its default triples remapped to global ids → global.tri
+//!         its named quads remapped → global.qtri (graph ordinal first)
 //! index:  per permutation: budget-sized sorted runs → k-way merge (dedup)
 //!           → streaming tiler → independently compressed tiles on disk
 //! named:  external sort of global.qtri by (g, s, p, o) — so every graph is one
@@ -35,9 +37,26 @@
 //!           footer, hashed incrementally
 //! ```
 //!
-//! Peak RAM ≈ max(one chunk's working set, remap tables + merge buffers, one
-//! sort run, one named graph's index) — all sized from `memory_budget`, never
-//! from the dataset.
+//! Peak RAM ≈ max(one chunk's working set, the merge's read and write buffers,
+//! one chunk's remap tables, one sort run, one named graph's index) — all
+//! sized from `memory_budget`, never from the dataset:
+//!
+//! - a chunk is sealed at half the budget; its remap tables, 4 B per local id,
+//!   are at most a quarter of that (`extbuild_remap`);
+//! - the merge reads every chunk's term files at once and appends to every
+//!   chunk's remap files at once, so those buffers shrink as the chunk count
+//!   grows: an eighth and a sixteenth of the budget, floored at 64 KiB per
+//!   reader and 4 KiB per writer;
+//! - a dictionary section's restart offsets (8 B per 16 terms) and chunk
+//!   directory are spilled too, and its header streamed from them;
+//! - a sort run holds a quarter of the budget in records (the text index's
+//!   vectors may grow to half);
+//! - what does grow with the data are the tile directories, about 30 B per
+//!   64 KiB tile — tens of MB at billions of statements.
+//!
+//! Up to 0.4.0 every chunk's remap tables stayed resident from the merge to
+//! the end of the remap, 4 B per chunk-local id: 15.0 GB at 1.73 B chunk-local
+//! terms, which capped one OpenCitations Meta build at half the graph.
 //!
 //! ## Named graphs
 //!
@@ -82,6 +101,9 @@ use std::path::{Path, PathBuf};
 use crate::build_trace::{self as trace, note_merge, Phase};
 use crate::dict::env_restart_interval;
 
+use crate::extbuild_remap::{
+    remap_buf_bytes, role_only_id, shared_id, RemapStore, RemapWriter, Seg, SegCounts,
+};
 use crate::extbuild_sections::{ExtLabels, ExtSchema};
 use crate::index::GroupSizer;
 use crate::ingest::{BuildStats, GraphLayout, IngestError, RawQuad};
@@ -284,7 +306,7 @@ where
 
     // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
     let schema_preds = crate::extbuild_sections::schema_predicates(opts.type_override.as_deref());
-    let mut merged = merge_dictionaries_with(&tmp, &chunks, &schema_preds)?;
+    let (merged, remaps) = merge_dictionaries_with(&tmp, &chunks, &schema_preds, budget)?;
     if let Some(x) = ext_schema.as_mut() {
         x.set_merge_facts(&merged.schema_facts);
     }
@@ -299,82 +321,24 @@ where
     }
 
     // ---- Phase 3: remap chunk triples to global ids --------------------------
-    let remaps = std::mem::take(&mut merged.remaps);
     let global_tri = tmp.path("global.tri");
     let global_qtri = tmp.path("global.qtri");
-    {
-        let mut out = BufWriter::new(File::create(&global_tri)?);
-        // The named-quad spill is opened only when the input actually carries
-        // named graphs, so a default-graph build writes and sorts exactly the
-        // bytes it did before quads existed here.
-        let mut qout = if has_named {
-            Some(BufWriter::new(File::create(&global_qtri)?))
-        } else {
-            None
-        };
-        if let Some(text) = text.as_mut() {
-            text.begin_remap(tmp.path("global.tok"))?;
-        }
-        for (ci, chunk) in chunks.iter().enumerate() {
-            let maps = &remaps[ci];
-            // The chunk's literal words, onto the same global subject ids.
-            if let Some(text) = text.as_mut() {
-                text.remap_chunk(&tmp.path(&format!("c{ci}.tok")), &maps.subj)?;
-            }
-            let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
-            let mut buf = [0u8; 12];
-            loop {
-                match rd.read_exact(&mut buf) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                    Err(e) => return Err(e.into()),
-                }
-                let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                let gs = maps.subj[(s - 1) as usize];
-                let gp = maps.pred[(p - 1) as usize];
-                let go = maps.obj[(o - 1) as usize];
-                out.write_all(&gs.to_le_bytes())?;
-                out.write_all(&gp.to_le_bytes())?;
-                out.write_all(&go.to_le_bytes())?;
-                if let Some(x) = ext_schema.as_mut() {
-                    x.tee(gs, gp, go)?;
-                }
-            }
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri")));
-            if chunk.quad_count > 0 {
-                let qout = qout
-                    .as_mut()
-                    .ok_or(ExtBuildError::Internal("named quads without a spill"))?;
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri")))?);
-                let mut buf = [0u8; 16];
-                loop {
-                    match rd.read_exact(&mut buf) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(e) => return Err(e.into()),
-                    }
-                    let g = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                    let s = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                    let p = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                    let o = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-                    // Quad index: the graph is a subject id; else an ordinal.
-                    let gmap = if quad_layout { &maps.subj } else { &maps.graph };
-                    qout.write_all(&gmap[(g - 1) as usize].to_le_bytes())?;
-                    qout.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
-                    qout.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
-                    qout.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
-                }
-            }
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.qtri")));
-        }
-        out.flush()?;
-        if let Some(mut q) = qout {
-            q.flush()?;
-        }
+    if let Some(text) = text.as_mut() {
+        text.begin_remap(tmp.path("global.tok"))?;
     }
-    drop(remaps); // free the remap tables before the sort phase
+    // The named-quad spill is opened only when the input actually carries
+    // named graphs, so a default-graph build writes and sorts exactly the
+    // bytes it did before quads existed here.
+    remap_chunks(
+        &tmp,
+        &chunks,
+        &remaps,
+        quad_layout,
+        &global_tri,
+        has_named.then_some(global_qtri.as_path()),
+        text.as_mut(),
+        ext_schema.as_mut(),
+    )?;
     note_scratch(&tmp);
     trace::lap(Phase::Encode);
 
@@ -631,6 +595,15 @@ struct ChunkInfo {
     graph_terms: u32,
 }
 
+impl ChunkInfo {
+    /// Local ids per remap segment ([`Seg`]): the section files' term counts,
+    /// then the graph names.
+    fn seg_counts(&self) -> SegCounts {
+        let [shared, subj, obj, pred] = self.section_terms;
+        [shared, subj, obj, pred, self.graph_terms]
+    }
+}
+
 struct Chunker<'a> {
     tmp: &'a TmpDir,
     chunk_budget: u64,
@@ -884,23 +857,12 @@ impl<'a> Chunker<'a> {
 // Phase 2: global dictionary merge
 // ---------------------------------------------------------------------------
 
-/// Per-chunk id remap tables: local id (1-based, per space) → global id.
-struct ChunkRemap {
-    subj: Vec<u32>,
-    obj: Vec<u32>,
-    pred: Vec<u32>,
-    /// chunk-local graph rank → global graph ordinal (empty when the chunk saw
-    /// no named graphs)
-    graph: Vec<u32>,
-}
-
 struct MergedDict {
     /// The four chunked-encoded dict section payloads, spilled to tmp files
     /// (shared, subjects, objects, predicates — the container order).
     section_files: [SectionFile; 4],
     term_count: u64,
     has_quoted: bool,
-    remaps: Vec<ChunkRemap>,
     /// Every distinct graph name, ascending, one per line — spilled rather than
     /// resident because fedlex has 497,905 of them. `None` when the input had
     /// no named graphs.
@@ -980,8 +942,14 @@ struct TermFileReader {
 
 impl TermFileReader {
     fn open(path: &Path) -> Result<Self, std::io::Error> {
+        Self::open_with(path, 1 << 20)
+    }
+
+    /// With a `capacity`-byte read buffer: the dictionary merge opens every
+    /// chunk's files at once and sizes them from the budget.
+    fn open_with(path: &Path, capacity: usize) -> Result<Self, std::io::Error> {
         Ok(TermFileReader {
-            rd: BufReader::with_capacity(1 << 20, File::open(path)?),
+            rd: BufReader::with_capacity(capacity, File::open(path)?),
             buf: String::new(),
         })
     }
@@ -1084,56 +1052,57 @@ impl KWayTerms {
     }
 }
 
-/// Provisional remap encoding while global section sizes are still unknown:
-/// class in the top 2 bits, class-local rank (0-based) below. Fixed up to real
-/// ids once the shared count is known.
-const CLASS_SHARED: u32 = 0b00 << 30;
-const CLASS_SUBJ_ONLY: u32 = 0b01 << 30;
-const CLASS_OBJ_ONLY: u32 = 0b10 << 30;
-const CLASS_MASK: u32 = 0b11 << 30;
-
 #[cfg(test)]
-fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, ExtBuildError> {
-    merge_dictionaries_with(tmp, chunks, &[])
+fn merge_dictionaries(
+    tmp: &TmpDir,
+    chunks: &[ChunkInfo],
+) -> Result<(MergedDict, RemapStore), ExtBuildError> {
+    merge_dictionaries_with(tmp, chunks, &[], 64 << 20)
 }
 
 /// [`merge_dictionaries`], also recording what the SCHEMA pass needs: the
 /// global ids of `schema_preds`, the shared-term count and the literal
-/// prefixes of the shared and object-only sections.
+/// prefixes of the shared and object-only sections. `budget` sizes the
+/// buffers of the merge's per-chunk readers and remap writers.
+///
+/// Returns the merged dictionary and every chunk's id remap tables, which are
+/// written to disk while the merge reaches each chunk-local id (see
+/// [`crate::extbuild_remap`]): within one remap segment of one chunk the
+/// merge meets the local ids in increasing order, so each table is a file of
+/// sequential appends.
 fn merge_dictionaries_with(
     tmp: &TmpDir,
     chunks: &[ChunkInfo],
     schema_preds: &[String],
-) -> Result<MergedDict, ExtBuildError> {
+    budget: u64,
+) -> Result<(MergedDict, RemapStore), ExtBuildError> {
     let k = chunks.len();
     let mut schema_facts = crate::extbuild_sections::MergeFacts {
         pred_ids: vec![None; schema_preds.len()],
         ..Default::default()
     };
 
-    // remap tables, sized by each chunk's spaces
-    let mut remaps: Vec<ChunkRemap> = chunks
-        .iter()
-        .map(|c| ChunkRemap {
-            subj: vec![0; (c.section_terms[0] + c.section_terms[1]) as usize],
-            obj: vec![0; (c.section_terms[0] + c.section_terms[2]) as usize],
-            pred: vec![0; c.section_terms[3] as usize],
-            graph: vec![0; c.graph_terms as usize],
-        })
-        .collect();
+    // The node merge reads four term files per chunk at once (shared twice,
+    // subject-only, object-only): their buffers share an eighth of the budget.
+    let read_buf = ((budget / 8) / (4 * k.max(1) as u64)).clamp(64 << 10, 1 << 20) as usize;
+    let counts: Vec<SegCounts> = chunks.iter().map(ChunkInfo::seg_counts).collect();
+    let mut remaps = RemapWriter::new(&tmp.dir, &counts, remap_buf_bytes(budget, k));
+    // A chunk-local id of the subject or object space at or below this is in
+    // the chunk's shared section, the same id in both spaces.
+    let shared_of = |ci: usize| chunks[ci].section_terms[0];
 
     // subject-space + object-space k-way streams
     let mut subj_streams = Vec::with_capacity(k);
     let mut obj_streams = Vec::with_capacity(k);
     for (ci, c) in chunks.iter().enumerate() {
         subj_streams.push(SpaceStream::new(
-            TermFileReader::open(&tmp.path(&format!("c{ci}.shared")))?,
-            TermFileReader::open(&tmp.path(&format!("c{ci}.subj")))?,
+            TermFileReader::open_with(&tmp.path(&format!("c{ci}.shared")), read_buf)?,
+            TermFileReader::open_with(&tmp.path(&format!("c{ci}.subj")), read_buf)?,
             c.section_terms[0],
         )?);
         obj_streams.push(SpaceStream::new(
-            TermFileReader::open(&tmp.path(&format!("c{ci}.shared")))?,
-            TermFileReader::open(&tmp.path(&format!("c{ci}.obj")))?,
+            TermFileReader::open_with(&tmp.path(&format!("c{ci}.shared")), read_buf)?,
+            TermFileReader::open_with(&tmp.path(&format!("c{ci}.obj")), read_buf)?,
             c.section_terms[0],
         )?);
     }
@@ -1170,12 +1139,20 @@ fn merge_dictionaries_with(
             Class::Shared => {
                 let (term, s_carriers) = s_item.take().unwrap();
                 let (_, o_carriers) = o_item.take().unwrap();
-                let enc = CLASS_SHARED | ranks[0];
+                // A shared id is final at once: shared ids lead both spaces.
+                let id = shared_id(ranks[0])?;
                 for (ci, lid) in s_carriers {
-                    remaps[ci].subj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        None | Some(0) => remaps.push(ci, Seg::Shared, lid, id)?,
+                        Some(rel) => remaps.push(ci, Seg::SubjOnly, rel, id)?,
+                    }
                 }
                 for (ci, lid) in o_carriers {
-                    remaps[ci].obj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        // shared in its chunk too: written from the subject side
+                        None | Some(0) => {}
+                        Some(rel) => remaps.push(ci, Seg::ObjOnly, rel, id)?,
+                    }
                 }
                 has_quoted |= term.starts_with("<<");
                 if term.starts_with('"') {
@@ -1188,9 +1165,16 @@ fn merge_dictionaries_with(
             }
             Class::SubjOnly => {
                 let (term, carriers) = s_item.take().unwrap();
-                let enc = CLASS_SUBJ_ONLY | ranks[1];
+                let id = role_only_id(ranks[1])?;
                 for (ci, lid) in carriers {
-                    remaps[ci].subj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        Some(rel) if rel > 0 => remaps.push(ci, Seg::SubjOnly, rel, id)?,
+                        _ => {
+                            return Err(ExtBuildError::Internal(
+                                "a chunk-shared term merged as subject-only",
+                            ))
+                        }
+                    }
                 }
                 has_quoted |= term.starts_with("<<");
                 subj_sec.push(&term)?;
@@ -1199,9 +1183,16 @@ fn merge_dictionaries_with(
             }
             Class::ObjOnly => {
                 let (term, carriers) = o_item.take().unwrap();
-                let enc = CLASS_OBJ_ONLY | ranks[2];
+                let id = role_only_id(ranks[2])?;
                 for (ci, lid) in carriers {
-                    remaps[ci].obj[(lid - 1) as usize] = enc;
+                    match lid.checked_sub(shared_of(ci)) {
+                        Some(rel) if rel > 0 => remaps.push(ci, Seg::ObjOnly, rel, id)?,
+                        _ => {
+                            return Err(ExtBuildError::Internal(
+                                "a chunk-shared term merged as object-only",
+                            ))
+                        }
+                    }
                 }
                 has_quoted |= term.starts_with("<<");
                 if term.starts_with('"') {
@@ -1213,33 +1204,38 @@ fn merge_dictionaries_with(
             }
         }
     }
+    // The node merge is over: release its readers and write buffers.
+    drop((subjects, objects));
+    for seg in [Seg::Shared, Seg::SubjOnly, Seg::ObjOnly] {
+        remaps.flush(seg)?;
+    }
     let (n_shared, n_subj, n_obj) = (ranks[0], ranks[1], ranks[2]);
+    if n_shared.checked_add(n_subj.max(n_obj)).is_none() {
+        return Err(ExtBuildError::Internal(
+            "more than 2^32 subject or object terms: the dictionary is too large for one file",
+        ));
+    }
     schema_facts.n_shared = n_shared;
 
     // predicates: plain k-way merge over the pred term files
     let mut pred_sec = RawSectionWriter::create(tmp.path("g.pred.raw"))?;
     {
         let mut streams = Vec::with_capacity(k);
-        for (ci, _) in chunks.iter().enumerate() {
-            // empty shared reader + real pred reader => a plain single stream
+        for (ci, c) in chunks.iter().enumerate() {
+            // real pred reader + empty role-only reader => a plain single stream
+            let empty = tmp.path(&format!("c{ci}.pred.empty"));
+            File::create(&empty)?;
             streams.push(SpaceStream::new(
-                TermFileReader::open(&tmp.path(&format!("c{ci}.pred")))?,
-                TermFileReader::open(&tmp.path(&format!("c{ci}.pred.empty",))).or_else(
-                    |_| -> Result<TermFileReader, std::io::Error> {
-                        // create-once empty file per chunk
-                        let p = tmp.path(&format!("c{ci}.pred.empty"));
-                        File::create(&p)?;
-                        TermFileReader::open(&p)
-                    },
-                )?,
-                chunks[ci].section_terms[3],
+                TermFileReader::open_with(&tmp.path(&format!("c{ci}.pred")), read_buf)?,
+                TermFileReader::open_with(&empty, read_buf)?,
+                c.section_terms[3],
             )?);
         }
         let mut kway = KWayTerms::new(streams)?;
         let mut rank = 0u32;
         while let Some((term, carriers)) = kway.next()? {
             for (ci, lid) in carriers {
-                remaps[ci].pred[(lid - 1) as usize] = rank + 1; // pred ids are final now
+                remaps.push(ci, Seg::Pred, lid, rank + 1)?; // pred ids are final now
             }
             if let Some(i) = schema_preds.iter().position(|w| *w == term) {
                 schema_facts.pred_ids[i] = Some(rank + 1);
@@ -1248,29 +1244,7 @@ fn merge_dictionaries_with(
             rank += 1;
         }
     }
-
-    // fix up provisional node encodings to final space ids:
-    //   shared:        id = rank + 1                      (both spaces)
-    //   subject-only:  id = n_shared + rank + 1           (subject space)
-    //   object-only:   id = n_shared + rank + 1           (object space)
-    for rm in &mut remaps {
-        for v in rm.subj.iter_mut() {
-            let rank = *v & !CLASS_MASK;
-            *v = match *v & CLASS_MASK {
-                CLASS_SHARED => rank + 1,
-                CLASS_SUBJ_ONLY => n_shared + rank + 1,
-                _ => return Err(ExtBuildError::Internal("subject remap class corrupt")),
-            };
-        }
-        for v in rm.obj.iter_mut() {
-            let rank = *v & !CLASS_MASK;
-            *v = match *v & CLASS_MASK {
-                CLASS_SHARED => rank + 1,
-                CLASS_OBJ_ONLY => n_shared + rank + 1,
-                _ => return Err(ExtBuildError::Internal("object remap class corrupt")),
-            };
-        }
-    }
+    remaps.flush(Seg::Pred)?;
 
     // graph names: the same k-way merge, into a plain sorted name list rather
     // than a front-coded dict section — the format stores graph names verbatim.
@@ -1287,8 +1261,8 @@ fn merge_dictionaries_with(
             let empty = tmp.path(&format!("c{ci}.graph.empty"));
             File::create(&empty)?;
             streams.push(SpaceStream::new(
-                TermFileReader::open(&real)?,
-                TermFileReader::open(&empty)?,
+                TermFileReader::open_with(&real, read_buf)?,
+                TermFileReader::open_with(&empty, read_buf)?,
                 c.graph_terms,
             )?);
         }
@@ -1296,7 +1270,7 @@ fn merge_dictionaries_with(
         while let Some((name, carriers)) = kway.next()? {
             graph_count += 1;
             for (ci, lid) in carriers {
-                remaps[ci].graph[(lid - 1) as usize] = graph_count;
+                remaps.push(ci, Seg::Graph, lid, graph_count)?;
             }
             w.write_all(name.as_bytes())?;
             w.write_all(b"\n")?;
@@ -1306,6 +1280,9 @@ fn merge_dictionaries_with(
     } else {
         None
     };
+    // Subject- and object-only ids stay provisional until `n_shared` is
+    // known: they are fixed up as each chunk's tables are loaded.
+    let remaps = remaps.finish(n_shared)?;
 
     // chunk-encode each raw section (identical to encode_chunked_dict_section)
     let codec = crate::file::writer_codec();
@@ -1333,28 +1310,41 @@ fn merge_dictionaries_with(
     let term_count =
         n_shared as u64 + n_subj as u64 + n_obj as u64 + section_files[3].term_count as u64;
 
-    Ok(MergedDict {
-        section_files: section_files.map(|s| s.file),
-        term_count,
-        has_quoted,
+    Ok((
+        MergedDict {
+            section_files: section_files.map(|s| s.file),
+            term_count,
+            has_quoted,
+            graph_names,
+            graph_count,
+            schema_facts,
+        },
         remaps,
-        graph_names,
-        graph_count,
-        schema_facts,
-    })
+    ))
 }
 
 /// A raw front-coded dict-section body being streamed to a tmp file, exactly as
 /// [`crate::dict::DictSectionBuilder::build`] would lay it out — plus the
 /// restart-offset bookkeeping needed to emit the header and (later) the chunked
 /// encoding without ever holding the body in RAM.
+///
+/// The restart offsets go to disk too (8 B per `restart_interval` terms: a
+/// section of a billion terms has 62.5 M of them), and so does the chunk
+/// directory [`finish_chunked`](Self::finish_chunked) builds from them, so a
+/// section of any size costs this writer one 64 KiB chunk of RAM.
 struct RawSectionWriter {
     w: BufWriter<File>,
     path: PathBuf,
     prev: String,
     n: u64,
     body_len: u64,
-    restart_offsets: Vec<u64>,
+    /// every restart offset, `u64` little-endian, in order
+    restarts: BufWriter<File>,
+    restarts_path: PathBuf,
+    n_restarts: u64,
+    /// the restart offsets' varint bytes, summed: the header's length,
+    /// known without reading them back
+    restart_varint_bytes: u64,
 }
 
 struct FinishedSection {
@@ -1362,15 +1352,41 @@ struct FinishedSection {
     term_count: u32,
 }
 
+/// Reads back the `u64` restart offsets a [`RawSectionWriter`] spilled.
+struct OffsetReader {
+    rd: BufReader<File>,
+}
+
+impl OffsetReader {
+    fn open(path: &Path) -> Result<Self, std::io::Error> {
+        Ok(OffsetReader {
+            rd: BufReader::with_capacity(1 << 16, File::open(path)?),
+        })
+    }
+
+    fn next(&mut self) -> Result<Option<u64>, std::io::Error> {
+        let mut b = [0u8; 8];
+        match self.rd.read_exact(&mut b) {
+            Ok(()) => Ok(Some(u64::from_le_bytes(b))),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 impl RawSectionWriter {
     fn create(path: PathBuf) -> Result<Self, std::io::Error> {
+        let restarts_path = path.with_extension("restarts");
         Ok(RawSectionWriter {
             w: BufWriter::with_capacity(1 << 20, File::create(&path)?),
             path,
             prev: String::new(),
             n: 0,
             body_len: 0,
-            restart_offsets: Vec::new(),
+            restarts: BufWriter::with_capacity(1 << 16, File::create(&restarts_path)?),
+            restarts_path,
+            n_restarts: 0,
+            restart_varint_bytes: 0,
         })
     }
 
@@ -1378,7 +1394,9 @@ impl RawSectionWriter {
         let r = env_restart_interval() as u64;
         let mut entry = Vec::with_capacity(term.len() + 8);
         if self.n.is_multiple_of(r) {
-            self.restart_offsets.push(self.body_len);
+            self.restarts.write_all(&self.body_len.to_le_bytes())?;
+            self.n_restarts += 1;
+            self.restart_varint_bytes += uvarint_len(self.body_len);
             write_uvarint(&mut entry, 0);
             write_uvarint(&mut entry, term.len() as u64);
             entry.extend_from_slice(term.as_bytes());
@@ -1399,7 +1417,9 @@ impl RawSectionWriter {
 
     /// Emit the chunked section payload (byte-identical to running
     /// `encode_chunked_dict_section` over the equivalent raw section) into a new
-    /// tmp file, deleting the raw body.
+    /// tmp file, deleting the raw body. Streams: the restart offsets are read
+    /// back once to cut the chunks and once more to write the header, and the
+    /// chunk directory is spilled as it is built.
     fn finish_chunked(
         mut self,
         tmp: &TmpDir,
@@ -1408,48 +1428,55 @@ impl RawSectionWriter {
     ) -> Result<FinishedSection, ExtBuildError> {
         self.w.flush()?;
         drop(self.w);
+        self.restarts.flush()?;
+        drop(self.restarts);
         let term_count = self.n as u32;
+        let interval = env_restart_interval() as u64;
 
-        // the raw header exactly as DictSectionBuilder writes it
-        let mut header = Vec::new();
-        write_uvarint(&mut header, self.n);
-        write_uvarint(&mut header, env_restart_interval() as u64);
-        write_uvarint(&mut header, self.restart_offsets.len() as u64);
-        for off in &self.restart_offsets {
-            write_uvarint(&mut header, *off);
-        }
+        // the raw header exactly as DictSectionBuilder writes it:
+        // [n][restart interval][restart count][restart offsets…]
+        let header_len = uvarint_len(self.n)
+            + uvarint_len(interval)
+            + uvarint_len(self.n_restarts)
+            + self.restart_varint_bytes;
 
-        // chunk bounds over the body by run offsets (whole runs, 64 KiB budget)
-        let budget = crate::write_opts::dict_chunk_budget() as u64; // as encode_chunked_dict_section
-        let offs = &self.restart_offsets;
-        let mut bounds: Vec<(usize, u64, u64)> = Vec::new(); // (first_run, start, end)
-        let mut r = 0usize;
-        while r < offs.len() {
-            let start = offs[r];
-            let mut r2 = r + 1;
-            while r2 < offs.len() && offs[r2] - start < budget {
-                r2 += 1;
-            }
-            let end = if r2 < offs.len() {
-                offs[r2]
-            } else {
-                self.body_len
-            };
-            bounds.push((r, start, end));
-            r = r2;
-        }
-
+        // Chunk bounds over the body by run offsets (whole runs, 64 KiB
+        // budget), exactly as `encode_chunked_dict_section` cuts them: a chunk
+        // starts at a run and takes the following runs while they start less
+        // than the budget past its own start.
+        let budget = crate::write_opts::dict_chunk_budget() as u64;
+        let mut offs = OffsetReader::open(&self.restarts_path)?;
         let mut body = File::open(&self.path)?;
-        // compress chunks (reading each body slice from disk), spill compressed
-        // bytes to a scratch file, record dir entries
+        // compressed chunks and the encoded directory, each spilled
         let comp_path = tmp.path(&format!("{out_name}.chunks"));
-        let mut comp_out = BufWriter::new(File::create(&comp_path)?);
-        let mut dir: Vec<(usize, Vec<u8>, u64)> = Vec::with_capacity(bounds.len());
+        let mut comp_out = BufWriter::with_capacity(1 << 20, File::create(&comp_path)?);
+        let dir_path = tmp.path(&format!("{out_name}.dir"));
+        let mut dir_out = BufWriter::with_capacity(1 << 16, File::create(&dir_path)?);
+        let mut dir_len = 0u64;
+        let mut num_chunks = 0u64;
+        let mut prev_run = 0u64;
         // The previous chunk's last term — the separator's lower bound. Kept in
         // lockstep with `encode_chunked_dict_section`; the two writers must emit
         // byte-identical directories for the same input.
         let mut prev_last: Option<Vec<u8>> = None;
-        for (i, &(first_run, start, end)) in bounds.iter().enumerate() {
+        let mut entry = Vec::new();
+        // `next` is the offset of run `run`, the first run not yet in a chunk
+        let mut run = 0u64;
+        let mut next = offs.next()?;
+        while let Some(start) = next {
+            let first_run = run;
+            let mut last_run_start = start;
+            run += 1;
+            next = offs.next()?;
+            while let Some(o) = next {
+                if o - start >= budget {
+                    break;
+                }
+                last_run_start = o;
+                run += 1;
+                next = offs.next()?;
+            }
+            let end = next.unwrap_or(self.body_len);
             body.seek(SeekFrom::Start(start))?;
             let mut raw = vec![0u8; (end - start) as usize];
             body.read_exact(&mut raw)?;
@@ -1458,7 +1485,7 @@ impl RawSectionWriter {
                 .ok_or(ExtBuildError::Internal("restart entry unreadable"))?;
             // Routing key = the shortest separator, not the first term; chunk 0
             // needs none. See `crate::dict::SectionChunk::key`.
-            let key = if i == 0 {
+            let key = if num_chunks == 0 {
                 Vec::new()
             } else {
                 match &prev_last {
@@ -1466,41 +1493,74 @@ impl RawSectionWriter {
                     Some(pl) => crate::dict::shortest_separator(pl, &first_term),
                 }
             };
-            if i + 1 < bounds.len() {
-                // This chunk's last run starts one run before the next chunk's;
-                // `raw` already holds the bytes, so decoding it is free of I/O.
-                let last_run_rel = (offs[bounds[i + 1].0 - 1] - start) as usize;
+            if next.is_some() {
+                // This chunk's last run is the one before the next chunk's
+                // first; `raw` already holds the bytes, so decoding it is free
+                // of I/O.
+                let last_run_rel = (last_run_start - start) as usize;
                 prev_last = crate::dict::run_last_term(&raw, last_run_rel, raw.len());
             }
             let comp = crate::file::compress(codec, &raw);
             comp_out.write_all(&comp)?;
-            dir.push((first_run, key, comp.len() as u64));
+            entry.clear();
+            write_uvarint(&mut entry, first_run - prev_run);
+            write_uvarint(&mut entry, key.len() as u64);
+            entry.extend_from_slice(&key);
+            write_uvarint(&mut entry, comp.len() as u64);
+            dir_out.write_all(&entry)?;
+            dir_len += entry.len() as u64;
+            prev_run = first_run;
+            num_chunks += 1;
         }
         comp_out.flush()?;
+        drop(comp_out);
+        dir_out.flush()?;
+        drop(dir_out);
         drop(body);
         let _ = std::fs::remove_file(&self.path);
 
         // assemble: [header_len][header][num_chunks][dir…][compressed chunks…]
         let out_path = tmp.path(out_name);
-        let mut out = BufWriter::new(File::create(&out_path)?);
+        let mut out = BufWriter::with_capacity(1 << 20, File::create(&out_path)?);
         let mut head = Vec::new();
-        write_uvarint(&mut head, header.len() as u64);
-        head.extend_from_slice(&header);
-        write_uvarint(&mut head, dir.len() as u64);
-        let mut prev_run = 0usize;
-        for (first_run, key, comp_len) in &dir {
-            write_uvarint(&mut head, (*first_run - prev_run) as u64);
-            write_uvarint(&mut head, key.len() as u64);
-            head.extend_from_slice(key);
-            write_uvarint(&mut head, *comp_len);
-            prev_run = *first_run;
-        }
+        write_uvarint(&mut head, header_len);
+        write_uvarint(&mut head, self.n);
+        write_uvarint(&mut head, interval);
+        write_uvarint(&mut head, self.n_restarts);
         out.write_all(&head)?;
+        let mut written = head.len() as u64;
+        let mut offs = OffsetReader::open(&self.restarts_path)?;
+        while let Some(off) = offs.next()? {
+            head.clear();
+            write_uvarint(&mut head, off);
+            out.write_all(&head)?;
+            written += head.len() as u64;
+        }
+        drop(offs);
+        let _ = std::fs::remove_file(&self.restarts_path);
+        if written != uvarint_len(header_len) + header_len {
+            return Err(ExtBuildError::Internal(
+                "dictionary section header length mismatch",
+            ));
+        }
+        head.clear();
+        write_uvarint(&mut head, num_chunks);
+        out.write_all(&head)?;
+        written += head.len() as u64;
+        let mut dir_in = File::open(&dir_path)?;
+        written += std::io::copy(&mut dir_in, &mut out)?;
+        drop(dir_in);
+        let _ = std::fs::remove_file(&dir_path);
         let mut comp_in = File::open(&comp_path)?;
         let copied = std::io::copy(&mut comp_in, &mut out)?;
+        drop(comp_in);
         out.flush()?;
         let _ = std::fs::remove_file(&comp_path);
-        let len = head.len() as u64 + copied;
+        let len = written + copied;
+        debug_assert_eq!(
+            len,
+            uvarint_len(header_len) + header_len + uvarint_len(num_chunks) + dir_len + copied
+        );
         Ok(FinishedSection {
             file: SectionFile {
                 path: out_path,
@@ -1528,6 +1588,105 @@ fn read_restart_term(raw: &[u8]) -> Option<Vec<u8>> {
     let (len, n2) = crate::varint::read_uvarint(&raw[n1..])?;
     let start = n1 + n2;
     raw.get(start..start + len as usize).map(|s| s.to_vec())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: remap every chunk to global ids
+// ---------------------------------------------------------------------------
+
+/// Rewrite every chunk's statements in global ids, loading one chunk's remap
+/// tables at a time: default triples to `global_tri`, named quads to
+/// `global_qtri` (graph first: a subject id in the quad layout, an ordinal in
+/// the per-graph one). The default triples are teed into the SCHEMA pass and
+/// each chunk's text-index words are remapped onto the same subject ids. The
+/// chunk spills are deleted as they are consumed.
+#[allow(clippy::too_many_arguments)]
+fn remap_chunks(
+    tmp: &TmpDir,
+    chunks: &[ChunkInfo],
+    remaps: &RemapStore,
+    quad_layout: bool,
+    global_tri: &Path,
+    global_qtri: Option<&Path>,
+    mut text: Option<&mut crate::text_index_spill::TextSpill>,
+    mut schema: Option<&mut ExtSchema>,
+) -> Result<(), ExtBuildError> {
+    let mut out = BufWriter::with_capacity(1 << 20, File::create(global_tri)?);
+    let mut qout = match global_qtri {
+        Some(p) => Some(BufWriter::with_capacity(1 << 20, File::create(p)?)),
+        None => None,
+    };
+    for (ci, chunk) in chunks.iter().enumerate() {
+        let maps = remaps.load(ci)?;
+        // The chunk's literal words, onto the same global subject ids.
+        if let Some(text) = text.as_deref_mut() {
+            text.remap_chunk(&tmp.path(&format!("c{ci}.tok")), &maps.subj)?;
+        }
+        let mut rd =
+            BufReader::with_capacity(1 << 20, File::open(tmp.path(&format!("c{ci}.tri")))?);
+        let mut buf = [0u8; 12];
+        loop {
+            match rd.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+            let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
+            let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+            let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+            let gs = maps.subj[(s - 1) as usize];
+            let gp = maps.pred[(p - 1) as usize];
+            let go = maps.obj[(o - 1) as usize];
+            out.write_all(&gs.to_le_bytes())?;
+            out.write_all(&gp.to_le_bytes())?;
+            out.write_all(&go.to_le_bytes())?;
+            if let Some(x) = schema.as_deref_mut() {
+                x.tee(gs, gp, go)?;
+            }
+        }
+        drop(rd);
+        let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri")));
+        if chunk.quad_count > 0 {
+            let qout = qout
+                .as_mut()
+                .ok_or(ExtBuildError::Internal("named quads without a spill"))?;
+            let mut rd =
+                BufReader::with_capacity(1 << 20, File::open(tmp.path(&format!("c{ci}.qtri")))?);
+            // Quad index: the graph is a subject id; else an ordinal.
+            let gmap = if quad_layout { &maps.subj } else { &maps.graph };
+            let mut buf = [0u8; 16];
+            loop {
+                match rd.read_exact(&mut buf) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => return Err(e.into()),
+                }
+                let g = u32::from_le_bytes(buf[0..4].try_into().unwrap());
+                let s = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+                let p = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+                let o = u32::from_le_bytes(buf[12..16].try_into().unwrap());
+                qout.write_all(&gmap[(g - 1) as usize].to_le_bytes())?;
+                qout.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
+                qout.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
+                qout.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
+            }
+        }
+        let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.qtri")));
+    }
+    out.flush()?;
+    if let Some(mut q) = qout {
+        q.flush()?;
+    }
+    let total = remaps.total_table_bytes();
+    trace::add("remap_total_bytes", total);
+    eprintln!(
+        "extbuild: remapped {} chunk(s) one at a time — {} B of id tables in all, \
+         at most {} B resident",
+        chunks.len(),
+        total,
+        remaps.largest_table_bytes()
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1720,10 +1879,14 @@ fn sort_quads(v: &mut [IdQuad]) {
     v.sort_unstable();
 }
 
-fn uvarint_len(v: u64) -> u64 {
-    let mut b = Vec::new();
-    write_uvarint(&mut b, v);
-    b.len() as u64
+/// Bytes [`write_uvarint`] takes for `v`.
+fn uvarint_len(mut v: u64) -> u64 {
+    let mut n = 1;
+    while v >= 0x80 {
+        v >>= 7;
+        n += 1;
+    }
+    n
 }
 
 /// Sort `global_qtri` by `(graph, s, p, o)` — so each graph is one contiguous
@@ -2877,29 +3040,10 @@ mod tests {
             chunks.len()
         );
         let statements: u64 = chunks.iter().map(|c| c.triple_count).sum();
-        let merged = merge_dictionaries(&tmp, &chunks).unwrap();
+        let (merged, remaps) = merge_dictionaries(&tmp, &chunks).unwrap();
 
         let global_tri = tmp.path("global.tri");
-        {
-            let mut w = BufWriter::new(File::create(&global_tri).unwrap());
-            for (ci, _c) in chunks.iter().enumerate() {
-                let maps = &merged.remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))).unwrap());
-                let mut buf = [0u8; 12];
-                while rd.read_exact(&mut buf).is_ok() {
-                    let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                    let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                    let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                    w.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())
-                        .unwrap();
-                    w.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())
-                        .unwrap();
-                    w.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())
-                        .unwrap();
-                }
-            }
-            w.flush().unwrap();
-        }
+        remap_chunks(&tmp, &chunks, &remaps, false, &global_tri, None, None, None).unwrap();
 
         let codec = crate::file::writer_codec();
         let mut sections = Vec::new();
@@ -2937,6 +3081,60 @@ mod tests {
         );
         drop(tmp);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// [`build_ext`] with the chunk budget forced down to `chunk` bytes, so a
+    /// small graph becomes many chunks.
+    fn build_ext_split(quads: &[RawQuad], chunk: u64) -> Vec<u8> {
+        TEST_SPLIT.with(|c| c.set(Some((chunk, 1 << 10))));
+        let (bytes, _) = build_ext(quads.to_vec(), 0);
+        TEST_SPLIT.with(|c| c.set(None));
+        bytes
+    }
+
+    /// The id remap tables were the part of the memory-bounded build that grew
+    /// with the dataset: every chunk's stayed resident from the dictionary
+    /// merge to the end of the remap. Now they go to disk as the merge writes
+    /// them and one chunk's are loaded at a time. Cutting four times the
+    /// graph into four times the chunks quadruples what the old build held
+    /// and leaves what this one holds where it was: one chunk's tables, at
+    /// most a quarter of the chunk budget. The files stay byte-identical.
+    #[test]
+    fn remap_memory_does_not_grow_with_the_chunk_count() {
+        const CHUNK: u64 = 4 * 1024;
+        let run = |n: usize| -> (u64, u64, u64) {
+            let quads = test_quads(n);
+            let reference = build_reference(quads.clone());
+            let collector = crate::build_trace::Collector::start();
+            let bytes = build_ext_split(&quads, CHUNK);
+            let t = collector.snapshot();
+            drop(collector);
+            assert_eq!(bytes, reference, "{n} quads: external build drifted");
+            (
+                t.counter("chunks").unwrap(),
+                t.counter("remap_total_bytes").unwrap(),
+                t.counter("remap_peak_bytes").unwrap(),
+            )
+        };
+        let (k1, total1, peak1) = run(1_000);
+        let (k4, total4, peak4) = run(4_000);
+        assert!(k1 >= 20 && k4 >= 3 * k1, "chunks: {k1}, then {k4}");
+        // What the old merge held resident grows with the chunks…
+        assert!(total4 >= 3 * total1, "tables: {total1} B, then {total4} B");
+        assert!(
+            total4 >= 50 * peak4,
+            "{total4} B in all, {peak4} B resident"
+        );
+        // …what this one holds does not: every buffered statement is charged
+        // at least 96 B against the chunk budget and brings at most six ids.
+        assert!(
+            peak4 <= peak1 * 3 / 2,
+            "resident: {peak1} B, then {peak4} B"
+        );
+        assert!(
+            peak4 <= (CHUNK + 1024) / 4,
+            "{peak4} B for a {CHUNK} B chunk"
+        );
     }
 
     /// The two dictionary writers must agree on the **separator keys**, not
@@ -3137,7 +3335,6 @@ mod tests {
             ],
             term_count,
             has_quoted: false,
-            remaps: Vec::new(),
             graph_names: None,
             graph_count: 0,
             schema_facts: Default::default(),
@@ -3462,52 +3659,20 @@ mod tests {
         run_len: usize,
         ram_triples: usize,
     ) -> Result<Vec<u8>, ExtBuildError> {
-        let mut merged = merge_dictionaries(tmp, chunks)?;
-        let remaps = std::mem::take(&mut merged.remaps);
+        let (merged, remaps) = merge_dictionaries(tmp, chunks)?;
         let has_named = chunks.iter().any(|c| c.quad_count > 0);
         let global_tri = tmp.path("global.tri");
         let global_qtri = tmp.path("global.qtri");
-        {
-            let mut w = BufWriter::new(File::create(&global_tri)?);
-            let mut qw = if has_named {
-                Some(BufWriter::new(File::create(&global_qtri)?))
-            } else {
-                None
-            };
-            for (ci, chunk) in chunks.iter().enumerate() {
-                let maps = &remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
-                let mut buf = [0u8; 12];
-                while rd.read_exact(&mut buf).is_ok() {
-                    let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                    let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                    let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                    w.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
-                    w.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
-                    w.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
-                }
-                if chunk.quad_count > 0 {
-                    let qw = qw.as_mut().unwrap();
-                    let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri")))?);
-                    let mut buf = [0u8; 16];
-                    while rd.read_exact(&mut buf).is_ok() {
-                        let g = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                        let s = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                        let p = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                        let o = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-                        qw.write_all(&maps.graph[(g - 1) as usize].to_le_bytes())?;
-                        qw.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
-                        qw.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
-                        qw.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
-                    }
-                }
-            }
-            w.flush()?;
-            if let Some(mut q) = qw {
-                q.flush()?;
-            }
-        }
-        drop(remaps);
+        remap_chunks(
+            tmp,
+            chunks,
+            &remaps,
+            false,
+            &global_tri,
+            has_named.then_some(global_qtri.as_path()),
+            None,
+            None,
+        )?;
 
         let codec = crate::file::writer_codec();
         let perms = crate::index::PermSet::ALL;
@@ -3840,47 +4005,21 @@ mod tests {
             "expected many chunks, got {}",
             chunks.len()
         );
-        let mut merged = merge_dictionaries(&tmp, &chunks).unwrap();
+        let (merged, remaps) = merge_dictionaries(&tmp, &chunks).unwrap();
         assert_eq!(merged.graph_count, 0, "no separate graph-name merge");
-        let remaps = std::mem::take(&mut merged.remaps);
         let global_tri = tmp.path("global.tri");
         let global_qtri = tmp.path("global.qtri");
-        {
-            let mut w = BufWriter::new(File::create(&global_tri).unwrap());
-            let mut qw = BufWriter::new(File::create(&global_qtri).unwrap());
-            for (ci, chunk) in chunks.iter().enumerate() {
-                let maps = &remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))).unwrap());
-                let mut buf = [0u8; 12];
-                while rd.read_exact(&mut buf).is_ok() {
-                    let r = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
-                    w.write_all(&maps.subj[(r(0) - 1) as usize].to_le_bytes())
-                        .unwrap();
-                    w.write_all(&maps.pred[(r(4) - 1) as usize].to_le_bytes())
-                        .unwrap();
-                    w.write_all(&maps.obj[(r(8) - 1) as usize].to_le_bytes())
-                        .unwrap();
-                }
-                if chunk.quad_count > 0 {
-                    let mut rd =
-                        BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri"))).unwrap());
-                    let mut buf = [0u8; 16];
-                    while rd.read_exact(&mut buf).is_ok() {
-                        let r = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
-                        qw.write_all(&maps.subj[(r(0) - 1) as usize].to_le_bytes())
-                            .unwrap();
-                        qw.write_all(&maps.subj[(r(4) - 1) as usize].to_le_bytes())
-                            .unwrap();
-                        qw.write_all(&maps.pred[(r(8) - 1) as usize].to_le_bytes())
-                            .unwrap();
-                        qw.write_all(&maps.obj[(r(12) - 1) as usize].to_le_bytes())
-                            .unwrap();
-                    }
-                }
-            }
-            w.flush().unwrap();
-            qw.flush().unwrap();
-        }
+        remap_chunks(
+            &tmp,
+            &chunks,
+            &remaps,
+            true,
+            &global_tri,
+            Some(&global_qtri),
+            None,
+            None,
+        )
+        .unwrap();
         let codec = crate::file::writer_codec();
         let perms = crate::index::PermSet::ALL;
         let mut sections = Vec::new();

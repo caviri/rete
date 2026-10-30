@@ -51,7 +51,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
-use crate::file::{compress, decompress, FileError};
+use crate::file::{decompress, FileError};
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// Minimum token length kept (1-char words are low-value and bloat the index).
@@ -518,7 +518,10 @@ impl TextIndexBuilder {
         write_uvarint(&mut tt, tokens);
         tt.extend_from_slice(&entries);
         self.scope.encode(&mut tt);
-        let ctt = compress(codec, &tt);
+        // The streaming encoder, not the one-shot `compress`: the
+        // memory-bounded build compresses this table from disk, and past the
+        // zstd window the two encoders' bytes differ (see `compress_to`).
+        let ctt = crate::file::compress_streamed(codec, &tt);
 
         let mut out = Vec::with_capacity(10 + ctt.len() + postings.len());
         write_uvarint(&mut out, ctt.len() as u64);
