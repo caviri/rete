@@ -242,6 +242,13 @@ been modified.") and the stored SPARQL update text are 65% of the full index,
 the timestamps another 20%. The token table, which a first remote search
 fetches whole, shrinks from 10.0 MB to 3.2 MB.
 
+The other way round: with the provenance **in named graphs** (the layout
+OpenCitations ships), the default scope indexes the data alone (10.2 MB), and
+`--text-index-graphs all` indexes the same literals as the first row above —
+the same 2,178,475 tokens and the same postings, 68.3 MB, +5.4% on the 1.07 GB
+file — so the provenance becomes searchable without moving it out of its
+graphs.
+
 **In the memory-bounded build.** `--text-index`, with any scope, works with
 `--memory-budget-mb`, and the TEXT_INDEX section is **byte-identical** to the
 in-RAM build's for the same input. Each chunk writes its literal words with

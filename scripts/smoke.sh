@@ -98,6 +98,7 @@ check "search --contains"     "<http://ex/w1>"       -- "$B" search "$T/text-ext
 check "scope: named graphs"   "<http://ex/w1/prov>"  -- bash -c "$B build '$T/text.nq' -o '$T/text-all.rete' --text-index --text-index-graphs all --memory-budget-mb 64 >/dev/null 2>&1 && $B search '$T/text-all.rete' --contains created"
 check "scope: exclude"        "covers: .*all but <http://ex/desc>" -- bash -c "$B build '$T/text.nq' -o '$T/text-ex.rete' --text-index --text-index-exclude http://ex/desc >/dev/null 2>&1 && $B search '$T/text-ex.rete' --contains modified 2>&1"
 check "scope: stats kind 11"  "some predicates only" -- "$B" stats "$T/text-ex.rete"
+check "scope: repyramid"      "<http://ex/w1/prov>"  -- bash -c "$B repyramid '$T/text.rete' -o '$T/text-rp.rete' --text-index --text-index-graphs all >/dev/null 2>&1 && $B search '$T/text-rp.rete' --contains created"
 check_code "scope: needs --text-index" 2 "required" -- "$B" build "$T/text.nq" -o "$T/x.rete" --text-index-exclude http://ex/desc
 
 echo "== validate =="
