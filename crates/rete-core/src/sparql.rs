@@ -191,7 +191,7 @@ pub enum Plan {
     /// not in `vars` is anonymous: matched, never bound in the output. With
     /// `vars` empty it is an existence test (one empty solution or none).
     ///
-    /// Built only by the OWL 2 QL rewriter ([`ql`]): an entailed atom such as
+    /// Built only by the OWL 2 QL rewriter (`ql`): an entailed atom such as
     /// `?x a C` holds once per entailed triple, while its rewriting
     /// (`?x a C₁`, `?x a C₂`, `?x p ?_` for a `p` with domain `C`, …) matches
     /// it once per *asserted* triple. The sources stream sorted on the key
