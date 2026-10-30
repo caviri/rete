@@ -2,19 +2,27 @@
 # Bring ONE already-published .rete up to the current Dataset Card, without
 # touching its data.
 #
-# Why this is not a one-liner: `rete repyramid --card` re-derives the whole card
-# by reading the .rete itself (no source RDF needed), but it takes the CURATED
-# half only from flags or --card-file — a bare --card silently drops the
-# publisher's title/source/license. So the old card has to be read first and
-# handed back in. And because the card sits inside the blake3 content hash there
-# is no in-place byte swap: the file is rewritten, which is exactly why the data
-# has to be proven unchanged afterwards.
+# Why this is not a one-liner: every re-card command (`rete recard`,
+# `rete repyramid --card`) re-derives the derived half of the card from the
+# .rete itself (no source RDF needed), but takes the CURATED half only from
+# --card-file or flags — so the old card has to be read first and handed back
+# in, and `card_tools.py verify` has to fail the run if a field went missing.
+# And because the card sits inside the blake3 content hash there is no
+# in-place byte swap: the file is rewritten, which is exactly why the data has
+# to be proven unchanged afterwards.
 #
 #   1. read the existing card (2 range reads, cheap even on a 30 GB file)
 #   2. carry its curated fields into a --card-file document
-#   3. rebuild:  repyramid   (fast, reads the whole file into RAM), or
+#   3. re-card:  recard      (default: streams the file's sections, rewrites
+#                             only the card and the build record, copies every
+#                             other section byte for byte; ~1 B of RAM per
+#                             subject plus the reader's caches, any size), or
+#                repyramid   (rebuilds every section, reads the whole file into
+#                             RAM; for when the PYRAMID must change too), or
 #                stream      (export -> N-Quads -> build, the two-pass assembler)
-#   4. PROVE the data is unchanged: N-Quads of both files must match
+#   4. PROVE the data is unchanged: in recard mode every non-card section is
+#      byte-identical (sha256 per section); in the rebuild modes the N-Quads of
+#      both files must match
 #   5. PROVE the new starter queries answer: measured row counts, all non-zero
 #   6. only then move the rebuilt file into place, and write a receipt
 #
@@ -28,8 +36,15 @@
 #   bash scripts/recard/recard.sh --source <url|/work/path.rete> --out /work/path.rete [options]
 #
 # Options:
-#   --mode auto|repyramid|stream   rebuild engine (default auto, by file size)
-#   --stream-above-mb N            auto switches to stream above N MB (default 192)
+#   --mode auto|recard|repyramid|stream
+#                                  engine (default auto = recard, for every size;
+#                                  repyramid/stream rebuild every section and
+#                                  are for when the pyramid or the text index
+#                                  must change too)
+#   --stream-above-mb N            repyramid vs stream threshold for the rebuild
+#                                  modes (default 192)
+#   --rebuild                      shorthand for the old auto: repyramid below
+#                                  --stream-above-mb, stream above it
 #   --work DIR                     scratch + receipts (default /work/dev/recard)
 #   --pyramid-algo auto|louvain|types
 #                                  auto (default) reproduces what the SOURCE has:
@@ -104,7 +119,7 @@ RETE="${RETE_BIN:-/work/target/release/rete}"
 TOOLS=/work/scripts/recard/card_tools.py
 TOOL_VERSION=2
 
-source=""; out=""; mode="auto"; stream_above_mb=192
+source=""; out=""; mode="auto"; stream_above_mb=192; rebuild=0
 work="/work/dev/recard"; pyramid_algo="auto"; allow_empty=""; expect_sha=""
 keep=0; force=0; verify_data=1; text_index="auto"; allow_section_loss=0
 reuse_staged=0; enrich=""
@@ -117,6 +132,7 @@ while [ $# -gt 0 ]; do
     --source) source="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --mode) mode="$2"; shift 2 ;;
+    --rebuild) rebuild=1; shift ;;
     --stream-above-mb) stream_above_mb="$2"; shift 2 ;;
     --work) work="$2"; shift 2 ;;
     --pyramid-algo) pyramid_algo="$2"; shift 2 ;;
@@ -129,7 +145,7 @@ while [ $# -gt 0 ]; do
     --reuse-staged) reuse_staged=1; shift ;;
     --force) force=1; shift ;;
     --no-verify-data) verify_data=0; shift ;;
-    -h|--help) sed -n '2,79p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,96p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -264,13 +280,25 @@ if [ "$force" != 1 ] && [ -f "$state" ] && [ -f "$out" ] \
   exit 0
 fi
 
+# `auto` is `recard`: it copies every section but the card byte for byte, so it
+# needs no pyramid algorithm, cannot lose a text index or an alien section, and
+# its memory does not grow with the statement count. `--rebuild` restores the
+# size-based choice between the two rebuild engines.
+if [ "$mode" = auto ]; then
+  if [ "$rebuild" = 1 ]; then
+    if [ "$src_bytes" -gt $((stream_above_mb * 1024 * 1024)) ]; then mode=stream; else mode=repyramid; fi
+  else
+    mode=recard
+  fi
+fi
+
 # ---- 1..2. the old card, and its curated half --------------------------------
 # ---- 0c. what else is in this file that a rebuild would not put back? --------
 # The community algorithm is not recorded anywhere in an older file, but the
 # pyramid it produced is: `types` yields exactly ONE level, `louvain` three to
 # six. That is enough to reproduce the source's own structure instead of
 # imposing `repyramid`'s default on it.
-if [ "$pyramid_algo" = auto ]; then
+if [ "$mode" != recard ] && [ "$pyramid_algo" = auto ]; then
   src_levels="$(header_field "$local_src" pyramid_levels)"
   : "${src_levels:=0}"
   if [ "$src_levels" = 1 ]; then pyramid_algo=types; else pyramid_algo=louvain; fi
@@ -279,20 +307,24 @@ fi
 
 src_text_index="$(header_field "$local_src" text_index_len)"
 : "${src_text_index:=0}"
+if [ "$mode" = recard ] && [ "$text_index" != auto ]; then
+  die "--text-index does not apply to --mode recard: the source's sections are copied as they are"
+fi
 case "$text_index" in
   auto) if [ "$src_text_index" -gt 0 ]; then want_text_index=1; else want_text_index=0; fi ;;
   yes|1|true) want_text_index=1 ;;
   no|0|false) want_text_index=0 ;;
   *) die "--text-index takes auto|yes|no" ;;
 esac
-if [ "$src_text_index" -gt 0 ]; then
+if [ "$mode" != recard ] && [ "$src_text_index" -gt 0 ]; then
   if [ "$want_text_index" = 1 ]; then
     say "source carries a $src_text_index-byte full-text index — rebuilding one (--text-index)"
   else
     say "WARNING: dropping the source's $src_text_index-byte full-text index (--text-index no)"
   fi
 fi
-alien="$(alien_sections "$local_src")"
+alien=""
+[ "$mode" = recard ] || alien="$(alien_sections "$local_src")"
 if [ -n "$alien" ]; then
   echo "recard: $local_src carries a section a rebuild cannot reproduce:" >&2
   echo "$alien" | sed 's/^/  - /' >&2
@@ -315,17 +347,21 @@ python3 -P "$TOOLS" curated "$scratch/old-card.json" -o "$scratch/curated.json" 
 # RSS measured at ~20x the file size (see README). Above the threshold the
 # two-pass streaming assembler is used instead, at the price of an N-Quads
 # staging file on disk.
-if [ "$mode" = auto ]; then
-  if [ "$src_bytes" -gt $((stream_above_mb * 1024 * 1024)) ]; then mode=stream; else mode=repyramid; fi
-fi
 tmp_out="$scratch/rebuilt.rete"
 rm -f "$tmp_out"
-say "[3/6] rebuild ($mode, pyramid-algo=$pyramid_algo, text-index=$want_text_index)"
+if [ "$mode" = recard ]; then
+  say "[3/6] re-card (sections other than the card are copied, not rebuilt)"
+else
+  say "[3/6] rebuild ($mode, pyramid-algo=$pyramid_algo, text-index=$want_text_index)"
+fi
 staged_bytes=""
 ti_flag=()
 [ "$want_text_index" = 1 ] && ti_flag=(--text-index)
 peak_reset
 case "$mode" in
+  recard)
+    "$RETE" recard "$local_src" -o "$tmp_out" --card-file "$scratch/curated.json" --verify
+    ;;
   repyramid)
     "$RETE" repyramid "$local_src" -o "$tmp_out" "${ti_flag[@]}" \
       --card-file "$scratch/curated.json" --pyramid-algo "$pyramid_algo"
@@ -385,7 +421,15 @@ fi
 # this costs no disk and constant memory. Byte-equal streams prove equal data.
 # Only if the streams differ (a reordering) do we pay for the sorted comparison.
 data_proof="skipped"; nq_sha256=""; nq_statements=""
-if [ "$verify_data" = 1 ]; then
+if [ "$verify_data" = 1 ] && [ "$mode" = recard ]; then
+  # A re-card copies every section but the card and the build record, so the
+  # proof is stronger and cheaper than comparing N-Quads: the bytes of each of
+  # those sections, hashed in both files, must be identical.
+  say "[4/6] verify every section but the card is byte-identical"
+  python3 -P "$TOOLS" sections-equal "$local_src" "$tmp_out" \
+    || die "a data section differs — refusing to replace $out (re-carded file left at $tmp_out)"
+  data_proof="sections-identical"
+elif [ "$verify_data" = 1 ]; then
   say "[4/6] verify the data is unchanged (N-Quads)"
   a=$("$RETE" export "$local_src" --format nq | sha256sum | cut -d' ' -f1)
   b=$("$RETE" export "$tmp_out"   --format nq | sha256sum | cut -d' ' -f1)

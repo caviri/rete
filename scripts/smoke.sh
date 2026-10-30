@@ -140,6 +140,20 @@ $B build "$T/g.nt" -o "$T/gcw.rete" --card --no-card-costs >/dev/null 2>&1
 check "card-audit write" "content hash unchanged" -- bash -c "$B card-audit '$T/gcw.rete' --measure --write-costs --allow-empty 2>&1"
 check "card-audit write verify" "OK|matches"      -- "$B" verify "$T/gcw.rete"
 check "card-audit write costs"  "query costs"     -- "$B" card "$T/gcw.rete"
+# The curated example_queries are audited too, apart from the generated ones.
+printf '%s\n' '{"title":"Smoke","example_queries":["SELECT ?s WHERE { ?s ?p ?o } LIMIT 1","SELECT ?s WHERE {"]}' > "$T/gcx.json"
+$B build "$T/g.nt" -o "$T/gcx.rete" --card-file "$T/gcx.json" >/dev/null 2>&1
+check "card-audit curated" "curated example_queries \(2\)" -- "$B" card-audit "$T/gcx.rete"
+check "card-audit invalid" "invalid +example-2"   -- "$B" card-audit "$T/gcx.rete"
+check "card-audit curated json" '"example_findings"' -- "$B" card-audit "$T/gcx.rete" --json
+check "card-audit curated run" "1 curated query run" -- "$B" card-audit "$T/gcx.rete" --measure --only example-1
+# A card-only rewrite: the card and the build record change, nothing else.
+check "recard" "starter quer"                     -- "$B" recard "$T/gcx.rete" -o "$T/gcr.rete" --keep-curated --verify
+check "recard verify" "OK|matches"                -- "$B" verify "$T/gcr.rete"
+check "recard keeps curated" '"title": ?"Smoke"' -- "$B" card "$T/gcr.rete" --json
+check "recard record" "re-carded"                 -- "$B" card "$T/gcr.rete"
+check_code "recard no overwrite" 1 "already exists" -- "$B" recard "$T/gcx.rete" -o "$T/gcr.rete" --keep-curated
+check_code "recard keeps prose" 1 "curated fields" -- "$B" recard "$T/gcx.rete" -o "$T/gcr2.rete"
 
 echo "== schema pyramid (semantic zoom) =="
 # A tiny subClassOf hierarchy: Astronomer ⊑ Scientist ⊑ Person, with instances.
