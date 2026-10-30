@@ -518,7 +518,7 @@ pub struct LabelIndexPreamble {
 }
 
 impl LabelIndexPreamble {
-    /// Parse the first [`PREAMBLE_LEN`] bytes of a section.
+    /// Parse the first `PREAMBLE_LEN` bytes of a section.
     pub fn parse(bytes: &[u8]) -> Result<Self, FileError> {
         if bytes.len() < PREAMBLE_LEN {
             return Err(FileError::Container("label index: truncated preamble"));
@@ -587,7 +587,7 @@ impl LabelIndex {
     }
 
     /// Open from the section's leading bytes (`head`, at least the preamble;
-    /// normally [`HEAD_READ`] bytes) and a loader for any range of the section.
+    /// normally `HEAD_READ` bytes) and a loader for any range of the section.
     /// The root is read from `head` when it fits, else fetched.
     pub fn from_head(
         head: &[u8],
