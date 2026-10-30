@@ -545,9 +545,22 @@ self.onmessage = function (e) {
   function purge(key){ Object.keys(mirror).forEach(function(k){ if(k.indexOf(key+"#")===0) delete mirror[k]; }); dirty=dirty.filter(function(it){ return it.k!==key; }); openDB().then(function(db){ var tx=db.transaction([RANGES,RMETA],"readwrite"), rs=tx.objectStore(RANGES), ms=tx.objectStore(RMETA); var g=ms.get(key); g.onsuccess=function(){ var m=g.result; if(m&&m.blocks) m.blocks.forEach(function(b){ try{rs.delete(key+"#"+b);}catch(e){} }); try{ms.delete(key);}catch(e){} }; }).catch(function(){}); delete totals[key]; delete etags[key]; }
   // One cheap real range per key per session: if the object changed identity,
   // every cached block for it is garbage, so drop them before serving any.
-  function validate(url,key){ if(validated[key]) return; validated[key]=1; try{ var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes=0-0"); x.responseType="arraybuffer"; x.send(); if(x.status!==206) return; var t=totalOf(x.getResponseHeader("Content-Range")), et=x.getResponseHeader("ETag"); var stale=(totals[key]!=null&&t!=null&&totals[key]!==t)||(etags[key]&&et&&etags[key]!==et); if(stale) purge(key); if(t!=null) totals[key]=t; if(et) etags[key]=et; }catch(e){} }
-  function fetchSpan(url,key,b0,b1){ var b=b0; while(b<=b1){ if(mirror[key+"#"+b]){ b++; continue; } var s=b; while(b<=b1 && !mirror[key+"#"+b]) b++; var e=b-1, as=s*BLOCK, ae=(e+1)*BLOCK-1; var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes="+as+"-"+ae); x.responseType="arraybuffer"; x.send(); if(x.status!==206) throw new Error("rc status "+x.status); var buf=new Uint8Array(x.response), t=totalOf(x.getResponseHeader("Content-Range")); if(t!=null) totals[key]=t; var et0=x.getResponseHeader("ETag"); if(et0) etags[key]=et0; for(var bb=s;bb<=e;bb++){ var off=(bb-s)*BLOCK; if(off>=buf.length) break; var u=buf.slice(off, Math.min(off+BLOCK, buf.length)); mirror[key+"#"+bb]=u; dirty.push({k:key,i:bb,b:u}); } scheduleFlush(); } }
-  function serve(url,s,e){ var key=keyOf(url), b0=Math.floor(s/BLOCK), b1=Math.floor(e/BLOCK); validate(url,key); fetchSpan(url,key,b0,b1); var out=new Uint8Array(e-s+1), p=0; for(var b=b0;b<=b1;b++){ var blk=mirror[key+"#"+b]; if(!blk) throw new Error("rc miss"); var bs=b*BLOCK, from=Math.max(s,bs)-bs, to=Math.min(e,bs+blk.length-1)-bs; for(var i=from;i<=to;i++) out[p++]=blk[i]; } return { bytes:out.subarray(0,p), total:totals[key], start:s }; }
+  // A host may hide Content-Range from JS (no Access-Control-Expose-Headers
+  // entry: Zenodo, GitHub Pages). Then the total comes from HEAD's
+  // Content-Length, which is CORS-safelisted and always readable — once per key
+  // per session, and only when nothing better is known. (It can describe a
+  // compressed representation, #95; the engine checks any total it is handed
+  // against the file's own header, so a wrong one costs a request, not a row.)
+  function headTotal(url){ try{ var h=new RealXHR(); h.open("HEAD",url,false); h.send(); if(h.status<200||h.status>=300) return null; var n=parseInt(h.getResponseHeader("Content-Length")||"",10); return n>0?n:null; }catch(e){ return null; } }
+  function validate(url,key){ if(validated[key]) return; validated[key]=1; try{ var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes=0-0"); x.responseType="arraybuffer"; x.send(); if(x.status===200){ keepWhole(key,new Uint8Array(x.response),x.getResponseHeader("ETag")); return; } if(x.status!==206) return; var t=totalOf(x.getResponseHeader("Content-Range")), et=x.getResponseHeader("ETag"); if(t==null&&totals[key]==null) t=headTotal(url); var stale=(totals[key]!=null&&t!=null&&totals[key]!==t)||(etags[key]&&et&&etags[key]!==et); if(stale) purge(key); if(t!=null) totals[key]=t; if(et) etags[key]=et; }catch(e){} }
+  // A 200 to a range request is a host that ignores Range: the body is the whole
+  // file. It has already been downloaded, so it becomes every block (up to the
+  // cap) and its length the total; above the cap it is not kept, and the request
+  // falls through to the engine's own reader, which says why.
+  var WHOLECAP=268435456, norange=Object.create(null);
+  function keepWhole(key,buf,et){ if(!buf.length) return false; if(buf.length>WHOLECAP){ norange[key]=1; return false; } if(et&&etags[key]&&etags[key]!==et) purge(key); totals[key]=buf.length; if(et) etags[key]=et; for(var bb=0,off=0;off<buf.length;bb++,off+=BLOCK){ var u=buf.slice(off,Math.min(off+BLOCK,buf.length)); mirror[key+"#"+bb]=u; dirty.push({k:key,i:bb,b:u}); } scheduleFlush(); return true; }
+  function fetchSpan(url,key,b0,b1){ var b=b0; while(b<=b1){ if(mirror[key+"#"+b]){ b++; continue; } var s=b; while(b<=b1 && !mirror[key+"#"+b]) b++; var e=b-1, as=s*BLOCK, ae=(e+1)*BLOCK-1; var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes="+as+"-"+ae); x.responseType="arraybuffer"; x.send(); if(x.status===200){ if(keepWhole(key,new Uint8Array(x.response),x.getResponseHeader("ETag"))) continue; throw new Error("rc status 200"); } if(x.status!==206) throw new Error("rc status "+x.status); var buf=new Uint8Array(x.response), t=totalOf(x.getResponseHeader("Content-Range")); if(t==null&&buf.length<ae-as+1) t=as+buf.length; if(t!=null) totals[key]=t; var et0=x.getResponseHeader("ETag"); if(et0) etags[key]=et0; for(var bb=s;bb<=e;bb++){ var off=(bb-s)*BLOCK; if(off>=buf.length) break; var u=buf.slice(off, Math.min(off+BLOCK, buf.length)); mirror[key+"#"+bb]=u; dirty.push({k:key,i:bb,b:u}); } scheduleFlush(); } }
+  function serve(url,s,e){ var key=keyOf(url), b0=Math.floor(s/BLOCK), b1=Math.floor(e/BLOCK); validate(url,key); if(norange[key]) throw new Error("rc: host ignores Range"); fetchSpan(url,key,b0,b1); var out=new Uint8Array(e-s+1), p=0; for(var b=b0;b<=b1;b++){ var blk=mirror[key+"#"+b]; if(!blk) throw new Error("rc miss"); var bs=b*BLOCK, from=Math.max(s,bs)-bs, to=Math.min(e,bs+blk.length-1)-bs; for(var i=from;i<=to;i++) out[p++]=blk[i]; } return { bytes:out.subarray(0,p), total:totals[key], start:s }; }
   class CachedXHR extends RealXHR {
     open(method,url,async){ this.__m=(method||"GET").toUpperCase(); this.__u=url; this.__sync=(async===false); this.__range=null; this.__cached=false; this.__resp=null; this.__cr=null; return super.open(method,url,async); }
     setRequestHeader(name,value){ if(String(name).toLowerCase()==="range") this.__range=value; return super.setRequestHeader(name,value); }
@@ -1921,7 +1934,12 @@ self.onmessage = function (e) {
   // label for an off-catalog remote. Never a catalog entry's text.
   function remoteFileName(url) {
     try {
-      const base = decodeURIComponent(String(url).split("#")[0].split("?")[0].split("/").pop() || "");
+      const segs = String(url).split("#")[0].split("?")[0].split("/");
+      let base = segs.pop() || "";
+      // Zenodo's file API (…/records/<id>/files/<name>/content) names the
+      // file in the segment before `content`; the label must not be "content".
+      if (/^content$/i.test(base) && segs.length >= 2 && segs[segs.length - 2] === "files") base = segs[segs.length - 1];
+      base = decodeURIComponent(base);
       return base || "Remote .rete";
     } catch (_e) {
       return "Remote .rete"; // a malformed %-escape must not break the label
@@ -7473,6 +7491,11 @@ self.onmessage = function (e) {
     }
     return null;
   }
+  // A host that ignores Range answers a tile read with 200 and the WHOLE .rete.
+  // Taking that body for the tile was silently wrong; it is the file, so keep
+  // it (per URL, as a promise so concurrent tile reads share one download) and
+  // slice every tile out of it.
+  const wholeTileBodies = new Map(); // .rete url -> Promise<ArrayBuffer>
   // A pmtiles Source that range-reads an archive embedded inside a .rete at `base`:
   // every internal PMTiles offset is shifted into the .rete file.
   function reteSectionSource(reteUrl, base) {
@@ -7480,7 +7503,12 @@ self.onmessage = function (e) {
       getKey: () => reteUrl + "#tiles@" + base,
       getBytes: async (offset, length, signal) => {
         const start = base + offset, end = start + length - 1;
+        if (wholeTileBodies.has(reteUrl)) return { data: (await wholeTileBodies.get(reteUrl)).slice(start, end + 1) };
         const r = await fetch(reteUrl, { headers: { Range: `bytes=${start}-${end}` }, signal });
+        if (r.status === 200) {
+          if (!wholeTileBodies.has(reteUrl)) wholeTileBodies.set(reteUrl, r.arrayBuffer());
+          return { data: (await wholeTileBodies.get(reteUrl)).slice(start, end + 1) };
+        }
         if (!r.ok && r.status !== 206) throw new Error("tiles range read " + r.status);
         return { data: await r.arrayBuffer() };
       },

@@ -106,6 +106,19 @@ ASYNC_ENV_JS = """
         // Chromium/Firefox (the async default there) with cross-reload re-fetches —
         // and they handle concurrent ranges fine. So gate it to WebKit only.
         var __reteNoStore = (function () { try { var ua = (navigator.userAgent || "").toLowerCase(); return ua.indexOf("safari") >= 0 && ua.indexOf("chrome") < 0 && ua.indexOf("chromium") < 0 && ua.indexOf("android") < 0 && ua.indexOf("edg/") < 0; } catch (e) { return false; } })();
+        // The whole body a range-IGNORING host sent (a 200 to a Range request),
+        // per URL. Kept up to the same cap as the sync reader (WHOLE_BODY_CAP in
+        // crates/rete-wasm): every later read is a slice of it.
+        var __RETE_WHOLE_CAP = 256 * 1024 * 1024;
+        function __reteWholeBodies() { return globalThis.__reteWhole || (globalThis.__reteWhole = new Map()); }
+        function __reteKeepWhole(url, bytes) {
+          if (!bytes || !bytes.length || bytes.length > __RETE_WHOLE_CAP) return null;
+          __reteWholeBodies().set(url, bytes);
+          // The whole file crossed the network: count it, or the byte line would
+          // claim a bounded read (docs/architecture.md).
+          if (typeof globalThis.reteProgress === 'function') globalThis.reteProgress(bytes.length, ['0-' + (bytes.length - 1)], 1);
+          return bytes;
+        }
         async function __reteDoFetch(urlPtr, urlLen, offsPtr, lensPtr, n, dstPtr) {
           const url = __reteStr(urlPtr, urlLen);
           const dv = new DataView(wasm.memory.buffer);
@@ -116,10 +129,19 @@ ASYNC_ENV_JS = """
           // BURST of concurrent fetches, and a single transient miss ("Failed to
           // fetch" on a flaky link, a 5xx blip) used to fail the whole query —
           // the sync XHR reader already retries, so async matches it.
+          // A host that IGNORES Range answers 200 with the whole file. That body
+          // is kept per URL (the length probe usually stores it first) and every
+          // range becomes a slice of it, instead of each read downloading the
+          // file again or the whole body being taken for the range.
+          const whole = __reteWholeBodies();
           const one = ([o, l], attempt) =>
+            (whole.has(url) ? Promise.resolve(whole.get(url).subarray(o, o + l)) :
             fetch(url, { headers: { Range: 'bytes=' + o + '-' + (o+l-1) }, cache: __reteNoStore ? 'no-store' : 'default' })
-              .then((r) => { if (r.status !== 206) throw new Error('Range status ' + r.status + ' (host must support HTTP range)'); return r.arrayBuffer(); })
-              .then((b) => new Uint8Array(b))
+              .then((r) => {
+                if (r.status === 200) return r.arrayBuffer().then((b) => { const u = __reteKeepWhole(url, new Uint8Array(b)); if (!u) throw new Error('Range status 200 with ' + b.byteLength + ' bytes (host must support HTTP range)'); return u.subarray(o, o + l); });
+                if (r.status !== 206) throw new Error('Range status ' + r.status + ' (host must support HTTP range)');
+                return r.arrayBuffer().then((b) => new Uint8Array(b));
+              }))
               .catch((e) => {
                 if (attempt >= 1) throw e;
                 return new Promise((res) => setTimeout(res, 250)).then(() => one([o, l], attempt + 1));
@@ -185,16 +207,31 @@ ASYNC_ENV_JS = """
                   // RETE footer. One extra 4-byte request, only on hosts whose
                   // headers are unusable or disagree.
                   const t = await fetch(url, { headers: { Range: 'bytes=' + (derived - 4) + '-' + (derived - 1) } });
-                  const tb = t.status === 206 ? new Uint8Array(await t.arrayBuffer()) : new Uint8Array(0);
-                  if (tb.length === 4 && tb[0] === 0x52 && tb[1] === 0x45 && tb[2] === 0x54 && tb[3] === 0x45) total = derived;
+                  // A 200 here is the whole file (ranges honoured for the head,
+                  // ignored for the tail): keep it if it IS the file.
+                  const tw = t.status === 200 && Number(t.headers.get('content-length') || 0) <= __RETE_WHOLE_CAP ? new Uint8Array(await t.arrayBuffer()) : null;
+                  const tb = t.status === 206 ? new Uint8Array(await t.arrayBuffer()) : tw && tw.length === derived ? tw.subarray(derived - 4) : new Uint8Array(0);
+                  if (tb.length === 4 && tb[0] === 0x52 && tb[1] === 0x45 && tb[2] === 0x54 && tb[3] === 0x45) { total = derived; if (tw) __reteKeepWhole(url, tw); }
                   else if (crTotal > 0) total = crTotal; // truncated .rete on an honest host
                 } else if (crTotal > 0) total = crTotal; // not a .rete header — trust a visible total
               } else if (r.status === 200) {
-                // Host ignored Range; it cannot serve range reads at all, but a
-                // positive length lets the first read fail with the clearer
+                // Host ignored Range and is sending the whole file. Keep it (up
+                // to the cap) so every read is a slice of it — the file then
+                // behaves like an in-memory one. Over the cap, stop the download:
+                // a positive length lets the first read fail with the clearer
                 // 'Range status 200 (host must support HTTP range)' error.
-                total = Number(r.headers.get('content-length') || 0);
-                if (r.body && r.body.cancel) r.body.cancel().catch(() => {});
+                const cl = Number(r.headers.get('content-length') || 0);
+                if (cl > __RETE_WHOLE_CAP) {
+                  total = cl;
+                  if (r.body && r.body.cancel) r.body.cancel().catch(() => {});
+                } else {
+                  const body = new Uint8Array(await r.arrayBuffer());
+                  // A .rete body must be exactly the length its header derives;
+                  // anything else is a truncated file, not the file.
+                  const derived = headerLen(body);
+                  const kept = (derived === 0 || derived === body.length) ? __reteKeepWhole(url, body) : null;
+                  total = kept ? kept.length : 0;
+                }
               }
             } catch (e) { /* retry the whole probe */ }
             if (!(total > 0)) { // last resort: HEAD's CORS-safelisted Content-Length

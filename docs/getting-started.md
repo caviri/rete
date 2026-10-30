@@ -248,7 +248,9 @@ selected permutation payload (the best of the six) for the triple pattern. `summ
 reads just the header, dictionary, and summary — **the index is never
 downloaded**. The host **must** return `206 Partial Content` to a `Range`
 request; a host that ignores `Range` (returns `200`) is rejected with a clear
-error rather than silently returning wrong bytes.
+error rather than silently returning wrong bytes. (The browser reader, which
+has already received that whole body, keeps it when it is at most 256 MiB and
+counts the whole download; see [Hosting](hosting.md).)
 
 ## Generating synthetic test data
 

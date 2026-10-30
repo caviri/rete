@@ -5,6 +5,20 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A host that ignores `Range` no longer breaks the browser reader.** A `200`
+  with the whole file used to fail every read ("server ignored Range"); the
+  sync and asyncify readers, the persistent range cache and the in-file tiles
+  reader now keep that body (up to 256 MiB) and serve every read from it, and
+  refuse a larger one by name without downloading it again.
+- **Zenodo-hosted files.** A host that hides `Content-Range` from JavaScript
+  (Zenodo's file API exposes only `Content-Type`, `ETag`, `Link` and its
+  rate-limit headers) opens as before from the file's own header; the
+  persistent range cache now takes the total from `HEAD`'s `Content-Length`
+  there, and an off-catalog `…/files/<name>/content` URL is labelled with the
+  file name. A gate check serves Zenodo's exact header set.
+
 ## [0.3.7] - 2026-10-28
 
 **Where 0.3.7 is published: every channel, from the one `v0.3.7` tag.**

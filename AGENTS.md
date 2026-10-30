@@ -324,9 +324,13 @@ rebuilt in lockstep, and two of the largest published files have no local source
 to rebuild from at all.
 
 **R2 rules of the road:**
-- **CORS is required and MUST ExposeHeaders `Content-Range`** — rete's open probe reads
-  the total file length from `Content-Range: bytes 0-0/N`; without exposing it the file
-  will not open in a browser (curl/CLI ignore CORS, so ALWAYS verify in a browser).
+- **CORS is required; keep `ExposeHeaders` listing `Content-Range`** (the catalog
+  contract, `scripts/check_dataset_catalog.py`, checks it). The browser readers do not
+  need it to open a `.rete`: the length comes from the file's own 1 KiB header,
+  confirmed by a 4-byte footer read, and a visible `Content-Range` that agrees only
+  saves that read. That is why a host that hides it, like Zenodo's file API, opens
+  fine (`docs/hosting.md`, `tests/gate/checks/check_zenodo_host.mjs`). curl/CLI ignore
+  CORS, so ALWAYS verify in a browser.
   Policy: `AllowedOrigins ["*"]`, `AllowedMethods ["GET","HEAD"]`, `AllowedHeaders
   ["Range"]`, `ExposeHeaders ["Content-Range","Content-Length","Accept-Ranges","ETag"]`.
 - **Cost:** egress is **free** (no per-request / per-user bandwidth charge — R2's whole
