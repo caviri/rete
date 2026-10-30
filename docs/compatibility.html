@@ -689,6 +689,28 @@ be expected to work. Keep the default for anything published, and treat
 <code>--permutations 3</code> as a choice about a specific consumer that you control.</p>
 <p>Which set a file carries is visible without downloading it: <code>rete info</code>, <code>rete stats</code> and the Dataset Card's <code>signals.permutations</code> all report it, derived from
 the header byte rather than stored — see <a href="dataset-cards.html">dataset-cards.md</a>.</p>
+<h3 id="label_index-and-schema-kinds-8-9-optional-sections-older-readers-skip">LABEL_INDEX and SCHEMA (kinds 8, 9): optional sections older readers skip</h3>
+<p>Since 0.4.0 <code>rete build</code> writes the labels and the schema in sections of their
+own (SPEC §6.4, §7.5), and its pyramid-meta carries only the community summary.
+The file is still format <code>0x05</code>: the two kinds are new directory entries, laid out
+after every other section, which is exactly the extension the 1 KiB directory was
+designed for.</p>
+<table><thead><tr><th></th><th>file built by ≤ 0.3.x</th><th>file built by 0.4.0</th></tr></thead><tbody>
+<tr><td><strong>reader ≤ 0.3.x</strong></td><td>unchanged</td><td>opens, queries and verifies it. Kinds 8 and 9 are unknown entries: kept verbatim, shifted on every header rewrite, never read. Same rows for every query; but <code>rete search &lt;prefix&gt;</code>, <code>rete summary</code>'s schema levels and the planner's measured selectivities come back empty, because the pyramid-meta no longer holds them</td></tr>
+<tr><td><strong>reader 0.4.0</strong></td><td>reads the labels and schema from the pyramid-meta, as before</td><td>reads them from kinds 8 and 9</td></tr>
+</tbody></table>
+<p>Both sections are <strong>outside the content hash</strong>. That is what keeps an older
+<code>rete verify</code> passing: it hashes the kinds it knows, and a hashed kind 8 or 9 would
+make it call every new file corrupt. Each section starts with its own 16-byte
+BLAKE3 digest instead, which the current <code>verify</code> checks too. The content hash is
+therefore the same for a file with and without them — two builds of the same data
+that differ only in <code>--label-index</code> share one identity (and one playground session
+cache key), and answer every SPARQL query identically.</p>
+<p>Verified against the released 0.3.7 binary (<code>ghcr.io/caviri/rete-cli:0.3.7</code>) on
+files with both sections: <code>info</code>, <code>verify</code>, <code>stats</code>, <code>sparql</code>, <code>export</code> and
+<code>search</code> all succeed (the last finds nothing, as the table says). Rebuild the
+bundled engines before publishing files written by 0.4.0, as for every writer
+change.</p>
 <h2 id="is-it-compatible-with-rdf">Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack

@@ -183,10 +183,12 @@ which predicate-combinations subjects carry, e.g. `{type, name, age} ×N`).
 ### Label search (autocomplete)
 
 `rete search data.rete <prefix>` resolves a case-insensitive label prefix
-**without scanning the literals**. At build time rete extracts the display labels
-(`rdfs:label`, `skos:prefLabel`/`altLabel`, `foaf:name`, `dc(terms):title`,
-`schema:name`) of the most-connected subjects into a bounded, label-sorted block
-in the pyramid-meta; a prefix query is then a binary search over that block:
+**without scanning the literals**. Built with `rete build --label-index`, the file
+carries a LABEL_INDEX section: the display labels (`rdfs:label`,
+`skos:prefLabel`/`altLabel`, `foaf:name`, `dc(terms):title`, `schema:name`, and
+`"family, given"` for people with only given/family names) of **every** labelled
+subject, label-sorted; a prefix query walks a small directory to the matching
+block:
 
 ```sh
 rete search data.rete "alan"          # label<TAB><iri> rows, case-insensitive
@@ -197,11 +199,12 @@ rete search data.rete                 # empty prefix → the first --limit label
 This is the fast path for autocomplete: a binary search plus a short walk,
 versus a `FILTER(STRSTARTS(LCASE(?l), …))` scan over every label triple
 (measured **~22× faster** at 6k labeled subjects; the gap widens with size — the
-scan is linear in the label count, the index is `O(log n + matches)`). The block
-is **bounded** (top 8,192 labeled subjects by degree), so on a very large graph
-it covers the prominent entities; an exhaustive match still needs the FILTER
-scan. Files built before this feature have no label index — rebuild to add it
-(the block is additive and backward-compatible, so old readers ignore it).
+scan is linear in the label count, the index is `O(log n + matches)`). The
+section has no cap, does not need the pyramid (`--no-pyramid` and
+`--memory-budget-mb` builds can carry it), and over HTTP a search reads a few
+small ranges and no dictionary. Files built before it existed answer from a
+bounded block in their pyramid-meta (the 8,192 most-connected labelled subjects);
+a build without `--label-index` has no label index at all.
 
 ### Full-text search (word / CONTAINS)
 

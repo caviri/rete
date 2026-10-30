@@ -44,6 +44,26 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   default graph, `suspect` when it names a predicate the card's complete
   predicate list lacks. `--measure` runs them; `--write-costs` still stores
   the starters' costs only.
+- **Labels and schema out of the community pyramid: two new optional
+  sections.**
+  - **LABEL_INDEX (kind 8)**, `rete build --label-index`: the display label
+    of *every* labelled subject (no 8,192 cap), sorted for prefix search and
+    read in a few small ranges — header, the section head, one directory node
+    per level, one data block, and no dictionary. People who carry only
+    `foaf:givenName`/`familyName` (and the schema.org/vCard equivalents) get
+    `"family, given"`. Works with `--no-pyramid` and `--memory-budget-mb`.
+    `rete search`, `search-url` and the browser's `prefix_search` read it and
+    fall back to the old pyramid block on older files. The card reports
+    `signals.label_index = {present, bytes, entries}`, measured at read time.
+  - **SCHEMA (kind 9)**, written by every `rete build` (`--no-schema` omits
+    it): the class hierarchy, level rollups and links, coherence axioms, the
+    planner's `query_stats` and the characteristic sets, computed without the
+    dendrogram — so `--no-pyramid` and memory-bounded files get them too, and
+    the planner has measured selectivities on files without a pyramid.
+  - Both sit outside the content hash (each carries its own BLAKE3 digest,
+    checked by `rete verify`), so an older `rete verify` still passes and the
+    content identity of a file does not depend on them.
+- `rete repyramid --label-index`; `rete merge` keeps its shards' label index.
 
 ### Changed
 
@@ -180,6 +200,21 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - **The card `extra` bag allows three container levels** (was two), so a list
   of objects holding a word list fits; size limits unchanged, and an over-deep
   bag's error names the path to flatten.
+- **`rete build` no longer writes labels or the schema into the
+  pyramid-meta.** Its pyramid now carries only the community summary and the
+  per-community descriptors. A build without `--label-index` therefore has no
+  label index at all (it used to get the bounded 8,192-entry block on pyramid
+  builds): add `--label-index` — the publish recipe is now
+  `--pyramid-algo types --label-index --card`. Readers older than this
+  release open such a file and return the same rows, but find no labels,
+  schema levels or planner statistics in it; rebuild bundled engines first.
+  The library's existing `assemble_*` entry points keep writing the old
+  combined layout, byte for byte.
+- The schema's representative class is now the subject's type with the
+  smallest id (it was the first in input order), and the schema's type
+  predicate is `--type-predicate` or `rdf:type` (the pyramid's
+  "behaves like instance-of" auto-detection applies to its descriptors only).
+  `query_stats` now counts deduplicated statements.
 
 ### Fixed
 

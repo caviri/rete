@@ -54,7 +54,7 @@ bounded before they are run: past 2,000,000 statements a template ships a
 `--no-card-costs` skips the run, and so skips that check as well. `--text-index` adds a
 full-text (word/CONTAINS) index over the literals for `rete search --contains`
 (see below). `--type-predicate <IRI>` overrides the predicate that types subjects
-with classes for the schema pyramid (default `rdf:type`, else auto-detected) —
+with classes for the schema (default `rdf:type`) —
 e.g. Wikidata's `--type-predicate http://www.wikidata.org/prop/direct/P31`.
 `--no-pyramid` skips the community pyramid entirely (no pyramid section): SPARQL /
 SHACL / triple-pattern / reachability queries don't use it, so the file stays
@@ -63,8 +63,32 @@ queries need the pyramid. `--pyramid-algo louvain|types` picks the community
 algorithm: `louvain` (default) detects topological communities; `types` partitions
 by `rdf:type` instead — deterministic, self-naming communities that stay feasible
 on graphs too large for the single-threaded Louvain build (it falls back to
-Louvain when the graph is untyped). All of these are opt-in; without them the
-output is byte-identical to a plain build.
+Louvain when the graph is untyped). These are opt-in; without them the output is
+a plain build.
+
+**Labels and schema have sections of their own, outside the pyramid.**
+`--label-index` writes a LABEL_INDEX section (kind 8): the display label of
+**every** labelled subject — `rdfs:label`, `skos:prefLabel`/`altLabel`,
+`foaf:name`, `dc`/`dcterms:title`, `schema:name`, and for people who carry only
+given and family names, `"family, given"` — sorted for
+[`rete search <prefix>`](#rete-search-file-prefix---contains-word---contains-prefix-p---limit-n---json).
+It has no cap, and a remote prefix search reads a few small ranges of it and no
+dictionary. Without the flag the file has **no label index at all**: the
+pyramid-meta no longer carries the 8,192-entry block it used to. Every build also
+writes a SCHEMA section (kind 9) — the class hierarchy and level rollups, the
+coherence axioms, the planner's per-predicate `query_stats` and the
+characteristic sets — computed without the pyramid, so `--no-pyramid` and
+`--memory-budget-mb` files have them too; it is a few kilobytes, and `--no-schema`
+leaves it out. Both flags work with `--no-pyramid`, any `--pyramid-algo` and
+`--memory-budget-mb`, and both sections sit outside the content hash (an older
+`rete verify` still passes; an older reader just doesn't see them — see
+[compatibility.md](compatibility.md)). The publish recipe is
+`--pyramid-algo types --label-index --card`.
+
+```sh
+rete build data.nt -o data.rete --no-pyramid --label-index   # labels + schema, no pyramid
+rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index
+```
 
 `--strict` refuses input carrying an IRI that the N-Triples/N-Quads `IRIREF`
 grammar and RFC 3987 disallow. It is **off** by default and the build only
@@ -139,7 +163,7 @@ rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see [compatibility.md](compatibility.md).
 
 The flag exists on `build` only. The two commands that re-assemble an existing
-file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-)
+file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---label-index---card-)
 **preserves its input's set** (and says so on stderr when that set is not the
 default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-)
 writes the **union** of its inputs' sets — one full shard is enough to keep the
@@ -198,11 +222,11 @@ bash scripts/recard/recard.sh --source /work/old.rete --out /work/new.rete   # w
 Measured on an OpenCitations Meta part (26.5 GB, 2,904,375,666 statements,
 978,932,751 terms): see [Maintaining a published card](dataset-cards.md#which-re-card-path).
 
-### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--card …]`
+### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--label-index] [--card …]`
 Rebuild a file's pyramid **in place**, reading the triples straight from the
 existing `.rete` — no `export | build` N-Quads round-trip. Use it to add a schema
-pyramid (or a `--text-index` / a Dataset Card) to a file built before those
-existed, or to re-derive the schema pyramid under a different `--type-predicate`
+(or a `--text-index`, a `--label-index` / a Dataset Card) to a file built before
+those existed, or to re-derive the schema pyramid under a different `--type-predicate`
 or `--pyramid-algo` (same semantics as `rete build`). The card flags match
 `rete build` (`--card-file` / `--title` / `--license` / …) — and take the
 curated half **only** from those flags, so a bare `--card` drops the
@@ -231,7 +255,9 @@ rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-al
 3-permutation, a 6 stays 6, and it prints the preserved set on stderr when it is
 not the default six. It re-assembles an existing file rather than re-deciding how
 it was built, so it has no `--permutations` of its own — rebuild from source to
-change the set.
+change the set. It keeps a LABEL_INDEX the input carries (`--label-index` adds
+one), and writes the SCHEMA section and the community-only pyramid-meta `rete build`
+writes.
 
 ### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …]`
 Fold several `.rete` files into one without going back through text — the way to
@@ -416,8 +442,10 @@ Before 0.4.0 the first line read `default-graph triples : 18869242`, which
 on this file is the whole dataset, 1.5 M provenance graphs included.
 
 ### `rete verify <file>`
-Recompute the blake3 content hash and compare to the header. Exits non-zero with
-`FAILED — content hash mismatch` on corruption/truncation. The hashed sections
+Recompute the blake3 content hash and compare to the header, and check the
+LABEL_INDEX / SCHEMA sections against their own digests (they are outside the
+content hash). Exits non-zero with `FAILED — content hash mismatch, …` on
+corruption/truncation. The hashed sections
 are streamed in 8 MiB reads, so verifying a 49 GB file needs megabytes, not
 49 GB (it used to read the whole file into memory).
 
@@ -428,13 +456,14 @@ Two modes.
 (case-insensitive), printed as `label<TAB><iri>` (or
 `{"schemaVersion":1,"matches":[{"label":…,"subject":…}]}` with `--json`).
 An empty prefix returns the first `--limit` labels (default 20).
-Answered from a bounded, label-sorted block in the pyramid-meta by binary search
-— **no literal scan** — so it is the fast path for autocomplete (~22× a
-`FILTER(STRSTARTS(LCASE(?l), …))` scan at 6k labels; the gap widens with size).
-Labels come from `rdfs:label`, `skos:prefLabel`/`altLabel`, `foaf:name`,
-`dc(terms):title`, and `schema:name`; the block keeps the top 8,192 most-connected
-labeled subjects. Files built before this feature carry no label index (the block
-is additive — rebuild to add it).
+Answered from the file's **LABEL_INDEX** section (`rete build --label-index`) —
+**no literal scan**, every labelled subject, results in label order — so it is the
+fast path for autocomplete. Labels come from `rdfs:label`, `skos:prefLabel`/`altLabel`,
+`foaf:name`, `dc(terms):title` and `schema:name`, and for people with only
+given/family names `"family, given"` (so `svobodová, j` finds the author). A file
+built before the section existed answers from the bounded block its pyramid-meta
+carried instead (the 8,192 most-connected labelled subjects, direct labels only).
+A file with neither says so; rebuild with `--label-index`.
 
 **Full-text** (`--contains <word>…`) — the subjects whose literals contain
 **every** given word (whole-word, case-insensitive — AND), printed one IRI per
@@ -1422,8 +1451,11 @@ The open is deliberately narrower than any other remote command's. It reads the
 header and the **subject** halves of the dictionary (the shared and subject-only
 sections), and stops: no permutation tile directories, no pyramid, no index.
 `--contains` then faults the TEXT_INDEX token table once and one range request
-per posting list; the bare prefix mode faults the pyramid instead, where the
-label index lives.
+per posting list. The bare prefix mode reads the LABEL_INDEX section — its head
+(preamble and root, one range of at most 64 KiB), one directory node per level and
+the data blocks it needs — and on such a file the dictionary is **not opened at
+all**, because the section stores each subject's term. On an older file it faults
+the pyramid instead, where the legacy label block lives.
 
 That narrowness is the point, because on a literal-heavy graph the dictionary is
 most of the file, and on a file built before 2026-08 its **object-only chunk

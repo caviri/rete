@@ -15,7 +15,7 @@ this for you; raw form:
 ```bash
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -w /work rete-dev:latest \
   /work/target/release/rete build /work/data/foo/foo.nt -o /work/data/foo/foo.rete \
-  --pyramid-algo types --card
+  --pyramid-algo types --label-index --card
 ```
 
 (`MSYS_NO_PATHCONV=1` is only needed on Windows Git-Bash so `/work` isn't mangled.)
@@ -29,14 +29,16 @@ binary is stale/missing.
 | `-o, --output <FILE>` | required output `.rete` |
 | `<INPUTS>...` | one or more RDF inputs (merged); `-` reads stdin |
 | `--format nt\|nq\|ttl\|rdfxml` | force input format (else by extension) |
-| `--pyramid-algo louvain\|types` | community pyramid algo. **`types`** = partition by `rdf:type`: deterministic, parallelizable, self-naming, still emits planner `query_stats`; falls back to louvain when untyped. `louvain` (default) = topological modularity, single-threaded, byte-identical. Prefer `types` for typed graphs and anything large. |
+| `--pyramid-algo louvain\|types` | community pyramid algo. **`types`** = partition by `rdf:type`: deterministic, parallelizable, self-naming, falls back to louvain when untyped. `louvain` (default) = topological modularity, single-threaded, byte-identical. Prefer `types` for typed graphs and anything large. |
 | `--no-pyramid` | skip the pyramid entirely — smaller file, still fully queryable (SPARQL/SHACL/triple/reach don't use it). Only community/summary/progressive queries need it. |
 | `--text-index` | full-text word index over literals → `rete search --contains <word>`. Large on text-heavy graphs; off by default. |
+| `--label-index` | the LABEL_INDEX section → `rete search <prefix>` / the playground's entity search: every labelled subject (people as "family, given"), no cap, a few small range reads per search. **Pass it for a publishable dataset** — labels are no longer inside the pyramid, so without it there is no label index. Works with `--no-pyramid` and `--memory-budget-mb`. |
+| `--no-schema` | leave out the SCHEMA section (class hierarchy, level rollups, planner `query_stats`, characteristic sets), which every build writes by default — a few KB, no pyramid needed. |
 | `--type-predicate <FULL-IRI>` | override the typing predicate for the schema pyramid. **Use the full IRI** (`http://www.wikidata.org/prop/direct/P31`), never a prefix — a prefix yields "0 typed classes". |
 | `--card` | embed a Dataset Card (counts, top predicates/classes, vocabularies + curated fields). Always pass for a publishable dataset. |
 | `--title / --license / --source / --description / --created` | curated card fields (each implies `--card`). |
 | `--card-file <json>` | JSON of curated card fields (implies `--card`). Publisher-defined custom fields go inside its `extra` object (bounded: 8 KB serialized, ≤64 keys, nesting ≤2); unknown TOP-LEVEL keys are rejected loudly — see `docs/dataset-cards.md`. |
-| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build. PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir`. |
+| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build (the SCHEMA section and `--label-index` included). PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir`. |
 | `--tmp-dir <dir>` | Where `--memory-budget-mb` puts its spill files (default: alongside the output). |
 | `--permutations 3\|6` | How many index permutations to store. **Default 6 — leave it alone for anything published.** `3` writes SPO/POS/OSP only: same rows, same routing, same tiles for every query, but no sort-merge join (the planner hash-joins instead) and **older readers refuse the file outright** (`malformed container: expected 6 permutation sections`, exit 1). The three dropped orders are 36.8%–50.5% of a built file. Consider `3` only for a private/self-hosted, index-dominated dataset whose workload is lookup-and-follow rather than `?s <p1> ?o1 . ?s <p2> ?o2` subject stars — and measure with `rete cost` first. |
 | `--materialize` | bake RDFS/OWL-RL entailments into the file at build time (aborts if incoherent). |
@@ -46,7 +48,7 @@ binary is stale/missing.
 
 ```bash
 rete build foo.nt -o foo.rete \
-  --pyramid-algo types --card \
+  --pyramid-algo types --label-index --card \
   --title "Foo KG" --license "CC0-1.0" --source "https://example.org" \
   --description "What this graph is."
 # add --text-index if content search matters; --type-predicate <IRI> if not rdf:type

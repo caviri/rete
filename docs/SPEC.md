@@ -161,7 +161,7 @@ addressing — *how many* of those six a given file actually stores is its
 
 | Offset | Size | Field |
 |---|---|---|
-| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info; higher ids reserved for future sections) |
+| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info, `8` label-index, `9` schema; higher ids reserved for future sections) |
 | +2 | 2 | section flags (reserved) |
 | +4 | 4 | reserved (zero) |
 | +8 | 8 | section offset |
@@ -199,6 +199,22 @@ input hash identically — must survive them. `verify` therefore does not cover
 it, on old readers (which see an unknown kind-7 entry and ignore it) and new
 ones alike; treat its contents as advisory provenance, not integrity-protected
 data.
+
+The **label-index** (kind `8`, §6.4) and **schema** (kind `9`, §7.5) sections are
+optional and were added after the generation-1 freeze. They are laid out **after
+every other section, just before the footer**, and — like build-info, for a
+different reason — they are **outside the content hash**. An older reader's
+`verify` folds in only the kinds it knows, so a hashed kind 8 or 9 would make every
+older `rete verify` report a new file as corrupt. Each section therefore starts with
+a **16-byte BLAKE3 digest of the rest of the section** (`blake3(section[16..])`,
+first 16 bytes), which a current `verify` checks besides the content hash. Both are
+pure functions of the data and the build flags, so the reproducible-hash property
+holds, and a file gains or loses them without changing its content identity (the
+content hash identifies the data, the card and the generation-1 indexes). A reader
+that predates them keeps their directory entries verbatim, shifts them on every
+header rewrite like any unknown kind, and never reads them; it answers every query
+with the same rows, but finds no label index, no schema and no planner statistics
+in a file whose pyramid-meta no longer carries them (§7.3).
 
 ---
 
@@ -476,6 +492,59 @@ range read at `text_index offset` and is the honest cost figure; the section
 length alone overstates it several-fold, since the postings blob is never read
 whole.
 
+### 6.4 Label index (LABEL_INDEX section, optional)
+
+An **opt-in** section (kind `8`, `rete build --label-index`) holding the display
+label of **every** labelled subject of the default graph, sorted for prefix search
+(`rete search <prefix>`, the browser's entity search). It replaces the label block
+the pyramid-meta used to carry (§7.3), which was fetched whole and so capped at
+8,192 entries ranked by out-degree, and which a file without a pyramid lacked
+entirely. The section has no cap and no ranking, does not depend on the pyramid, and
+is written by the in-memory and the memory-bounded build alike. Outside the content
+hash, self-digested (§4.1).
+
+**Which labels** (index-only — the triples are not changed):
+- **L1**, every literal of `rdfs:label`, `skos:prefLabel`, `skos:altLabel`,
+  `foaf:name`, `dcterms:title`, `dc:title`, `schema:name`;
+- **L2**, only for a subject with no L1 label: `"family, given"` from the smallest
+  value of `foaf:familyName` / `foaf:lastName` / `foaf:surname` /
+  `foaf:family_name` / `schema:familyName` / `vcard:family-name` and the smallest
+  of `foaf:givenName` / `foaf:firstName` / `foaf:givenname` / `schema:givenName` /
+  `vcard:given-name` — or whichever of the two exists. People who carry only given
+  and family names get a label, surname first, the bibliographic convention.
+- A label is the literal's lexical value with escapes resolved, whitespace runs
+  collapsed to one space, trimmed, and cut to 512 bytes at a character boundary.
+  Its **key** is its Unicode lowercase form. There is one entry per
+  `(subject, key)`, keeping the smallest label; entries are sorted by
+  `(key, subject)`.
+
+**On-disk layout:**
+
+```text
+off  size
+0    16   digest = blake3(section[16..])[..16]
+16   1    version (1)
+17   1    levels: directory levels below the root (0 = the root lists data blocks)
+18   2    reserved (0)
+20   8    entry_count (u64 LE)
+28   4    root_len (u32 LE)
+32   root_len         root node
+32+root_len …         body: data blocks, then the directory nodes, level by level
+node  (block codec):  varint n; per child: varint shared, varint suffix_len, suffix
+                      (the child's first key, front-coded), varint off, varint len,
+                      varint entries          # off is relative to the body start
+block (block codec):  varint n; per entry: varint shared, varint suffix_len, suffix   # label
+                                           varint shared, varint suffix_len, suffix   # subject term
+```
+
+Data blocks close at 16 KiB uncompressed; a node holds at most 1,024 children, and
+levels are added until the root does too, so the root stays far below 64 KiB. The
+subject is stored as its **term**, not its dictionary id, so a search never reads
+the dictionary. A remote search reads the section's first `min(len, 64 KiB)` bytes
+(preamble + root), then one node per level and the data blocks of the matching run,
+one at a time, until `limit` entries are found or the run ends. A card reader learns
+`entry_count` from the 32-byte preamble alone (`signals.label_index`).
+
 **Compatibility:** `0x05` is stable format generation 1. Every stable reader from
 Rete **0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen
 in the 0.3 line and the release version is a separate number.
@@ -578,6 +647,27 @@ varint num_descriptors;    per: varint community, dominant_idx+1 (0 = none),
 The string table holds both class and predicate IRIs, so the schema pyramid decodes
 **without the dictionary** — the ontology travels as self-contained text.
 
+Between the tiles and the v2 block, three optional **tagged blocks** may appear, in
+this order, each `u8 tag, varint len, payload` so a reader that does not know a tag
+skips it:
+
+```text
+3  query_stats   varint n; per: varint predicate, count, distinct_subjects, distinct_objects,
+                                    max_objects_per_subject, max_subjects_per_object
+4  char_sets     varint n; per: varint num_predicates, predicate…, subjects     # top 128 shapes
+5  label block   varint n; per: len-prefixed label, varint subject id           # ≤ 8,192; legacy
+```
+
+**Two layouts.** Up to 0.3.x every pyramid-meta carried all of the above (the
+*combined* layout, which the library's legacy `assemble_*` entry points still
+write). `rete build` and `rete repyramid` now write the **community-only** layout:
+round, superedges, tiles, and a v2 block holding only the per-community
+`descriptors` — the parts that need the community partition. The schema, the
+`query_stats` and the characteristic sets live in the SCHEMA section (§7.5), the
+labels in the LABEL_INDEX section (§6.4). A reader takes each field from its
+section when the file has one, else from the pyramid-meta, so files of either
+layout read the same.
+
 ### 7.4 The schema pyramid — semantic zoom (v2)
 
 The community pyramid (§7.1) is **topological**; the schema pyramid is the
@@ -613,6 +703,42 @@ A client reads the leveled legend over the same index-free range fetch as the
 summary: `rete summary --level k` (and `summary-url`) render it without touching
 the triple index. The `subClassOf` axioms come from the data, or from
 `rete build --materialize` (the OWL-RL reasoner).
+
+### 7.5 The SCHEMA section (kind 9)
+
+The schema of §7.4 without the community pyramid: the class hierarchy, the
+per-level type rollups and lateral class links, the coherence axioms
+(`subClassOf` cycles, `owl:disjointWith` and `owl:equivalentClass` pairs), plus the
+planner's per-predicate `query_stats` and the characteristic sets. None of these
+needs the dendrogram — only the per-community descriptors do, and they stay in the
+pyramid-meta — so every `rete build` writes this section (`--no-schema` omits it),
+`--no-pyramid` and `--memory-budget-mb` included. It is a few kilobytes. Outside the
+content hash, self-digested (§4.1).
+
+```text
+0   16  digest = blake3(section[16..])[..16]
+16  1   version (1)
+17  …   varint len + bytes: the type predicate the rollups used (empty = no typing)
+    …   a pyramid-meta stream (§7.3) with round 0, no superedges, no tiles, no label
+        block and no descriptors: [3 query_stats] [4 char_sets] [v2 block]
+```
+
+Its content is computed over the **deduplicated** default graph with rules that do
+not depend on input order, which is what lets the in-memory build and the
+memory-bounded build (which reads its sorted permutation streams) write the same
+bytes:
+- the type predicate is `--type-predicate` when given, else `rdf:type`;
+- a subject's representative class is its type with the smallest object id;
+  instance counts count every type statement;
+- lateral links `(class(s), p, class(o))` skip the type and `subClassOf`
+  statements, with `(literal)` / `(untyped)` as object sentinels;
+- every level carries `round = 0` (there is no dendrogram to align with).
+
+Readers: `Rete::schema()`, `predicate_stats()` and `char_sets()` read it (a lazy
+open faults it, one range, on first use); `rete summary`, the Tier-0 coherence read
+and the schema summary read it before falling back to the pyramid-meta. The
+planner takes its selectivities from it — when the pyramid summary is resident, and,
+on a file without one, for a pattern position an outer row binds at run time.
 
 ---
 

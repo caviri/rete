@@ -85,7 +85,9 @@ much of the file to load:
 | Header | Magic/version, content hash, counts, and the section directory |
 | Dictionary | Front-coded term strings and role-aware ID spaces |
 | Indexes | Compressed triple blocks in the file's permutation orders — six by default (SPO/POS/OSP/SOP/PSO/OPS), three (SPO/POS/OSP) with `build --permutations 3` |
-| Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (query_stats, entity shapes, label index) |
+| Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and per-community descriptors (older files: also the profiling blocks below) |
+| Schema | Optional SCHEMA section (kind 9, written by default): class hierarchy, level rollups, coherence axioms, `query_stats`, entity shapes |
+| Label index | Optional `--label-index` section (kind 8): every labelled subject, for prefix search |
 | Text index | Optional `--text-index` section: word → subjects, for full-text (`--contains`) search |
 | Metadata | Optional dataset-card JSON/catalog data |
 
@@ -95,12 +97,14 @@ dictionary, and summary, deliberately skipping the index.
 
 The pyramid-meta grows by **length-prefixed, version-tagged blocks** appended
 before the (trailing) schema block: `query_stats` (per-predicate cardinality),
-characteristic sets (entity shapes), and the **label index** (a bounded,
-label-sorted `(label, subject)` table powering `rete search` / `prefix_search` —
-case-insensitive prefix lookup by binary search, no literal scan). Each block is
-optional and skipped by a reader that predates it, so the format stays
-backward-compatible and a typeless, label-free graph encodes byte-identically to
-v1.
+characteristic sets (entity shapes), and a bounded label block. Each block is
+optional and skipped by a reader that predates it. Since 0.4.0 `rete build` keeps
+only the community material there: the schema, `query_stats` and the entity shapes
+move to the **SCHEMA** section (kind 9), computed without the dendrogram, and the
+labels to the **LABEL_INDEX** section (kind 8) — every labelled subject, read with a
+few range requests, powering `rete search` / `prefix_search`. Both are outside the
+content hash and carry their own digests ([SPEC §6.4, §7.5](SPEC.md)); readers fall
+back to the pyramid-meta blocks on older files.
 
 For **full-text** search — finding entities by a word *anywhere* in their
 literals, not just a label prefix — an opt-in **TEXT_INDEX** section (`rete build
