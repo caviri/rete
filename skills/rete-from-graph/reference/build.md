@@ -97,7 +97,11 @@ Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:
 - **Spill sizing**: the spill (`--tmp-dir`) needs roughly ¼–½ of the input NT
   size (id-encoded + zstd) *plus* the staged NT itself if you put it there;
   ORCID's 198 GB NT spilled ~45 GB. It lives in a `.rete-extbuild-<pid>-<seq>`
-  SUBDIR of `--tmp-dir`.
+  SUBDIR of `--tmp-dir`. While the dictionary merge runs it also holds the id
+  remap tables, about 4 B per chunk-local term (~4% more spill on the
+  OpenCitations sample). They live there, not in RAM (0.4.0 and earlier held
+  them resident: 15 GB for 1.7 B terms), so the peak RAM no longer grows with
+  the graph.
 - **Crash resume**: the spill survives a kill. Completed `<PERM>.tiles.sec`
   sections, the merged dictionary and `global.tri` are all reusable — the
   `resume_from_spill` harness (`cargo test -p rete-core --release --lib

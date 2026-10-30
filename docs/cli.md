@@ -100,6 +100,24 @@ rete build data.nt -o data.rete --no-pyramid --label-index   # labels + schema, 
 rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index
 ```
 
+**The memory-bounded build (`--memory-budget-mb N`).** It reads the input
+once and cuts it into chunks of about half the budget. Each chunk's
+dictionary and statements go to `--tmp-dir` (default: next to the output). A
+k-way merge then builds the one global dictionary, the chunks are rewritten in
+global ids one at a time, and external sorts build every index. At any moment
+it holds one chunk being sealed, the merge's buffers, or one sort run, and
+each of those is sized from the budget, not from the graph. On the
+OpenCitations sample (18.9 M statements, `--named-graphs quad --text-index
+--label-index`) the peak RSS is 850 MiB at a budget of 1,000 MiB and 2.4 GB at
+3,000 MiB, both while the chunks are sealed; eight renamed copies of it (151 M
+statements, 186 chunks at 400 MiB) peak at 391 MiB, where 0.4.0 needed
+1,084 MiB. The
+file is byte-identical to the in-RAM `--no-pyramid` build of the same input,
+except for the card, which carries counts only (`rete recard` writes a full
+one). Up to 0.4.0 the merge also kept every chunk's id remap table until the
+last chunk was rewritten, 4 B per chunk-local term: 15.0 GB for half of
+OpenCitations Meta, which is why that graph had to be split.
+
 `--strict` refuses input carrying an IRI that the N-Triples/N-Quads `IRIREF`
 grammar and RFC 3987 disallow. It is **off** by default and the build only
 *counts* them — see [Invalid IRIs](#invalid-iris) for what that means and why the
@@ -285,8 +303,11 @@ chunk-local subject ids to `--tmp-dir` while it is sealed. The ids are remapped
 with the tables the dictionary merge already produces, sorted externally by
 `(word, subject)` in runs of at most a quarter of the budget, and merged into
 the section. The token table is the one part a reader must hold whole, so the
-build streams it to disk and compresses it from there. `extbuild: text index …`
-reports the token and record counts.
+build streams it to disk and compresses it from there; the in-RAM build
+compresses it with the same streaming encoder, which keeps the two identical
+past zstd's 4 MiB window (0.4.0 did not: its memory-bounded token table could
+come out a few KB larger). `extbuild: text index …` reports the token and
+record counts.
 
 Measured on the same sample with provenance in the default graph (50.5 M word
 records, 2.18 M tokens): at 1,500 MiB the build took 83 s instead of 59 s, peak

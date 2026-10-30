@@ -5,6 +5,38 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The memory-bounded build no longer grows with the dataset.**
+  `rete build --memory-budget-mb` kept every chunk's id remap table resident
+  from the dictionary merge to the end of the remap: 4 B per chunk-local term,
+  8 B for one that is both subject and object in its chunk. On half of
+  OpenCitations Meta (1.73 B chunk-local terms) the build peaked at 15.0 GB at
+  a budget of 12,000 MiB, so the whole graph (3.4 B) could not be one file.
+  The merge now appends each table to `--tmp-dir` as it reaches each local id
+  (a chunk's local ids come out in order, so every write is an append), and
+  the remap loads one chunk's table at a time. Two smaller parts that grew with
+  the data went to disk too: a dictionary section's restart offsets (8 B per 16
+  terms) and its chunk directory. The merge's per-chunk read and write buffers
+  now shrink as the chunk count grows, within an eighth and a sixteenth of the
+  budget. Peak RAM is the larger of one chunk's working set and one sort run,
+  both set by the budget. On eight renamed copies of the OpenCitations sample
+  (151 M statements, 186 chunks at 400 MiB) the peak fell from 1,084 MiB to
+  391 MiB, and the merge's own from 1,083 MiB to 101 MiB; a merge over 3.4 B
+  chunk-local terms would have held 14.7–16.2 GB of tables (4.3–4.8 B per
+  term) and now holds one chunk's. The output is byte-identical; the spill
+  grows by the remap tables while the merge runs (+4% on the OpenCitations
+  sample). A dictionary class of more than 2³¹ terms is now refused; the old
+  encoding wrapped silently past 2³⁰.
+- **`--text-index` writes the same bytes in-RAM and memory-bounded at any
+  size.** 0.4.0 compressed the token table in one shot in RAM and streamed it
+  in the memory-bounded build. The two agree only up to the zstd window (4 MiB
+  at level 9), so on the OpenCitations sample the memory-bounded table came out
+  3,852 B larger. Both builds now use the streaming encoder. An in-RAM build
+  whose token table is over 4 MiB writes a slightly different table than 0.4.0
+  did (3,852 B larger on that sample), so its content hash changes. Smaller
+  tables, and every memory-bounded build, keep their 0.4.0 bytes.
+
 ## [0.4.0] - 2026-10-30
 
 0.4.0 is about large graphs: it builds them in less memory, stores labels and
