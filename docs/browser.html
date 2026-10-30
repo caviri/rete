@@ -1007,8 +1007,11 @@ retain native swipe and vertical scrolling inside long cards.</p>
 a graph's IRIs by heart. It opens on the schema card's <strong>classes and predicates</strong>
 (instant, from the resident card) and, as you type, also searches <strong>entities by
 label</strong> — synchronously for an embedded graph, and over HTTP-range reads (with a
-spinner) for a remote-lazy one, using the bounded label index. Click any result
-to drop its <code>&lt;IRI&gt;</code> at the cursor.</p>
+spinner) for a remote-lazy one, using the file's label index. Click any result
+to drop its <code>&lt;IRI&gt;</code> at the cursor. The label index is the LABEL_INDEX section of
+a file built with <code>--label-index</code> (every labelled subject, read a section head,
+one node per level and one block at a time), or, in a file built before 0.4.0,
+the label block inside its pyramid-meta, capped at 8,192 entries.</p>
 <p>Each predicate row also carries a <strong>values ›</strong> drill: click it for a faceted
 browse of the distinct objects that predicate takes — IRIs resolved to their
 human labels, literals shown verbatim — then click one to insert it into the
