@@ -101,7 +101,9 @@ Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:
   remap tables, about 4 B per chunk-local term (~4% more spill on the
   OpenCitations sample). They live there, not in RAM (0.4.0 and earlier held
   them resident: 15 GB for 1.7 B terms), so the peak RAM no longer grows with
-  the graph.
+  the graph. `--label-index` no longer adds to the spill peak (in 0.4.0 it
+  added ~20% on a data-only graph: its string records sat beside every
+  chunk's files).
 - **Crash resume**: the spill survives a kill. Completed `<PERM>.tiles.sec`
   sections, the merged dictionary and `global.tri` are all reusable — the
   `resume_from_spill` harness (`cargo test -p rete-core --release --lib

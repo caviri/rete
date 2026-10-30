@@ -706,7 +706,10 @@ each of those is sized from the budget, not from the graph. On the
 OpenCitations sample (18.9 M statements, <code>--named-graphs quad --text-index --label-index</code>) the peak RSS is 850 MiB at a budget of 1,000 MiB and 2.4 GB at
 3,000 MiB, both while the chunks are sealed; eight renamed copies of it (151 M
 statements, 186 chunks at 400 MiB) peak at 391 MiB, where 0.4.0 needed
-1,084 MiB. The
+1,084 MiB. The spill peaks at the end of the dictionary merge, while every
+chunk's statements are still on disk; <code>--label-index</code> adds nothing to it,
+because the label pass works on ids and reads its strings back from the
+finished file. The
 file is byte-identical to the in-RAM <code>--no-pyramid</code> build of the same input,
 except for the card, which carries counts only (<code>rete recard</code> writes a full
 one). Up to 0.4.0 the merge also kept every chunk's id remap table until the

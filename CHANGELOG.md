@@ -28,6 +28,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   grows by the remap tables while the merge runs (+4% on the OpenCitations
   sample). A dictionary class of more than 2³¹ terms is now refused; the old
   encoding wrapped silently past 2³⁰.
+- **`--label-index` no longer adds to the memory-bounded build's spill.** The
+  label pass collected string candidates while the chunks were sealed and
+  sorted them before the dictionary merge, so its records sat on disk beside
+  every chunk's files at the spill's peak. On the data-only OpenCitations
+  sample that was +20% (310 MiB against 258 MiB). It now tees 12-byte id
+  records during the remap and, once the file is written, resolves their
+  strings through the file's own dictionary, as the in-memory build does; the
+  section is byte-identical. The merge also deletes each chunk's term files as
+  soon as it has read them, and the spilled sections go once the file is
+  written. Peak spill on that sample: 243 MiB with or without labels. The
+  label pass's sort buffer (an eighth of the budget) also leaves the chunk
+  phase.
 - **`--text-index` writes the same bytes in-RAM and memory-bounded at any
   size.** 0.4.0 compressed the token table in one shot in RAM and streamed it
   in the memory-bounded build. The two agree only up to the zstd window (4 MiB
