@@ -326,10 +326,13 @@ the corresponding signal is non-empty:
 | `qt-coverage` | Of the statements that get annotated most, how many actually carry an annotation? | the witnessed pair |
 | `qt-quoted-object` | Which statements are referenced as the value of another statement? | a quoting predicate |
 
-The bodies are written in the **RDF-star** surface `<< s p o >>`, because that
-is what the query parser accepts ([SPARQL-star](sparql.md#rdf-star)). The
-ratified RDF 1.2 spelling `<<( s p o )>>` is an *export* surface: a query body
-written in it does not parse, which is the worst content a card can carry.
+The bodies are written in the **RDF-star** surface `<< s p o >>`, which every
+rete reader parses as a quoted triple ([SPARQL-star](sparql.md#rdf-star)). Since
+0.4.0 rete also parses the ratified RDF 1.2 spelling `<<( s p o )>>`, which is
+what a SPARQL 1.2 engine needs (it reads `<< s p o >>` as a *reifier*, and
+returns nothing for these bodies); a reader older than 0.4.0 does not parse it,
+which is the worst content a card can carry, so the generated bodies keep the
+RDF-star surface.
 
 ### Where to get `theme` IRIs
 

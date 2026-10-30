@@ -46,8 +46,18 @@ blake3.workspace = true
 # `zstd` below instead; this crate is then only the wasm decoder.
 ruzstd = "0.9"
 # Tiny pure-Rust regex engine for SPARQL `REGEX(...)` — `regex-lite` keeps the
-# wasm small (no SIMD/aho-corasick), unlike the full `regex` crate.
+# wasm small (no SIMD/aho-corasick), unlike the full `regex` crate. Its `\b`,
+# `\w`, `\d`, `\s` and `(?i)` are ASCII-only, which is why a native build uses
+# `regex` instead (the `unicode-regex` feature below).
 regex-lite = "0.1"
+# Unicode-aware REGEX / REPLACE / sh:pattern: `\b` and `\w` know that "á" is a
+# letter, `(?i)` folds "Á". Only the Perl classes and simple case folding, with
+# no performance features (no DFA, no literal prefilter) — the smallest `regex`
+# that is Unicode-correct. Measured on the wasm32 release cdylib: +392 KB raw /
+# +122 KB gzip without `unicode-case`, +489 KB / +162 KB with it, on a 4.74 MB /
+# 1.33 MB module; hence a feature, ON by default (native) and left to each wasm
+# build to turn on.
+regex = { version = "1", optional = true, default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
 # Pure-Rust hashes for the SPARQL hash built-ins (MD5/SHA1/SHA2 family). All
 # RustCrypto, no C, so they compile to wasm too.
 md-5 = "0.10"
@@ -77,7 +87,11 @@ rayon = { version = "1", optional = true }
 proptest = "1"
 
 [features]
-default = ["compression", "rdf12-turtle"]
+default = ["compression", "rdf12-turtle", "unicode-regex"]
+# Unicode-aware SPARQL `REGEX` / `REPLACE` and SHACL `sh:pattern` (the `regex`
+# crate). Without it, `regex-lite`: the same syntax, but `\b` `\w` `\d` `\s` and
+# `(?i)` are ASCII-only. See the `regex` dependency above for the size cost.
+unicode-regex = ["dep:regex"]
 # zstd needs a C toolchain; disable for targets that lack one (e.g. wasm).
 compression = ["dep:zstd"]
 # Read the **RDF 1.2** Turtle/TriG surface (`<<( s p o )>>` triple terms,

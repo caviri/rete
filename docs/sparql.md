@@ -34,10 +34,27 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 | **Property paths** | `p+`, `p*`, `p?` (zero-length included for `*`/`?`), reverse `^p`, sequence `a/b`, alternative `a\|b` — evaluated goal-directed from a bound endpoint |
 | **Solution modifiers** | `DISTINCT`, `ORDER BY` (ASC/DESC), `LIMIT`, `OFFSET`, `VALUES`, `BIND` |
 | **Aggregation** | `GROUP BY`, `HAVING`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` (incl. `COUNT(DISTINCT …)`) |
-| **Datasets** | `GRAPH <iri>` / `GRAPH ?g`, `FROM` (RDF-merge default graph), `FROM NAMED` (scope which graphs `GRAPH` sees); `EXISTS` honors the active graph. Plus an **opt-in, non-standard** [union default graph](#union-default-graph) mode for named-graph-heavy files. |
+| **Datasets** | `GRAPH <iri>` / `GRAPH ?g`, `FROM` (RDF-merge default graph), `FROM NAMED` (scope which graphs `GRAPH` sees); `EXISTS`, sub-`SELECT`s and `DESCRIBE` honor the active graph. The full-text index (`--text-index`) covers the default graph only, so it speeds up `FILTER(CONTAINS(…))` there and is not used inside `GRAPH`, under `FROM` or over the union default graph, where the filter scans. Plus an **opt-in, non-standard** [union default graph](#union-default-graph) mode for named-graph-heavy files. |
 | **Output** | SPARQL Results JSON (`--json`), with correct `uri`/`literal`/`bnode` typing, datatype, and `xml:lang`; literal values are properly unescaped |
 | **RDF-star** | Quoted triples `<< s p o >>` in subject/object position — ingest (N-Triples-star & Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables `<< ?s :p ?o >>`) and the `isTRIPLE` / `TRIPLE` / `SUBJECT` / `PREDICATE` / `OBJECT` built-ins. See [below](#rdf-star). |
 | **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated answering by **query rewriting** — no materialization: `rdfs:subClassOf` / `subPropertyOf` hierarchy + `rdfs:domain` / `range` type inference, computed over the raw data. `rete sparql … --entail`, or the playground **🧠 Reason** toggle. See [below](#reasoning-owl-2-ql). |
+
+**`REGEX` and non-ASCII text.** A pattern without metacharacters is a substring
+test, with full Unicode case folding under the `i` flag, in every build. Any
+other pattern goes to a regex engine, and which one depends on the build:
+
+| Build | Engine | `\b` `\w` `\d` and the `i` flag |
+|---|---|---|
+| native — the CLI, `rete serve`, Python, R, the File Explorer | `regex` (feature `unicode-regex`, on by default) | Unicode: `REGEX(?name, "\\bsvobodová\\b", "i")` finds "Jitka Svobodová" and "SVOBODOVÁ" |
+| the npm package `rete-graph` (`rete-wasm`, built by `clients/js/build-wasm.sh`) and the Claude Desktop extension `rete.mcpb` built on it | `regex` (`rete-wasm` built with `--features unicode-regex`) | Unicode, as native |
+| the browser playground and the other packages `scripts/build_wasm.sh` builds (`docs/engine/`, `web/pkg*`, the release's browser bundle) | `regex-lite` (`rete-wasm`'s default) | ASCII only: no boundary after "á", so the same pattern misses both names (and finds one *inside* "Svobodováová"); `(?i)` does not fold "Á" |
+
+The playground's engine keeps `regex-lite` for its size: the Unicode engine adds
+about 489 KB to the 4.74 MB wasm module (162 KB of its 1.33 MB gzipped), which
+every visitor downloads. The npm package and the extension run mostly in Node,
+where that size matters less than an answer that agrees with the CLI.
+Neither engine knows `\p{…}` classes. XPath regular expressions, which SPARQL
+names, have no `\b` at all; rete follows the Perl meaning, as Oxigraph does.
 
 ## Property paths
 
@@ -115,6 +132,14 @@ own instances, so on a 9.53 B-triple file `?s a :Service ; :publicationYear
   variable stream through a merge join. Nothing proportional to the large
   pattern is held;
 - otherwise the small side is materialized and hash-joined, as before.
+
+The same rule applies between a basic graph pattern and what joins it from the
+outside — a property path, an `OPTIONAL`, another block: the outside rows are
+pulled first, and if there are few of them next to the pattern's most selective
+triple pattern (16 times fewer, that pattern above 65,536 triples), the pattern
+is looked up once per row instead of being evaluated whole and hash-joined.
+`<work> frbr:partOf+ ?j . ?j a fabio:Journal ; dcterms:title ?t` reads the
+three containers of one work, not every journal of the file.
 
 A sub-select's rows enter the outer query as dictionary ids, never resolved to
 strings in between. It is still not a cost-based optimizer over the whole
@@ -406,8 +431,38 @@ SELECT ?occ ?who WHERE {
 ```
 
 `CONSTRUCT` (and `rete serve`'s SPARQL Update) may build quoted triples in their
-templates. Nested quoting (`<< << … >> :p ?o >>`) works. rete follows the
-RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.
+templates. Nested quoting (`<< << … >> :p ?o >>`) works.
+
+**Query — SPARQL 1.2 triple terms.** The ratified spelling `<<( s p o )>>` is a
+**triple-term pattern** in every query, with constants or inner variables, in a
+pattern, `VALUES`, `BIND` or a `CONSTRUCT` template. It matches the same stored
+token as `<< s p o >>`, so it finds triple terms written in either surface:
+
+```sparql
+SELECT ?s ?t WHERE { ?snapshot oc:inserted <<( ?s dcterms:title ?t )>> }
+```
+
+SPARQL 1.2 also changed what `<< s p o >>` means: it is a **reified triple** — a
+reifier `?r` with `?r rdf:reifies <<( s p o )>>` — not a quoted triple. rete
+reads it that way **only when the query starts with `VERSION "1.2"`**; without
+the declaration it keeps its SPARQL-star meaning, so existing queries and the
+starter queries in published cards answer as before:
+
+```sparql
+VERSION "1.2"
+# the source recorded on a reifier of the statement (RDF 1.2 data)
+SELECT ?src WHERE { << :a :b :c >> :source ?src }
+# = SELECT ?src WHERE { ?r rdf:reifies <<( :a :b :c )>> ; :source ?src }
+```
+
+Under the declaration a reified triple is refused where SPARQL 1.2 forbids it
+(an expression, `VALUES`), and two 1.2 forms are refused by name rather than
+read in their SPARQL-star sense: a named reifier `<< s p o ~ ?r >>` and the
+annotation syntax `s p o {| … |}` — write `?r rdf:reifies <<( s p o )>>`
+instead. The parser is `spargebra` 0.3 (SPARQL-star); rete translates the
+SPARQL 1.2 surface before parsing. A SPARQL 1.2 engine (Oxigraph 0.5, Jena 5)
+reads `<< s p o >>` as a reifier too, so a query meant to run on both should
+spell triple terms `<<( s p o )>>`.
 
 **You do not have to write the first one.** A dataset built with `--card` whose
 statements quote other statements ships a `qt-*` family of starter queries in
@@ -415,8 +470,8 @@ its [dataset card](dataset-cards.md#querying-the-star-layer), instantiated with
 its own annotation vocabulary — what gets said about statements, who says it,
 and how much of the data is qualified — and every one of them is run against the
 finished file at build time, so a shipped query is one that answers. Note that
-those bodies are written in the `<< s p o >>` surface above: the ratified RDF 1.2
-`<<( s p o )>>` is an **export** spelling and does not parse in a query.
+those bodies are written in the `<< s p o >>` SPARQL-star surface, which rete
+reads as a quoted triple when the query has no `VERSION "1.2"` declaration.
 
 **RDF 1.2 interop.** rete's **N-Triples/N-Quads** reader also accepts the
 ratified RDF 1.2 object triple-term syntax `<<( s p o )>>`, mapped to the *same*
@@ -426,8 +481,10 @@ the RDF-star surface only; the export prints a note when it writes a TriG dump
 rete itself could not read back.) RDF 1.2
 **base-direction strings** (`"…"@lang--dir`) are modelled: `DATATYPE` reports
 `rdf:dirLangString` and `LANG` returns the language subtag; a leading SPARQL 1.2
-`VERSION "1.2"` declaration is accepted. RDF 1.2 reification (`rdf:reifies`) and
-the new SPARQL 1.2 direction functions are not yet supported — see
+`VERSION "1.2"` declaration is accepted, and switches `<< … >>` to the reified
+triple described above. RDF 1.2 reification is otherwise ordinary data
+(`?r rdf:reifies <<( s p o )>>`); the new SPARQL 1.2 direction functions are not
+yet supported — see
 [Compatibility](compatibility.md#is-it-compatible-with-rdf).
 
 ## Reasoning (OWL 2 QL)
@@ -464,13 +521,31 @@ Reasoning is **opt-in** — `rete sparql|sparql-url … --entail`, or the playgr
 SELECT ?o WHERE { ?o a <https://w3id.org/rete/gbif/taxon/class/Aves> } LIMIT 20
 ```
 
-**How** — a hierarchy atom is lowered to the property path that already walks the
-hierarchy: `?x a C` becomes `?x a ?c . ?c rdfs:subClassOf* C` (reflexive, so a
-direct type still matches), and likewise `subPropertyOf*` for roles; `domain` /
-`range` add `UNION` branches. A small TBox read gates the rewrite, so an atom
-whose class/property has no sub-terms — and every non-reasoned query — is
-untouched. The reasoning reaches nested patterns (`UNION` / `OPTIONAL` /
-subqueries).
+**How** — the TBox is read from the file's **default graph** (the
+`subClassOf` / `subPropertyOf` / `domain` / `range` / `inverseOf` statements,
+a few scans of small predicates) and its hierarchies are closed before the query
+runs. An atom then becomes the **distinct union** of the asserted patterns that
+entail it: `?x a C` → `?x a D` for every `D ⊑* C`, plus `?x p ?_` for every
+property `p` whose domain is `⊑* C`, plus `?_ q ?x` for every `q` whose range
+is; `?x P ?y` → `?x Q ?y` for every `Q ⊑* P`, plus `?y R ?x` for the inverses.
+The TBox applies inside `GRAPH` and under `FROM` too.
+
+- **One row per entailed triple.** A work typed both `fabio:Expression` and
+  `fabio:JournalArticle` is an Expression once: `COUNT(?s)` over
+  `?s a fabio:Expression` gives the number of works, not of type statements
+  (on OpenCitations' sample, 258,268 rather than 508,044). Each source is read
+  in subject order and the sources are merged, so the duplicates are dropped
+  without holding the answer set; `LIMIT` still stops early. A class with many
+  subclasses that cover most of the typed nodes is read as one scan of
+  `rdf:type`. Joined with rows that already bind the subject, the atom is a
+  check: the subject's own types are read once per row.
+- **Gated per atom.** A class gets a domain (range) branch only for the
+  properties whose domain (range) is `⊑* C`, and a class or property the file
+  never uses adds nothing. An atom reasoning cannot extend is left exactly as
+  written, so one unrelated `rdfs:domain` axiom no longer slows every class
+  atom of every reasoned query.
+
+The reasoning reaches nested patterns (`UNION` / `OPTIONAL` / subqueries).
 
 The existential rewrite is **sound by construction**: it fires only when the
 object variable is purely existential — it occurs exactly once in the whole query
@@ -558,6 +633,13 @@ What a string's text looks like never matters: a string is not a number.
 
 `IN` is a chain of `=`. `sameTerm` is term identity, with no value
 comparison: `sameTerm(1, 1.0)` is false.
+
+`"x"` and `"x"^^xsd:string` are **one term** (RDF 1.1), so they are equal,
+`sameTerm`, and match each other in a pattern, a join or `VALUES`. rete stores,
+computes and returns the plain spelling. A file built before 0.4.0 from
+N-Triples/N-Quads may store the typed one: a plain constant still matches it,
+and results show it plain. Only a file that stores *both* spellings of the same
+string keeps them apart (as two dictionary terms) until it is rebuilt.
 
 `ORDER BY` puts no value first, then blank nodes, IRIs, literals and quoted
 triples (§15.1). Among literals: first text — simple, `xsd:string`,

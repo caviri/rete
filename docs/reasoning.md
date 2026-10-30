@@ -287,17 +287,29 @@ SELECT ?o WHERE { ?o a <https://w3id.org/rete/gbif/taxon/class/Aves> } LIMIT 20
 The rewrite is a **post-lowering pass on the query plan** — the hot triple matcher
 and every non-reasoned query are byte-identical.
 
-- **Hierarchy** (`subClassOf` / `subPropertyOf`) is exactly what rete's
-  goal-directed [property paths](sparql.html#property-paths) already do, so a
-  hierarchy atom becomes a path over the raw data — `?x a C` → `?x a ?c .
-  ?c rdfs:subClassOf* C` (reflexive, so a direct type still matches). No `UNION`
-  enumeration, so it does **not** blow up on deep taxonomies (gbif's ~1,200 classes
-  stay one path, not 1,200 query branches).
-- **Domain / range / inverseOf / existentials** add `UNION` branches. A tiny TBox
-  read (the objects of the hierarchy predicates, plus whether the graph declares
-  domain/range/inverse/`someValuesFrom` axioms at all) **gates** the rewrite, so an
-  atom whose class/property has no relevant axioms — and a graph with no ontology —
-  is left untouched, making reasoning **zero-overhead where it can add nothing**.
+- **The TBox** — the `subClassOf`, `subPropertyOf`, `domain`, `range` and
+  `inverseOf` statements of the file's **default graph** — is read once per
+  query (a few scans of small predicates) and its hierarchies are closed before
+  evaluation. It applies inside `GRAPH` and under `FROM` too.
+- **An atom becomes the distinct union of the asserted patterns that entail
+  it.** `?x a C` → `?x a D` for every `D ⊑* C`, `?x p ?_` for every property
+  whose domain is `⊑* C`, `?_ q ?x` for every property whose range is (each
+  with its subproperties); `?x P ?y` → `?x Q ?y` for every `Q ⊑* P` and
+  `?y R ?x` for its inverses. Each source streams in key order through a
+  sorted permutation and the streams are merged, so **each entailed triple
+  answers once** — a node typed `C` and a subclass of `C` is one `C` — without
+  holding the answer set, and a `LIMIT` stops early. When a class has many
+  subclasses that cover most of the typed nodes (a taxonomy of hundreds of
+  classes below one), the union is read as one sorted scan of `rdf:type` instead of one
+  cursor per class. Joined with rows that already bind the subject, the atom
+  is a check: the subject's own types are read once per row.
+- **Gated per atom.** A class gets a domain (range) source only for the
+  properties whose domain (range) is `⊑* C`, and a class or property the file
+  never uses contributes nothing. An atom that reasoning cannot extend — and a
+  graph with no ontology — is left exactly as written, so reasoning is
+  **zero-overhead where it can add nothing**, and one unrelated axiom does not
+  slow the class atoms it says nothing about.
+- **Existentials** add a branch for a purely existential end (below).
 
 ### Existential soundness
 

@@ -465,11 +465,15 @@ impl Dictionary {
     }
 
     /// Unified node ID for a term, resolving via subject role then object role.
+    /// A string literal also matches its other spelling (`"x"` ↔
+    /// `"x"^^xsd:string`, one RDF 1.1 term; see [`Self::subject_id`]).
     pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
-        if let Some(sid) = self.subject_id(term) {
-            return Some(self.subject_node(sid));
-        }
-        self.object_id(term).map(|oid| self.object_node(oid))
+        let exact = |t: &str| {
+            self.subject_id_exact(t)
+                .map(|sid| self.subject_node(sid))
+                .or_else(|| self.object_id_exact(t).map(|oid| self.object_node(oid)))
+        };
+        exact(term).or_else(|| exact(&crate::terms::string_literal_alias(term)?))
     }
 
     /// Subject-role ID of a node, or `None` if the node never appears as a
@@ -498,7 +502,25 @@ impl Dictionary {
     // --- term -> id -------------------------------------------------------
 
     /// Subject-role ID for `term`: shared `1..=S`, else subject-only `S+1..`.
+    ///
+    /// A string literal that is not found under its own spelling is looked up
+    /// under the other (`"x"` ↔ `"x"^^xsd:string`): RDF 1.1 makes them one
+    /// term, ingest keeps only the plain one, and a file built before it did
+    /// may hold the typed one. The second lookup runs only on a miss, and the
+    /// two spellings sort side by side, so it reads no further chunk.
     pub fn subject_id(&self, term: &str) -> Option<SubjectId> {
+        self.subject_id_exact(term)
+            .or_else(|| self.subject_id_exact(&crate::terms::string_literal_alias(term)?))
+    }
+
+    /// Object-role ID for `term`, with the same string-literal fallback as
+    /// [`Self::subject_id`].
+    pub fn object_id(&self, term: &str) -> Option<ObjectId> {
+        self.object_id_exact(term)
+            .or_else(|| self.object_id_exact(&crate::terms::string_literal_alias(term)?))
+    }
+
+    fn subject_id_exact(&self, term: &str) -> Option<SubjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
@@ -506,7 +528,7 @@ impl Dictionary {
     }
 
     /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
-    pub fn object_id(&self, term: &str) -> Option<ObjectId> {
+    fn object_id_exact(&self, term: &str) -> Option<ObjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }

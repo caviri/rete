@@ -66,9 +66,13 @@ pub(super) fn strip_version(query: &str) -> &str {
 }
 
 /// Parse a SPARQL query — the single entry point, so every caller drops a
-/// SPARQL-1.2 `VERSION` declaration and reports a uniform parse error.
+/// SPARQL-1.2 `VERSION` declaration, reads SPARQL 1.2 triple terms
+/// (`<<( s p o )>>`, and under `VERSION "1.2"` reified triples — see
+/// [`super::sparql12`]) and reports a uniform parse error.
 pub(super) fn parse_query(query: &str) -> Result<Query, SparqlError> {
-    Query::parse(strip_version(query), None).map_err(|e| SparqlError::Parse(e.to_string()))
+    let sparql12 = super::sparql12::is_sparql12(super::sparql12::version(query));
+    let text = super::sparql12::rewrite(strip_version(query), sparql12)?;
+    Query::parse(&text, None).map_err(|e| SparqlError::Parse(e.to_string()))
 }
 
 /// Parse a SPARQL `SELECT` query and lower it to a [`Select`].

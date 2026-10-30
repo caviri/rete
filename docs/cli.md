@@ -967,8 +967,11 @@ summary-based routing, and compares three access paths:
   triple index.
 - **routed pattern open** — for a single default-graph triple pattern, header +
   dictionary + the one selected permutation payload (the best of the six).
-- **full query open** — the current SPARQL engine path, which opens dictionary +
-  index (+ pyramid/named-graph metadata when present) before evaluation.
+- **full query open** — the eager open, which reads the dictionary + index
+  (+ pyramid, text-index and named-graph sections when present) before
+  evaluation. Its figure is computed from the header, not by performing the
+  open: previewing a large file no longer reads it whole (a 26 GB file used
+  to be killed at 2 GB).
 
 ```sh
 rete cost data.rete "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"

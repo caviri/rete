@@ -5,6 +5,25 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **SPARQL 1.2 triple terms in queries.** `<<( s p o )>>` parses as a
+  triple-term pattern — in a pattern, `VALUES`, `BIND` or a `CONSTRUCT`
+  template — and matches the same stored token as `<< s p o >>`, so it finds
+  triple terms written in either RDF 1.2 or RDF-star. Under a leading
+  `VERSION "1.2"` declaration, `<< s p o >>` is SPARQL 1.2's reified triple
+  (`?r rdf:reifies <<( s p o )>>`); without it, it keeps its SPARQL-star
+  meaning, so existing queries and published card starters answer as before.
+  Named reifiers (`~ ?r`) and annotations (`{| … |}`) are refused by name
+  under the declaration. The parser stays `spargebra` 0.3; the 1.2 surface is
+  translated before parsing.
+- **`rete-bench --build-mem` profiles the Dataset Card and the full-text
+  index too**: the card derivation, the text-index build and the
+  starter-query costing a carded build runs last (each query cold against
+  the written file, the five heaviest listed), which is where a carded
+  build peaks on a large graph. `--no-card`, `--no-card-costs` and
+  `--no-text-index` leave them out.
+
 ### Changed
 
 - **The playground's cross-source join sends each pattern to every source that
@@ -83,6 +102,39 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   remains is the open: the dictionary and index containers are found by
   walking their sections' length prefixes, about eight dependent reads
   each.
+- **`REGEX` / `REPLACE` / `sh:pattern` are Unicode-aware in native builds.**
+  `regex-lite` treats `\b`, `\w`, `\d` and `(?i)` as ASCII, so
+  `REGEX(?name, "\\bsvobodová\\b", "i")` found no "Svobodová" (no boundary
+  after "á") and did find one inside "Svobodováová". rete-core's new
+  `unicode-regex` feature (default on: the CLI, `rete serve`, Python, R, the
+  File Explorer) uses the `regex` crate with its Unicode Perl classes and case
+  folding. `rete-wasm` offers it behind its own `unicode-regex` feature: ON
+  for the npm package `rete-graph` and the Claude Desktop extension built on
+  it, OFF for the browser playground and the other `scripts/build_wasm.sh`
+  packages, which keep `regex-lite` for its size (the Unicode engine adds
+  489 KB raw / 162 KB gzip to a 4.74 MB / 1.33 MB module).
+- **`"x"` and `"x"^^xsd:string` are one term.** RDF 1.1 says so, and rete
+  compared them as two: a pipeline that wrote typed strings could not be
+  matched by a plain constant (OpenCitations' pipelines carry rule R-ocdm-2 to
+  work around it). Now:
+  - **Ingest** stores the plain spelling from every input syntax. The
+    N-Triples/N-Quads reader (rete's own, also behind the memory-bounded
+    build) dropped nothing before and now drops `^^xsd:string`, inside quoted
+    triples too; Turtle, TriG and RDF/XML already arrived plain through
+    `oxrdf`.
+  - **Queries**: constants were already plain (the parser normalizes them);
+    computed values now are too (`STRDT(…, xsd:string)`, `xsd:string(…)`).
+  - **Existing files are not rewritten and keep their content hash.** Reading
+    one that holds the typed spelling, a lookup that misses one spelling tries
+    the other, so a plain constant, a `VALUES` row or a computed value still
+    finds the typed string, and results show the plain spelling (`DATATYPE`
+    still answers `xsd:string`). A file that holds both spellings of the same
+    string keeps them as two dictionary terms until it is rebuilt; `rete
+    export` writes what the file stores.
+  - **A rebuild changes the content hash** of a file whose N-Triples/N-Quads
+    source carries typed strings (the dictionary holds the plain spelling);
+    sources without them, and Turtle/TriG/RDF-XML sources, store exactly the
+    terms they stored before.
 
 ### Fixed
 
@@ -105,15 +157,71 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `named-graph quads`, splitting the count from the Dataset Card's build-time
   counts or the default graph's index, never by reading the named graphs, and
   counts the graphs without walking them.
-
-### Added
-
-- **`rete-bench --build-mem` profiles the Dataset Card and the full-text
-  index too**: the card derivation, the text-index build and the
-  starter-query costing a carded build runs last (each query cold against
-  the written file, the five heaviest listed), which is where a carded
-  build peaks on a large graph. `--no-card`, `--no-card-costs` and
-  `--no-text-index` leave them out.
+- **`--entail` answers each entailed triple once.** `?x a C` was rewritten to
+  a union of the asserted patterns that entail it, and returned a node once
+  per matching pattern: OpenCitations works are typed both `fabio:Expression`
+  and a subtype, so `COUNT(?s)` over `?s a fabio:Expression` gave 508,044
+  where 258,268 works exist. The rewrite now yields the distinct members
+  (each source streams sorted on the subject and the sources merge, so no
+  answer set is held, and `LIMIT` stops early), and role atoms through
+  subproperties and inverses likewise answer each pair once. Queries that
+  relied on the repeated rows (a `COUNT(*)` over a reasoned class atom)
+  now count members. The TBox is read from the default graph as before; the
+  hierarchy is now closed when the query is rewritten, so it also applies
+  inside `GRAPH` and under `FROM`. On the OpenCitations sample with its
+  ontology: the `COUNT` 2.58 s → 0.07 s, the card's `lb-labels` starter
+  (`LIMIT 50`) 2.92 s → 0.06 s.
+- **`--entail` gates each class atom by its own axioms.** Any one
+  `rdfs:domain` or `rdfs:range` axiom used to add a domain/range branch to
+  every class atom of every reasoned query. A class now gets a branch only
+  for the properties whose domain (range) is below it, and a class or
+  property the file never uses adds nothing. On the same file, the card's
+  `ty-class-shape` starter over `pro:RoleInTime` (no subclass; OCO's one
+  domain axiom is about `cito:Citation`) went from 1.16 s back to 0.32 s,
+  and `?x a cito:Citation` (whose domain property is unused) from 2.43 s
+  to 0.03 s.
+- **SPARQL: `FILTER(CONTAINS(…))` inside `GRAPH <g> { … }` returned no rows**
+  on a file built with `--text-index`, even when the graph's literals
+  contained the string (`STRSTARTS`, `REGEX` and `BIND(CONTAINS(…))` were
+  right). The full-text pushdown seeded the scan with subjects from the
+  default graph's words; it now runs only when the active graph is the
+  default graph, and `CONTAINS` scans elsewhere (inside `GRAPH`, under
+  `FROM`, over the union default graph). Two more places read the default
+  graph whatever the query said: a sub-`SELECT` inside `GRAPH <g>`, under
+  `FROM` or under the union-default toggle now reads that active graph, and
+  `DESCRIBE … FROM <g>` describes from `<g>`.
+- **Planner: a query starting from a literal could materialize a whole
+  predicate.** The byte-size figure behind the merge-join and fat-side gates
+  routed a bound term by its unified node id instead of its id in the role
+  of its position — off by the whole subject-only block for any literal — so
+  `?id :hasLiteralValue "10.…" ; :usesIdentifierScheme :doi` saw its
+  identifier-scheme partner as "0 bytes" and merge-joined it in full (every
+  DOI identifier of a 2.9 B-triple OpenCitations part, killed at 4 GB). The
+  figure now routes in role-id space.
+- **Planner: a small outside side now probes a basic graph pattern** instead
+  of evaluating it whole and hash-joining. The outside rows (a property path,
+  an `OPTIONAL`'s left side, another block) are pulled first; when they are
+  at least 16 times fewer than the pattern's most selective triple pattern
+  (above 65,536 triples), the pattern is looked up per row — the rule a
+  basic graph pattern already applied between its own triple patterns. On
+  OpenCitations' 1 GB sample, the card's "authors in order" query went from
+  0.48 s and 353 MB to 0.07 s and 48 MB, and "where a work was published"
+  from 1.2 s and 546 MB to 0.07 s and 15 MB. On the layout with provenance
+  in the default graph, a work's provenance history (a bound subject and four
+  `OPTIONAL`s) went from 2.4 s and 1.45 GiB to 0.03 s and 19 MB locally, and
+  over HTTP from 6.1 s, 35 requests and 5.5 MB to 0.35 s, 26 requests and
+  4.0 MB.
+- **Planner: the size gates count rows, not compressed bytes.** Whether a
+  join side is "fat" (probe it rather than build it) and whether a merge join
+  is lopsided were decided from compressed tile bytes against 2 MiB, so a
+  change of zstd level alone flipped plans (two OpenCitations queries ran
+  3–7× slower at level 19), and a resident open (decoded sizes) and a lazy one
+  (compressed sizes) of the same file could plan differently. They now read
+  the tile-directory row estimate (above about a million rows is fat), which
+  only the data changes.
+- **`rete cost` no longer reads the whole file.** It performed the eager open
+  to report that open's size; on a 26 GB file it was killed at 2 GB. The
+  figure is now computed from the header, and is the same.
 
 ## [0.3.7] - 2026-10-28
 

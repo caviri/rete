@@ -2678,6 +2678,7 @@ dependencies = [
  "oxttl 0.1.8",
  "oxttl 0.2.4",
  "rayon",
+ "regex",
  "regex-lite",
  "ruzstd",
  "serde",

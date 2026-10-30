@@ -20,7 +20,7 @@ if (!existsSync(wasm)) {
   throw new Error(
     "clients/js/dist is missing — build the JS client first:\n" +
       "  docker compose run --rm --user root dev bash -c 'wasm-pack build crates/rete-wasm " +
-      "--target web --no-opt --out-dir /work/clients/js/vendor/pkg'\n" +
+      "--target web --no-opt --out-dir /work/clients/js/vendor/pkg -- --features unicode-regex'\n" +
       "  docker run --rm -v \"$PWD\":/w -w /w/clients/js node:22-slim node build.mjs",
   );
 }

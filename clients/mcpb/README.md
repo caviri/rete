@@ -197,7 +197,7 @@ changed:
 
 ```sh
 docker compose run --rm --user root dev bash -c \
-  'wasm-pack build crates/rete-wasm --target web --no-opt --out-dir /work/clients/js/vendor/pkg'
+  'wasm-pack build crates/rete-wasm --target web --no-opt --out-dir /work/clients/js/vendor/pkg -- --features unicode-regex'
 docker run --rm -v "$PWD":/w -w /w/clients/js node:22-slim node build.mjs
 ```
 

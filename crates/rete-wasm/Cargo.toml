@@ -42,6 +42,12 @@ threads = ["rete-core/parallel", "dep:wasm-bindgen-rayon"]
 # worker must drive the suspend/rewind loop — see scripts/build_playground_async.sh.
 # A separate artifact (web/pkg-nomodules-async); the default build is unchanged.
 asyncify = []
+# Unicode-aware SPARQL REGEX (`\b`, `\w`, `\d`, `(?i)` know non-ASCII letters),
+# as every native build has. OFF here because it costs +489 KB raw / +162 KB
+# gzip on the module (the `regex` crate); without it the browser engine keeps
+# `regex-lite`, whose classes and case folding are ASCII-only. See
+# rete-core's `unicode-regex` feature.
+unicode-regex = ["rete-core/unicode-regex"]
 
 [dependencies]
 # No default features: the C zstd encoder isn't available on wasm; the pure-Rust
