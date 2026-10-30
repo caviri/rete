@@ -1431,6 +1431,7 @@ mod tests {
                 rete_core::PermSet::ALL,
                 false,
                 ingest::QuotedTripleSurface::default(),
+                BuildSections::default(),
             )
             .unwrap();
             build_external_cmd(
@@ -1450,6 +1451,8 @@ mod tests {
                 rete_core::PermSet::ALL,
                 false,
                 ingest::QuotedTripleSurface::default(),
+                None,
+                BuildSections::default(),
             )
             .unwrap();
             let ram_bytes = std::fs::read(&ram).unwrap();
