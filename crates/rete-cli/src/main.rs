@@ -401,6 +401,14 @@ enum Command {
     /// section — the shards' orderings do not survive the remap, and every
     /// permutation is rebuilt. Memory stays bounded: inputs are opened lazily and
     /// the builder spills under `--memory-budget-mb`.
+    ///
+    /// A card (`--card`, `--card-file`, a curated flag) is the full one, as
+    /// `rete build --memory-budget-mb` writes it: derived from the merged file
+    /// by streaming its sorted sections (what `rete recard` runs, inside this
+    /// budget), its starter queries run against it, and written after the data
+    /// with the build record, which names each input by file name, size and
+    /// BLAKE3. The inputs' own cards are not carried: the curated fields come
+    /// from `--card-file` and the curated flags only.
     Merge {
         /// Input `.rete` files.
         #[arg(required = true, num_args = 1..)]
@@ -435,6 +443,10 @@ enum Command {
         /// Card creation date (ISO-8601).
         #[arg(long)]
         created: Option<String>,
+        /// Do not run the card's starter queries against the merged file (they
+        /// are kept unchecked, and the build record carries no costs).
+        #[arg(long = "no-card-costs")]
+        no_card_costs: bool,
     },
     /// Print the header of a `.rete` file.
     Info {
@@ -1663,6 +1675,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             source,
             description,
             created,
+            no_card_costs,
         } => commands::merge::merge_cmd(
             &inputs,
             &output,
@@ -1677,6 +1690,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 description,
                 created,
             },
+            !no_card_costs,
         ),
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),

@@ -748,7 +748,8 @@ carrying:
   the section `codec`, `card_costs` (not `--no-card-costs`), the card's
   `card_top_n` cap, and `card_file` — its **file name** and BLAKE3, never its
   path.
-- `inputs` — each input by **file name only** (`stdin` for `-`), its `format`,
+- `inputs` — each input by **file name only** (`stdin` for `-`), its `format`
+  (`rete` for the shards of a `rete merge` and the input of `repyramid`),
   `compression` (`gzip`, detected from the bytes), `bytes` as stored, and the
   `blake3` of exactly those bytes (below). A build over more than 64 inputs
   lists the first 64 and counts the rest in `inputs_omitted`.
@@ -761,10 +762,11 @@ carrying:
   time per phase, below), `peak_rss_bytes` (`VmHWM`; `null` off Linux),
   `memory_limit_bytes` (the process's cgroup limit; `null` when none) and
   `cpus` (logical CPUs available to the process).
-- `spill` — the memory-bounded build only: `chunks`, `merge_passes` (k-way
-  merges over spilled files), `sort_runs` (the files those merges read) and
-  `scratch_peak_bytes` (the spill directory at its fullest, sampled at phase
-  boundaries and after each sort writes its runs — a lower bound).
+- `spill` — the memory-bounded build and `rete merge` only: `chunks`,
+  `merge_passes` (k-way merges over spilled files), `sort_runs` (the files
+  those merges read) and `scratch_peak_bytes` (the spill directory at its
+  fullest, sampled at phase boundaries and after each sort writes its runs — a
+  lower bound).
 - `query_costs` — measured cost figures for every starter query (below).
 - `dropped_queries` — starter queries this build generated, **ran**, and then
   refused to ship (below). Absent on a healthy build.
@@ -811,21 +813,22 @@ peak RSS (below):
 The builders time themselves with a lap timer (`rete_core::build_trace`): each
 phase is charged the wall-clock time since the previous one ended, so the
 phases **partition** the run and never overlap. Their names are a closed set:
-`read` (`repyramid`/`recard` reading the input file), `parse` and `reason` (the
+`read` (`repyramid`/`recard` reading the input file, `merge` hashing its
+shards), `parse` and `reason` (the
 in-RAM text path), `parse+dictionary` and `parse+encode` (the two passes of
 the streaming in-RAM build, where parsing cannot be told apart from what it
 feeds), `parse+chunk`, `dictionary`, `encode` and `named_graphs` (the
-memory-bounded build), `card_derive`, `pyramid`, `text_index`,
+memory-bounded build and `merge`), `card_derive`, `pyramid`, `text_index`,
 `labels+schema`, `dictionary_section`, `index_permutations`, `serialize`,
 `starter_queries`, `write` and `content_hash` (the read of every hashed section
-that places a card after the data needs: the memory-bounded build and
+that places a card after the data needs: the memory-bounded build, `merge` and
 `recard --in-place`). In the memory-bounded build the SCHEMA pass is
 fed from the remap and permutation merges, so part of its cost sits in
 `encode` and `index_permutations`; `labels+schema` is only its finish.
 
 Where a phase is a card's own work — `card_derive` and `starter_queries` in the
-memory-bounded build and in `rete recard` — it also records its **own peak
-RSS** (`peak_rss_bytes` on the phase, shown as `(peak …)`), beside the run's:
+memory-bounded build, `rete merge` and `rete recard` — it also records its
+**own peak RSS** (`peak_rss_bytes` on the phase, shown as `(peak …)`), beside the run's:
 the derivation runs after the build's heavy phases, so the run's peak says
 nothing about it. It is the kernel's high-water mark when the phase raised it,
 and otherwise the highest `VmRSS` a sampler read every 10 ms during the phase.
@@ -850,6 +853,12 @@ ran at about 8 GB/s, on one core), so the digest added 0.07 s to a 51.5 s in-RAM
 build (0.1%) and a 13.7 s memory-bounded one (0.5%). There is no switch to
 skip it. A cardless build has no record and hashes nothing.
 
+`rete merge` is the exception to "no second pass": it reads its shards by range,
+in index order, so it hashes each one in a sequential read of its own before
+the merge starts — timed as the record's `read` phase. That is one read of
+every shard, against the merge's own walk of their dictionaries and index;
+a merge without a card does not hash.
+
 ### Written last, in place
 
 Most of the record is only known at the end — every build's last phase is
@@ -862,7 +871,8 @@ trailing whitespace, and every reader of the section (serde, `JSON.parse`,
 Python's `json`) accepts it. Nothing else in the file moves; the wall time and
 peak RSS cover the final write. The padding is a few hundred bytes.
 
-The memory-bounded build reserves nothing: its card and record are written
+The memory-bounded build reserves nothing, and neither does `rete merge`: the
+card and record are written
 together **after the data**, once everything they describe is on disk, and the
 record is sealed just before that write — its run covers every phase, the
 content hash included, but not the last few KB written.
@@ -934,9 +944,9 @@ are recorded together but labelled apart:
   quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
   9 requests" survives being read elsewhere; "12 ms" does not.
 
-`rete merge` records timestamp/builder/params but no costs (its card carries no
-derived starter queries to measure). The memory-bounded build measures its
-starter queries against the file it has just written, as `rete recard` does.
+The memory-bounded build and `rete merge` measure their starter queries
+against the file they have just written, as `rete recard` does. (Up to 0.4.0
+both wrote a counts-only card with no starter queries, and so no costs.)
 
 ### A build does not ship a query it just measured at zero rows
 
@@ -987,8 +997,8 @@ to one that never measured at all.
 
 **Measurement versus the static machinery.** They are not redundant. The
 generator's `NonEmpty` claims and `provably_empty` hooks act at *generation*
-time, before any measurement exists, and they carry every card built without a
-build record (external builds, `merge`, and every file published before build
+time, before any measurement exists, and they carry every card whose queries
+were never run (`--no-card-costs`, and every file published before build
 records). Where both speak, the measurement wins. Where they *disagree* — a
 template that declares its query cannot come back empty, and then it does —
 that is a defect in the rule, not a fact about the dataset: the build says so

@@ -816,9 +816,10 @@ in place). Both are invisible to older readers: verified with the released
 prints its known subset with no warning and <code>verify</code> passes (the section is
 outside the content hash).</p>
 <h3 id="a-card-after-the-data">A card after the data</h3>
-<p>The memory-bounded build and <code>rete recard --in-place</code> write the Dataset Card
-(and the build record beside it) <strong>after every other section</strong> instead of
-between the header and the dictionary (<a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>).
+<p>The memory-bounded build, <code>rete merge</code> and <code>rete recard --in-place</code> write the
+Dataset Card (and the build record beside it) <strong>after every other section</strong>
+instead of between the header and the dictionary
+(<a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>).
 Nothing about the format changes: the header has always been the directory,
 every reader has always located the card through it, and the content hash folds
 the card first wherever it lies — the same card on the same data hashes the same

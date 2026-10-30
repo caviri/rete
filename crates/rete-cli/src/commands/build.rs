@@ -138,7 +138,7 @@ pub(crate) struct RecordFlags<'a> {
 
 impl RecordFlags<'_> {
     /// The record's `params`. `codec` is the finished file's own.
-    fn params(&self, codec: Option<u8>) -> buildinfo::BuildParams {
+    pub(crate) fn params(&self, codec: Option<u8>) -> buildinfo::BuildParams {
         let mut params = buildinfo::BuildParams {
             command: Some(self.command.to_string()),
             format: self.format.map(str::to_string),
@@ -181,8 +181,8 @@ impl RecordFlags<'_> {
             ..Default::default()
         };
         params.set_text_index(self.text_index);
-        if self.command == "repyramid" {
-            // It re-assembles an existing file: these flags do not exist there,
+        if matches!(self.command, "repyramid" | "merge") {
+            // They re-assemble existing files: these flags do not exist there,
             // and "false" would claim a choice nobody made.
             params.collapse_graphs = None;
             params.strict = None;
@@ -1003,54 +1003,95 @@ pub(crate) fn build_external_cmd(
     })?;
     let audit = audit.into_inner();
     if let (Some(info), Some(curated)) = (info.as_mut(), curated) {
-        let codec = {
-            use std::io::Read;
-            let mut head = vec![0u8; rete_core::format::HEADER_LEN];
-            std::fs::File::open(&out_path)?.read_exact(&mut head)?;
-            rete_core::Header::from_bytes(&head)?.dict_codec
-        };
-        info.params.codec = Some(buildinfo::codec_name(codec).to_string());
-        info.counts = Some(buildinfo::counts(
-            &stats,
-            rec.statements_read.get(),
-            None,
-            &audit.report,
-        ));
-        info.spill = Some(rec.spill());
-        let unfinished = |e: anyhow::Error| {
-            anyhow::anyhow!(
-                "{e}\n{output} is complete but has no card; `rete recard {output} --in-place \
-                 --card-file …` gives it one without rebuilding"
-            )
-        };
-        let full = card::derive_full_card(
+        append_full_card(
             output,
+            info,
             curated,
-            None,
             measure_costs,
-            card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
+            memory_budget_mb,
+            &stats,
+            &audit.report,
             &rec,
             "build",
-        )
-        .map_err(unfinished)?;
-        info.query_costs = full.query_costs;
-        info.dropped_queries = full.dropped;
-        let meta = full.card.to_json_bytes();
-        let (_, _) = card::append_card(output, &meta, false, &rec, "build", || {
-            rec.seal(info);
-            info.to_json_bytes()
-        })
-        .map_err(unfinished)?;
-        eprintln!(
-            "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside the \
-             content hash) after the data",
-            meta.len(),
-            info.to_json_bytes().len()
-        );
+        )?;
     }
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
     print_build_summary(output, &stats, byte_len);
     crate::commands::iri_report::warn_after_build(&audit.report);
+    Ok(())
+}
+
+/// Give the file the memory-bounded external builder has just written at
+/// `output` its **full** card, and its build record: what `rete build
+/// --memory-budget-mb` and `rete merge` both do once their stream is on disk.
+///
+/// `info` is the record begun before the stream ([`buildinfo::Recorder::begin`]);
+/// this adds what only the finished file knows — its codec, the counts
+/// (`stats`, the statements the stream read, the IRI audit), the spill — then
+/// derives the card from the file exactly as `rete recard` does
+/// ([`card::derive_full_card`], inside `memory_budget_mb` all told), runs and
+/// records its starter queries unless `!measure_costs`, and writes the card
+/// and the sealed record after the data ([`card::append_card`]). `who`
+/// prefixes the progress lines.
+///
+/// A failure past the stream leaves a complete, cardless file; the error says
+/// how to card it without a second build.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn append_full_card(
+    output: &str,
+    info: &mut buildinfo::BuildInfo,
+    curated: card::CardInput,
+    measure_costs: bool,
+    memory_budget_mb: u64,
+    stats: &ingest::BuildStats,
+    iri: &rete_core::IriReport,
+    rec: &buildinfo::Recorder,
+    who: &str,
+) -> anyhow::Result<()> {
+    let codec = {
+        use std::io::Read;
+        let mut head = vec![0u8; rete_core::format::HEADER_LEN];
+        std::fs::File::open(output)?.read_exact(&mut head)?;
+        rete_core::Header::from_bytes(&head)?.dict_codec
+    };
+    info.params.codec = Some(buildinfo::codec_name(codec).to_string());
+    info.counts = Some(buildinfo::counts(
+        stats,
+        rec.statements_read.get(),
+        None,
+        iri,
+    ));
+    info.spill = Some(rec.spill());
+    let unfinished = |e: anyhow::Error| {
+        anyhow::anyhow!(
+            "{e}\n{output} is complete but has no card; `rete recard {output} --in-place \
+             --card-file …` gives it one without rebuilding"
+        )
+    };
+    let full = card::derive_full_card(
+        output,
+        curated,
+        None,
+        measure_costs,
+        card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
+        rec,
+        who,
+    )
+    .map_err(unfinished)?;
+    info.query_costs = full.query_costs;
+    info.dropped_queries = full.dropped;
+    let meta = full.card.to_json_bytes();
+    let (_, _) = card::append_card(output, &meta, false, rec, who, || {
+        rec.seal(info);
+        info.to_json_bytes()
+    })
+    .map_err(unfinished)?;
+    eprintln!(
+        "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside the \
+         content hash) after the data",
+        meta.len(),
+        info.to_json_bytes().len()
+    );
     Ok(())
 }
 

@@ -19,9 +19,8 @@ use rete_core::{Header, RangeReader};
 // the CLI has always used (`super::card::DatasetCard`, …). One import site to
 // change if the core module is ever renamed.
 pub(crate) use rete_core::card::{
-    curated_counts_card, derive_card, derive_card_encoded, CardInput, Coherence, DatasetCard,
-    ExampleQuery, LabelIndexSignal, PermutationsSignal, QuotedTriplesSignal, TextIndexSignal, Tier,
-    CARD_TOP_N,
+    derive_card, derive_card_encoded, CardInput, Coherence, DatasetCard, ExampleQuery,
+    LabelIndexSignal, PermutationsSignal, QuotedTriplesSignal, TextIndexSignal, Tier, CARD_TOP_N,
 };
 
 /// `DatasetCard::from_json_bytes` in `anyhow` clothes. `rete-core`'s card
@@ -1189,11 +1188,11 @@ pub(crate) struct FullCard {
 /// half and `coherence` carried over (a reasoning verdict is about the data,
 /// which a card does not change).
 ///
-/// This is the one derivation `rete recard` and the memory-bounded `rete build`
-/// share, so the two write the same card for the same file. Neither the card
-/// nor the queries' verdicts depend on where the file keeps its card or on
-/// whether it has one: the derivation reads the dictionary and the index, and
-/// a starter query's budget is counted past the open.
+/// This is the one derivation `rete recard`, the memory-bounded `rete build`
+/// and `rete merge` share, so they write the same card for the same file.
+/// Neither the card nor the queries' verdicts depend on where the file keeps
+/// its card or on whether it has one: the derivation reads the dictionary and
+/// the index, and a starter query's budget is counted past the open.
 ///
 /// The phases go to `rec` as `card_derive` and `starter_queries`, each with its
 /// own peak RSS. `who` prefixes the progress lines.
@@ -1261,10 +1260,10 @@ pub(crate) fn derive_full_card(
         let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
             std::sync::Arc::new(LocalRangeReader::open(path)?);
         // The file NAME, not its path: this string is stored in the file. A
-        // build measures the file it is writing, whose name says nothing (and
-        // would make two builds to different paths differ).
+        // build or a merge measures the file it is writing, whose name says
+        // nothing (and would make two runs to different paths differ).
         let which = match who {
-            "build" => "the file this build wrote, on local disk".to_string(),
+            "build" | "merge" => format!("the file this {who} wrote, on local disk"),
             _ => format!("local file {}", file_name(path)),
         };
         let transport = format!(
@@ -1676,7 +1675,7 @@ fn read_card_for_audit(path: &str) -> anyhow::Result<CardForAudit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rete_core::card::{normalize_string_list, normalize_themes};
+    use rete_core::card::{curated_counts_card, normalize_string_list, normalize_themes};
 
     const TYPE: &str = rete_core::RDF_TYPE;
 
