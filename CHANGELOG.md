@@ -20,6 +20,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   whose shards each get the sub-query (one subject at a time), a sharded
   partner brings all its shards, and steps run most-constrained first. The
   result line now reports the join's sub-queries, bytes and requests.
+- **The wasm build downloads nothing.** The dev image carries the
+  `wasm-bindgen` CLI pinned to `Cargo.lock`, and `scripts/build_wasm.sh` runs
+  `wasm-pack --mode no-install`; the artifacts are byte-identical to a build
+  with the official binary. Each `web/pkg*` package is stamped with the content
+  hash of the engine source it was built from (`rete-build.json`), and the
+  gate fails on a stale or unstamped package (`node scripts/engine_stamp.mjs
+  check`).
 
 ### Fixed
 
