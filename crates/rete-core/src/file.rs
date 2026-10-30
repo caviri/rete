@@ -243,7 +243,7 @@ fn compute_label_index(
 /// string-literal object: tokenize each literal into words and record the
 /// subject that carries it. Empty when the graph has no literals. Opt-in
 /// (`rete build --text-index`); O(literal bytes) transient. The token table is
-/// compressed with [`writer_codec`] (the reader decompresses with `block_codec`).
+/// compressed with `writer_codec` (the reader decompresses with `block_codec`).
 pub fn compute_text_index(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Vec<u8> {
     use crate::terms::{is_literal, literal_lexical};
     let mut b = crate::text_index::TextIndexBuilder::new();
