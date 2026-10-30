@@ -883,9 +883,24 @@ the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries 
 the header and card byte ranges (the same two small reads <code>card-url</code> does over
 HTTP), so a 50 GB file answers in about a second.</p>
 <h3 id="rete-stats-file"><code>rete stats &lt;file&gt;</code></h3>
-<p>Human-friendly overview: file size, default-graph triple count, distinct terms,
-named-graph count, pyramid levels, and top predicates. Notes the label-index and
-<strong>text-index</strong> sizes when the file carries them.</p>
+<p>Human-friendly overview: file size, statement counts, distinct terms, pyramid
+levels, and top predicates. Notes the label-index and <strong>text-index</strong> sizes when
+the file carries them.</p>
+<p>The header counts every statement in the file, so <code>stats</code> prints that as
+<code>statements</code> and splits it: <code>default-graph triples</code>, <code>named graphs</code> (the graph
+count) and, when there are any, <code>named-graph quads</code>. The split costs no read of
+the named graphs: with none, the header says it all; otherwise it comes from
+the <a href="dataset-cards.html">Dataset Card</a>'s build-time counts when the card agrees
+with the header, else from counting the default graph's index tiles. The line
+says which.</p>
+<pre><code class="language-text">opencitations-2026-06-small-full-labels.rete — 1073354201 bytes
+  statements            : 18869242 (all graphs)
+  default-graph triples : 5971936
+  named graphs          : 1494934
+  named-graph quads     : 12897306 (split from the dataset card)
+</code></pre>
+<p>Before 0.4.0 the first line read <code>default-graph triples : 18869242</code>, which
+on this file is the whole dataset, 1.5 M provenance graphs included.</p>
 <h3 id="rete-verify-file"><code>rete verify &lt;file&gt;</code></h3>
 <p>Recompute the blake3 content hash and compare to the header. Exits non-zero with
 <code>FAILED — content hash mismatch</code> on corruption/truncation. The hashed sections
@@ -1309,12 +1324,29 @@ generate_query | rete sparql data.rete --query-file - --json
 never an addition: giving both, or neither, is a usage error (exit 2). The
 file must be UTF-8 (a leading byte-order mark is ignored); a file that cannot
 be read, or holds only whitespace, is an error (exit 1).</p>
-<p><strong>Memory &amp; I/O.</strong> A local file larger than a quarter of the memory budget
-(1 GiB at the default) opens through the same lazy range reader the <code>-url</code>
-commands use (threshold override: <code>RETE_LOCAL_LAZY_ABOVE_MB</code>, block size:
-<code>RETE_BLOCK_KB</code>), and aggregation streams through per-group accumulators.
-Preview a query's byte cost with <code>rete cost</code>, and see the exact ranges a query
-read with <code>rete why</code>.</p>
+<p><strong>Memory &amp; I/O.</strong> Every command that opens a local file (this one, <code>stats</code>,
+<code>search</code>, <code>serve</code>, …) reads it whole only when that is cheap, and otherwise
+opens it through the same lazy range reader the <code>-url</code> commands use (block
+size: <code>RETE_BLOCK_KB</code>). Reading whole holds the file image, its decoded
+dictionary and every index permutation, none of it evictable: 6.8× the file
+on the OpenCitations sample. So a file is read whole only when it is <strong>at most
+a sixteenth of the memory available to the process</strong>, never past 1 GiB, and
+for <code>sparql</code> also at most a quarter of <code>--memory-budget-mb</code>. Available memory
+is the smaller of the kernel's <code>MemAvailable</code> and the headroom under the
+process's cgroup limit (v2 <code>memory.max</code> or v1 <code>memory.limit_in_bytes</code>, page
+cache not counted as used), so inside a container the container's limit is
+what counts. Where neither can be read (macOS, Windows) the threshold is
+256 MiB. <code>RETE_LOCAL_LAZY_ABOVE_MB</code> overrides the threshold outright (<code>0</code> =
+always lazy); <code>RETE_OPEN_DEBUG=1</code> prints which way each open went and why.</p>
+<p>Measured in a 4 GiB container on the OpenCitations sample: under the fixed
+1 GiB threshold of earlier releases, <code>stats</code>, <code>sparql</code>, <code>search</code> and <code>serve</code>
+on the 1.07 GB file each read it whole, passed 4 GiB and were killed after
+24–49 s. Now the same file opens lazily: a one-row <code>sparql</code> answers in
+0.035 s at 15 MB peak, <code>search --contains</code> in 0.11 s at 59 MB, <code>stats</code> in
+0.53 s at 421 MB (it reads the pyramid's statistics blocks). Its 0.24 GB
+sibling is still a small enough fraction to read whole (3.1 s, 1.6 GB). Aggregation
+streams through per-group accumulators. Preview a query's byte cost with
+<code>rete cost</code>, and see the exact ranges a query read with <code>rete why</code>.</p>
 <p><strong><code>--memory-budget-mb N</code></strong> (default 4096; <code>0</code> = unlimited) bounds what the
 lazy reader keeps resident: the decoded dictionary chunks, the decoded index
 tiles with their group directories, and the raw file blocks, split as for
@@ -1356,9 +1388,22 @@ query with nothing to report gets neither header.</li>
 <li>Binds loopback by default. Expose deliberately (<code>--bind 0.0.0.0:7878</code>) and
 set <code>--token</code>: updates then require <code>Authorization: Bearer &lt;t&gt;</code> (reads stay
 open). CORS is enabled, so browsers can query it directly.</li>
-<li>Scale: the state lives in memory and rebuilds after writes — built for
-living small/medium datasets (annotation, curation; up to a few million
-triples), not the multi-GB catalog files.</li>
+<li>Scale: until the first update the endpoint answers <strong>straight from the
+file</strong>, opened like any local command opens it (read whole only when it is a
+small fraction of the free memory, lazily otherwise; see <code>rete sparql</code>'s
+Memory &amp; I/O), and <code>GET /snapshot.rete</code> streams the file itself. So serving
+a multi-GB catalog file read-only costs what its queries touch. Before
+0.4.0 the server loaded every quad at startup: in a 4 GiB container it was
+killed before answering on both the 1.07 GB and the 0.24 GB OpenCitations
+files (18.9 M quads each); now it answers its first query in 0.06 s at
+16 MB, and in 3.0 s at 1.6 GB on the smaller file, which it reads whole. The first update (or a
+journal with changes to replay at startup) loads every quad into memory and
+rebuilds after each write, which is built for living small/medium datasets
+(annotation, curation; up to a few million triples). An update whose load
+would not fit is refused with <code>503</code> and a message, and the endpoint keeps
+answering queries. The estimate is 1 KiB per quad against the available
+memory (measured: 646 MiB at peak for 1 M OpenCitations quads), so a graph
+of very long literals can still need more than it predicts.</li>
 </ul>
 <pre><code class="language-sh">rete serve notes.rete
 curl -s --data-urlencode 'query=SELECT * WHERE { ?s ?p ?o } LIMIT 5' http://127.0.0.1:7878/sparql
@@ -1551,6 +1596,39 @@ rete reach g.rete --predicate '&lt;http://ex/knows&gt;' --seeds-file seeds.txt -
 <h2 id="over-http">Over HTTP</h2>
 <p>Both URL commands work against <code>http://</code> and <code>https://</code> hosts that honor <code>Range</code>
 requests (S3, GitHub, any CDN).</p>
+<p><strong>How the ranges are fetched.</strong> On a remote file the time goes to round trips,
+not bytes, so the HTTP reader behind every <code>-url</code> command (and <code>cost</code>,
+<code>progressive</code>, <code>card-audit</code>, <code>reason --url</code>, <code>shacl-url</code> and <code>federate</code> on a
+URL):</p>
+<ul>
+<li>keeps its connections alive: one client with a connection pool, where each
+range used to open (and on <code>https://</code> TLS-handshake) a connection of its own;</li>
+<li>fetches the engine's <strong>batches in parallel</strong>, up to 16 requests in flight —
+the tiles a scan or a join step is about to read, the dictionary chunks a
+result decodes (all four dictionary sections in one batch), the subjects a
+full-text search returns — so a batch costs one round trip instead of one
+per range; before 0.4.0 the CLI passed every batch on one range at a time;</li>
+<li>walks the dictionary and the index containers <strong>at the same time</strong> while
+opening a file: each is a chain of small dependent reads (a container's
+sections are found through their length prefixes), and the header says
+where both start;</li>
+<li>merges ranges of one batch that lie at most 32 KiB apart into one request
+(never past 8 MiB), and slices them apart again;</li>
+<li>retries a transient failure (a dropped connection, a short body, <code>408</code>,
+<code>429</code>, a <code>5xx</code>) twice with backoff, and fails at once on a permanent one: a
+host that ignores <code>Range</code> (<code>200</code> for a range request), a <code>Content-Range</code> for
+the wrong offset, a <code>404</code>. One range failing fails the batch, and a query
+never returns a partial answer as if it were whole.</li>
+</ul>
+<p>Knobs: <code>RETE_HTTP_CONCURRENCY</code> (requests in flight, 1–64, default 16; <code>1</code>
+fetches one range at a time, the behaviour before 0.4.0),
+<code>RETE_HTTP_COALESCE_KB</code> (default 32; <code>0</code> merges only touching ranges) and
+<code>RETE_HTTP_RETRIES</code> (default 2). The <code>fetched … in N range request(s)</code> line
+counts the ranges handed to the HTTP reader (after the block cache has merged
+adjacent blocks); when the reader merges two nearby ones into one request the
+server sees one fewer, and retries are not counted.</p>
+<p>Measured through a latency-injecting proxy on the OpenCitations sample: see
+the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.</p>
 <h3 id="rete-card-url-url---json---format-jsonldcroissant---sha256-hex"><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
 <p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and one
 coalesced metadata + build-info range, in <strong>two small range requests</strong>. The

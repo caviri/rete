@@ -27,6 +27,62 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   hash of the engine source it was built from (`rete-build.json`), and the
   gate fails on a stale or unstamped package (`node scripts/engine_stamp.mjs
   check`).
+- **A local file is read whole only when it is small next to the free
+  memory.** Every command that opens a local `.rete` (`sparql`, `stats`,
+  `search`, `serve`, `query`, …) used to read any file up to 1 GiB whole,
+  which holds the file image, its decoded dictionary and every index
+  permutation at once: 6.8× the file on the OpenCitations sample. In a
+  4 GiB container `stats`, a one-row `sparql`, `search --contains` and
+  `serve` on its 1.07 GB file were each killed after 24–49 s. The threshold
+  is now a sixteenth of the memory the process can still allocate (the
+  smaller of `MemAvailable` and the headroom under its cgroup v2/v1 limit,
+  page cache not counted), never past 1 GiB, and for `sparql` at most a
+  quarter of `--memory-budget-mb`; 256 MiB where memory cannot be read
+  (macOS, Windows). On the same file in the same container the one-row query
+  now answers in 0.035 s at 15 MB, `search --contains` in 0.11 s at 59 MB and
+  `stats` in 0.53 s at 421 MB. `RETE_LOCAL_LAZY_ABOVE_MB` still overrides it;
+  `RETE_OPEN_DEBUG=1` prints the decision and its reason. `summary`,
+  `predicates` and `federate`'s routing no longer read the whole file to
+  look at its summary.
+- **`rete serve` answers from the file until the first update.** It loaded
+  every quad into memory and rebuilt the file before answering anything, so
+  in a 4 GiB container it was killed on both OpenCitations files (18.9 M
+  quads). It now opens the file like any local command (lazily when large)
+  and streams it as `/snapshot.rete`; the first update, or a journal with
+  changes to replay, loads the quads as before. First answer: 0.06 s at
+  16 MB on the 1.07 GB file, 3.0 s at 1.6 GB on the 0.24 GB one (read
+  whole). An update whose load would not fit in the
+  available memory (estimated at 1 KiB per quad; measured 646 MiB for 1 M
+  quads) is refused with `503`, and the endpoint keeps serving queries.
+- **Remote reads go out in parallel, over kept-alive connections.** The
+  HTTP reader behind every `-url` command had a parallel `read_many`, but the
+  local-or-URL wrapper the commands open did not forward it (nor the reader's
+  fan-out), so every batch the engine asked for went out one range at a time,
+  each on a new connection. It now forwards both; one HTTP agent keeps up to
+  16 connections alive; a batch goes out from a work queue, up to 16 requests
+  in flight; ranges at most 32 KiB apart share a request; transient failures
+  (dropped connection, short body, `408`, `429`, `5xx`) are retried twice
+  with backoff, and a `206` for the wrong offset is refused. The engine
+  batches more as well: a lazy open walks the dictionary and index
+  containers at the same time when the reader has a fan-out, decoding a
+  result faults the chunks of every dictionary section in one batch (it was
+  one batch per section), and a full-text search faults its hits' subject
+  chunks in one batch (it was one read per chunk). Knobs:
+  `RETE_HTTP_CONCURRENCY` (1–64, default 16; `1` is the old sequential
+  behaviour), `RETE_HTTP_COALESCE_KB` (default 32), `RETE_HTTP_RETRIES`
+  (default 2), and `RETE_HTTP_TRACE=1` to print each read and batch.
+  Measured through a latency proxy on the OpenCitations sample (26 card,
+  search and SPARQL queries over the 1.07 GB and 0.24 GB files, median of 5
+  interleaved cold runs, identical rows and bytes): round trips on the
+  critical path 595 → 378 at 20 ms and 595 → 366 at 80 ms, requests
+  595 → 562, connections 595 → 76, total wall time 27.3 → 21.3 s at 20 ms
+  and 62.9 → 47.2 s at 80 ms; with the TCP handshake of each new connection
+  modelled (one more round trip; `https` costs more) 115.6 → 54.0 s at
+  80 ms. At 80 ms a full-text search went from 2.15 to 0.86 s, a one-row
+  query from 1.62 to 1.02 s, a DOI lookup from 1.88 to 1.19 s. Most of what
+  remains is the open: the dictionary and index containers are found by
+  walking their sections' length prefixes, about eight dependent reads
+  each.
 
 ### Fixed
 
@@ -41,6 +97,23 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   persistent range cache now takes the total from `HEAD`'s `Content-Length`
   there, and an off-catalog `…/files/<name>/content` URL is labelled with the
   file name. A gate check serves Zenodo's exact header set.
+- **`rete stats` printed every statement as "default-graph triples".** The
+  header counts the default graph and every named graph together, so on the
+  OpenCitations file (18,869,242 statements, 1,494,934 provenance graphs) it
+  reported 18.9 M default-graph triples where there are 5,971,936. It now
+  prints `statements`, `default-graph triples`, `named graphs` and
+  `named-graph quads`, splitting the count from the Dataset Card's build-time
+  counts or the default graph's index, never by reading the named graphs, and
+  counts the graphs without walking them.
+
+### Added
+
+- **`rete-bench --build-mem` profiles the Dataset Card and the full-text
+  index too**: the card derivation, the text-index build and the
+  starter-query costing a carded build runs last (each query cold against
+  the written file, the five heaviest listed), which is where a carded
+  build peaks on a large graph. `--no-card`, `--no-card-costs` and
+  `--no-text-index` leave them out.
 
 ## [0.3.7] - 2026-10-28
 
