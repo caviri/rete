@@ -7,6 +7,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use rete_core::format::{content_hash_parts, rewrite_card};
 use rete_core::ingest::{assemble_dataset_opts, AssembleOptions, RawQuad};
 use rete_core::{
     append_sections, attach_build_info, read_schema_coherence_ranged, read_schema_summary_ranged,
@@ -276,4 +277,98 @@ fn a_legacy_build_keeps_its_combined_pyramid_meta_and_answers_from_it() {
     assert!(rete.prefix_search("svobodová", 5).is_empty());
     assert!(!rete.predicate_stats().is_empty(), "from the pyramid-meta");
     assert!(rete.schema_or_pyramid().is_some());
+}
+
+/// Which section kinds the header content hash covers, pinned, in the order
+/// `content_hash_parts` folds them: metadata (1), dictionary (2), index (3),
+/// pyramid-meta (4), text index (6), named graphs (5). Build info (7) and the
+/// self-digested LABEL_INDEX (8) and SCHEMA (9) are outside it. A kind that
+/// joins the hash joins `content_hash_parts` and this list in the same change.
+#[test]
+fn the_content_hash_covers_exactly_kinds_1_to_6() {
+    let mut q = quads(40);
+    q.push((
+        "<http://ex/g1>".into(),
+        LABEL.into(),
+        "\"in a named graph\"".into(),
+        Some("<http://ex/graph1>".into()),
+    ));
+    let opts = AssembleOptions {
+        with_text_index: true,
+        ..sectioned(true)
+    };
+    let bytes = build(q, &opts);
+    let bytes = replace_metadata(&bytes, br#"{"title":"t"}"#).unwrap();
+    let bytes = attach_build_info(&bytes, br#"{"built_at":"x"}"#).unwrap();
+    let h = Header::from_bytes(&bytes).unwrap();
+    let all = [
+        SectionKind::Metadata,
+        SectionKind::Dictionary,
+        SectionKind::Index,
+        SectionKind::PyramidMeta,
+        SectionKind::NamedGraphs,
+        SectionKind::TextIndex,
+        SectionKind::BuildInfo,
+        SectionKind::LabelIndex,
+        SectionKind::Schema,
+    ];
+    for k in all {
+        assert!(h.section(k).is_some(), "the fixture carries {k:?}");
+    }
+    let hashed: Vec<u16> = content_hash_parts(&h)
+        .into_iter()
+        .map(|(off, len)| {
+            // `all` is in kind order, so a position is its kind number minus one.
+            let i = all
+                .iter()
+                .position(|k| {
+                    h.section(*k)
+                        .is_some_and(|s| s.offset == off && s.length == len)
+                })
+                .unwrap_or_else(|| panic!("hashed range {off}+{len} is no section"));
+            i as u16 + 1
+        })
+        .collect();
+    assert_eq!(hashed, [1, 2, 3, 4, 6, 5]);
+    assert!(verify(&bytes).unwrap());
+}
+
+/// `rete recard`'s rewrite (only the card and the build record change) keeps
+/// kinds 8 and 9 byte for byte and reachable: the header offsets shift, their
+/// own digests still hold, and searches and the schema answer as before.
+#[test]
+fn a_card_rewrite_carries_the_label_and_schema_sections() {
+    let bytes = build(quads(80), &sectioned(true));
+    let bytes = attach_build_info(&bytes, br#"{"built_at":"x"}"#).unwrap();
+    let before = Rete::open(&bytes).unwrap();
+    let want = before.prefix_search("acta", 10);
+    let want_people = before.prefix_search("svobodová", 5);
+    assert!(!want_people.is_empty());
+    let section_bytes = |b: &[u8], s: rete_core::Section| {
+        b[s.offset as usize..(s.offset + s.length) as usize].to_vec()
+    };
+    let h0 = Header::from_bytes(&bytes).unwrap();
+    let card = br#"{"title":"a much longer title than before, so every later section moves"}"#;
+    let mut out = std::io::Cursor::new(Vec::new());
+    rewrite_card(
+        &SliceReader::new(&bytes),
+        &mut out,
+        card,
+        br#"{"built_at":"y"}"#,
+        &mut |_| {},
+    )
+    .unwrap();
+    let out = out.into_inner();
+    let h1 = Header::from_bytes(&out).unwrap();
+    for k in [SectionKind::LabelIndex, SectionKind::Schema] {
+        let (s0, s1) = (h0.section(k).unwrap(), h1.section(k).unwrap());
+        assert_ne!(s0.offset, s1.offset, "{k:?} moved with the longer card");
+        assert_eq!(section_bytes(&bytes, s0), section_bytes(&out, s1), "{k:?}");
+    }
+    assert!(verify(&out).unwrap());
+    assert!(verify_ranged(&SliceReader::new(&out)).unwrap());
+    let after = Rete::open(&out).unwrap();
+    assert_eq!(after.prefix_search("acta", 10), want);
+    assert_eq!(after.prefix_search("svobodová", 5), want_people);
+    assert!(after.schema().is_some());
 }
