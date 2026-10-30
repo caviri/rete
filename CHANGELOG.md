@@ -192,7 +192,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   basic graph pattern already applied between its own triple patterns. On
   OpenCitations' 1 GB sample, the card's "authors in order" query went from
   0.48 s and 353 MB to 0.07 s and 48 MB, and "where a work was published"
-  from 1.2 s and 546 MB to 0.07 s and 15 MB.
+  from 1.2 s and 546 MB to 0.07 s and 15 MB. On the layout with provenance
+  in the default graph, a work's provenance history (a bound subject and four
+  `OPTIONAL`s) went from 2.4 s and 1.45 GiB to 0.03 s and 19 MB locally, and
+  over HTTP from 6.1 s, 35 requests and 5.5 MB to 0.35 s, 26 requests and
+  4.0 MB.
+- **Planner: the size gates count rows, not compressed bytes.** Whether a
+  join side is "fat" (probe it rather than build it) and whether a merge join
+  is lopsided were decided from compressed tile bytes against 2 MiB, so a
+  change of zstd level alone flipped plans (two OpenCitations queries ran
+  3–7× slower at level 19), and a resident open (decoded sizes) and a lazy one
+  (compressed sizes) of the same file could plan differently. They now read
+  the tile-directory row estimate (above about a million rows is fat), which
+  only the data changes.
 - **`rete cost` no longer reads the whole file.** It performed the eager open
   to report that open's size; on a 26 GB file it was killed at 2 GB. The
   figure is now computed from the header, and is the same.

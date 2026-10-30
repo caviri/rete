@@ -221,24 +221,29 @@ fn component(t: Triple, col: usize) -> u32 {
     }
 }
 
-/// The bytes of the UNION of the tiles that scanning each of `patterns`
-/// (through its cheapest permutation) routes to. Sources that share tiles —
-/// sibling classes in one OPS tile — count those tiles once, which a plain sum
-/// of per-pattern figures does not.
-fn union_tile_bytes(index: &GraphIndex, patterns: impl Iterator<Item = Pattern>) -> u64 {
-    let sections = index.tile_sections();
+/// Rows per tile of section `si`: the planner's average (the triple total over
+/// the section's tile count), the same figure
+/// [`GraphIndex::estimate_matches`] uses.
+fn rows_per_tile(ctx: &Ctx, index: &GraphIndex, si: usize) -> f64 {
+    let tiles = index.tile_sections()[si].len().max(1);
+    ctx.rete.header().quad_count as f64 / tiles as f64
+}
+
+/// The estimated rows of the UNION of the tiles that scanning each of
+/// `patterns` (through its cheapest permutation) routes to. Sources that share
+/// tiles — sibling classes in one OPS tile — count those tiles once, which a
+/// plain sum of per-pattern figures does not. A row figure, not a byte one, so
+/// the choice does not move with the compression.
+fn union_tile_rows(ctx: &Ctx, index: &GraphIndex, patterns: impl Iterator<Item = Pattern>) -> f64 {
     let mut tiles: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     for pattern in patterns {
-        let mut best: Option<(u64, usize, usize, usize)> = None;
+        let mut best: Option<(f64, usize, usize, usize)> = None;
         for perm in index.perms().iter() {
             let si = perm.section_index();
             let (start, end) = index.tile_span(si, perm.order_pattern(pattern)[0]);
-            let bytes: u64 = sections[si][start..end]
-                .iter()
-                .map(|t| t.encoded_len())
-                .sum();
-            if best.is_none_or(|(b, ..)| bytes < b) {
-                best = Some((bytes, si, start, end));
+            let rows = (end - start) as f64 * rows_per_tile(ctx, index, si);
+            if best.is_none_or(|(r, ..)| rows < r) {
+                best = Some((rows, si, start, end));
             }
         }
         if let Some((_, si, start, end)) = best {
@@ -247,7 +252,7 @@ fn union_tile_bytes(index: &GraphIndex, patterns: impl Iterator<Item = Pattern>)
     }
     tiles
         .into_iter()
-        .map(|(si, i)| sections[si][i].encoded_len())
+        .map(|(si, _)| rows_per_tile(ctx, index, si))
         .sum()
 }
 
@@ -272,14 +277,14 @@ fn group_streams<'q>(
 ) -> Vec<KeyIter<'q>> {
     if members.len() >= GROUP_SCAN_MIN {
         let whole: Pattern = (None, Some(p), None);
-        let per_source = union_tile_bytes(index, members.iter().map(|(l, _)| l.pattern));
-        let one_scan = crate::bgp::routed_scan_bytes(index, whole);
+        let per_source = union_tile_rows(ctx, index, members.iter().map(|(l, _)| l.pattern));
+        let one_scan = index.estimate_matches(whole, ctx.rete.header().quad_count);
         let slack = if ctx.limit_hint.get().is_some_and(|h| h <= 4096) {
-            4
+            4.0
         } else {
-            1
+            1.0
         };
-        if one_scan <= per_source.saturating_mul(slack) {
+        if one_scan <= per_source * slack {
             if let Some(it) = index.scan_iter_sorted_on(whole, key_col) {
                 let wanted: std::collections::HashSet<u32> =
                     members.iter().map(|&(_, id)| id).collect();
@@ -419,18 +424,19 @@ pub(super) fn matches(
     })
 }
 
-/// The tile bytes a full evaluation would at least scan, summed over the
-/// sources (from the tile directory, no read) — the join's "is this side fat"
-/// figure.
-pub(super) fn scan_bytes(
+/// The rows a full evaluation would at least scan, summed over the sources
+/// (tile-directory estimates, no read) — the join's "is this side fat"
+/// figure, in rows like every planner gate.
+pub(super) fn scan_rows(
     ctx: &Ctx,
     index: &GraphIndex,
     vars: &[String],
     sources: &[TriplePattern],
-) -> u64 {
+) -> f64 {
+    let total = ctx.rete.header().quad_count;
     sources
         .iter()
         .filter_map(|s| lower(ctx, vars, s))
-        .map(|l| crate::bgp::routed_scan_bytes(index, l.pattern))
-        .fold(0u64, u64::saturating_add)
+        .map(|l| index.estimate_matches(l.pattern, total))
+        .sum()
 }

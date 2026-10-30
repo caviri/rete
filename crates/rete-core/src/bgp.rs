@@ -293,14 +293,7 @@ fn try_merge_join(
     // graph. The hybrid loop handles that shape strictly better (scan the
     // pinpoint side, probe the fat one per surviving row), so leave the merge
     // seed to comparably-sized sides.
-    let (lo, hi) = {
-        let (a, b) = (
-            pattern_scan_bytes(ctx, index, ta),
-            pattern_scan_bytes(ctx, index, tb),
-        );
-        (a.min(b), a.max(b))
-    };
-    if hi >= FAT_SCAN_BYTES && hi / 4 >= lo {
+    if merge_seed_lopsided(ctx, index, ta, tb) {
         return None;
     }
     let lower = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Option<Pattern> {
@@ -798,7 +791,8 @@ pub(crate) fn bgp_min_scan_bytes(
         .min()
 }
 
-/// One pattern's cheapest scan extent in BYTES: for each permutation, sum the
+/// One pattern's cheapest scan extent in BYTES — what `rete cost` previews
+/// (the planner's gates use row estimates instead): for each permutation, sum the
 /// encoded lengths of the tiles a scan of this pattern would route to (all
 /// tiles covering the bound leading key, or the whole section when the leading
 /// key is unbound), and take the minimum. Tile *counts* are useless here — a
@@ -849,12 +843,34 @@ pub(crate) fn routed_scan_bytes(index: &GraphIndex, pattern: Pattern) -> u64 {
     best
 }
 
-/// Scan extent above which a join side counts as "fat": materializing (or, on
-/// a remote index, fetching) ≥2 MiB of encoded tiles to build a hash/merge
-/// side is past the point where probing it per surviving row wins. Shared by
-/// the merge-seed asymmetry gate here and the left-join force-probe gate in
-/// `sparql::eval`.
-pub(crate) const FAT_SCAN_BYTES: u64 = 2 << 20;
+/// Estimated matches above which a join side counts as "fat": materializing
+/// (or, on a remote index, fetching) a million rows to build a hash/merge side
+/// is past the point where probing it per surviving row wins. Shared by the
+/// merge-seed asymmetry gate here and the force-probe gates in `sparql::eval`.
+///
+/// A ROW estimate ([`GraphIndex::estimate_matches`]: routed tiles × rows per
+/// tile), not a byte figure. Tiles are cut by their encoded size before
+/// compression, so the estimate does not move when only the compression does;
+/// the compressed tile bytes this gate used to read did — at zstd level 19,
+/// two OpenCitations queries crossed the old 2 MiB line and ran 3–7× slower
+/// with up to 6× the memory — and they differed between a resident open
+/// (decoded sizes) and a lazy one (compressed sizes) of the same file.
+pub(crate) const FAT_SCAN_ROWS: f64 = (1u64 << 20) as f64;
+
+/// Would a merge join of `ta` and `tb` materialize a fat side next to a
+/// pinpoint one? (One side above [`FAT_SCAN_ROWS`] and at least four times the
+/// other.) Then the hybrid loop — scan the small side, probe the fat one — is
+/// strictly better, and the merge seed is declined.
+fn merge_seed_lopsided(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    ta: &(SlotTerm, SlotTerm, SlotTerm),
+    tb: &(SlotTerm, SlotTerm, SlotTerm),
+) -> bool {
+    let est = tile_estimates(ctx, index, &[*ta, *tb], &std::collections::HashSet::new());
+    let (lo, hi) = (est[0].min(est[1]), est[0].max(est[1]));
+    hi >= FAT_SCAN_ROWS && hi / 4.0 >= lo
+}
 
 /// Order pattern indices for a left-deep join: cheapest (smallest estimated
 /// cardinality) first, always preferring a pattern that shares a variable with
@@ -1734,8 +1750,9 @@ mod tests {
         }
     }
 
-    /// The scan-bytes figure behind the merge-join and fat-side gates routes a
-    /// bound term by its id IN ITS ROLE. It used to route the unified node id,
+    /// The scan-bytes figure (`rete cost`'s preview, and through 0.3.7 the
+    /// merge-join and fat-side gates) routes a bound term by its id IN ITS
+    /// ROLE. It used to route the unified node id,
     /// which for an object-only term (any literal) is shifted past the whole
     /// subject-only block: `?s :value "lit"` found no OPS tile at all, cost
     /// "0 bytes", and so let a merge join materialize its partner in full —
@@ -1771,6 +1788,88 @@ mod tests {
                 got < whole,
                 "{lit} routed to the whole predicate ({got} of {whole})"
             );
+        }
+    }
+
+    /// The planner's size gates read ROW estimates, which do not depend on how
+    /// the tiles are compressed. The same file opened resident (tile sizes are
+    /// the decoded images) and lazily (tile sizes are the compressed frames)
+    /// reports different bytes but must take the same decisions — the byte
+    /// gates this replaced flipped plans when only the zstd level changed.
+    #[test]
+    fn plan_gates_do_not_move_with_the_compression() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..3000 {
+            let s = format!("<http://ex/s{i}>");
+            owned.push((
+                s.clone(),
+                "<http://ex/kind>".into(),
+                format!("<http://ex/K{}>", i % 7),
+            ));
+            owned.push((s.clone(), "<http://ex/value>".into(), format!("\"v {i}\"")));
+            if i % 50 == 0 {
+                owned.push((s, "<http://ex/rare>".into(), "<http://ex/R>".into()));
+            }
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(1024);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+        let resident = Rete::open(&bytes).unwrap();
+        let lazy = Rete::open_ranged_lazy(crate::reader::SliceReader::new(leaked)).unwrap();
+        let shapes: Vec<Vec<TriplePattern>> = vec![
+            vec![
+                pat("?s", "<http://ex/rare>", "<http://ex/R>"),
+                pat("?s", "<http://ex/value>", "?v"),
+            ],
+            vec![
+                pat("?s", "<http://ex/kind>", "<http://ex/K3>"),
+                pat("?s", "<http://ex/value>", "?v"),
+            ],
+            vec![
+                pat("?s", "<http://ex/kind>", "?k"),
+                pat("?s", "<http://ex/value>", "?v"),
+            ],
+            vec![
+                pat("?s", "<http://ex/value>", "\"v 7\""),
+                pat("?s", "<http://ex/kind>", "?k"),
+            ],
+        ];
+        let decisions = |rete: &Rete| -> Vec<(Vec<u64>, bool, Option<u64>)> {
+            shapes
+                .iter()
+                .map(|q| {
+                    let mut slots = Slots::new();
+                    collect_pattern_slots(q, &mut slots);
+                    let ctx = Ctx::new(rete, slots);
+                    let index = rete.default_index();
+                    let lowered = lower(q, &ctx).unwrap();
+                    let est = tile_estimates(&ctx, index, &lowered, &Default::default());
+                    let lopsided = merge_seed_lopsided(&ctx, index, &lowered[0], &lowered[1]);
+                    let min = bgp_min_estimate(&ctx, index, q).map(|e| e as u64);
+                    (est.iter().map(|e| *e as u64).collect(), lopsided, min)
+                })
+                .collect()
+        };
+        assert_eq!(decisions(&resident), decisions(&lazy));
+        // ... while the byte figures the gates used to read do differ.
+        #[cfg(feature = "compression")]
+        {
+            let bytes_of = |rete: &Rete| {
+                let q = &shapes[2];
+                let mut slots = Slots::new();
+                collect_pattern_slots(q, &mut slots);
+                let ctx = Ctx::new(rete, slots);
+                bgp_min_scan_bytes(&ctx, rete.default_index(), q)
+            };
+            assert_ne!(bytes_of(&resident), bytes_of(&lazy));
         }
     }
 

@@ -1973,8 +1973,8 @@ fn join_iter<'q>(
             let shares = shares_certain_var(ctx, patterns, &lcert);
             let mut probe = inlj_hint(ctx).is_some()
                 || (shares
-                    && crate::bgp::bgp_min_scan_bytes(ctx, index, patterns)
-                        .is_none_or(|n| n >= crate::bgp::FAT_SCAN_BYTES));
+                    && crate::bgp::bgp_min_estimate(ctx, index, patterns)
+                        .is_none_or(|n| n >= crate::bgp::FAT_SCAN_ROWS));
             let mut small_left: Option<Vec<Row>> = None;
             if !probe && shares {
                 let budget = crate::bgp::bgp_min_estimate(ctx, index, patterns)
@@ -2053,8 +2053,8 @@ fn join_iter<'q>(
             .all(|v| ctx.slots.slot(v).is_some_and(|s| lcert[s]));
         if all_bound
             && (inlj_hint(ctx).is_some()
-                || super::distinct_union::scan_bytes(ctx, index, vars, sources)
-                    >= crate::bgp::FAT_SCAN_BYTES)
+                || super::distinct_union::scan_rows(ctx, index, vars, sources)
+                    >= crate::bgp::FAT_SCAN_ROWS)
         {
             let mut cache = ExistsCache::new();
             return Box::new(eval_plan_iter(ctx, index, nf, l).filter(move |row| {
