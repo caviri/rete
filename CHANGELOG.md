@@ -5,6 +5,27 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **SPARQL 1.2 triple terms in queries.** `<<( s p o )>>` parses as a
+  triple-term pattern — in a pattern, `VALUES`, `BIND` or a `CONSTRUCT`
+  template — and matches the same stored token as `<< s p o >>`, so it finds
+  triple terms written in either RDF 1.2 or RDF-star. Under a leading
+  `VERSION "1.2"` declaration, `<< s p o >>` is SPARQL 1.2's reified triple
+  (`?r rdf:reifies <<( s p o )>>`); without it, it keeps its SPARQL-star
+  meaning, so existing queries and published card starters answer as before.
+  Named reifiers (`~ ?r`) and annotations (`{| … |}`) are refused by name
+  under the declaration. The parser stays `spargebra` 0.3; the 1.2 surface is
+  translated before parsing.
+
+
+- **`rete-bench --build-mem` profiles the Dataset Card and the full-text
+  index too**: the card derivation, the text-index build and the
+  starter-query costing a carded build runs last (each query cold against
+  the written file, the five heaviest listed), which is where a carded
+  build peaks on a large graph. `--no-card`, `--no-card-costs` and
+  `--no-text-index` leave them out.
+
 ### Changed
 
 - **The playground's cross-source join sends each pattern to every source that
@@ -84,20 +105,6 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   walking their sections' length prefixes, about eight dependent reads
   each.
 
-### Added
-
-- **SPARQL 1.2 triple terms in queries.** `<<( s p o )>>` parses as a
-  triple-term pattern — in a pattern, `VALUES`, `BIND` or a `CONSTRUCT`
-  template — and matches the same stored token as `<< s p o >>`, so it finds
-  triple terms written in either RDF 1.2 or RDF-star. Under a leading
-  `VERSION "1.2"` declaration, `<< s p o >>` is SPARQL 1.2's reified triple
-  (`?r rdf:reifies <<( s p o )>>`); without it, it keeps its SPARQL-star
-  meaning, so existing queries and published card starters answer as before.
-  Named reifiers (`~ ?r`) and annotations (`{| … |}`) are refused by name
-  under the declaration. The parser stays `spargebra` 0.3; the 1.2 surface is
-  translated before parsing.
-
-### Changed
 
 - **`REGEX` / `REPLACE` / `sh:pattern` are Unicode-aware in native builds.**
   `regex-lite` treats `\b`, `\w`, `\d` and `(?i)` as ASCII, so
@@ -217,15 +224,6 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - **`rete cost` no longer reads the whole file.** It performed the eager open
   to report that open's size; on a 26 GB file it was killed at 2 GB. The
   figure is now computed from the header, and is the same.
-
-### Added
-
-- **`rete-bench --build-mem` profiles the Dataset Card and the full-text
-  index too**: the card derivation, the text-index build and the
-  starter-query costing a carded build runs last (each query cold against
-  the written file, the five heaviest listed), which is where a carded
-  build peaks on a large graph. `--no-card`, `--no-card-costs` and
-  `--no-text-index` leave them out.
 
 ## [0.3.7] - 2026-10-28
 
