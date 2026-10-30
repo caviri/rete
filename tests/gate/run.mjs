@@ -85,6 +85,19 @@ function g0() {
   } catch (e) {
     record("G0", "compiled engine matches this checkout's engine source", false, String(e).slice(0, 200));
   }
+  // The cross-source router on the shipped app.js, against in-memory sources:
+  // every pattern to every source that can answer it (the Crossref title join,
+  // a sharded partner), exclusive stars kept whole, endpoints only where they bind.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_fed_router.mjs`, { encoding: "utf8" });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record("G0", "federation router: each pattern to every source that can contribute", ok,
+      ok ? `${verdict.cases} routing cases` : out.slice(-240));
+  } catch (e) {
+    record("G0", "federation router: each pattern to every source that can contribute", false,
+      String(e.stderr || e.stdout || e).slice(-240));
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/test_catalog_matrix.mjs`, {
       encoding: "utf8",
@@ -415,6 +428,7 @@ const G2 = [
   ["check_deeplink_view_state", "deep links carry the view: union/reason round-trip WITH differing results, strategy/round/fed/view/labels restored, default hash unchanged", 300000, false],
   ["check_card_modal", "Dataset Card modal: rendered + coloured JSON, remote & resident", 120000, false],
   ["check_len_probe_hostile", "host under-reports length via HEAD + hides Content-Range (#95)", 120000, false],
+  ["check_zenodo_host", "Zenodo's header set (Content-Range hidden, …/content URL) and a Range-ignoring no-store host open in both engines", 300000, false],
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000, false],
   ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000, true],
   ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000, false],
@@ -428,7 +442,6 @@ const G2 = [
   ["check_schema_empty", "no-pyramid dataset shows honest empty schema (no stale scholar leak)", 120000, true],
   ["check_schema_render", "with-pyramid remote schema + ontology diagram render on async default", 120000, true],
   ["check_ontology_docs", "ReSpec-style ontology reference (classes+props+definitions) renders, incl. --no-pyramid dblp", 150000, true],
-  ["check_zenodo_host", "Zenodo's header set (Content-Range hidden, …/content URL) and a Range-ignoring no-store host open in both engines", 300000, false],
   ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000, false],
   ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000, false],
   ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000, false],

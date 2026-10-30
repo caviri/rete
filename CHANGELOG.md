@@ -5,6 +5,22 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The playground's cross-source join sends each pattern to every source that
+  can answer it.** It used to route a pattern to the one source that bound its
+  subject whenever that source had the predicate at all: the Crossref title
+  join (`?citing cx:cites <doi> . ?citing rdfs:label ?title` over
+  `crossref-citations` + `crossref`) returned 0 rows because the citation file
+  holds one `rdfs:label` (its declaration of `cx:citedDOIAsWritten`), and with
+  a partner added every pattern of a sharded dataset went to its first shard.
+  Sources are now chosen per pattern by cached `ASK`s (the predicate, then the
+  pattern's constants when several sources have the predicate); patterns only
+  one dataset answers still run together on it, a sharded dataset is one source
+  whose shards each get the sub-query (one subject at a time), a sharded
+  partner brings all its shards, and steps run most-constrained first. The
+  result line now reports the join's sub-queries, bytes and requests.
+
 ### Fixed
 
 - **A host that ignores `Range` no longer breaks the browser reader.** A `200`

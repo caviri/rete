@@ -7894,7 +7894,19 @@ self.onmessage = function (e) {
     if (!sh || sh.length < 2) return [];
     return sh.slice(1).map((u, i) => ({
       id: "shard" + (i + 1), kind: "remote", label: "shard " + (i + 1),
-      url: u, key: state.dataset + "#s" + (i + 1), shard: true,
+      url: u, key: state.dataset + "#s" + (i + 1), shard: true, group: "self",
+    }));
+  }
+  // A PARTNER that is itself sharded is all of its shards, not its first one
+  // (addCatalogFedSource stores the dataset's url, which is shards[0]). They
+  // share the partner's id as their group: one logical source to the router.
+  function partnerShards(p) {
+    const d = p.kind === "remote" && p.key ? datasetInfo(p.key) : null;
+    const sh = d && Array.isArray(d.shards) ? d.shards : null;
+    if (!sh || sh.length < 2) return [];
+    return sh.filter((u) => u !== p.url).map((u, i) => ({
+      id: p.id + "-s" + (i + 1), kind: "remote", label: p.label + " · shard " + (i + 1),
+      url: u, key: p.key + "#s" + (i + 1), shard: true, group: p.id,
     }));
   }
 
@@ -7906,7 +7918,10 @@ self.onmessage = function (e) {
       ? { id: "self", kind: "remote", label: name, url: state.remote.url, self: true }
       : { id: "self", kind: "memory", label: name, self: true };
   }
-  function allFedSources() { return [selfSource()].concat(shardSources()).concat(state.fedSources); }
+  function allFedSources() {
+    return [selfSource()].concat(shardSources(),
+      ...state.fedSources.map((p) => [p].concat(partnerShards(p))));
+  }
 
   function detectQueryKind(q) {
     const body = q.replace(/^\s*(?:#.*\n|PREFIX\s+[^\n]*\n|BASE\s+[^\n]*\n)*/i, "");
@@ -8067,22 +8082,165 @@ self.onmessage = function (e) {
     return t;
   }
   const fedPatVars = (pat) => [pat.s, pat.p, pat.o].filter(fedIsVar).map(fedVn);
-  function fedRoute(parsed, sources) {
-    const can = (src, pred) => src.preds === null || (pred !== null && src.preds.has(pred));
-    const owner = {}, assign = new Array(parsed.patterns.length).fill(-1);
-    parsed.patterns.forEach((pat, idx) => {
-      const pred = fedIsVar(pat.p) ? null : fedExpandIri(pat.p, parsed.prefixes);
-      let si = -1;
-      if (fedIsVar(pat.s) && owner[fedVn(pat.s)] != null && can(sources[owner[fedVn(pat.s)]], pred)) si = owner[fedVn(pat.s)];
-      if (si < 0 && pred !== null) {
-        const sp = sources.findIndex((s) => s.preds !== null && s.preds.has(pred));
-        si = sp >= 0 ? sp : sources.findIndex((s) => s.preds === null);
+  // A term that pins a pattern: an IRI or a literal (a variable or a blank node does not).
+  const fedIsConst = (t) => typeof t === "string" && !fedIsVar(t) && !t.startsWith("_:");
+  // The DATASET a physical source belongs to. A sharded dataset is one logical
+  // source whose shards are its members: this dataset and its shards share
+  // "self"; a partner and its shards share the partner's id.
+  const fedGroupOf = (src) => src.group || src.id;
+
+  // ── Source selection: which sources can contribute to each pattern ────────
+  // A pattern is evaluated against EVERY source that has a triple it could
+  // match, and the rows are unioned. (The router used to send a pattern to the
+  // ONE source that bound its subject whenever that source had the predicate at
+  // all: one stray rdfs:label in crossref-citations — from its declaration of
+  // cx:citedDOIAsWritten — sent every title lookup there and the join came back
+  // empty, and with a partner added, every pattern of a sharded dataset went to
+  // its first shard.)
+  //
+  // ASK answers per remote file, kept for the session: a file at one URL is
+  // immutable for it, the assumption the range cache makes too.
+  const fedAskCache = new Map(); // url -> Map(pattern key -> Promise<boolean>)
+  function fedAsk(src, parsed, s, p, o) {
+    const run = () => querySource(src, parsed.prefixBlock + "\nASK { " + s + " " + p + " " + o + " }", "ask")
+      .then((r) => r.boolean === true || r.boolean === "true")
+      .catch(() => true); // unknown → never rule a source out
+    if (src.kind !== "remote") return run(); // in memory: microseconds, nothing to cache
+    const key = [s, p, o].map((t) => (fedIsConst(t) ? (t[0] === "<" || t[0] === '"' ? t : "<" + fedExpandIri(t, parsed.prefixes) + ">") : "?")).join(" ");
+    let m = fedAskCache.get(src.url);
+    if (!m) fedAskCache.set(src.url, (m = new Map()));
+    if (!m.has(key)) m.set(key, run());
+    return m.get(key);
+  }
+  // rel[i][j]: can source j contribute to pattern i?
+  //  - a .rete or in-memory source is ASKed: first the predicate alone (the
+  //    old per-predicate probe, cached), then — only when more than one source
+  //    has it — the pattern with its constants, which is what tells
+  //    `?b a schema:Book` (one dataset) from rdf:type (every dataset) and keeps
+  //    a typed star on the one source that has the class;
+  //  - a live endpoint answers anything, so it is never asked: it takes a
+  //    pattern no other source has, and every pattern whose subject it bound
+  //    (`?wd wdt:P17 ?c . ?c rdfs:label ?l`: the labels of ITS entities).
+  //  - a pattern nobody has goes to this dataset, so the join is empty rather
+  //    than mis-routed.
+  async function fedRelevance(parsed, sources) {
+    const P = parsed.patterns;
+    const probe = sources.map((s, j) => (s.kind === "endpoint" ? -1 : j)).filter((j) => j >= 0);
+    const eps = sources.map((s, j) => (s.kind === "endpoint" ? j : -1)).filter((j) => j >= 0);
+    const rel = P.map(() => new Array(sources.length).fill(false));
+    await Promise.all(P.map(async (pat, i) => {
+      const t1 = await Promise.all(probe.map((j) => (fedIsVar(pat.p) ? true : fedAsk(sources[j], parsed, "?s", pat.p, "?o"))));
+      let cand = probe.filter((_j, k) => t1[k]);
+      if (cand.length > 1 && (fedIsConst(pat.s) || fedIsConst(pat.o))) {
+        const t2 = await Promise.all(cand.map((j) => fedAsk(sources[j], parsed,
+          fedIsConst(pat.s) ? pat.s : "?s", pat.p, fedIsConst(pat.o) ? pat.o : "?o")));
+        cand = cand.filter((_j, k) => t2[k]);
       }
-      if (si < 0) si = 0;
-      assign[idx] = si;
-      [pat.s, pat.o].forEach((tm) => { if (fedIsVar(tm) && owner[fedVn(tm)] == null) owner[fedVn(tm)] = si; });
+      cand.forEach((j) => { rel[i][j] = true; });
+    }));
+    if (eps.length) {
+      rel.forEach((r) => { if (!r.some(Boolean)) eps.forEach((j) => { r[j] = true; }); });
+      for (let changed = true; changed;) {
+        changed = false;
+        const fromEp = new Map(); // variable -> endpoints that bind it
+        P.forEach((pat, i) => eps.forEach((j) => {
+          if (!rel[i][j]) return;
+          [pat.s, pat.o].filter(fedIsVar).forEach((t) => {
+            if (!fromEp.has(fedVn(t))) fromEp.set(fedVn(t), new Set());
+            fromEp.get(fedVn(t)).add(j);
+          });
+        }));
+        P.forEach((pat, i) => {
+          if (!fedIsVar(pat.s) || !fromEp.has(fedVn(pat.s))) return;
+          fromEp.get(fedVn(pat.s)).forEach((j) => { if (!rel[i][j]) { rel[i][j] = true; changed = true; } });
+        });
+      }
+    }
+    rel.forEach((r) => { if (!r.some(Boolean)) r[0] = true; });
+    return rel;
+  }
+
+  // ── The plan: steps, each one sub-query on each of its target sources ─────
+  //  - patterns only ONE dataset can answer form one step on it (an exclusive
+  //    group: every matching triple is in that dataset, so evaluating them
+  //    together there is exact and cheap);
+  //  - for a SHARDED dataset that step is split per subject: a subject's
+  //    triples live in one shard, a join between subjects can cross shards;
+  //  - a pattern several datasets can answer is a step of its own, run on each
+  //    of them and unioned.
+  // Steps run most-constrained first: a step joined to what is bound, with the
+  // most constants; the seed is the step with the most constants. FILTERs go to
+  // the first step at which all their variables are bound (variables bound
+  // earlier travel in that step's VALUES). Returns null when there is nothing to
+  // join — one dataset answers every pattern, so the union path (the query on
+  // each of its sources, shards included) is the same answer.
+  function fedPlan(parsed, sources, rel) {
+    const P = parsed.patterns;
+    const R = rel.map((r) => r.map((ok, j) => (ok ? j : -1)).filter((j) => j >= 0));
+    const G = R.map((js) => [...new Set(js.map((j) => fedGroupOf(sources[j])))]);
+    if (new Set(G.flat()).size < 2) return null;
+    const size = (g) => sources.filter((s) => fedGroupOf(s) === g).length;
+    const steps = [], byKey = new Map();
+    P.forEach((pat, i) => {
+      const key = G[i].length > 1 ? "m:" + i
+        : size(G[i][0]) > 1 ? "x:" + G[i][0] + "|" + pat.s : "x:" + G[i][0];
+      if (!byKey.has(key)) { byKey.set(key, steps.length); steps.push({ pats: [], first: i, multi: G[i].length > 1 }); }
+      steps[byKey.get(key)].pats.push(i);
     });
-    return assign;
+    steps.forEach((st) => {
+      st.targets = R[st.pats[0]].filter((j) => st.pats.every((i) => R[i].includes(j)));
+      st.vars = [...new Set(st.pats.flatMap((i) => fedPatVars(P[i])))];
+      st.score = st.pats.reduce((a, i) => a + (fedIsConst(P[i].s) ? 1 : 0) + (fedIsConst(P[i].o) ? 1 : 0), 0);
+    });
+    const order = [], bound = new Set(), left = steps.slice();
+    while (left.length) {
+      const conn = left.filter((st) => st.vars.some((v) => bound.has(v)));
+      const pick = (conn.length ? conn : left).sort((a, b) => (b.score - a.score) || (a.first - b.first))[0];
+      left.splice(left.indexOf(pick), 1);
+      order.push(pick);
+      pick.vars.forEach((v) => bound.add(v));
+    }
+    const placed = new Set(), seen = new Set();
+    for (const st of order) {
+      st.shared = st.vars.filter((v) => seen.has(v));
+      st.filters = []; st.carry = [];
+      parsed.filters.forEach((f, k) => {
+        if (placed.has(k)) return;
+        const fv = [...new Set((f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)))];
+        if (!fv.every((v) => st.vars.includes(v) || seen.has(v))) return;
+        placed.add(k);
+        st.filters.push(f);
+        fv.forEach((v) => { if (!st.vars.includes(v) && !st.carry.includes(v)) st.carry.push(v); });
+      });
+      st.vars.forEach((v) => seen.add(v));
+    }
+    if (placed.size < parsed.filters.length) return null; // a FILTER over a variable no pattern binds
+    const assign = new Array(P.length);
+    order.forEach((st) => st.pats.forEach((i) => { assign[i] = st.targets; }));
+    return { steps: order, assign };
+  }
+  // One step's sub-query for one source. `tuples` = the VALUES rows (null in a
+  // dry run, which prints a placeholder).
+  function fedStepQuery(parsed, st, src, tuples, cap) {
+    const P = parsed.patterns, keys = st.shared.concat(st.carry), sel = st.vars.concat(st.carry);
+    // No DISTINCT for a remote source: it blocks the engine's stream-and-stop
+    // (a DISTINCT sub-query on the 1.3B orcid file materialized the whole group
+    // and died) — the merge dedupes anyway.
+    let sub = parsed.prefixBlock + "\nSELECT " + (src.kind === "remote" ? "" : "DISTINCT ") +
+      (sel.length ? sel.map((v) => "?" + v).join(" ") : "*") + " WHERE {\n" +
+      st.pats.map((i) => `  ${P[i].s} ${P[i].p} ${P[i].o} .`).join("\n") + "\n";
+    st.filters.forEach((f) => { sub += "  " + f + "\n"; });
+    if (keys.length) {
+      sub += "  VALUES (" + keys.map((v) => "?" + v).join(" ") + ") {\n" +
+        (tuples ? tuples.map((t) => "    (" + t.join(" ") + ")").join("\n") : `    …keys bound by the earlier steps, ≤${cap}`) + "\n  }\n";
+    }
+    // ALWAYS bounded. A bound step contributes ≤cap keys, so rows beyond a small
+    // multiple of that cannot survive the join. A seed's rows each cost remote
+    // probes, so it is sized by the USER's limit (2× headroom for join misses):
+    // 1000 seed rows on the 1.3B file is minutes of probing for a LIMIT-50 answer.
+    return sub + "} LIMIT " + (keys.length
+      ? Math.max(cap * 4, parsed.limit || 0)
+      : (parsed.limit ? Math.max(parsed.limit * 2, 100) : cap * 4));
   }
   function fedHashJoin(left, right, keys) {
     const idx = new Map();
@@ -8091,44 +8249,24 @@ self.onmessage = function (e) {
     for (const l of left) for (const r of (idx.get(JSON.stringify(keys.map((v) => l[v]))) || [])) out.push(Object.assign({}, l, r));
     return out;
   }
-  async function fedJoinExec(parsed, sources, runOnSource, cap) {
+  async function fedJoinExec(parsed, sources, plan, runOnSource, cap) {
     cap = cap || 250;
-    const assign = fedRoute(parsed, sources);
-    const order = [], groups = new Map();
-    assign.forEach((si, i) => { if (!groups.has(si)) { groups.set(si, []); order.push(si); } groups.get(si).push(parsed.patterns[i]); });
-    if (order.length < 2) return null;
-    let table = [{}], bound = new Set();
-    for (const si of order) {
-      const pats = groups.get(si);
-      const gVars = [...new Set(pats.flatMap(fedPatVars))];
-      const shared = gVars.filter((v) => bound.has(v));
-      // No DISTINCT for a remote source: it blocks the engine's stream-and-stop
-      // (a DISTINCT sub-query on the 1.3B orcid file materialized the whole
-      // group and died) — the merge below dedupes anyway. And ALWAYS bound the
-      // sub-query: each hop only contributes up to `cap` join keys, so rows
-      // beyond a small multiple of that can never survive the join.
-      const distinct = sources[si].kind === "remote" ? "" : "DISTINCT ";
-      let sub = parsed.prefixBlock + "\nSELECT " + distinct + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
-        pats.map((p) => `  ${p.s} ${p.p} ${p.o} .`).join("\n") + "\n";
-      parsed.filters.forEach((f) => { const fv = (f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)); if (fv.every((v) => gVars.includes(v))) sub += "  " + f + "\n"; });
-      if (shared.length) {
-        const tuples = [...new Set(table.map((r) => JSON.stringify(shared.map((v) => r[v]))))].slice(0, cap).map((s) => JSON.parse(s)).filter((t) => t.every((x) => x != null));
-        if (!tuples.length) return { vars: parsed.selVars === "*" ? [] : parsed.selVars, rows: [], groups: order.length };
-        sub += "  VALUES (" + shared.map((v) => "?" + v).join(" ") + ") {\n" +
-          tuples.map((t) => "    (" + t.join(" ") + ")").join("\n") + "\n  }\n";
+    let table = [{}];
+    for (const [k, st] of plan.steps.entries()) {
+      const keys = st.shared.concat(st.carry), sel = st.vars.concat(st.carry);
+      let tuples = null;
+      if (keys.length) {
+        tuples = [...new Set(table.map((r) => JSON.stringify(keys.map((v) => r[v]))))].slice(0, cap)
+          .map((s) => JSON.parse(s)).filter((t) => t.every((x) => x != null));
+        if (!tuples.length) { table = []; break; }
       }
-      // Seed group (no VALUES): its rows each cost remote probes, so size it by
-      // the USER's limit (2× headroom for join misses) — 1000 seed rows on the
-      // 1.3B file is minutes of HTTP probing for a LIMIT-50 answer. Bound hops
-      // are VALUES-capped and cheap; they keep the wide cap.
-      sub += "} LIMIT " + (shared.length
-        ? Math.max(cap * 4, parsed.limit || 0)
-        : (parsed.limit ? Math.max(parsed.limit * 2, 100) : cap * 4));
-      const rows = await runOnSource(sources[si], sub);
-      table = shared.length ? fedHashJoin(table, rows, shared)
+      // The step's sub-query on every source that can contribute, rows unioned.
+      const parts = await Promise.all(st.targets.map((j) => runOnSource(sources[j], fedStepQuery(parsed, st, sources[j], tuples, cap), k)));
+      const once = new Set(), rows = [];
+      parts.flat().forEach((r) => { const k = JSON.stringify(sel.map((v) => r[v])); if (!once.has(k)) { once.add(k); rows.push(r); } });
+      table = keys.length ? fedHashJoin(table, rows, keys)
         : (table.length === 1 && !Object.keys(table[0]).length) ? rows
         : (() => { const o = []; for (const l of table) for (const r of rows) o.push(Object.assign({}, l, r)); return o; })();
-      gVars.forEach((v) => bound.add(v));
       if (!table.length) break;
     }
     let res = table;
@@ -8137,32 +8275,23 @@ self.onmessage = function (e) {
     for (const r of res) { const k = JSON.stringify(r); if (!seen.has(k)) { seen.add(k); uniq.push(r); } }
     res = uniq;
     if (parsed.limit) res = res.slice(0, parsed.limit);
-    return { vars: parsed.selVars === "*" ? [...new Set(res.flatMap((r) => Object.keys(r)))] : parsed.selVars, rows: res, groups: order.length, assign };
+    const used = new Set(plan.steps.flatMap((st) => st.targets));
+    const stepOf = [];
+    plan.steps.forEach((st, k) => st.pats.forEach((i) => { stepOf[i] = k; }));
+    return { vars: parsed.selVars === "*" ? [...new Set(res.flatMap((r) => Object.keys(r)))] : parsed.selVars,
+      rows: res, steps: plan.steps.length, sourcesUsed: used.size, assign: plan.assign, stepOf };
   }
-  // Distinct-predicate set per source (cached). Endpoints are wildcards (null).
-  function fedSourcePreds(src, predIris) {
-    if (src.kind === "endpoint") return Promise.resolve(null);
-    if (src._preds) return Promise.resolve(src._preds);
-    // A full DISTINCT-?p enumeration is fine on an in-memory graph, but on a
-    // huge remote file it SCANS (orcid: 1.3B triples — minutes over HTTP, and
-    // its failure used to null the preds and quietly demote the join to a
-    // UNION). For remote sources probe ONLY the predicates this query mentions:
-    // a bound-predicate ASK is a single directory probe, milliseconds each.
-    if (src.kind === "remote") {
-      src._predCache = src._predCache || new Map();
-      const todo = (predIris || []).filter((p) => !src._predCache.has(p));
-      return Promise.all(todo.map((p) =>
-        querySource(src, "ASK { ?s <" + p + "> ?o }", "ask")
-          .then((r) => src._predCache.set(p, !!r.boolean))
-          .catch(() => src._predCache.set(p, true)))) // unknown → don't rule it out
-        .then(() => new Set((predIris || []).filter((p) => src._predCache.get(p))));
-    }
-    return querySource(src, "SELECT DISTINCT ?p WHERE { ?s ?p ?o }", "select").then((r) => {
-      const set = new Set();
-      (r.rows || []).forEach((row) => { const p = row.p; if (p && p[0] === "<") set.add(p.slice(1, -1)); });
-      src._preds = set;
-      return set;
-    });
+  // "crossref-citations + crossref", "wikidata-xxl (all 6 shards)": a whole
+  // sharded dataset reads as one name.
+  function fedTargetsLabel(sources, targets) {
+    const byGroup = new Map();
+    (targets || []).forEach((j) => { const g = fedGroupOf(sources[j]); if (!byGroup.has(g)) byGroup.set(g, []); byGroup.get(g).push(j); });
+    return [...byGroup].map(([g, js]) => {
+      const all = sources.filter((s) => fedGroupOf(s) === g);
+      if (all.length < 2) return sources[js[0]].label;
+      const head = all.find((s) => !s.shard) || all[0];
+      return `${head.label} (${js.length === all.length ? "all " + all.length : js.length + " of " + all.length} shards)`;
+    }).join(" + ") || "?";
   }
 
   // Try the cross-source join; on any miss, fall back to the union behaviour.
@@ -8173,21 +8302,24 @@ self.onmessage = function (e) {
     $("out").innerHTML = netSpinner("planning a cross-source join…");
     updateResultVisibility();
     const t0 = performance.now();
-    // The router only needs to know which of THIS query's predicates each
-    // source answers — pass them so remote sources can probe instead of scan.
-    const predIris = [...new Set(parsed.patterns
-      .map((pt) => (fedIsVar(pt.p) ? null : fedExpandIri(pt.p, parsed.prefixes)))
-      .filter(Boolean))];
-    Promise.all(sources.map((s) => fedSourcePreds(s, predIris).then((preds) => Object.assign({}, s, { preds })).catch(() => Object.assign({}, s, { preds: null }))))
-      .then((withPreds) => {
-        const assign = fedRoute(parsed, withPreds);
-        if (new Set(assign).size < 2) return runFederatedUnion(q, fmt); // all one source → union
-        const run = (src, sub) => querySource(src, sub, "select")
-          .then((r) => { console.debug("fedq[" + src.label + "] => " + (r.rows || []).length + " row(s)"); return r.rows || []; })
+    fedRelevance(parsed, sources)
+      .then((rel) => {
+        const plan = fedPlan(parsed, sources, rel);
+        if (!plan || plan.steps.length < 2) return runFederatedUnion(q, fmt); // nothing to join → union
+        // Physical traffic of every sub-query (a source's first one includes
+        // opening it), so the result line says what the join cost.
+        const cost = { bytes: 0, requests: 0, subs: 0, steps: [] };
+        const run = (src, sub, k) => querySource(src, sub, "select")
+          .then((r) => {
+            cost.bytes += r.bytes || 0; cost.requests += r.requests || 0; cost.subs++;
+            const sc = cost.steps[k] || (cost.steps[k] = { bytes: 0, requests: 0, rows: 0 });
+            sc.bytes += r.bytes || 0; sc.requests += r.requests || 0; sc.rows += (r.rows || []).length;
+            console.debug("fedq[" + src.label + "] => " + (r.rows || []).length + " row(s), " + (r.bytes || 0) + " B, " + (r.requests || 0) + " req");
+            return r.rows || [];
+          })
           .catch((e) => { console.warn("fedq[" + src.label + "] FAILED: " + String(e && e.message || e).slice(0, 160)); throw e; });
-        return fedJoinExec(parsed, withPreds, run).then((out) => {
-          if (!out) return runFederatedUnion(q, fmt);
-          fedRenderJoin(out, parsed, q, fmt, withPreds, performance.now() - t0);
+        return fedJoinExec(parsed, sources, plan, run).then((out) => {
+          fedRenderJoin(Object.assign(out, { cost }), parsed, q, fmt, sources, performance.now() - t0);
         });
       })
       // The union fallback is correct behaviour for unroutable queries, but a
@@ -8198,13 +8330,18 @@ self.onmessage = function (e) {
     const merged = { kind: "select", vars: out.vars, rows: out.rows };
     const renderFmt = ROW_VIEWS.has(fmt) && fmt !== "graph" ? fmt : "table";
     const summary = renderResult(merged, renderFmt);
+    // Per pattern: the sources that answered it, and what its step cost (patterns
+    // run together on one source share a step).
+    const sc = (i) => { const k = out.stepOf ? out.stepOf[i] : null, c = out.cost && k != null ? out.cost.steps[k] : null;
+      return k == null ? "" : `step ${k + 1}` + (c ? ` · ${c.rows} row(s) · ${formatBytes(c.bytes)} · ${c.requests} req` : ""); };
     const rows = parsed.patterns.map((p, i) =>
-      `<tr><td class="num">${out.assign[i] != null ? esc(sources[out.assign[i]].label) : "?"}</td><td>${esc(p.s + " " + p.p + " " + p.o)}</td></tr>`).join("");
-    const banner = `<div class="fed-banner"><div class="fed-banner-head">Cross-source JOIN — ${out.rows.length} joined row(s) across ${out.groups} sources</div>` +
+      `<tr><td class="num">${esc(fedTargetsLabel(sources, out.assign[i]))}</td><td>${esc(p.s + " " + p.p + " " + p.o)}</td><td class="num">${esc(sc(i))}</td></tr>`).join("");
+    const banner = `<div class="fed-banner"><div class="fed-banner-head">Cross-source JOIN — ${out.rows.length} joined row(s) · ${out.steps} step(s) across ${out.sourcesUsed} source(s)</div>` +
       `<table><tbody>${rows}</tbody></table></div>`;
     $("out").innerHTML = banner + $("out").innerHTML;
     state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated", remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
-    $("qmeta").textContent = `${summary} · cross-source join · ${dt.toFixed(0)} ms${unionGraphsOn() ? " · ⛁ All graphs ignored (federated runs use standard semantics)" : ""}`;
+    const c = out.cost;
+    $("qmeta").textContent = `${summary} · cross-source join · ${c ? `${c.subs} sub-queries · ${formatBytes(c.bytes)} ranged · ${c.requests} req · ` : ""}${dt.toFixed(0)} ms${unionGraphsOn() ? " · ⛁ All graphs ignored (federated runs use standard semantics)" : ""}`;
     updateResultVisibility();
   }
 
@@ -8300,7 +8437,7 @@ self.onmessage = function (e) {
       `<span class="fed-chip-kind">${state.remote ? "lazy" : "in-memory"}</span></span>`;
     const extra = state.fedSources.map((s) =>
       `<span class="fed-chip"><span class="fed-chip-name" title="${esc(s.label)}">${esc(s.label)}</span>` +
-      `<span class="fed-chip-kind">${s.kind === "remote" ? "lazy" : s.kind === "endpoint" ? "endpoint" : "in-memory"}</span>` +
+      `<span class="fed-chip-kind">${s.kind === "remote" ? "lazy" + (partnerShards(s).length ? ` · ${partnerShards(s).length + 1} shards` : "") : s.kind === "endpoint" ? "endpoint" : "in-memory"}</span>` +
       `<button type="button" class="fed-x" data-fedremove="${s.id}" title="Remove this source" aria-label="Remove ${esc(s.label)}">×</button></span>`).join("");
     const sh = shardSources();
     const shardChip = sh.length
@@ -8313,9 +8450,10 @@ self.onmessage = function (e) {
     const run = $("run");
     if (run && run.textContent !== "Cancel") run.textContent = fedActive() ? "Run federated" : "Run Query";
   }
-  // Dry run: show the join plan (pattern → source routing + the per-source sub-queries)
-  // WITHOUT executing the join. The only source contact is each source's predicate list
-  // (metadata, cached and reused by the real run).
+  // Dry run: show the join plan (pattern → the sources that can answer it, and the
+  // sub-query each step would run) WITHOUT executing the join. The only source
+  // contact is the source-selection ASKs — cached, and reused by the real run, which
+  // plans with exactly this function pair (fedRelevance + fedPlan).
   function fedDryRun(q) {
     $("commOut").innerHTML = "";
     const parsed = fedParse(q);
@@ -8324,35 +8462,30 @@ self.onmessage = function (e) {
       updateResultVisibility(); return;
     }
     const sources = allFedSources();
-    $("out").innerHTML = netSpinner("planning the join (reading predicate lists)…");
+    $("out").innerHTML = netSpinner("planning the join (asking each source which patterns it can answer)…");
     updateResultVisibility();
-    Promise.all(sources.map((s) => fedSourcePreds(s).then((preds) => Object.assign({}, s, { preds })).catch(() => Object.assign({}, s, { preds: null }))))
-      .then((withPreds) => {
-        const assign = fedRoute(parsed, withPreds);
-        const nSrc = new Set(assign).size;
-        const routeRows = parsed.patterns.map((p, i) =>
-          `<tr><td>${esc(withPreds[assign[i]].label)}</td><td><code>${esc(p.s + " " + p.p + " " + p.o)}</code></td></tr>`).join("");
-        const order = [], groups = new Map();
-        assign.forEach((si, i) => { if (!groups.has(si)) { groups.set(si, []); order.push(si); } groups.get(si).push(parsed.patterns[i]); });
-        let bound = new Set(), subs = "";
-        for (const si of order) {
-          const pats = groups.get(si);
-          const gVars = [...new Set(pats.flatMap(fedPatVars))];
-          const shared = gVars.filter((v) => bound.has(v));
-          let sub = parsed.prefixBlock + "\nSELECT " + (withPreds[si].kind === "remote" ? "" : "DISTINCT ") + gVars.map((v) => "?" + v).join(" ") + " WHERE {\n" +
-            pats.map((p) => `  ${p.s} ${p.p} ${p.o} .`).join("\n") + "\n";
-          parsed.filters.forEach((f) => { const fv = (f.match(/\?[A-Za-z0-9_]+/g) || []).map((x) => x.slice(1)); if (fv.every((v) => gVars.includes(v))) sub += "  " + f + "\n"; });
-          if (shared.length) sub += "  VALUES (" + shared.map((v) => "?" + v).join(" ") + ") {  …keys bound by earlier sources, ≤250  }\n";
-          sub += "} LIMIT " + Math.max(1000, parsed.limit || 0);
-          subs += `<div class="fed-plan-step"><div class="fed-plan-src">${esc(withPreds[si].label)}${shared.length ? " · joins on " + shared.map((v) => "?" + v).join(", ") : " · seed (runs first)"}</div><pre>${esc(sub)}</pre></div>`;
-          gVars.forEach((v) => bound.add(v));
+    fedRelevance(parsed, sources)
+      .then((rel) => {
+        const plan = fedPlan(parsed, sources, rel);
+        const routeRows = parsed.patterns.map((p, i) => {
+          const js = plan ? plan.assign[i] : rel[i].map((ok, j) => (ok ? j : -1)).filter((j) => j >= 0);
+          return `<tr><td>${esc(fedTargetsLabel(sources, js))}</td><td><code>${esc(p.s + " " + p.p + " " + p.o)}</code></td></tr>`;
+        }).join("");
+        let subs = "";
+        if (plan && plan.steps.length >= 2) {
+          plan.steps.forEach((st, k) => {
+            const keys = st.shared.concat(st.carry);
+            const where = fedTargetsLabel(sources, st.targets) + (st.targets.length > 1 ? " · rows unioned" : "");
+            const head = `${k + 1}. ${where}${keys.length ? " · joins on " + keys.map((v) => "?" + v).join(", ") : " · seed (runs first)"}`;
+            subs += `<div class="fed-plan-step"><div class="fed-plan-src">${esc(head)}</div><pre>${esc(fedStepQuery(parsed, st, sources[st.targets[0]] || sources[0], null, 250))}</pre></div>`;
+          });
         }
-        const verdict = nSrc < 2
-          ? `<p class="note">Every pattern routes to one source — this would run as a normal query / UNION, not a cross-source join.</p>`
-          : `<p class="microcopy">Cross-source JOIN across <b>${nSrc}</b> sources — executed left-to-right (bound-join: each step's keys VALUES-injected into the next, ≤250 per hop). This is a preview; no join was run.</p>`;
+        const verdict = !plan || plan.steps.length < 2
+          ? `<p class="note">One source set answers every pattern — this runs as a normal query / UNION (the whole query on each source, shards included), not a cross-source join.</p>`
+          : `<p class="microcopy">Cross-source JOIN in <b>${plan.steps.length}</b> steps over <b>${new Set(plan.steps.flatMap((st) => st.targets)).size}</b> sources — each pattern goes to every source that can answer it, and their rows are unioned; steps run in this order, each step's keys VALUES-injected into the next (≤250 per hop). This is a preview; no join was run.</p>`;
         $("out").innerHTML = `<div class="fed-plan-out"><h4>Join plan — pattern routing</h4>${verdict}` +
-          `<table class="fed-plan-route"><thead><tr><th>Source</th><th>Triple pattern</th></tr></thead><tbody>${routeRows}</tbody></table>` +
-          (nSrc >= 2 ? `<h4>Sub-queries (one per source)</h4>${subs}` : "") + `</div>`;
+          `<table class="fed-plan-route"><thead><tr><th>Sources</th><th>Triple pattern</th></tr></thead><tbody>${routeRows}</tbody></table>` +
+          (subs ? `<h4>Sub-queries (one per step)</h4>${subs}` : "") + `</div>`;
         updateResultVisibility();
       })
       .catch((e) => { $("out").innerHTML = note("Plan failed: " + String((e && e.message) || e)); updateResultVisibility(); });
