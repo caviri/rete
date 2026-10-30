@@ -1048,7 +1048,7 @@ self.onmessage = function (e) {
   }
 
   // ── Entity finder (the panel beside the SPARQL editor) ───────────────────
-  // Type a human string; rete's bounded label index (prefix_search, no scan)
+  // Type a human string; rete's label index (prefix_search, no scan)
   // returns matching entities; click one to insert its <IRI> at the caret.
   function localName(iri) { return String(iri).replace(/[<>]/g, "").replace(/^.*[\/#:]/, "") || iri; }
   function insertAtCaret(id, text) {
@@ -1268,8 +1268,10 @@ self.onmessage = function (e) {
 
   // ── Full text (the sidebar's "Full text" section) ────────────────────────
   // The SECOND search tier, and deliberately not the first one's twin:
-  //   🔎 Find a term → the bounded LABEL index (prefix_search, capped at 8,192
-  //                    entries, already resident) — safe on every keystroke.
+  //   🔎 Find a term → the LABEL index (prefix_search): the LABEL_INDEX section
+  //                    of a --label-index file (a few small reads a lookup), or
+  //                    an older file's resident pyramid-meta label block (capped
+  //                    at 8,192 entries) — safe on every keystroke either way.
   //   Full text      → the file's TEXT_INDEX section: whole words anywhere in
   //                    ANY literal, including subjects no label index holds.
   // The first word lookup FAULTS the index's token table whole — measured at
@@ -1450,7 +1452,7 @@ self.onmessage = function (e) {
       // Remote, not probed. Offer the check, not the box — asking costs a
       // session open, and we don't spend that on a dataset nobody has queried.
       box.innerHTML =
-        `<div>Whole words anywhere in <b>any</b> literal — the tier <b>🔎 Find a term</b> can't reach (that one prefix-matches the bounded label index).</div>` +
+        `<div>Whole words anywhere in <b>any</b> literal — the tier <b>🔎 Find a term</b> can't reach (that one prefix-matches the label index).</div>` +
         `<div><button id="ftCheck" type="button" class="secondary">Check for a text index</button></div>` +
         `<div class="ef-empty">Reads this remote file's header, plus the ten bytes that state how big its token table is — so you see what a first search costs before paying it.</div>` + err;
       const b = $("ftCheck");

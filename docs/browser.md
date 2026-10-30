@@ -459,8 +459,11 @@ The console's **🔎 Find a term** button opens a picker so you don't have to kn
 a graph's IRIs by heart. It opens on the schema card's **classes and predicates**
 (instant, from the resident card) and, as you type, also searches **entities by
 label** — synchronously for an embedded graph, and over HTTP-range reads (with a
-spinner) for a remote-lazy one, using the bounded label index. Click any result
-to drop its `<IRI>` at the cursor.
+spinner) for a remote-lazy one, using the file's label index. Click any result
+to drop its `<IRI>` at the cursor. The label index is the LABEL_INDEX section of
+a file built with `--label-index` (every labelled subject, read a section head,
+one node per level and one block at a time), or, in a file built before 0.4.0,
+the label block inside its pyramid-meta, capped at 8,192 entries.
 
 Each predicate row also carries a **values ›** drill: click it for a faceted
 browse of the distinct objects that predicate takes — IRIs resolved to their

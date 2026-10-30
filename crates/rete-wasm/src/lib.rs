@@ -1673,8 +1673,8 @@ pub fn query(bytes: &[u8], query: &str, format: &str) -> Result<String, JsValue>
 
 /// Prefix-search the label index of an embedded `.rete` image: the subjects whose
 /// label starts with `prefix` (case-insensitive), as `[{"label":…,"subject":…}]`,
-/// capped at `limit`. Answers from the bounded label-index block in the
-/// pyramid-meta — no literal scan. Empty array when the file has no label index.
+/// capped at `limit`. Answers from the LABEL_INDEX section, else from an older
+/// file's pyramid-meta label block, with no literal scan. Empty array without one.
 #[wasm_bindgen]
 pub fn prefix_search(bytes: &[u8], prefix: &str, limit: usize) -> Result<String, JsValue> {
     let rete = open(bytes)?;
