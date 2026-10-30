@@ -1052,7 +1052,13 @@ runs (so a re-card of the merged file writes the same card, byte for byte),
 inside this command's <code>--memory-budget-mb</code>; the card and the build record are
 then written <strong>after the data</strong>. The data sections are the same bytes as
 without a card, and the same as <code>rete build --memory-budget-mb</code> writes for the
-union of the shards' statements. Up to 0.4.0 a merged card carried counts only.</p>
+union of the shards' statements. Up to 0.4.0 a merged card carried counts only
+and the full one took a <code>rete recard</code> afterwards; on two halves of the
+OpenCitations sample the one pass costs what the merge alone did (see
+<a href="dataset-cards.html#which-re-card-path">Maintaining a published card</a>).</p>
+<p>The budget bounds the builder, not the merge's walk of its inputs: on that
+sample the merge peaked about 1 GiB over <code>--memory-budget-mb</code> (3,025 MiB at
+2,000), card or no card, so leave that much headroom under a container's limit.</p>
 <p>The build record names what was merged: each input's file name, size and
 BLAKE3 (one sequential read of each shard before the merge, the record's <code>read</code>
 phase — a shard is otherwise read by range, in index order, and cannot be

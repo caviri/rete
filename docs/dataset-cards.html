@@ -1865,6 +1865,24 @@ cards are the same bytes and the three files have the same content hash. At
 this size the time is the same either way and the build's spill sets the disk
 peak; what the one pass saves is the second command and, on a file too big to
 copy, the copy — 7 min of the 19 min 27 s above, and a second 26.5 GB file.</p>
+<p><strong><code>rete merge</code> writes its card the same way</strong> — it runs on the same builder,
+and finishes with the same step — so a sharded dataset folded into one file no
+longer needs a <code>recard</code> either. Two halves of the M=1200 sample (its first and
+last 9,434,621 lines, each built memory-bounded with <code>--named-graphs quad --label-index</code>: 94.4 and 102.2 MB) merged in a 4 GiB container at a budget of
+2,000 MiB:</p>
+<table><thead><tr><th>two halves of the M=1200 sample</th><th>one pass (full card)</th><th>merge (counts-only card), then <code>recard -o</code></th><th>merge, then <code>recard --in-place</code></th></tr></thead><tbody>
+<tr><td>wall time</td><td>66.7 s</td><td>66.6 s + 1.6 s</td><td>66.6 s + 1.5 s</td></tr>
+<tr><td>peak RSS</td><td>3,025 MiB</td><td>3,052 MiB, then 173 MiB</td><td>3,052 MiB, then 175 MiB</td></tr>
+<tr><td>written past the merged file</td><td>—</td><td>a second 194.4 MB file</td><td>15 KB of dead bytes (the old card and record)</td></tr>
+</tbody></table>
+<p>In the one pass, <code>read</code> (hashing both shards for the record) took 0.4 s,
+<code>card_derive</code> 0.6 s at a phase peak of 244 MiB, the 16 starter queries 0.8 s
+(198 MiB, none dropped) and <code>content_hash</code> 37 ms. The four cards are the same
+59,740 bytes and the four files have the same content hash; the data sections of
+the two merges are the same bytes. The peak is the merge's own, not the card's:
+its walk of the shards is not counted in <code>--memory-budget-mb</code>, so here it runs
+about 1 GiB over the budget, and at 3,000 MiB the merge does not fit a 4 GiB
+container — with a card or without, and in 0.4.0 too.</p>
 <p><strong>Measurement RAM is in the queries, not in the file.</strong> Attaching costs to an
 existing file rewrites it through a bounded buffer, but running the starter
 queries to get those costs does not: the engine evaluates eagerly, so a query

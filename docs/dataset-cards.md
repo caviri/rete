@@ -1469,6 +1469,28 @@ this size the time is the same either way and the build's spill sets the disk
 peak; what the one pass saves is the second command and, on a file too big to
 copy, the copy — 7 min of the 19 min 27 s above, and a second 26.5 GB file.
 
+**`rete merge` writes its card the same way** — it runs on the same builder,
+and finishes with the same step — so a sharded dataset folded into one file no
+longer needs a `recard` either. Two halves of the M=1200 sample (its first and
+last 9,434,621 lines, each built memory-bounded with `--named-graphs quad
+--label-index`: 94.4 and 102.2 MB) merged in a 4 GiB container at a budget of
+2,000 MiB:
+
+| two halves of the M=1200 sample | one pass (full card) | merge (counts-only card), then `recard -o` | merge, then `recard --in-place` |
+|---|---|---|---|
+| wall time | 66.7 s | 66.6 s + 1.6 s | 66.6 s + 1.5 s |
+| peak RSS | 3,025 MiB | 3,052 MiB, then 173 MiB | 3,052 MiB, then 175 MiB |
+| written past the merged file | — | a second 194.4 MB file | 15 KB of dead bytes (the old card and record) |
+
+In the one pass, `read` (hashing both shards for the record) took 0.4 s,
+`card_derive` 0.6 s at a phase peak of 244 MiB, the 16 starter queries 0.8 s
+(198 MiB, none dropped) and `content_hash` 37 ms. The four cards are the same
+59,740 bytes and the four files have the same content hash; the data sections of
+the two merges are the same bytes. The peak is the merge's own, not the card's:
+its walk of the shards is not counted in `--memory-budget-mb`, so here it runs
+about 1 GiB over the budget, and at 3,000 MiB the merge does not fit a 4 GiB
+container — with a card or without, and in 0.4.0 too.
+
 **Measurement RAM is in the queries, not in the file.** Attaching costs to an
 existing file rewrites it through a bounded buffer, but running the starter
 queries to get those costs does not: the engine evaluates eagerly, so a query
