@@ -299,10 +299,10 @@ defaults are in [BENCHMARK.md](BENCHMARK.md#compression-04).
 
 | flag | default | what it trades |
 | --- | --- | --- |
-| `--tile-kib N` (4–4096) | 64 | Uncompressed size of an index tile, the unit a reader fetches and decompresses. Each doubling makes the file about 0.8% smaller and each touched tile larger; at 256 a cold remote query moved 9% more bytes, at 512 24% more. |
+| `--tile-kib N` (4–4096) | 64 | Uncompressed size of an index tile, the unit a reader fetches and decompresses. 128 makes the file about 1% smaller and each touched tile larger; above 128 the file grows again (zstd's small-input parameters stop applying) and remote queries fetch more bytes (+9% at 256, +24% at 512). |
 | `--dict-chunk-kib N` (4–4096) | 64 | The same for dictionary chunks. |
-| `--zstd-level N` (1–22) | 9 | Level of every tile and chunk. `19` makes a file about 5% smaller than `9` for about 14× the compression CPU, and decodes 8–18% slower: a choice for a file built once and read for a long time. Levels between 9 and 19 gain little or nothing. |
-| `--frequent-objects N` | 0 (off) | Moves the `N` most frequent object-only terms (classes, controlled vocabularies, status literals) into the shared dictionary section, which gives them small ids where they sort ahead of the shared entities — the size effect of declaring the vocabulary in a TBox, without one. `64` made the OpenCitations samples 4.8–6.5% smaller, against 2.7–5.5% for their 499-statement TBox, at no measurable build cost. Not available with `--memory-budget-mb` (refused). |
+| `--zstd-level N` (1–22) | 9 | Level of every tile and chunk. `19` makes a file 4–9% smaller than `9` for about 2.7× the build CPU, and decodes 8–18% slower: a choice for a file built once and read for a long time. Levels between 9 and 19 gain little or nothing. |
+| `--frequent-objects N` | 0 (off) | Moves the `N` most frequent object-only terms (classes, controlled vocabularies, status literals) into the shared dictionary section, which gives them small ids where they sort ahead of the shared entities — the size effect of declaring the vocabulary in a TBox, without one. `64` made the OpenCitations samples 4.8–6.5% smaller, against 2.7–5.5% for their 499-statement TBox, and two other datasets 2.3–3.2% smaller, at no measurable build cost. Not available with `--memory-budget-mb` (refused). |
 
 Each flag falls back to an environment variable when left out
 (`RETE_TILE_KIB`, `RETE_DICT_CHUNK_KIB`, `RETE_ZSTD_LEVEL`,
@@ -311,8 +311,8 @@ Each flag falls back to an environment variable when left out
 build records the settings in its build info (`params.write`).
 
 Since 0.4 every tile and chunk is a **single-segment zstd frame that records its
-size**, which lets zstd use its small-input parameters: the same data is 6–8%
-smaller at the same level, and builds no slower. `RETE_ZSTD_FRAME=stream` writes
+size**, which lets zstd use its small-input parameters: at the same level the
+four measured datasets came out 0.7–7.0% smaller, and the build used less CPU. `RETE_ZSTD_FRAME=stream` writes
 the streaming frames of 0.3 instead, byte for byte.
 
 ### `rete recard <file> -o <out.rete> [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]`

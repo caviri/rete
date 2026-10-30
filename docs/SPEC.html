@@ -833,6 +833,19 @@ and object position. Predicates and graphs occupy their own independent ID
 spaces. This is what <code>dictionary.rs</code> builds on top of the §5.1 sections.</p>
 </li>
 <li>
+<p>A writer <strong>may also place object-only terms in the shared section</strong>:
+<code>rete build --frequent-objects N</code> (off by default) moves the <code>N</code> object-only
+terms that the most statements carry as object — classes, controlled
+vocabularies, status literals — into it. The section stays in term order, so a
+promoted term gets a small object ID wherever it sorts ahead of the shared
+entities, which shortens every varint that carries it (§6.1); its subject ID is
+never used by a statement. Readers need nothing for this, and never did:
+<code>term → id</code> consults the shared section first for both roles, and a pattern
+whose subject is such a term simply matches nothing. Readers therefore <strong>must
+not</strong> infer from section membership that a shared ID occurs in subject
+position. No layout changes; every reader of format <code>0x05</code> reads such a file.</p>
+</li>
+<li>
 <p>Literals carry datatype IRI (as a dictionary ID) and optional language tag.</p>
 </li>
 <li>
@@ -954,7 +967,8 @@ contain a bound constant before fetching the body — the §7 routing then bound
 <em>which</em> blocks are fetched at all.</p>
 <h3 id="62-tiled-permutation-sections-format-0x02">6.2 Tiled permutation sections (format <code>0x02</code>)</h3>
 <p>Each permutation section is <strong>tiled</strong>: consecutive runs of whole a-groups are
-packed to a byte budget (default 64 KiB of encoded triples), and each tile is a
+packed to a byte budget (default 64 KiB of encoded triples, set at build time with
+<code>rete build --tile-kib</code>), and each tile is a
 fully self-contained §6.1 block (its own zone map; deltas restart). Tiles are
 <strong>compressed individually</strong> with the header's block codec, so a ranged client
 can fetch and decompress exactly the tiles a query routes to. The section
@@ -994,12 +1008,23 @@ is also <code>none</code>): each of the four §5 sections is stored as</p>
                              varint clen               # compressed chunk length
                   chunks:    run-aligned body slices, compressed individually
 </code></pre>
-<p>Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
+<p>Chunks hold whole front-coded runs (~64 KiB of body per chunk by default;
+<code>rete build --dict-chunk-kib</code>), and the
 directory carries one <strong>routing key</strong> per chunk — so <code>term → id</code>
 binary-searches the directory locally and faults exactly <strong>one</strong> chunk, and
 <code>id → term</code> computes its chunk arithmetically and faults one. A lazily-opened
 remote file therefore pays the section headers + directories (KBs) up front and
 O(touched chunks) afterwards, instead of the whole dictionary container.</p>
+<p><strong>Compression frames.</strong> Every tile and every dictionary chunk is one zstd frame
+(codec <code>1</code>), compressed at level 9 by default (<code>rete build --zstd-level</code>). Since
+0.4 the writer emits <strong>single-segment frames that record their content size</strong>;
+writers up to 0.3 emitted streaming frames without it, which declare the level's
+whole window (4 MiB at level 9) and are compressed with the parameters zstd tunes
+for large inputs. Both are plain zstd: readers must accept either, and any
+conformant decoder does (the C library natively, <code>ruzstd</code> in wasm). A reader must
+not rely on the content size being present, and must bound any allocation it
+derives from one, since the file is untrusted. Measurements:
+<a href="BENCHMARK.html#compression-04">BENCHMARK.md § Compression (0.4)</a>.</p>
 <p>The key is a <strong>separator, not a term</strong>. Its only contract is</p>
 <pre><code>last_term(chunk i-1)  &lt;  key(i)  &lt;=  first_term(chunk i)
 </code></pre>

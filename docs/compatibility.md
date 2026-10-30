@@ -202,6 +202,29 @@ quad-index file only where every reader is 0.4.0 or later (the playground, the
 explorer pages and the clients are rebuilt in the release that reads it). Files
 already published with the per-graph layout keep working with every reader.
 
+### 0.4 writer changes that every `0x05` reader reads
+
+Four writer choices moved or became flags in 0.4 ([cli.md](cli.md#compression-knobs),
+measurements in [BENCHMARK.md](BENCHMARK.md#compression-04)). None of them changes the
+layout, so unlike `--permutations 3` they need no reader update:
+
+- **Single-segment zstd frames (the new default).** Each tile and chunk now records
+  its content size, which lets zstd pick its small-input parameters: at the same
+  level the four measured datasets came out 0.7–7.0% smaller. Older writers' streaming frames still
+  read, and `RETE_ZSTD_FRAME=stream` reproduces a 0.3 file byte for byte.
+- **`--tile-kib` / `--dict-chunk-kib`.** Tiles and chunks are routed by their
+  directories, so any size reads.
+- **`--zstd-level`.** Any level decodes with the same decoders.
+- **`--frequent-objects N`** (off by default) puts frequent object-only terms in
+  the shared dictionary section ([SPEC §5](SPEC.md#5-dictionary)); readers have
+  always looked terms up there first.
+
+Verified by reading files written with the new defaults and with
+`--frequent-objects 64` with the released 0.3.5 and 0.3.7 binaries: `verify`
+passes and the 12-query OpenCitations set returns the same rows as the new reader,
+over the lazy local open. The browser reader decodes the new frames with the same
+`ruzstd` it ships.
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query

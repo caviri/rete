@@ -13,10 +13,9 @@ use rete_core::write_opts;
 #[derive(clap::Args, Debug, Clone, Default)]
 pub(crate) struct WriteArgs {
     /// Index tile budget, in KiB of uncompressed tile (default 64). A tile is
-    /// the unit a reader fetches and decompresses, so smaller tiles mean fewer
-    /// bytes per point lookup and larger ones a smaller file (each doubling
-    /// saves about 1% on the measured OpenCitations sample) at more bytes and
-    /// decode work per touch.
+    /// the unit a reader fetches and decompresses. 128 makes a file about 1%
+    /// smaller and each touched tile larger; above 128 the file grows again,
+    /// because zstd's small-input parameters stop applying.
     #[arg(long = "tile-kib", value_name = "KIB",
           value_parser = clap::value_parser!(u32).range(4..=4096))]
     pub tile_kib: Option<u32>,
@@ -25,10 +24,10 @@ pub(crate) struct WriteArgs {
     #[arg(long = "dict-chunk-kib", value_name = "KIB",
           value_parser = clap::value_parser!(u32).range(4..=4096))]
     pub dict_chunk_kib: Option<u32>,
-    /// zstd level for every tile and chunk, 1–22 (default 9). Decoding speed
-    /// does not depend on it; encoding does: 19 makes the files a few percent
-    /// smaller for several times the compression CPU, so it suits a file that
-    /// is built once and read for a long time.
+    /// zstd level for every tile and chunk, 1–22 (default 9). 19 makes a file
+    /// 4–9% smaller than 9 for about 2.7 times the build CPU and 8–18% slower
+    /// decoding, which suits a file built once and read for a long time; the
+    /// levels between gain little.
     #[arg(long = "zstd-level", value_name = "LEVEL",
           value_parser = clap::value_parser!(i32).range(1..=22))]
     pub zstd_level: Option<i32>,
