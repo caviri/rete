@@ -617,6 +617,13 @@ What a string's text looks like never matters: a string is not a number.
 `IN` is a chain of `=`. `sameTerm` is term identity, with no value
 comparison: `sameTerm(1, 1.0)` is false.
 
+`"x"` and `"x"^^xsd:string` are **one term** (RDF 1.1), so they are equal,
+`sameTerm`, and match each other in a pattern, a join or `VALUES`. rete stores,
+computes and returns the plain spelling. A file built before 0.4.0 from
+N-Triples/N-Quads may store the typed one: a plain constant still matches it,
+and results show it plain. Only a file that stores *both* spellings of the same
+string keeps them apart (as two dictionary terms) until it is rebuilt.
+
 `ORDER BY` puts no value first, then blank nodes, IRIs, literals and quoted
 triples (§15.1). Among literals: first text — simple, `xsd:string`,
 language-tagged literals, literals of an unknown datatype and ill-typed values

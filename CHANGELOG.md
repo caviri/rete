@@ -97,6 +97,31 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   under the declaration. The parser stays `spargebra` 0.3; the 1.2 surface is
   translated before parsing.
 
+### Changed
+
+- **`"x"` and `"x"^^xsd:string` are one term.** RDF 1.1 says so, and rete
+  compared them as two: a pipeline that wrote typed strings could not be
+  matched by a plain constant (OpenCitations' pipelines carry rule R-ocdm-2 to
+  work around it). Now:
+  - **Ingest** stores the plain spelling from every input syntax. The
+    N-Triples/N-Quads reader (rete's own, also behind the memory-bounded
+    build) dropped nothing before and now drops `^^xsd:string`, inside quoted
+    triples too; Turtle, TriG and RDF/XML already arrived plain through
+    `oxrdf`.
+  - **Queries**: constants were already plain (the parser normalizes them);
+    computed values now are too (`STRDT(…, xsd:string)`, `xsd:string(…)`).
+  - **Existing files are not rewritten and keep their content hash.** Reading
+    one that holds the typed spelling, a lookup that misses one spelling tries
+    the other, so a plain constant, a `VALUES` row or a computed value still
+    finds the typed string, and results show the plain spelling (`DATATYPE`
+    still answers `xsd:string`). A file that holds both spellings of the same
+    string keeps them as two dictionary terms until it is rebuilt; `rete
+    export` writes what the file stores.
+  - **A rebuild changes the content hash** of a file whose N-Triples/N-Quads
+    source carries typed strings (the dictionary holds the plain spelling);
+    sources without them, and Turtle/TriG/RDF-XML sources, store exactly the
+    terms they stored before.
+
 ### Fixed
 
 - **A host that ignores `Range` no longer breaks the browser reader.** A `200`

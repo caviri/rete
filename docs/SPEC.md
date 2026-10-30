@@ -221,6 +221,11 @@ data.
   and object position. Predicates and graphs occupy their own independent ID
   spaces. This is what `dictionary.rs` builds on top of the §5.1 sections.
 - Literals carry datatype IRI (as a dictionary ID) and optional language tag.
+- A string literal is stored in its **canonical** spelling `"x"`, never
+  `"x"^^xsd:string` (one RDF 1.1 term). Writers since 0.4.0 canonicalize at
+  ingest; a reader also accepts a file written earlier that stores the typed
+  spelling, by looking a string literal up under its other spelling when its
+  own misses. No format change: the bytes of both kinds of file are valid.
 - **RDF-star quoted triples** (`<< s p o >>`) are stored as ordinary terms: a
   quoted triple is interned by its canonical N-Triples-star surface, exactly like
   an IRI or literal, so the dictionary, the permutation indexes, and this layout

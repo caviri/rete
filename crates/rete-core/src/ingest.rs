@@ -874,6 +874,12 @@ pub(crate) fn take_term(s: &str) -> Option<(String, &str)> {
             let mut end = i + 1; // past closing quote
             if s[end..].starts_with("^^<") {
                 let close = s[end..].find('>')? + end;
+                // RDF 1.1: `"x"^^xsd:string` IS `"x"`; keep the one canonical
+                // spelling, so the two never become two dictionary terms and
+                // a plain query constant matches either input.
+                if &s[end + 3..close] == "http://www.w3.org/2001/XMLSchema#string" {
+                    return Some((s[..end].to_string(), &s[close + 1..]));
+                }
                 end = close + 1;
             } else if s[end..].starts_with('@') {
                 // Language tag: '@' then BCP-47 subtags `[a-zA-Z0-9-]+`. Stop at

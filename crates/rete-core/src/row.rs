@@ -285,7 +285,9 @@ impl<'a> Resolver<'a> {
             return t.clone();
         }
         let t: Option<Rc<str>> = if id >= 0 {
-            self.dict.node_term(id as u32).map(Rc::from)
+            self.dict
+                .node_term(id as u32)
+                .map(|t| Rc::from(crate::terms::canonical_literal(&t).as_ref()))
         } else {
             self.dict.predicate_term((-id - 1) as u32).map(Rc::from)
         };
@@ -318,7 +320,12 @@ impl<'a> Resolver<'a> {
     /// term for no hits.
     pub(crate) fn str_once(&self, v: &Val) -> Option<String> {
         match v {
-            Val::Id(id) if *id >= 0 => self.dict.node_term(*id as u32),
+            // A file built before ingest canonicalized `"x"^^xsd:string` may
+            // hold the typed spelling; results always show the plain one.
+            Val::Id(id) if *id >= 0 => self
+                .dict
+                .node_term(*id as u32)
+                .map(crate::terms::into_canonical_literal),
             Val::Id(id) => self.dict.predicate_term((-id - 1) as u32),
             Val::Str(s) => Some(s.to_string()),
         }
