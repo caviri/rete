@@ -152,6 +152,8 @@ pub(crate) enum Slot {
 }
 
 impl Slot {
+    /// Read back from the memory-bounded build's spill (native only).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn from_u8(v: u8) -> Option<Slot> {
         match v {
             0 => Some(Slot::Direct),
@@ -365,6 +367,8 @@ pub(crate) struct LabelIndexWriter<W: Write> {
 pub(crate) struct LabelIndexParts<W> {
     pub head: Vec<u8>,
     pub body: W,
+    /// Read by the memory-bounded build (native only), to skip an empty section.
+    #[cfg(not(target_arch = "wasm32"))]
     pub entry_count: u64,
 }
 
@@ -471,6 +475,7 @@ impl<W: Write> LabelIndexWriter<W> {
         Ok(LabelIndexParts {
             head,
             body: self.body,
+            #[cfg(not(target_arch = "wasm32"))]
             entry_count: self.entry_count,
         })
     }
