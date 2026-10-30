@@ -27,6 +27,11 @@ x-rete-dev: &rete-dev
   environment:
     CARGO_TARGET_DIR: /target
     CARGO_TERM_COLOR: always
+    # The commit `rete build` stamps into every build record (crates/rete-cli/
+    # build.rs). A git worktree's .git cannot be followed from in here, so
+    # `export RETE_SOURCE_REVISION=$(git rev-parse HEAD)` on the host passes it
+    # through; unset, the build script asks git, then says `unknown`.
+    RETE_SOURCE_REVISION: ${RETE_SOURCE_REVISION:-}
   volumes:
     - .:/work
     - cargo-registry:/usr/local/cargo/registry
