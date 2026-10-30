@@ -472,16 +472,14 @@ impl Header {
                     h.build_info_len = length;
                 }
                 SectionKind::LabelIndex
-                    | SectionKind::Schema
-                    | SectionKind::QuadIndex
-                    | SectionKind::Unknown(_) => {
-                    h.extra_sections.push(Section {
-                        kind,
-                        flags: u16_at(p + 2),
-                        offset,
-                        length,
-                    })
-                }
+                | SectionKind::Schema
+                | SectionKind::QuadIndex
+                | SectionKind::Unknown(_) => h.extra_sections.push(Section {
+                    kind,
+                    flags: u16_at(p + 2),
+                    offset,
+                    length,
+                }),
             }
         }
         Ok(h)
