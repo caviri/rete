@@ -2276,27 +2276,41 @@ fn hash_of_sections(header: &Header, bytes: &[u8]) -> Result<[u8; 16], FileError
             .get(off as usize..end as usize)
             .ok_or(FileError::Container("section overruns buffer"))
     };
-    let d = slice(header.dictionary_offset, header.dictionary_len)?;
-    let i = slice(header.root_dir_offset, header.root_dir_len)?;
-    let m = if header.pyramid_meta_len > 0 {
-        slice(header.pyramid_meta_offset, header.pyramid_meta_len)?
-    } else {
-        &[]
-    };
-    let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
+    let parts = content_hash_parts(header)
+        .into_iter()
+        .map(|(off, len)| slice(off, len))
+        .collect::<Result<Vec<&[u8]>, FileError>>()?;
+    Ok(content_hash(&parts))
+}
+
+/// The byte ranges the content hash folds, **in the order it folds them**: the
+/// metadata payload when present, then dictionary, index, pyramid-meta, and —
+/// when present — the text index and the named graphs. Build info and any
+/// section kind this reader does not know are deliberately outside it.
+///
+/// The one list [`verify`], [`verify_ranged`] and [`replace_metadata`] hash
+/// over, and what a streaming rewriter (`rete recard`) feeds a hasher while it
+/// copies — so a section a future format adds to the hash is added here, once,
+/// and every one of them follows.
+pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
+    let mut parts: Vec<(u64, u64)> = Vec::with_capacity(6);
     if header.metadata_len > 0 {
-        parts.push(slice(header.metadata_offset, header.metadata_len)?);
+        parts.push((header.metadata_offset, header.metadata_len));
     }
-    parts.push(d);
-    parts.push(i);
-    parts.push(m);
+    parts.push((header.dictionary_offset, header.dictionary_len));
+    parts.push((header.root_dir_offset, header.root_dir_len));
+    // A zero-length pyramid folds nothing either way; it is listed only when
+    // present so the ranges a rewriter walks are all real sections.
+    if header.pyramid_meta_len > 0 {
+        parts.push((header.pyramid_meta_offset, header.pyramid_meta_len));
+    }
     if header.text_index_len > 0 {
-        parts.push(slice(header.text_index_offset, header.text_index_len)?);
+        parts.push((header.text_index_offset, header.text_index_len));
     }
     if header.named_graphs_len > 0 {
-        parts.push(slice(header.named_graphs_offset, header.named_graphs_len)?);
+        parts.push((header.named_graphs_offset, header.named_graphs_len));
     }
-    Ok(content_hash(&parts))
+    parts
 }
 
 /// Recompute the content hash from a file image and check it against the header
@@ -2320,23 +2334,8 @@ pub fn verify_ranged(reader: &dyn crate::reader::RangeReader) -> Result<bool, Fi
         return Err(FileError::Container("file shorter than its header"));
     }
     let header = Header::from_bytes(&reader.read_at(0, HEADER_LEN as u64)?)?;
-    let mut parts: Vec<(u64, u64)> = Vec::with_capacity(6);
-    if header.metadata_len > 0 {
-        parts.push((header.metadata_offset, header.metadata_len));
-    }
-    parts.push((header.dictionary_offset, header.dictionary_len));
-    parts.push((header.root_dir_offset, header.root_dir_len));
-    if header.pyramid_meta_len > 0 {
-        parts.push((header.pyramid_meta_offset, header.pyramid_meta_len));
-    }
-    if header.text_index_len > 0 {
-        parts.push((header.text_index_offset, header.text_index_len));
-    }
-    if header.named_graphs_len > 0 {
-        parts.push((header.named_graphs_offset, header.named_graphs_len));
-    }
     let mut h = blake3::Hasher::new();
-    for (off, n) in parts {
+    for (off, n) in content_hash_parts(&header) {
         // Offsets come straight from the header: reject an overrun (or an
         // overflowing sum) before reading, as `hash_of_sections` does.
         if off.checked_add(n).is_none_or(|end| end > len) {

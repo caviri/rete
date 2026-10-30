@@ -41,6 +41,30 @@
 //! (`NonEmpty::Undecidable`) instead of pretending; `provably_empty` is the
 //! last gate, dropping a template the card can prove would answer nothing.
 //!
+//! # Why a generated query may not cost more than a starter should
+//!
+//! The other half of "a starter query that answers nothing is worse than
+//! none" is a starter query that does not finish. On the OpenCitations sample
+//! (18.9 M quads, 1.5 M named graphs, 1.07 GB) eight of the old bodies scanned
+//! the whole file — `ov-triples`, `ov-pred-*`, `top-*-hubs`, `top-dangling`,
+//! `ng-*` — and every one was killed in a 4 GiB client; `top-dangling` alone
+//! peaked at 8.7 GiB. A greeting query is the first thing a newcomer runs, often
+//! in a browser tab, so its cost has to be bounded by construction, not by the
+//! size of the dataset it happens to greet.
+//!
+//! Every template therefore declares what its body **reads** (`Scan`), and the
+//! card's own counts turn that into a number of statements before the body is
+//! written. Within [`STARTER_SCAN_BUDGET`] the exact body ships, unchanged. Past
+//! it the template ships its **bounded** form (`Bounded`) — the same question
+//! over a fixed-size sample (`LIMIT` inside a sub-select, which the engine
+//! evaluates lazily), or a weaker question with an exact bounded answer — and a
+//! template with no honest bounded form is not shipped at all: those are the
+//! questions (`how many statements?`, `which predicates, how often?`, `which
+//! hubs?`) the card already answers from its own precomputed profile, index-free.
+//! The build then measures every emitted query through a byte budget
+//! ([`STARTER_MAX_BYTES`]) and drops whatever still reads more, so the bound is
+//! measured, not only estimated.
+//!
 //! This is pure serde generation — no format change, no I/O, no threads. It
 //! lives in `rete-core` (it used to live in the binary-only `rete-cli`, where no
 //! client could reach it — #152) so the CLI, the browser builder and every
@@ -49,7 +73,9 @@
 use serde::Serialize;
 
 use crate::card_derive::{
-    DatasetCard, ExampleQuery, Tier, CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL,
+    DatasetCard, ExampleQuery, Tier, CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY,
+    LINK_PREDICATES as LINK_PREDICATE_IRIS, O_LITERAL, WGS_LAT as WGS_LAT_IRI,
+    WGS_LONG as WGS_LONG_IRI,
 };
 use crate::RDF_TYPE;
 
@@ -270,6 +296,76 @@ enum NonEmpty {
     Undecidable(&'static str),
 }
 
+/// How many statements a starter query's body may have to read before the
+/// generator swaps it for its [`Bounded`] form (or drops it).
+///
+/// Calibrated on the heaviest exact bodies, measured on the OpenCitations
+/// sample's 5.97 M-statement default graph: `top-class-graph` peaked at
+/// ~450 B of RSS per statement scanned and the old `top-dangling` at ~570 B, so
+/// two million statements keeps the worst of them near 1 GiB — inside a 4 GiB
+/// client with room for the reader's own caches — while a full scan of one
+/// permutation at this size is a few MB of index. A dataset at or under the
+/// budget keeps every exact body, byte for byte.
+pub const STARTER_SCAN_BUDGET: u64 = 2_000_000;
+
+/// The most bytes a starter query may read when the build (or `rete recard`)
+/// measures it, counted once the file is open — the measured backstop to
+/// [`STARTER_SCAN_BUDGET`]'s estimate. A query that asks for more is dropped
+/// from the card and the drop is recorded ("did not finish"). The open is not
+/// charged: it reads the section directories (~44 MB on a 26 GB file) whatever
+/// the query, a cost no starter can change. 64 MiB is ~3× the heaviest exact body on a
+/// budget-sized graph and ~40× the heaviest bounded one.
+pub const STARTER_MAX_BYTES: u64 = 64 << 20;
+
+/// What a template's body has to read — turned into a number of statements by
+/// [`scan_estimate`] from the card's own counts, and compared against
+/// [`STARTER_SCAN_BUDGET`].
+///
+/// An estimate, not a promise (a join's fan-out is not in the card), which is
+/// why the build measures every emitted query through [`STARTER_MAX_BYTES`]
+/// as well. It errs high: a term the card does not list is charged the
+/// largest count it could have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scan {
+    /// The body bounds itself — a `LIMIT` over a pattern the engine evaluates
+    /// lazily, a single seeded lookup, an `ASK`.
+    Bounded,
+    /// Every statement in the body's graph scope.
+    Everything,
+    /// Every `rdf:type` statement.
+    Types,
+    /// Every statement of one substituted predicate.
+    Pred(Cap),
+    /// Every statement of these fixed predicates.
+    Preds(&'static [&'static str]),
+    /// The instances of one substituted class.
+    Class(Cap),
+    /// The instances of one substituted class and every statement they make.
+    ClassStar(Cap),
+    /// Every statement in a named graph.
+    NamedGraphs,
+    /// Every statement whose subject is a quoted triple.
+    Annotations,
+}
+
+/// The form a template takes when its [`Scan`] is over the budget.
+///
+/// Each bounded body reads a fixed-size slice: a `LIMIT`ed sub-select (the
+/// engine stops scanning when it is full) feeding the template's question, or
+/// a weaker question whose exact answer is a handful of lookups. The title and
+/// question change with it, so the card never presents a sample as the whole
+/// graph. Default-graph shaped like a [`Fallback`]: sound on a mixed file (its
+/// profile is the default graph's), and skipped on a named-graph-only one
+/// unless `named_body` is given.
+struct Bounded {
+    title: &'static str,
+    question: &'static str,
+    body: &'static str,
+    named_body: Option<&'static str>,
+    requires: &'static [Cap],
+    nonempty: NonEmpty,
+}
+
 /// One query template: a body with `{{PLACEHOLDER}}`s, the tier that answers it,
 /// and the capabilities it needs (which also gate emission).
 struct Template {
@@ -320,6 +416,13 @@ struct Template {
     /// what lets [`audit`] tell a query the card decides from one it does not,
     /// instead of counting both as unknown.
     hook_is_exact: bool,
+    /// What the body reads — see [`Scan`] and [`STARTER_SCAN_BUDGET`].
+    scan: Scan,
+    /// What ships instead when `scan` is over the budget. `None` ⇒ nothing
+    /// ships: the template is a question the card's own profile already
+    /// answers index-free (counts, predicate and class histograms, hubs,
+    /// datatypes, extents), so a sample of it would only be a worse copy.
+    bounded: Option<Bounded>,
 }
 
 /// The reduced form of a [`Template`], used when its full `requires` are not
@@ -353,6 +456,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
     Template {
         id: "ov-triples",
@@ -370,6 +475,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: None,
     },
     Template {
         id: "ov-pred-list",
@@ -387,6 +494,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: None,
     },
     Template {
         id: "ov-pred-hist",
@@ -407,6 +516,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: None,
     },
     Template {
         id: "ov-ask-pred",
@@ -424,6 +535,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
     // --- Identity & labels ---
     Template {
@@ -440,6 +553,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
     Template {
         id: "lb-labels",
@@ -496,6 +611,8 @@ const TEMPLATES: &[Template] = &[
         }),
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
     // --- Types ---
     Template {
@@ -513,6 +630,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Types,
+        bounded: None,
     },
     Template {
         id: "ty-entities",
@@ -528,6 +647,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Types,
+        bounded: None,
     },
     Template {
         id: "ty-class-shape",
@@ -546,6 +667,15 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::ClassStar(Cap::TopClass),
+        bounded: Some(Bounded {
+            title: "What does the top class look like? (1,000 instances)",
+            question: "Which predicates describe a sample of 1,000 instances of the most common class?",
+            body: "SELECT ?p (COUNT(*) AS ?n) WHERE { { SELECT ?s WHERE { ?s a {{TOP_CLASS}} } LIMIT 1000 } ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n)",
+            named_body: None,
+            requires: &[Cap::TopClass],
+            nonempty: NonEmpty::Witnessed,
+        }),
     },
     // --- Topology ---
     Template {
@@ -562,6 +692,14 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        // No bounded form, deliberately. A sample would join each of its
+        // subjects and objects to `?x a ?class`, and an unbound class is a
+        // pattern the planner answers by materializing every `rdf:type`
+        // statement (2.6 GiB on the OpenCitations sample, for a
+        // 1,000-statement sample) — and the answer is `card.class_links`,
+        // which the card already carries, exact, index-free.
+        bounded: None,
     },
     Template {
         id: "top-out-hubs",
@@ -581,6 +719,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: None,
     },
     Template {
         id: "top-in-hubs",
@@ -610,13 +750,20 @@ const TEMPLATES: &[Template] = &[
         // `in_hubs` is this query's own precompute, so the hook decides it in
         // both directions once the body is default-graph scoped.
         hook_is_exact: true,
+        scan: Scan::Everything,
+        bounded: None,
     },
     Template {
         id: "top-dangling",
         title: "Referenced but undescribed IRIs",
         dimension: "topology",
         question: "Which IRIs are referenced as objects but never described?",
-        body: "SELECT ?o WHERE { ?s ?p ?o FILTER(isIRI(?o)) FILTER NOT EXISTS { ?o ?p2 ?o2 } } LIMIT 100",
+        // `OPTIONAL … FILTER(!BOUND(…))`, not `FILTER NOT EXISTS`: the same
+        // rows, but the engine probes the OPTIONAL once per streamed row and
+        // stops at the LIMIT, while NOT EXISTS materializes its whole inner
+        // pattern first. On the OpenCitations sample's 5.97 M-statement default
+        // graph that is 18 MB and 0.02 s against 3.4 GB and 4.8 s.
+        body: "SELECT ?o WHERE { ?s ?p ?o FILTER(isIRI(?o)) OPTIONAL { ?o ?p2 ?o2 } FILTER(!BOUND(?p2)) } LIMIT 100",
         named_body: Some(
             "SELECT ?o WHERE { GRAPH ?g { ?s ?p ?o FILTER(isIRI(?o)) } FILTER NOT EXISTS { GRAPH ?h { ?o ?p2 ?o2 } } } LIMIT 100",
         ),
@@ -635,6 +782,17 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: Some(|card| card.in_hubs.is_empty()),
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: Some(Bounded {
+            title: "Referenced but undescribed IRIs (1,000 statements)",
+            question: "Which IRIs referenced by a sample of 1,000 statements are never described in the default graph?",
+            body: "SELECT DISTINCT ?o WHERE { { SELECT ?o WHERE { ?s ?p ?o } LIMIT 1000 } FILTER(isIRI(?o)) OPTIONAL { ?o ?p2 ?o2 } FILTER(!BOUND(?p2)) } LIMIT 100",
+            named_body: None,
+            requires: &[],
+            nonempty: NonEmpty::Undecidable(
+                "a sample of a fully-described graph has no dangling IRI, and the card does not record which objects are also subjects",
+            ),
+        }),
     },
     Template {
         id: "top-reach",
@@ -672,6 +830,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
     // --- Connectivity / completeness ---
     Template {
@@ -693,6 +853,15 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Class(Cap::LabeledClass),
+        bounded: Some(Bounded {
+            title: "Do the labelled class's entities have a label? (1,000 instances)",
+            question: "How complete is labelling on a sample of 1,000 instances of the class that carries labels?",
+            body: "SELECT (COUNT(?s) AS ?total) (COUNT(?l) AS ?have) WHERE { { SELECT ?s WHERE { ?s a {{LABELED_CLASS}} } LIMIT 1000 } OPTIONAL { ?s {{LABEL_PRED}} ?l } }",
+            named_body: None,
+            requires: &[Cap::LabeledClass, Cap::LabelPred],
+            nonempty: NonEmpty::Aggregate,
+        }),
     },
     // --- Links ---
     Template {
@@ -713,6 +882,15 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Preds(LINK_PREDICATE_IRIS),
+        bounded: Some(Bounded {
+            title: "Aligned to which external datasets?",
+            question: "Which entity-alignment predicates are used?",
+            body: "SELECT ?p WHERE { VALUES ?p { owl:sameAs skos:exactMatch skos:closeMatch rdfs:seeAlso } FILTER EXISTS { ?s ?p ?o } }",
+            named_body: None,
+            requires: &[Cap::Link],
+            nonempty: NonEmpty::Witnessed,
+        }),
     },
     Template {
         id: "lk-external",
@@ -732,6 +910,17 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: Some(Bounded {
+            title: "Which predicates link out? (1,000 statements)",
+            question: "In a sample of 1,000 statements, which predicates point to IRIs outside this dataset?",
+            body: "SELECT ?p (COUNT(*) AS ?n) WHERE { { SELECT ?p ?o WHERE { ?s ?p ?o } LIMIT 1000 } FILTER(isIRI(?o) && !STRSTARTS(STR(?o), \"{{BASE_IRI}}\")) } GROUP BY ?p ORDER BY DESC(?n) LIMIT 50",
+            named_body: None,
+            requires: &[Cap::BaseIri, Cap::ExternalIri],
+            nonempty: NonEmpty::Undecidable(
+                "the card records an IRI outside the base IRI somewhere in the graph, not in the 1,000-statement sample this body reads",
+            ),
+        }),
     },
     // --- Literals ---
     Template {
@@ -748,6 +937,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: None,
     },
     Template {
         id: "lt-langs",
@@ -763,6 +954,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Everything,
+        bounded: None,
     },
     Template {
         id: "lt-numrange",
@@ -779,6 +972,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Pred(Cap::NumPred),
+        bounded: None,
     },
     // --- Time ---
     Template {
@@ -795,6 +990,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Pred(Cap::TimePred),
+        bounded: None,
     },
     Template {
         id: "ti-histogram",
@@ -810,6 +1007,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Pred(Cap::TimePred),
+        bounded: None,
     },
     // --- Space (WKT is always CRS84 lon/lat) ---
     Template {
@@ -834,6 +1033,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Preds(&[WGS_LAT_IRI, WGS_LONG_IRI]),
+        bounded: None,
     },
     Template {
         id: "sp-within",
@@ -872,6 +1073,17 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Preds(&[GEO_ASWKT]),
+        bounded: Some(Bounded {
+            title: "Features inside a box (1,000 geometries)",
+            question: "Which of a sample of 1,000 geometries fall inside the dataset's bounding box? (WKT is lon/lat)",
+            body: "SELECT ?s WHERE { { SELECT ?s ?w WHERE { ?s {{WKT_PATH}} ?w } LIMIT 1000 } FILTER(geof:sfWithin(?w, \"{{BBOX_POLYGON}}\"^^geo:wktLiteral)) } LIMIT 100",
+            named_body: None,
+            requires: &[Cap::WktPath, Cap::Bbox],
+            nonempty: NonEmpty::Undecidable(
+                "the box is derived from wgs84 lat/long literals, not from the WKT geometries this query reads, and the card records no coordinate extent for them",
+            ),
+        }),
     },
     // --- Named graphs ---
     Template {
@@ -888,6 +1100,17 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::NamedGraphs,
+        bounded: Some(Bounded {
+            title: "What graphs partition this? (first 100)",
+            question: "Which named graphs does the dataset contain? (the first 100)",
+            body: "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 100",
+            named_body: Some(
+                "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 100",
+            ),
+            requires: &[Cap::NamedGraphs],
+            nonempty: NonEmpty::Witnessed,
+        }),
     },
     Template {
         id: "ng-sizes",
@@ -904,6 +1127,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::NamedGraphs,
+        bounded: None,
     },
     Template {
         id: "ng-sample",
@@ -920,6 +1145,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
     // --- Statements about statements (RDF-star) ---
     //
@@ -954,6 +1181,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
     Template {
         id: "qt-about",
@@ -975,6 +1204,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Annotations,
+        bounded: None,
     },
     Template {
         id: "qt-qualifiers",
@@ -993,6 +1224,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Pred(Cap::AnnotationPred),
+        bounded: None,
     },
     Template {
         id: "qt-coverage",
@@ -1018,6 +1251,15 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Pred(Cap::AnnotatedPred),
+        bounded: Some(Bounded {
+            title: "How much of the data is qualified? (1,000 assertions)",
+            question: "Of a sample of 1,000 statements of the most-annotated kind, how many carry an annotation?",
+            body: "SELECT (COUNT(*) AS ?asserted) (COUNT(?value) AS ?qualified) WHERE { { SELECT ?s ?o WHERE { ?s {{ANNOTATED_PRED}} ?o } LIMIT 1000 } OPTIONAL { << ?s {{ANNOTATED_PRED}} ?o >> {{ANNOTATION_PRED}} ?value } }",
+            named_body: None,
+            requires: &[Cap::AnnotatedPred, Cap::AnnotationPred],
+            nonempty: NonEmpty::Aggregate,
+        }),
     },
     Template {
         id: "qt-quoted-object",
@@ -1038,6 +1280,8 @@ const TEMPLATES: &[Template] = &[
         fallback: None,
         provably_empty: None,
         hook_is_exact: false,
+        scan: Scan::Bounded,
+        bounded: None,
     },
 ];
 
@@ -1066,12 +1310,91 @@ pub enum Claim {
 /// `commands::build` says so out loud and records it. `Undecidable` is the
 /// opposite: the template said in advance it could not know, so a measured zero
 /// is expected news, not a contradiction.
+///
+/// This is the claim of the template's **exact** body. A template can also
+/// ship a [`Bounded`] form with a claim of its own (a sample of a graph that has
+/// dangling IRIs need not contain one); [`claim_of_query`] reads the body and
+/// answers for whichever form it is.
 pub fn claim_of(id: &str) -> Claim {
     match TEMPLATES.iter().find(|t| t.id == id) {
-        Some(t) if matches!(t.nonempty, NonEmpty::Undecidable(_)) => Claim::Undecidable,
-        Some(_) => Claim::CannotBeEmpty,
+        Some(t) => claim_from(t.nonempty),
         None => Claim::Unknown,
     }
+}
+
+/// The [`Claim`] behind a shipped query, read from its **body** as well as its
+/// id — the form to use whenever the SPARQL is at hand, because the exact and
+/// the bounded form of one template claim different things.
+pub fn claim_of_query(id: &str, sparql: &str) -> Claim {
+    let Some(t) = TEMPLATES.iter().find(|t| t.id == id) else {
+        return Claim::Unknown;
+    };
+    match variant_of(t, strip_prefixes(sparql).trim()) {
+        Some(v) => claim_from(v.nonempty),
+        None => claim_from(t.nonempty),
+    }
+}
+
+fn claim_from(nonempty: NonEmpty) -> Claim {
+    match nonempty {
+        NonEmpty::Undecidable(_) => Claim::Undecidable,
+        _ => Claim::CannotBeEmpty,
+    }
+}
+
+/// Which of a template's forms a published body is, and the bindings it gave
+/// the placeholders.
+struct Variant {
+    pattern: &'static str,
+    binds: Binds,
+    nonempty: NonEmpty,
+    /// The [`Bounded`] form — a sample, so the card's whole-graph precomputes
+    /// stop deciding it in both directions (see `Template::hook_is_exact`).
+    bounded: bool,
+}
+
+/// Match a published body against every form of `t`: the exact body in each
+/// scope, the fallback, the bounded form, then the bodies earlier revisions
+/// wrote. The *values* decide a verdict, so two revisions sharing a pattern is
+/// not a problem — `revision` already says which one a re-card would write.
+fn variant_of(t: &Template, body: &str) -> Option<Variant> {
+    let mut forms: Vec<(&'static str, NonEmpty, bool)> = Vec::new();
+    for p in [Some(t.body), t.named_body, t.mixed_body]
+        .into_iter()
+        .flatten()
+    {
+        forms.push((p, t.nonempty, false));
+    }
+    if let Some(f) = &t.fallback {
+        forms.push((f.body, f.nonempty, false));
+    }
+    if let Some(b) = &t.bounded {
+        for p in [Some(b.body), b.named_body].into_iter().flatten() {
+            forms.push((p, b.nonempty, true));
+        }
+    }
+    for l in LEGACY_BODIES.iter().filter(|l| l.id == t.id) {
+        forms.push((l.body, t.nonempty, false));
+    }
+    // The bodies of one template are not prefixes of each other, so an exact
+    // match is unambiguous.
+    forms.into_iter().find_map(|(pattern, nonempty, bounded)| {
+        match_pattern(pattern, body).map(|binds| Variant {
+            pattern,
+            binds,
+            nonempty,
+            bounded,
+        })
+    })
+}
+
+/// A query's body without the `PREFIX` lines every generated query carries.
+fn strip_prefixes(sparql: &str) -> String {
+    sparql
+        .lines()
+        .filter(|l| !l.starts_with("PREFIX"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Where the dataset's statements live, decided from the card's own counts —
@@ -1360,11 +1683,84 @@ fn bbox_polygon(bbox: Option<[f64; 4]>) -> String {
     )
 }
 
+/// The count the card records for a predicate, or — when the term fell off the
+/// capped list — the most it could be: a list sorted by count that stops at the
+/// cap bounds everything below it by its last entry. A complete list that does
+/// not name the term proves it absent.
+fn bounded_count(card: &DatasetCard, list: &[(String, u64)], term: &str) -> u64 {
+    if let Some((_, n)) = list.iter().find(|(t, _)| t == term) {
+        return *n;
+    }
+    if complete(card, list) {
+        0
+    } else {
+        list.last().map_or(u64::MAX, |(_, n)| *n)
+    }
+}
+
+/// Which form of a template's body was picked — the [`Scan::Everything`]
+/// estimate depends on it (a `UNION`/`GRAPH` body reads the named graphs too).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BodyScope {
+    Default,
+    AllQuads,
+}
+
+/// How many statements a body of this [`Scan`] reads, from the card's counts.
+fn scan_estimate(scan: Scan, card: &DatasetCard, caps: &Caps, body: BodyScope) -> u64 {
+    let pred = |iri: &str| bounded_count(card, &card.predicates, iri);
+    let class = |iri: &str| bounded_count(card, &card.classes, iri);
+    let named = card.quad_count.saturating_sub(card.triple_count);
+    match scan {
+        Scan::Bounded => 0,
+        Scan::Everything => match body {
+            BodyScope::Default => card.triple_count,
+            BodyScope::AllQuads => card.quad_count,
+        },
+        Scan::Types => pred(RDF_TYPE),
+        Scan::Pred(cap) => caps.value(cap).map_or(u64::MAX, pred),
+        Scan::Preds(list) => list.iter().map(|p| pred(p)).fold(0u64, u64::saturating_add),
+        Scan::Class(cap) => caps.value(cap).map_or(u64::MAX, class),
+        Scan::ClassStar(cap) => {
+            let Some(c) = caps.value(cap) else {
+                return u64::MAX;
+            };
+            // Every statement a subject of the class makes, as the quotient
+            // counts them. A class with no row of its own in a truncated
+            // quotient is charged the whole graph — the estimate errs high.
+            let rows: u64 = card
+                .class_links
+                .iter()
+                .filter(|l| l.s_class == c)
+                .map(|l| l.count)
+                .sum();
+            if rows == 0 && !complete(card, &card.class_links) {
+                return card.triple_count;
+            }
+            class(c).saturating_add(rows)
+        }
+        Scan::NamedGraphs => named,
+        Scan::Annotations => card
+            .signals
+            .annotation_predicates
+            .iter()
+            .map(|p| pred(p))
+            .fold(0u64, u64::saturating_add),
+    }
+}
+
 /// Generate the tiered starter-query library for a card: emit each template whose
 /// required capabilities are all present, with the body picked for where the data
 /// lives (`GraphScope`), placeholders substituted, and the shared PREFIX block
-/// prepended.
+/// prepended. A body whose [`Scan`] is over [`STARTER_SCAN_BUDGET`] statements is
+/// replaced by its bounded form, or dropped when it has none.
 pub fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
+    generate_with_budget(card, STARTER_SCAN_BUDGET)
+}
+
+/// [`generate`] under an explicit scan budget — the tests' way to exercise the
+/// bounded forms on a fixture small enough to build in a unit test.
+fn generate_with_budget(card: &DatasetCard, budget: u64) -> Vec<ExampleQuery> {
     let caps = Caps::from_card(card);
     let scope = GraphScope::of(card);
     let mut out = Vec::new();
@@ -1384,25 +1780,44 @@ pub fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
         //    always Index-tier: GRAPH/UNION patterns are not summary-shaped
         //    (`summary_query_shape` recognizes only a bare default-graph
         //    pattern), and the pyramid summary covers the default graph only.
-        let (body, tier) = match scope {
-            GraphScope::DefaultOnly => (base, t.tier),
+        let (mut body, mut tier, reads) = match scope {
+            GraphScope::DefaultOnly => (base, t.tier, BodyScope::Default),
             GraphScope::NamedOnly => match named {
-                Some(b) => (b, Tier::Index),
+                Some(b) => (b, Tier::Index, BodyScope::AllQuads),
                 // GRAPH-native templates (the ng-* family) already address the
                 // named graphs; any other default-graph body would be a
                 // guaranteed-zero-rows query on a file whose default graph the
                 // card itself records as empty — skip it.
-                None if requires.contains(&Cap::NamedGraphs) => (base, t.tier),
+                None if requires.contains(&Cap::NamedGraphs) => (base, t.tier, BodyScope::AllQuads),
                 None => continue,
             },
             GraphScope::Mixed => match mixed {
-                Some(b) => (b, Tier::Index),
+                Some(b) => (b, Tier::Index, BodyScope::AllQuads),
                 // The default-graph body is sound here — the profile that
                 // instantiated it was derived from the (non-empty) default
                 // graph — and the ng-* family surfaces the named half.
-                None => (base, t.tier),
+                None => (base, t.tier, BodyScope::Default),
             },
         };
+
+        // 2b. The cost gate: a body that would read more than the budget is
+        //     replaced by its bounded form, or not shipped. See the module docs.
+        let (mut title, mut question, mut requires, mut nonempty) =
+            (t.title, t.question, requires, nonempty);
+        if scan_estimate(t.scan, card, &caps, reads) > budget {
+            let Some(b) = t.bounded.as_ref().filter(|b| all(b.requires)) else {
+                continue;
+            };
+            body = match scope {
+                GraphScope::NamedOnly => match b.named_body {
+                    Some(nb) => nb,
+                    None => continue,
+                },
+                _ => b.body,
+            };
+            tier = Tier::Index;
+            (title, question, requires, nonempty) = (b.title, b.question, b.requires, b.nonempty);
+        }
 
         // 3. The last gate: refuse a query the card can PROVE would answer
         //    nothing. Only in default-graph scope — the card's counts are over
@@ -1426,9 +1841,9 @@ pub fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
         );
         out.push(ExampleQuery {
             id: t.id.to_string(),
-            title: t.title.to_string(),
+            title: title.to_string(),
             dimension: t.dimension.to_string(),
-            question: t.question.to_string(),
+            question: question.to_string(),
             sparql: format!("{PREFIXES}\n{body}"),
             tier,
             requires: requires.iter().map(|c| c.key().to_string()).collect(),
@@ -1478,6 +1893,10 @@ pub enum Verdict {
     /// The body matches no known revision of its template, so nothing is
     /// claimed about it.
     Unrecognized,
+    /// The query does not parse. Only a curated `example_queries` entry can be
+    /// this — the generator's bodies are parsed by the test suite — and it is
+    /// the one verdict that needs no run to be certain of.
+    Invalid,
 }
 
 impl Verdict {
@@ -1489,8 +1908,16 @@ impl Verdict {
             Verdict::Suspect => "suspect",
             Verdict::Undecidable => "undecidable",
             Verdict::Unrecognized => "unrecognized",
+            Verdict::Invalid => "invalid",
         }
     }
+}
+
+/// The id `rete card-audit` gives the curated `example_queries` entry at
+/// `index` (0-based): `example-1`, `example-2`, … — curated queries carry no id
+/// of their own, and a stable positional one is what `--only` can name.
+pub fn example_query_id(index: usize) -> String {
+    format!("example-{}", index + 1)
 }
 
 /// One published query's verdict, with the evidence behind it.
@@ -1604,6 +2031,14 @@ const LEGACY_BODIES: &[Legacy] = &[
     Legacy {
         id: "lk-sameas",
         body: "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o VALUES ?p { owl:sameAs skos:exactMatch rdfs:seeAlso } } GROUP BY ?p",
+    },
+    // pre-0.4 `top-dangling`: the same rows as today's body, but `FILTER NOT
+    // EXISTS` materializes its inner pattern — 8.7 GiB on the OpenCitations
+    // sample. Recognized so a published card audits as `superseded`, not as an
+    // unreadable body.
+    Legacy {
+        id: "top-dangling",
+        body: "SELECT ?o WHERE { ?s ?p ?o FILTER(isIRI(?o)) FILTER NOT EXISTS { ?o ?p2 ?o2 } } LIMIT 100",
     },
 ];
 
@@ -1884,6 +2319,97 @@ pub fn audit(card: &DatasetCard) -> Vec<Finding> {
         .collect()
 }
 
+/// Audit the **curated** `example_queries` a card carries — the half of a card a
+/// publisher wrote, which [`audit`] (the generated half) never looks at.
+///
+/// A curated query makes no claim, so there is no template to hold it to; what
+/// the card *can* still decide is narrower and stated as such:
+///
+/// * it does not parse — [`Verdict::Invalid`], certain;
+/// * it reads only the default graph of a file whose default graph the card
+///   records as empty — [`Verdict::Empty`], the same scope rule the starters
+///   obey (#170);
+/// * it names a predicate the card's **complete** predicate list does not
+///   contain — [`Verdict::Suspect`], not `Empty`: the predicate may sit in an
+///   `OPTIONAL`, `UNION` or `MINUS` branch, and the profile covers the default
+///   graph only;
+/// * anything else — [`Verdict::Undecidable`]; `card-audit --measure` runs it.
+///
+/// Findings use the ids of [`example_query_id`] and `revision: "curated"`, and
+/// are reported apart from the generated queries' — they answer to a
+/// different author.
+pub fn audit_examples(card: &DatasetCard) -> Vec<Finding> {
+    card.example_queries
+        .iter()
+        .enumerate()
+        .map(|(i, sparql)| curated_finding(card, example_query_id(i), sparql))
+        .collect()
+}
+
+fn curated_finding(card: &DatasetCard, id: String, sparql: &str) -> Finding {
+    let mk = |verdict, why: String| Finding {
+        id: id.clone(),
+        verdict,
+        why,
+        revision: "curated",
+        substitutions: Vec::new(),
+        conjoined: false,
+        observed: None,
+    };
+    let predicates = match crate::query_predicates(sparql) {
+        Ok(p) => p,
+        Err(e) => return mk(Verdict::Invalid, format!("does not parse: {e}")),
+    };
+    // Keyword tests on the text, as the starter audit's scope rule does: a
+    // `GRAPH` or a dataset clause anywhere means the query does not read only
+    // the default graph.
+    let upper = strip_prefixes(sparql).to_ascii_uppercase();
+    let scoped = upper.contains("GRAPH") || upper.contains("FROM");
+    if !scoped && card.triple_count == 0 && card.named_graph_count > 0 {
+        return mk(
+            Verdict::Empty,
+            format!(
+                "it reads only the default graph, which the card records as empty \
+                 ({} named graph(s) hold all {} statements)",
+                card.named_graph_count, card.quad_count
+            ),
+        );
+    }
+    let missing: Vec<&String> = predicates
+        .iter()
+        .filter(|p| !card.predicates.iter().any(|(q, _)| q == *p))
+        .collect();
+    if !missing.is_empty() && !card.predicates.is_empty() {
+        let names = missing
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        return if complete(card, &card.predicates) && card.named_graph_count == 0 {
+            mk(
+                Verdict::Suspect,
+                format!(
+                    "names {names}, which the card's complete predicate list does not contain \
+                     — no row can match unless it sits in an OPTIONAL/UNION/MINUS branch"
+                ),
+            )
+        } else {
+            mk(
+                Verdict::Undecidable,
+                format!(
+                    "names {names}, which the card's predicate list does not show — the list is \
+                     capped, or the predicate may live in a named graph the profile does not cover"
+                ),
+            )
+        };
+    }
+    mk(
+        Verdict::Undecidable,
+        "a curated query makes no claim the card can check; `card-audit --measure` runs it"
+            .to_string(),
+    )
+}
+
 fn finding(
     card: &DatasetCard,
     caps: &Caps,
@@ -1891,12 +2417,7 @@ fn finding(
     q: &ExampleQuery,
     revision: &'static str,
 ) -> Finding {
-    let body = q
-        .sparql
-        .lines()
-        .filter(|l| !l.starts_with("PREFIX"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let body = strip_prefixes(&q.sparql);
     let body = body.trim();
 
     let mk = |verdict, why: String, revision, binds: &Binds| {
@@ -1929,29 +2450,15 @@ fn finding(
     };
 
     // Recover the substituted terms: match the body against the template's own
-    // patterns (every scope variant and the fallback), then against the bodies
-    // earlier revisions wrote. The *values* decide the verdict, so a pattern
-    // shared by two revisions is not a problem — `revision` already says which
-    // one a re-card would replace it with.
-    let patterns = [
-        Some(t.body),
-        t.named_body,
-        t.mixed_body,
-        t.fallback.as_ref().map(|f| f.body),
-    ]
-    .into_iter()
-    .flatten()
-    .chain(
-        LEGACY_BODIES
-            .iter()
-            .filter(|l| l.id == q.id)
-            .map(|l| l.body),
-    );
-    let Some((pattern, binds)) = patterns.into_iter().find_map(|p| {
-        // Longest pattern first would be nicer, but the bodies of one template
-        // are not prefixes of each other — an exact match is unambiguous.
-        match_pattern(p, body).map(|b| (p, b))
-    }) else {
+    // patterns (every scope variant, the fallback and the bounded form), then
+    // against the bodies earlier revisions wrote. See `variant_of`.
+    let Some(Variant {
+        pattern,
+        binds,
+        nonempty,
+        bounded,
+    }) = variant_of(t, body)
+    else {
         return mk(
             Verdict::Unrecognized,
             "the body matches no known revision of this template".to_string(),
@@ -1989,7 +2496,7 @@ fn finding(
                     &binds,
                 );
             }
-            if t.hook_is_exact {
+            if t.hook_is_exact && !bounded {
                 return mk(
                     Verdict::Answers,
                     "the card precomputes this query's own result, and it is not empty".to_string(),
@@ -2003,7 +2510,7 @@ fn finding(
     // --- 3. The co-occurrence rule, applied to the body that shipped.
     if let Some((cn, pn)) = class_pred_conjunction(pattern) {
         if let (Some(class), Some(pred)) = (bound(&binds, cn), bound(&binds, pn)) {
-            let aggregate = matches!(t.nonempty, NonEmpty::Aggregate);
+            let aggregate = matches!(nonempty, NonEmpty::Aggregate);
             if class_carries(card, class, pred) {
                 return mk(
                     Verdict::Answers,
@@ -2193,9 +2700,7 @@ fn finding(
     //        matter, and one no card can settle (`class_links` collapses every
     //        untyped subject into one bucket, so rows for the two predicates
     //        under it are not evidence that any single subject carries both).
-    if matches!(t.nonempty, NonEmpty::Aggregate)
-        && body.contains(" ; ")
-        && !body.contains("GROUP BY")
+    if matches!(nonempty, NonEmpty::Aggregate) && body.contains(" ; ") && !body.contains("GROUP BY")
     {
         return mk(
             Verdict::Undecidable,
@@ -2208,13 +2713,13 @@ fn finding(
     }
 
     // --- 9. Nothing above bit: the template's own claim stands.
-    match t.nonempty {
+    match nonempty {
         NonEmpty::Undecidable(reason) => {
             mk(Verdict::Undecidable, reason.to_string(), revision, &binds)
         }
         NonEmpty::AnyGraph | NonEmpty::Aggregate | NonEmpty::Witnessed => mk(
             Verdict::Answers,
-            match t.nonempty {
+            match nonempty {
                 NonEmpty::AnyGraph => "any non-empty graph answers this",
                 NonEmpty::Aggregate => "an un-grouped aggregate always returns one row",
                 _ => "every substituted term came from a count the card records as > 0",
@@ -3077,8 +3582,303 @@ mod tests {
                     t.id
                 );
             }
+            if let Some(b) = &t.bounded {
+                for body in [Some(b.body), b.named_body].into_iter().flatten() {
+                    if let Err(e) = check_body(t.id, body, b.requires, b.nonempty) {
+                        problems.push(e);
+                    }
+                }
+            }
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    // ---------------------------------------------------------------------
+    // B4: the cost gate. Every emitted starter is bounded — by the budget
+    // when the card says the exact body is cheap, by its bounded form when
+    // not, and by not being emitted when it has no honest bounded form.
+    // ---------------------------------------------------------------------
+
+    /// The ids whose exact question the card's own profile already answers,
+    /// and which therefore ship nothing at all past the budget.
+    const PROFILE_ANSWERS: &[&str] = &[
+        "ov-triples",
+        "ov-pred-list",
+        "ov-pred-hist",
+        "ty-class-hist",
+        "ty-entities",
+        "top-out-hubs",
+        "top-in-hubs",
+        "lt-datatypes",
+        "lt-langs",
+        "lt-numrange",
+        "ti-extent",
+        "ti-histogram",
+        "sp-bbox",
+        "ng-sizes",
+        "qt-about",
+        "qt-qualifiers",
+        "top-class-graph",
+    ];
+
+    /// Generate under a budget of zero — every template whose body reads
+    /// anything takes its bounded form or is dropped — and run every emitted
+    /// query against the graph it was generated for.
+    fn assert_bounded_library(quads: Vec<(String, String, String, Option<String>)>, ng: u64) {
+        let card = derive_card(&quads, 60, ng, CardInput::default());
+        let (bytes, _) =
+            ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| Vec::new());
+        let rete = Rete::open(&bytes).unwrap();
+        let bounded = generate_with_budget(&card, 0);
+        assert!(!bounded.is_empty(), "nothing survived a zero budget");
+        for eq in &bounded {
+            let t = TEMPLATES.iter().find(|t| t.id == eq.id).unwrap();
+            // Either self-bounded, or the bounded form — never the exact body
+            // of a template that reads something.
+            if t.scan != Scan::Bounded {
+                let b = t
+                    .bounded
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{}: emitted past the budget", eq.id));
+                assert!(
+                    eq.sparql.ends_with(b.body)
+                        || b.named_body.is_some_and(|nb| eq.sparql.ends_with(nb))
+                        || {
+                            // Substituted bodies cannot be compared verbatim; the
+                            // variant matcher is the arbiter.
+                            variant_of(t, strip_prefixes(&eq.sparql).trim())
+                                .is_some_and(|v| v.bounded)
+                        },
+                    "{}: not the bounded form:\n{}",
+                    eq.id,
+                    eq.sparql
+                );
+                assert_eq!(
+                    eq.title, b.title,
+                    "{}: the title must say it is a sample",
+                    eq.id
+                );
+            }
+            assert!(
+                !PROFILE_ANSWERS.contains(&eq.id.as_str()),
+                "{}: a profile-answered question shipped past the budget",
+                eq.id
+            );
+            let undecidable = claim_of_query(&eq.id, &eq.sparql) == Claim::Undecidable;
+            match eval_query(&rete, &eq.sparql) {
+                Ok(QueryOutput::Select(_, rows)) => assert!(
+                    undecidable || !rows.is_empty(),
+                    "{}: bounded form returned zero rows:\n{}",
+                    eq.id,
+                    eq.sparql
+                ),
+                Ok(QueryOutput::Ask(b)) => assert!(undecidable || b, "{}: ASK false", eq.id),
+                Ok(QueryOutput::Construct(ts)) => assert!(undecidable || !ts.is_empty()),
+                Err(e) => panic!("{}: failed to run: {e:?}\n{}", eq.id, eq.sparql),
+            }
+        }
+        // And the audit reads every bounded body as a known form of its
+        // template — never "unrecognized".
+        let mut shipped = card.clone();
+        shipped.queries = bounded;
+        for f in audit(&shipped) {
+            assert_ne!(f.verdict, Verdict::Unrecognized, "{}: {}", f.id, f.why);
+        }
+    }
+
+    #[test]
+    fn bounded_forms_parse_run_and_answer_in_every_scope() {
+        assert_bounded_library(rich_quads(), 0);
+        assert_bounded_library(named_only_quads(), 3);
+        assert_bounded_library(mtg_shaped_quads(), 0);
+        assert_bounded_library(annotated_quads(), 0);
+        let mut mixed = rich_quads();
+        for i in 0..5 {
+            mixed.push((
+                format!("<http://ex/note/{i}>"),
+                "<http://ex/about>".to_string(),
+                format!("<http://ex/person/{}>", i % 6),
+                Some("<http://ex/graph/notes>".to_string()),
+            ));
+        }
+        assert_bounded_library(mixed, 1);
+    }
+
+    /// The gate reads the card's counts, so a graph the size of an
+    /// OpenCitations part gets bounded bodies whatever its fixture size. Here
+    /// the rich fixture's card is inflated to 2.9 B statements: every emitted
+    /// body must be bounded, the profile-answered questions must be gone, and
+    /// the bounded forms must be the ones that ship.
+    #[test]
+    fn a_billion_statement_card_ships_only_bounded_starters() {
+        let mut card = derive_card(&rich_quads(), 50, 0, CardInput::default());
+        let scale = 50_000_000u64;
+        card.triple_count *= scale;
+        card.quad_count = card.triple_count;
+        for (_, n) in card.predicates.iter_mut().chain(card.classes.iter_mut()) {
+            *n *= scale;
+        }
+        for l in &mut card.class_links {
+            l.count *= scale;
+        }
+        let queries = generate(&card);
+        let ids: Vec<&str> = queries.iter().map(|q| q.id.as_str()).collect();
+        for gone in PROFILE_ANSWERS {
+            assert!(!ids.contains(gone), "{gone} shipped on a 2.9 B card");
+        }
+        for kept in [
+            "ov-one-row",
+            "ov-ask-pred",
+            "id-sample",
+            "lb-labels",
+            "top-reach",
+            "ty-class-shape",
+            "top-dangling",
+            "cmp-coverage",
+            "lk-sameas",
+            "lk-external",
+            "sp-within",
+        ] {
+            assert!(
+                ids.contains(&kept),
+                "{kept} missing from the bounded set {ids:?}"
+            );
+        }
+        let shape = queries.iter().find(|q| q.id == "ty-class-shape").unwrap();
+        assert!(shape.sparql.contains("LIMIT 1000"), "{}", shape.sparql);
+        assert!(shape.title.contains("1,000"), "{}", shape.title);
+        // Within the budget the same card writes the exact bodies.
+        let small = derive_card(&rich_quads(), 50, 0, CardInput::default());
+        let exact = generate(&small);
+        let shape = exact.iter().find(|q| q.id == "ty-class-shape").unwrap();
+        assert!(!shape.sparql.contains("LIMIT 1000"), "{}", shape.sparql);
+        // The audit agrees with the generator about the inflated card: what it
+        // ships is current, and nothing is refuted.
+        card.queries = queries;
+        for f in audit(&card) {
+            assert_eq!(f.revision, "current", "{}", f.id);
+            assert!(
+                matches!(f.verdict, Verdict::Answers | Verdict::Undecidable),
+                "{}: {} — {}",
+                f.id,
+                f.verdict.as_str(),
+                f.why
+            );
+        }
+    }
+
+    /// The bounded form's own claim is what `claim_of_query` reports — a
+    /// sample of a graph may honestly hold no dangling IRI even where the
+    /// whole graph does, and the measured-zero drop must not call that a
+    /// generator defect.
+    #[test]
+    fn the_claim_follows_the_form_that_shipped() {
+        let card = derive_card(&rich_quads(), 50, 0, CardInput::default());
+        let exact = generate(&card);
+        let shape = exact.iter().find(|q| q.id == "ty-class-shape").unwrap();
+        assert_eq!(
+            claim_of_query(&shape.id, &shape.sparql),
+            Claim::CannotBeEmpty
+        );
+        let bounded = generate_with_budget(&card, 0);
+        let external = bounded.iter().find(|q| q.id == "lk-external").unwrap();
+        assert_eq!(claim_of("lk-external"), Claim::CannotBeEmpty);
+        assert_eq!(
+            claim_of_query(&external.id, &external.sparql),
+            Claim::Undecidable,
+            "the 1,000-statement sample may hold no external IRI"
+        );
+        // An unknown body falls back to the template's own claim.
+        assert_eq!(
+            claim_of_query("ty-class-shape", "SELECT ?x WHERE { ?x ?y ?z }"),
+            Claim::CannotBeEmpty
+        );
+        assert_eq!(claim_of_query("not-a-template", "ASK {}"), Claim::Unknown);
+    }
+
+    /// The new `top-dangling` body returns the rows the old one did, and the
+    /// old one — on published cards — is recognized and reported superseded.
+    #[test]
+    fn the_dangling_query_is_rewritten_without_changing_its_rows() {
+        let (mut card, rete) = card_and_graph(named_only_quads_as_default(), 30, 0);
+        let new = sparql_of(&card, "top-dangling").unwrap().to_string();
+        let old = "SELECT ?o WHERE { ?s ?p ?o FILTER(isIRI(?o)) FILTER NOT EXISTS { ?o ?p2 ?o2 } } LIMIT 100";
+        let rows = |q: &str| -> std::collections::BTreeSet<String> {
+            match eval_query(&rete, q).unwrap() {
+                QueryOutput::Select(_, rows) => rows
+                    .iter()
+                    .map(|r| r.get("o").cloned().unwrap_or_default())
+                    .collect(),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(rows(&new), rows(&format!("{PREFIXES}\n{old}")));
+        assert!(!rows(&new).is_empty());
+        ship_instead(&mut card, "top-dangling", old);
+        let f = audit(&card);
+        let d = f.iter().find(|f| f.id == "top-dangling").unwrap();
+        assert_eq!(d.revision, "superseded");
+        assert_eq!(d.verdict, Verdict::Undecidable);
+    }
+
+    /// `named_only_quads`, moved into the default graph: a graph with one IRI
+    /// every item references and nobody describes.
+    fn named_only_quads_as_default() -> Vec<(String, String, String, Option<String>)> {
+        named_only_quads()
+            .into_iter()
+            .map(|(s, p, o, _)| (s, p, o, None))
+            .collect()
+    }
+
+    // ---------------------------------------------------------------------
+    // D1: the curated `example_queries` are audited too, apart.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn curated_example_queries_are_audited_separately() {
+        let mut card = derive_card(&rich_quads(), 50, 0, CardInput::default());
+        card.example_queries = vec![
+            // Parses, names only predicates the card knows: nothing to decide.
+            "SELECT ?s WHERE { ?s <http://ex/knows> ?o } LIMIT 5".to_string(),
+            // Does not parse.
+            "SELECT ?s WHERE { ?s <http://ex/knows> ".to_string(),
+            // A predicate the card's complete list does not contain.
+            "SELECT ?s WHERE { ?s <http://ex/neverUsed> ?o }".to_string(),
+        ];
+        let findings = audit_examples(&card);
+        assert_eq!(findings.len(), 3);
+        assert_eq!(findings[0].id, "example-1");
+        assert_eq!(findings[0].verdict, Verdict::Undecidable);
+        assert_eq!(findings[0].revision, "curated");
+        assert_eq!(findings[1].verdict, Verdict::Invalid);
+        assert!(
+            findings[1].why.contains("does not parse"),
+            "{}",
+            findings[1].why
+        );
+        assert_eq!(findings[2].verdict, Verdict::Suspect);
+        assert!(findings[2].why.contains("neverUsed"), "{}", findings[2].why);
+        // The generated half is untouched by the curated half.
+        assert_eq!(audit(&card).len(), card.queries.len());
+
+        // A truncated predicate list proves nothing absent: undecidable.
+        card.predicates = (0..CARD_TOP_N)
+            .map(|i| (format!("<http://ex/p{i}>"), 1))
+            .collect();
+        let f = audit_examples(&card);
+        assert_eq!(f[2].verdict, Verdict::Undecidable, "{}", f[2].why);
+    }
+
+    #[test]
+    fn a_curated_default_graph_query_on_a_named_only_file_is_empty() {
+        let mut card = derive_card(&named_only_quads(), 20, 3, CardInput::default());
+        card.example_queries = vec![
+            "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1".to_string(),
+            "SELECT ?s WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 1".to_string(),
+        ];
+        let f = audit_examples(&card);
+        assert_eq!(f[0].verdict, Verdict::Empty, "{}", f[0].why);
+        assert_ne!(f[1].verdict, Verdict::Empty, "{}", f[1].why);
     }
 
     // ---------------------------------------------------------------------
@@ -3341,6 +4141,25 @@ mod tests {
                 "{}: hook_is_exact without a hook to be exact about",
                 t.id
             );
+        }
+        // A bounded form must be bounded by its own text: every body reads a
+        // LIMITed slice or asks a lookup-sized question, and carries the
+        // placeholders it declares.
+        for t in TEMPLATES {
+            if let Some(b) = &t.bounded {
+                assert!(
+                    t.scan != Scan::Bounded,
+                    "{}: a self-bounded template needs no bounded form",
+                    t.id
+                );
+                for body in [Some(b.body), b.named_body].into_iter().flatten() {
+                    assert!(
+                        body.contains("LIMIT") || body.contains("FILTER EXISTS"),
+                        "{}: bounded body without a LIMIT or an existence probe:\n{body}",
+                        t.id
+                    );
+                }
+            }
         }
         // Every legacy body names a template that still exists (otherwise the
         // audit could never reach it) and is genuinely different from the ones

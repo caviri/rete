@@ -61,6 +61,7 @@ pub mod reach;
 pub mod reader;
 #[doc(hidden)]
 pub mod reason;
+pub mod recard;
 #[doc(hidden)]
 pub mod results;
 mod row;
@@ -86,8 +87,8 @@ pub mod varint;
 /// Stable file-format, reader, and in-memory build API.
 pub mod format {
     pub use crate::file::{
-        attach_build_info, plan_build_info, read_build_info, replace_metadata, verify,
-        BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment, Rete, TermTriple,
+        attach_build_info, content_hash_parts, plan_build_info, read_build_info, replace_metadata,
+        verify, BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment, Rete, TermTriple,
         TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
@@ -102,6 +103,7 @@ pub mod format {
         parse_turtle_surface, BuildStats, DeferredMetadata, FinalCounts, IngestError, IntoMetadata,
         QuotedTripleSurface, RawQuad, RawTriple,
     };
+    pub use crate::recard::{plan_card_rewrite, rewrite_card, CardRewritePlan, REWRITE_CHUNK};
 }
 
 /// Stable **Dataset Card** API — both halves of a card, so that every writer
@@ -124,11 +126,11 @@ pub mod format {
 /// spends that pass unless the caller asks for a card.
 pub mod card {
     pub use crate::card_derive::{
-        curated_counts_card, derive_card, derive_card_encoded, derive_card_from, load_card,
-        CardInput, CardTripleSource, ClassLink, Coherence, Creator, DatasetCard, ExampleQuery,
-        PermutationsSignal, Publisher, QuotedTriplesSignal, Signals, TextIndexSignal, Tier,
-        CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL, QUOTED_TRIPLE_SURFACE_RDF12,
-        QUOTED_TRIPLE_SURFACE_RDF_STAR,
+        curated_counts_card, derive_card, derive_card_encoded, derive_card_from,
+        derive_card_streaming, load_card, CardInput, CardTripleSource, ClassLink, Coherence,
+        Creator, DatasetCard, ExampleQuery, PermutationsSignal, Publisher, QuotedTriplesSignal,
+        Signals, StreamReport, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY,
+        O_LITERAL, QUOTED_TRIPLE_SURFACE_RDF12, QUOTED_TRIPLE_SURFACE_RDF_STAR,
     };
     pub use crate::card_input::{
         canonicalize_json, check_description_len, compose_curated_card, json_depth,
@@ -138,7 +140,9 @@ pub mod card {
         UNKNOWN_FIELD_HINT,
     };
     pub use crate::card_queries::{
-        audit, claim_of, generate, Claim, Finding, Observation, Recorded, Substitution, Verdict,
+        audit, audit_examples, claim_of, claim_of_query, example_query_id, generate, Claim,
+        Finding, Observation, Recorded, Substitution, Verdict, STARTER_MAX_BYTES,
+        STARTER_SCAN_BUDGET,
     };
 }
 

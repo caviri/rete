@@ -971,6 +971,46 @@ impl GraphIndex {
             .sum()
     }
 
+    /// Stream **every** triple of one stored permutation in that section's own
+    /// order, as `(a, b, c)` in the permutation's column order (SPO gives
+    /// `(s, p, o)`, OSP gives `(o, s, p)`, …).
+    ///
+    /// The access a whole-graph pass needs — `rete recard`'s streaming card
+    /// derivation reads SPO for out-degrees and OSP for in-degrees and literal
+    /// objects — and one [`scan_iter`](Self::scan_iter) cannot give, because a
+    /// fully unbound pattern always routes to SPO. Tiles fault with the same
+    /// geometric prefetch as a scan and are decoded one at a time; nothing is
+    /// retained beyond the tile cache, so memory follows its cap, not the
+    /// section. A failed fault is recorded in
+    /// [`load_incomplete`](Self::load_incomplete) and the tile is skipped, as
+    /// everywhere else. Returns `false` when the file does not store `perm`.
+    pub fn for_each_in_order(
+        &self,
+        perm: IndexPermutation,
+        f: &mut dyn FnMut(u32, u32, u32),
+    ) -> bool {
+        if !self.perms.contains(perm) {
+            return false;
+        }
+        let si = perm.section_index();
+        let end = self.sections[si].len();
+        let mut window = PREFETCH_WINDOW_START;
+        for ti in 0..end {
+            if !self.tile_resident(si, ti) {
+                self.prefetch_span(si, ti, (ti + window).min(end));
+                window = window.saturating_mul(2).min(PREFETCH_WINDOW_MAX);
+            }
+            if let Some(entry) = self.tile_entry(si, ti) {
+                if let Ok(block) = TripleBlock::parse(entry.body()) {
+                    for (a, b, c) in block.scan(None, None, None) {
+                        f(a, b, c);
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// The tiles of each permutation section (in `ALL_PERMS` order), for the
     /// file writer.
     pub fn tile_sections(&self) -> [&[Tile]; NUM_PERMS] {

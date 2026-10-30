@@ -362,6 +362,47 @@ impl Dictionary {
         self.sections[2].term_count()
     }
 
+    /// Number of predicate terms.
+    pub fn predicate_count(&self) -> u32 {
+        self.sections[3].term_count()
+    }
+
+    /// [`subject_term`](Self::subject_term) for many ids at once: one
+    /// chunk-ordered, single-pass walk per section
+    /// ([`ChunkedSection::resolve_into`]) instead of a fault and a run walk per
+    /// id — the difference between a whole-dictionary pass taking minutes and
+    /// taking hours. `out[i]` is exactly what `subject_term(ids[i])` returns.
+    ///
+    /// [`ChunkedSection::resolve_into`]: crate::dict::ChunkedSection::resolve_into
+    pub fn subject_terms(&self, ids: &[SubjectId]) -> Vec<Option<String>> {
+        self.role_terms(ids, 1)
+    }
+
+    /// [`object_term`](Self::object_term) for many ids at once — see
+    /// [`subject_terms`](Self::subject_terms).
+    pub fn object_terms(&self, ids: &[ObjectId]) -> Vec<Option<String>> {
+        self.role_terms(ids, 2)
+    }
+
+    /// Shared ids route to section 0, the rest to `own` (1 subjects, 2 objects)
+    /// with the shared block subtracted — the routing of `subject_term` /
+    /// `object_term`.
+    fn role_terms(&self, ids: &[u32], own: usize) -> Vec<Option<String>> {
+        let mut out = vec![None; ids.len()];
+        let mut shared = Vec::new();
+        let mut rest = Vec::new();
+        for (slot, &id) in ids.iter().enumerate() {
+            if id <= self.shared_len {
+                shared.push((id, slot));
+            } else {
+                rest.push((id - self.shared_len, slot));
+            }
+        }
+        self.sections[0].resolve_into(&mut shared, &mut out);
+        self.sections[own].resolve_into(&mut rest, &mut out);
+        out
+    }
+
     // --- unified node space (for graph algorithms / the pyramid) ----------
     //
     // Subjects and objects use *separate* ID spaces that overlap on shared
