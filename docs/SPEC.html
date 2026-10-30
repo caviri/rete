@@ -690,7 +690,7 @@ break an old reader.</em></p>
 │   ├ shared (terms used as both subject &amp; object)               │
 │   ├ subjects-only                                              │
 │   ├ objects-only (incl. literals)                              │
-│   └ predicates          (graph IRIs live in NAMED GRAPHS)      │
+│   └ predicates   (graph IRIs: NAMED GRAPHS, or subject terms)  │
 ├──────────────────────────────────────────────────────────────┤
 │ INDEX             default-graph permutation container:         │
 │   SPO/POS/OSP/SOP/PSO/OPS streams, each a zone-mapped,         │
@@ -701,6 +701,9 @@ break an old reader.</em></p>
 ├──────────────────────────────────────────────────────────────┤
 │ NAMED GRAPHS      optional: (graph IRI, permutation container) │
 │   per named graph, sharing the dictionary. Quads only.         │
+│   — or QUAD INDEX (kind 10, §6.5): each named-graph quad once, │
+│   the graph as a 4th column of graph-leading permutations in   │
+│   shared tiles, behind a sorted graph directory.               │
 ├──────────────────────────────────────────────────────────────┤
 │ FOOTER            4-byte `RETE` magic — a format/integrity     │
 │                   sentinel (the directory is the header).      │
@@ -732,7 +735,7 @@ and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
 <tr><td>4</td><td>1</td><td>format version (<code>0x05</code>, stable generation 1)</td></tr>
-<tr><td>5</td><td>1</td><td>flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples; bit4: the text index also covers the named graphs' literals, <code>--text-index-graphs all</code>, §6.3 — Rete 0.4.0, ignored by older readers)</td></tr>
+<tr><td>5</td><td>1</td><td>flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples; bit3: the named graphs live in the quad index, §6.5; bit4: the text index also covers the named graphs' literals, <code>--text-index-graphs all</code>, §6.3 — Rete 0.4.0, ignored by older readers)</td></tr>
 <tr><td>6</td><td>2</td><td>header length (= 1024)</td></tr>
 <tr><td>8</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
 <tr><td>24</td><td>8</td><td>total quad count</td></tr>
@@ -747,7 +750,7 @@ and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
 </tbody></table>
 <p><strong>Section directory (bytes 64…, <code>section_count</code> entries of 24 bytes):</strong></p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
-<tr><td>+0</td><td>2</td><td>section kind (<code>1</code> metadata, <code>2</code> dictionary, <code>3</code> index, <code>4</code> pyramid-meta, <code>5</code> named-graphs, <code>6</code> text-index, <code>7</code> build-info, <code>8</code> label-index, <code>9</code> schema, <code>11</code> text-index restricted to some predicates (§6.3); other ids reserved for future sections)</td></tr>
+<tr><td>+0</td><td>2</td><td>section kind (<code>1</code> metadata, <code>2</code> dictionary, <code>3</code> index, <code>4</code> pyramid-meta, <code>5</code> named-graphs, <code>6</code> text-index, <code>7</code> build-info, <code>8</code> label-index, <code>9</code> schema, <code>10</code> quad-index (§6.5), <code>11</code> text-index restricted to some predicates (§6.3); other ids reserved for future sections)</td></tr>
 <tr><td>+2</td><td>2</td><td>section flags (reserved)</td></tr>
 <tr><td>+4</td><td>4</td><td>reserved (zero)</td></tr>
 <tr><td>+8</td><td>8</td><td>section offset</td></tr>
@@ -804,6 +807,11 @@ although it sits where a kind-<code>6</code> index does: it is outside the conte
 starts with the same 16-byte self-digest, which a current <code>verify</code> checks. A
 reader older than 0.4.0 does not know kind <code>11</code>, so a hashed one would make its
 <code>verify</code> call the file corrupt. A kind-<code>6</code> index is hashed, as it always was.</p>
+<p>The <strong>quad index</strong> (kind <code>10</code>, §6.5) is hashed <strong>by reference</strong>: it is not a
+range of the content hash itself, but its BLAKE3 digest is the <strong>seal</strong>, the last
+section of the index container (kind <code>3</code>), which is — so it stays part of the
+file's identity, a current <code>verify</code> checks it against the seal, and an older
+<code>verify</code> (which refuses to open such a file anyway, on the seal) still passes.</p>
 <hr />
 <h2 id="5-dictionary">5. Dictionary</h2>
 <img class="img-sq" src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
@@ -917,8 +925,12 @@ only the header and the metadata section.</li>
 <li>Each permutation is encoded as an <strong>adjacency / bitmap-triples</strong> structure
 (HDT-style): for SPO, a sorted list of subjects, each with its predicate
 list, each with its object list, delta-encoded.</li>
-<li>Quads (named graphs) add a <code>G</code> dimension; the format stores per-graph triple
-sets plus a default-graph union. (Full GSPO permutations are a later optimization.)</li>
+<li>Quads (named graphs) add a <code>G</code> dimension, stored one of two ways, chosen at
+build time (<code>rete build --named-graphs per-graph|quad</code>): one permutation
+container per graph in the NAMED_GRAPHS section (kind 5), or the <strong>quad
+index</strong> (kind 10, §6.5) — the graph as a fourth column of graph-leading
+permutations <code>G+SPO</code>, <code>G+POS</code>, … in tiles shared across graphs. The default
+graph is always the INDEX container's triples; there is no stored union.</li>
 <li>Triples are <strong>partitioned by pyramid tile</strong> (see §7), and within a tile split
 into fixed-size <strong>blocks</strong>. Every block is prefixed with a <strong>zone map</strong>
 (min ID, max ID, count) so the query planner can skip blocks — Parquet-style.</li>
@@ -1165,6 +1177,79 @@ A required layout change uses a new format byte. <strong>No backwards-compatibil
 promise is made before 1.0.0:</strong> a later generation may drop <code>0x05</code> read support
 and force a rebuild from RDF source. Experimental formats <code>0x01</code> through <code>0x04</code>
 are already such a break and must be rebuilt from RDF source.</p>
+<h3 id="65-quad-index-quad_index-section-optional">6.5 Quad index (QUAD_INDEX section, optional)</h3>
+<p>The alternative to the NAMED_GRAPHS section for files with many named graphs:
+every named-graph quad is stored <strong>once</strong>, the graph as a fourth column, in
+<strong>graph-leading permutations</strong> — <code>G+X</code> for every order <code>X</code> the file carries
+(byte 50), in the same order (<code>G+SPO, G+POS, G+OSP[, G+SOP, G+PSO, G+OPS]</code>) —
+cut into tiles that many graphs share, behind a <strong>sorted graph directory</strong>.
+A graph name is a dictionary term in the <strong>subject</strong> role (shared or
+subject-only section), and the graph column stores its subject id.</p>
+<p>A file uses it exactly when header flag bit 3 (<code>0b1000</code>) is set. Then:
+the directory has a kind-<code>10</code> entry; it has <strong>no</strong> kind-<code>5</code> entry; and the
+INDEX container (kind 3) holds <code>perms + 1</code> sections — the permutations, then a
+<strong>seal</strong>:</p>
+<pre><code>seal:  "RQIX" | u8 version = 1 | 16 bytes = blake3(QUAD_INDEX section)[0..16]
+</code></pre>
+<p>The seal is what keeps a reader that predates the quad index from misreading
+the file (see <a href="compatibility.html#named-graphs-in-the-quad-index">compatibility.md</a>):
+every such reader checks the INDEX container's section count before it reads a
+payload, and <code>perms + 1</code> (4 or 7) is never what it expects, so it refuses the
+file on every open path. The quad index is written only with the 3- or the
+6-permutation set (a five-permutation set would make six). The content hash
+keeps its part list (§4.1) — the QUAD_INDEX section is not a part of its own;
+the seal, inside the hashed INDEX container, carries its digest, and <code>verify</code>
+checks the section against it.</p>
+<pre><code>section:   "RQIX" | u8 version = 1 | u8 order mask (byte-50 bits, never 0) | u16 reserved = 0
+           varint graph_count | varint quad_count | varint block_graphs (1024)
+           varint part_count (= 2 + 2·n, n = orders) | part_count × varint part_len
+parts, back to back:
+  P0           graph-directory block index:  varint num_blocks,
+               per block: varint Δfirst_g, varint (clen &lt;&lt; 1 | raw)
+  P1 … Pn      tile directory of each order:  varint num_tiles, per tile:
+               varint Δfirst_g, varint first_a, varint last_g − first_g, varint last_a,
+               varint (clen &lt;&lt; 1 | raw),
+               varint min_b, varint max_b − min_b, varint min_c, varint max_c − min_c
+  Pn+1         graph-directory blocks: per graph varint Δg, varint quad_count
+  Pn+2 … P2n+1 tile payloads of each order, concatenated
+quad tile:  varint num_segments
+            per segment (one graph's rows in the tile):
+              varint Δg (from the previous segment; the first from the tile's first_g)
+              varint zigzag(first_a − previous segment's first_a; 0 for the first)
+              varint body_len
+              body: varint num_a, then the §6.1 a-groups, the first one's Δa omitted;
+                    in the column that holds the subject (b in G+OSP and G+PSO,
+                    c in G+POS and G+OPS) the first value of each run is
+                    varint zigzag(v − the previous run's first v), 0 at segment start
+</code></pre>
+<p>The subject rule exists because within one graph the subjects are a handful of
+ids that recur in every a-group (a record's snapshots), so coding each run's
+first subject from 0 repeats a 3–4-byte id per group. On the OpenCitations
+M=1200 sample it shrinks those four orders by 46–49%; applied to the object
+column instead it makes <code>G+SPO</code> 64% larger, so it is not.</p>
+<ul>
+<li><code>(first_g, first_a)</code>/<code>(last_g, last_a)</code> are the leading keys of a tile's
+first and last row. Tiles ascend by that key and never overlap, except that
+consecutive tiles may share <code>(g, a)</code> where one <code>(g, a)</code> group was cut across
+tiles (the §6.2 mega-group rule).</li>
+<li>The routing parts (P0 and the tile directories) come first, so on a small file
+they are one read; a reader resolving one graph needs P0, one directory block,
+and the tile directory of each order its query uses — then only the tiles.</li>
+<li>A tile or directory block is zstd-compressed (the block codec) unless that
+does not shrink it; <code>raw = 1</code> marks it stored as is. A tile holding a handful
+of quads is not worth a zstd frame.</li>
+<li>Tiles are cut by one deterministic rule (whole <code>(g, a)</code> groups to ~64 KiB of
+encoded rows, segment headers included), shared by the in-RAM and the
+memory-bounded external builder, which therefore write identical bytes.</li>
+</ul>
+<p>A reader presents each graph as an ordinary permutation index over its slice of
+the shared tiles: for order <code>X</code>, the <code>G+X</code> tiles with <code>first_g ≤ g ≤ last_g</code>,
+whose leading range is exact where the directory knows it (<code>first_a</code> when
+<code>first_g = g</code>, <code>last_a</code> when <code>last_g = g</code>) and conservative otherwise; a tile's
+synopsis bounds every graph it holds. One decompressed tile serves every graph
+in it. Graphs enumerate in graph-id order. Orders led by <code>S</code>, <code>P</code> or <code>O</code> with
+the graph trailing (<code>SPO+G</code>, …) are not stored: SPARQL evaluates <code>GRAPH ?g</code> one
+graph at a time, which the graph-leading orders already route.</p>
 <hr />
 <h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>

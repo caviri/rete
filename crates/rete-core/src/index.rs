@@ -1434,6 +1434,30 @@ impl GraphIndex {
         best
     }
 
+    /// The smallest leading id `>= a` present in permutation section `section`,
+    /// or `None` past the last one. Routes by the tile directory, then reads the
+    /// tile's own group directory — so it skips the ids a tile's *range* covers
+    /// but its body does not hold. That matters where a range is conservative:
+    /// a quad-index view's tile shared with other graphs is `0..=u32::MAX`, and
+    /// stepping through it id by id would never finish. Faults the tiles it
+    /// reads; a failed fault ends the search (`load_incomplete` says so).
+    pub(crate) fn next_leading(&self, section: usize, a: u32) -> Option<u32> {
+        let tiles = &self.sections[section];
+        let mut ti = tiles.partition_point(|t| t.max_a < a);
+        while ti < tiles.len() {
+            let from = a.max(tiles[ti].min_a);
+            let entry = self.tile_entry(section, ti)?;
+            if let Ok(block) = TripleBlock::parse(entry.body()) {
+                let dir = self.tile_dir(section, ti, &entry, &block);
+                if let Some(x) = dir.first_at_or_after(from) {
+                    return Some(x);
+                }
+            }
+            ti += 1;
+        }
+        None
+    }
+
     /// The tile index span a scan must visit: every tile when the leading
     /// component is unbound, else the run of tiles whose leading-id ranges
     /// cover it. Tile ranges are ascending; consecutive tiles may SHARE a

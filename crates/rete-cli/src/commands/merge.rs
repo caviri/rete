@@ -112,14 +112,21 @@ pub(crate) fn merge_cmd(
     // merge-join orders that input's queries relied on. `merge` has no
     // `--permutations` of its own — it consolidates shards, it does not
     // re-decide how they were built.
+    // The named-graph layout follows the same rule: one quad-index input makes
+    // the merge a quad-index file (its readers are new enough by construction).
     let mut perms_bits = rete_core::PermSet::CORE.bits();
     // Likewise the label index: kept when any input carries one. The merged
-    // file always carries a SCHEMA section, as `rete build` writes.
+    // file always carries a SCHEMA section, as `rete build` writes. And the
+    // named-graph layout: a quad-index input makes a quad-index merge.
     let mut label_index = false;
+    let mut graphs = rete_core::GraphLayout::PerGraph;
     for path in inputs {
         let rete = crate::commands::range_source::open_local(path)?;
         perms_bits |= rete.header().perms.bits();
         label_index |= rete.has_label_index();
+        if rete.header().has_quad_index() {
+            graphs = rete_core::GraphLayout::Quad;
+        }
     }
 
     let curated = if card_args.requested() {
@@ -198,6 +205,7 @@ pub(crate) fn merge_cmd(
             schema: true,
             type_override: None,
             text_index: None,
+            graphs,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

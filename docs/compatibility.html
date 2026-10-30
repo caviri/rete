@@ -739,6 +739,52 @@ away. It also sets header flag bit 4, which tells a current reader, from the
 header alone, that a <code>CONTAINS</code> inside <code>GRAPH</code> or under <code>FROM</code> may use the
 index; older readers ignore the bit. A default-scope index (no scope flags) is
 the same bytes as before 0.4.0.</p>
+<h3 id="named-graphs-in-the-quad-index">Named graphs in the quad index</h3>
+<p><code>rete build --named-graphs quad</code> (0.4.0) stores the named graphs in the <strong>quad
+index</strong> (<a href="SPEC.html#65-quad-index-quad_index-section-optional">SPEC.md §6.5</a>,
+section kind 10) instead of one container per graph (kind 5). It is still format
+<code>0x05</code>, and it is refused by every Rete before 0.4.0 — on purpose.</p>
+<p>The hazard it is built against: a reader that predates kind 10 keeps it as an
+unknown section and ignores it, and ignores header flag bit 3 too (no released
+reader checks flag bits). On its own, such a file would open in an old reader
+as a file <strong>without named graphs</strong>: <code>GRAPH</code> queries would return nothing and
+<code>export</code> would drop every named-graph quad, without an error. So the writer
+also appends a <strong>seal</strong> section to the default-graph index container, and every
+released reader checks that container's section count before it reads a single
+payload — the same check that refuses a <code>--permutations 3</code> file:</p>
+<pre><code>$ rete sparql quad.rete 'SELECT * { GRAPH ?g { ?s ?p ?o } } LIMIT 1'   # rete 0.3.7
+Error: malformed container: index container section count does not match the header permutation mask
+$ rete sparql-url http://…/quad.rete '…'                               # rete 0.3.7
+Error: malformed container: unexpected container section count
+</code></pre>
+<table><thead><tr><th>Reader</th><th><code>info</code>, <code>verify</code>, <code>card-url</code></th><th>every query, <code>export</code>, <code>stats</code>, lazy or remote open</th></tr></thead><tbody>
+<tr><td>0.3.0 – 0.3.3 (expect exactly 6 sections)</td><td>work; <code>verify</code> says OK</td><td>refused: 7 or 4 sections</td></tr>
+<tr><td>0.3.4 – 0.3.7 (expect the mask's 3 or 6)</td><td>work; <code>verify</code> says OK</td><td>refused: 7 or 4 sections</td></tr>
+<tr><td>0.4.0</td><td>work; <code>verify</code> also checks the quad index</td><td>read</td></tr>
+</tbody></table>
+<p>Checked with the 0.3.7 and 0.3.5 binaries and with 0.3.0 built from its tag, on
+the OpenCitations sample: none of them returned a row or a quad from any
+command; 0.3.0 says <code>malformed container: expected 6 permutation sections</code>.</p>
+<ul>
+<li>Why not a new format byte: the refusal comes from a check every <code>0x05</code> reader
+already performs, it leaves the header-only tools (<code>info</code>, <code>card-url</code>, the
+catalog survey) working on these files, and it does not spend a generation
+number on one feature — a generation break is meant to batch several
+(<a href="https://github.com/caviri/rete/issues/206">#206</a>).</li>
+<li>Why the old <code>verify</code> stays truthful: the content hash keeps its part list; the
+seal, inside the hashed container, carries the quad section's digest. An old
+reader verifies everything it can read; a new one also checks the quad index
+against the seal. So the quad index is hashed by reference: unlike the
+self-digested kinds 8, 9 and 11, it stays part of the file's content hash.</li>
+<li>The quad index is written only with three or six permutations (<code>perms + 1</code>
+is then 4 or 7, never what an old reader wants).</li>
+<li>A file <strong>without</strong> named graphs is byte-identical whichever layout was asked
+for, so the flag is harmless on triple-only inputs.</li>
+</ul>
+<p>Like <code>--permutations 3</code>, this is not forward compatibility: publish a
+quad-index file only where every reader is 0.4.0 or later (the playground, the
+explorer pages and the clients are rebuilt in the release that reads it). Files
+already published with the per-graph layout keep working with every reader.</p>
 <h2 id="is-it-compatible-with-rdf">Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack

@@ -98,6 +98,27 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `ExternalBuildOptions::text_index`. The build functions' `with_text_index`
   argument takes a `bool` as before, or a scope (`IntoTextIndex`), and
   `AssembleOptions` carries it as `text_index_scope`.
+- **The quad index: named graphs as a fourth column** (`rete build
+  --named-graphs quad`, SPEC.md §6.5, section kind 10). Every named-graph quad
+  is stored once, in graph-leading permutations (`G+SPO`, `G+POS`, …) cut into
+  tiles that many graphs share, behind a sorted graph directory; graph names
+  become dictionary terms, and a tile is stored raw when zstd would not shrink
+  it. The per-graph layout (kind 5) wrote each graph's IRI as text and a full
+  permutation container with one zstd frame per tile, chained with no
+  directory, so a dataset of many small graphs paid ~650 B per graph and a
+  remote `GRAPH <g>` walked the section up to `g`. On the OpenCitations sample
+  (1.5 M provenance graphs) the named graphs take 102 MB instead of 974 MB,
+  the build 77 s instead of 33 min, and one graph's provenance over HTTP
+  3.7 MB in 26 requests instead of 414 MB in 81 (docs/BENCHMARK.md). Queries, `export`, `dump`
+  and every graph-scoped API return the same rows from either layout; the
+  memory-bounded build (`--memory-budget-mb`) writes the quad index too, byte
+  for byte, and `repyramid`/`merge` keep a quad-index input's layout. The
+  default stays `per-graph`. **Readers before 0.4.0 refuse quad-index files**
+  (loudly, on the index container's section count — `info`, `verify` and
+  `card-url` still work); see `docs/compatibility.md`.
+- `Rete::named_graph_quad_count` and `Rete::named_quad_count`: a graph's (or all
+  named graphs') quad count from a quad-index file's directory, without reading
+  any index.
 
 ### Changed
 
@@ -261,6 +282,9 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   header flag bit 4, so a `CONTAINS` inside `GRAPH` or under `FROM` knows from
   the header whether the index covers it: without the bit it scans and reads
   no byte of the index. See [compatibility.md](docs/compatibility.md).
+- `dump_batch` over a graph whose subjects are sparse jumps from one subject to
+  the next through the tile's group directory instead of probing every id in
+  between.
 
 ### Fixed
 

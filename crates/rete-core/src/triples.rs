@@ -401,6 +401,12 @@ impl GroupDirectory {
         (self.entries.capacity() * std::mem::size_of::<DirEntry>()) as u64
     }
 
+    /// The smallest leading id `>= a` this block holds, if any.
+    pub fn first_at_or_after(&self, a: u32) -> Option<u32> {
+        let i = self.entries.partition_point(|e| e.a < a);
+        self.entries.get(i).map(|e| e.a)
+    }
+
     /// An empty directory, for cache tests that need one without a block.
     #[cfg(test)]
     pub(crate) fn empty_for_tests() -> Self {

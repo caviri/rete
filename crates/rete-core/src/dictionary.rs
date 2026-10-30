@@ -61,6 +61,16 @@ impl DictionaryBuilder {
         }
     }
 
+    /// Record a **graph name** as a term in the subject role — how the quad
+    /// index (SPEC.md §6.5) makes graph names dictionary ids. It lands in the
+    /// shared section when the name is also an object, else in the
+    /// subject-only section.
+    pub fn observe_graph(&mut self, graph: &str) {
+        if !self.subjects.contains(graph) {
+            self.subjects.insert(graph.to_string());
+        }
+    }
+
     pub fn build(self) -> Dictionary {
         // Sort each role's terms once (ascending) — identical output order to
         // the old BTreeSet iteration, but without the per-insert tree cost.

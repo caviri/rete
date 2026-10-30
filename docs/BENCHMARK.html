@@ -854,6 +854,37 @@ the transfer is what hurts. Measure first: <code>rete cost</code> reports the by
 request cost of a real query against either build.</p>
 <p>Repro: <code>dev/perms/{build_bench.sh,query_bench.py,sections.py,rangeserver.py}</code>
 (gitignored; sources are <code>data/tree-city-inventory/</code> and <code>data/davidrumsey-maps/</code>).</p>
+<h2 id="named-graphs-per-graph-layout-vs-the-quad-index">Named graphs: per-graph layout vs the quad index</h2>
+<p><code>rete build --named-graphs quad</code> stores the named graphs in the quad index
+(<a href="SPEC.html#65-quad-index-quad_index-section-optional">SPEC.md §6.5</a>) instead of
+one permutation container per graph. Measured on the OpenCitations Meta
+development sample (1 work in 1,200, 2026-10): 18,869,242 statements, of which
+12,897,306 are provenance in <strong>1,494,934 per-entity graphs</strong> of ~9 quads
+(<code>&lt;entity&gt;/prov/</code>) — the shape the per-graph layout handles worst. Same input,
+same flags (<code>--strict --no-pyramid --card</code>), one binary; the third column puts
+the provenance in the default graph instead (no <code>GRAPH</code> at all).</p>
+<table><thead><tr><th></th><th style="text-align: right">per-graph (kind 5)</th><th style="text-align: right">quad index (kind 10)</th><th style="text-align: right">provenance in the default graph</th></tr></thead><tbody>
+<tr><td>file</td><td style="text-align: right">1,062,199,572 B</td><td style="text-align: right"><strong>191,077,024 B</strong></td><td style="text-align: right">166,630,831 B</td></tr>
+<tr><td>named-graph section</td><td style="text-align: right">974,397,639 B</td><td style="text-align: right"><strong>102,138,600 B</strong></td><td style="text-align: right">—</td></tr>
+<tr><td>bytes per provenance statement</td><td style="text-align: right">75.6</td><td style="text-align: right"><strong>7.9</strong></td><td style="text-align: right">~6.1</td></tr>
+<tr><td>build (in RAM)</td><td style="text-align: right">33 min, 9.8 GiB</td><td style="text-align: right"><strong>77 s, 1.9 GB</strong></td><td style="text-align: right">—</td></tr>
+</tbody></table>
+<p>Query cost, cold process per run, <code>--memory-budget-mb 2048</code>, a local nginx
+range server (requests and bytes as the server saw them):</p>
+<table><thead><tr><th>Query</th><th>per-graph, remote</th><th>quad index, remote</th></tr></thead><tbody>
+<tr><td>one work's provenance, <code>GRAPH &lt;work/prov/&gt; { … }</code></td><td>81 requests · 414 MB · 1.04 s</td><td><strong>26 requests · 3.7 MB · 0.05 s</strong></td></tr>
+<tr><td>one deleted agent's provenance</td><td>141 requests · 909 MB · 2.12 s</td><td><strong>26 requests · 3.5 MB · 0.04 s</strong></td></tr>
+<tr><td><code>COUNT(*)</code> over <code>GRAPH ?g</code> (all 1.5 M graphs)</td><td>killed at 4 GB</td><td><strong>131 requests · 23 MB · 15.5 s · 0.36 GB</strong></td></tr>
+</tbody></table>
+<p>Every query returns the same rows from each layout. Why: the per-graph layout
+spends ~650 B per graph on the graph's IRI as text, six tile directories and six
+zstd frames of a handful of triples each, and has no directory, so reaching one
+graph means walking the section up to it. The quad index stores the quads once
+in tiles shared by ~1,000 graphs and finds a graph by binary search. The one
+place it costs more than the default-graph layout is the graph column itself,
+mostly in the orders that lead with a predicate or an object. Details, the
+encoding experiment and the build table: <code>dev/session-notes/QUAD-INDEX-DESIGN.md</code>
+(gitignored).</p>
 <h2 id="coherence-checking-tier-costs">Coherence checking: tier costs</h2>
 <p>How much of a remote <code>.rete</code> each coherence check actually fetches, as the graph
 grows. A synthetic medical ontology — a fixed T-Box with a planted <strong>unsatisfiable

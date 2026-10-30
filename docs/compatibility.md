@@ -149,6 +149,59 @@ header alone, that a `CONTAINS` inside `GRAPH` or under `FROM` may use the
 index; older readers ignore the bit. A default-scope index (no scope flags) is
 the same bytes as before 0.4.0.
 
+### Named graphs in the quad index
+
+`rete build --named-graphs quad` (0.4.0) stores the named graphs in the **quad
+index** ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional),
+section kind 10) instead of one container per graph (kind 5). It is still format
+`0x05`, and it is refused by every Rete before 0.4.0 — on purpose.
+
+The hazard it is built against: a reader that predates kind 10 keeps it as an
+unknown section and ignores it, and ignores header flag bit 3 too (no released
+reader checks flag bits). On its own, such a file would open in an old reader
+as a file **without named graphs**: `GRAPH` queries would return nothing and
+`export` would drop every named-graph quad, without an error. So the writer
+also appends a **seal** section to the default-graph index container, and every
+released reader checks that container's section count before it reads a single
+payload — the same check that refuses a `--permutations 3` file:
+
+```
+$ rete sparql quad.rete 'SELECT * { GRAPH ?g { ?s ?p ?o } } LIMIT 1'   # rete 0.3.7
+Error: malformed container: index container section count does not match the header permutation mask
+$ rete sparql-url http://…/quad.rete '…'                               # rete 0.3.7
+Error: malformed container: unexpected container section count
+```
+
+| Reader | `info`, `verify`, `card-url` | every query, `export`, `stats`, lazy or remote open |
+|---|---|---|
+| 0.3.0 – 0.3.3 (expect exactly 6 sections) | work; `verify` says OK | refused: 7 or 4 sections |
+| 0.3.4 – 0.3.7 (expect the mask's 3 or 6) | work; `verify` says OK | refused: 7 or 4 sections |
+| 0.4.0 | work; `verify` also checks the quad index | read |
+
+Checked with the 0.3.7 and 0.3.5 binaries and with 0.3.0 built from its tag, on
+the OpenCitations sample: none of them returned a row or a quad from any
+command; 0.3.0 says `malformed container: expected 6 permutation sections`.
+
+- Why not a new format byte: the refusal comes from a check every `0x05` reader
+  already performs, it leaves the header-only tools (`info`, `card-url`, the
+  catalog survey) working on these files, and it does not spend a generation
+  number on one feature — a generation break is meant to batch several
+  ([#206](https://github.com/caviri/rete/issues/206)).
+- Why the old `verify` stays truthful: the content hash keeps its part list; the
+  seal, inside the hashed container, carries the quad section's digest. An old
+  reader verifies everything it can read; a new one also checks the quad index
+  against the seal. So the quad index is hashed by reference: unlike the
+  self-digested kinds 8, 9 and 11, it stays part of the file's content hash.
+- The quad index is written only with three or six permutations (`perms + 1`
+  is then 4 or 7, never what an old reader wants).
+- A file **without** named graphs is byte-identical whichever layout was asked
+  for, so the flag is harmless on triple-only inputs.
+
+Like `--permutations 3`, this is not forward compatibility: publish a
+quad-index file only where every reader is 0.4.0 or later (the playground, the
+explorer pages and the clients are rebuilt in the release that reads it). Files
+already published with the per-graph layout keep working with every reader.
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query

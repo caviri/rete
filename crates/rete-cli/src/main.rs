@@ -287,6 +287,27 @@ enum Command {
         /// anything published.
         #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
         permutations: String,
+        /// How to store the **named graphs**: `per-graph` (default) or `quad`.
+        ///
+        /// `per-graph` writes one permutation index per graph (the
+        /// NAMED_GRAPHS section): each graph's IRI as text, then its own
+        /// tiles, chained with no directory. `quad` writes the **quad index**
+        /// (SPEC.md §6.5): every named-graph quad once, the graph as a fourth
+        /// column of graph-leading permutations in tiles that many graphs
+        /// share, behind a sorted graph directory, with graph names as
+        /// dictionary terms. On many small graphs (per-entity provenance)
+        /// that is several times smaller and finds one graph by binary search
+        /// instead of walking the section; queries return the same rows.
+        ///
+        /// **A `quad` file is refused by every Rete before 0.4.0** (loudly:
+        /// the index container's section count), so keep `per-graph` for
+        /// files read by older engines. No effect without named graphs.
+        #[arg(
+            long = "named-graphs",
+            value_parser = ["per-graph", "quad"],
+            default_value = "per-graph"
+        )]
+        named_graphs: String,
         /// Refuse input containing an IRI the N-Triples/N-Quads `IRIREF` grammar
         /// and RFC 3987 disallow — a raw `[`/`]` outside an IP-literal host, a
         /// second `#`, a space or one of ``<>"{}|^` \``, a `%` not followed by
@@ -1502,6 +1523,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             memory_budget_mb,
             tmp_dir,
             permutations,
+            named_graphs,
             strict,
             quoted_triple_syntax,
         } => {
@@ -1512,6 +1534,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             let perms = match permutations.as_str() {
                 "3" => rete_core::PermSet::CORE,
                 _ => rete_core::PermSet::ALL,
+            };
+            let graphs = match named_graphs.as_str() {
+                "quad" => rete_core::GraphLayout::Quad,
+                _ => rete_core::GraphLayout::PerGraph,
             };
             let surface = commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?;
             let text_index = text_index_scope(
@@ -1542,6 +1568,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     collapse_graphs,
                     card_args,
                     perms,
+                    graphs,
                     strict,
                     surface,
                     type_predicate.as_deref(),
@@ -1562,6 +1589,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     card_args,
                     no_card_costs,
                     perms,
+                    graphs,
                     strict,
                     surface,
                     sections,

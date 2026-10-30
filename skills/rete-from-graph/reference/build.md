@@ -72,6 +72,18 @@ section). Escalating levers:
    **subject/entity** to keep star-queries inside one shard. Model:
    `data/scripts/standalone/build_databnf_shards.sh`, `data/scripts/standalone/build_biblissima_shards.sh`.
 
+### Many small named graphs (per-entity provenance)
+
+An N-Quads dump with one graph per entity (OpenCitations' `<entity>/prov/`, a
+graph per record) is the case `--named-graphs quad` (0.4.0) exists for: the
+per-graph layout pays ~650 B of framing per graph and a remote `GRAPH <g>` walks
+the section to reach `g`; the quad index stores the quads once in shared tiles
+and finds a graph by binary search. Same rows from every query. It works on
+every build path (`--memory-budget-mb` included). Readers before 0.4.0 refuse
+the file, so use it where the consumers are 0.4.0 or later. Few, large graphs
+(a TriG export of a handful of datasets) gain little; `--collapse-graphs` is
+still the choice when the graph names carry no meaning.
+
 ### External-build playbook (billion-triple single file)
 
 Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:

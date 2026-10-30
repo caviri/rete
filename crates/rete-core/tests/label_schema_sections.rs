@@ -9,12 +9,12 @@ use std::sync::Arc;
 
 use rete_core::format::{content_hash_parts, rewrite_card};
 use rete_core::ingest::{assemble_dataset_opts, AssembleOptions, RawQuad};
-use rete_core::TextIndexScope;
 use rete_core::{
     append_sections, attach_build_info, read_schema_coherence_ranged, read_schema_summary_ranged,
     replace_metadata, verify, verify_ranged, Header, RangeReader, Rete, SearchView, SectionKind,
     SliceReader, SummaryView,
 };
+use rete_core::{GraphLayout, TextIndexScope};
 
 const T: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 const SUB: &str = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
@@ -281,7 +281,7 @@ fn a_legacy_build_keeps_its_combined_pyramid_meta_and_answers_from_it() {
 }
 
 /// Every section kind a file can carry, with its number.
-const KINDS: [(SectionKind, u16); 10] = [
+const KINDS: [(SectionKind, u16); 11] = [
     (SectionKind::Metadata, 1),
     (SectionKind::Dictionary, 2),
     (SectionKind::Index, 3),
@@ -291,6 +291,7 @@ const KINDS: [(SectionKind, u16); 10] = [
     (SectionKind::BuildInfo, 7),
     (SectionKind::LabelIndex, 8),
     (SectionKind::Schema, 9),
+    (SectionKind::QuadIndex, 10),
     (SectionKind::TextIndexPartial, 11),
 ];
 
@@ -343,7 +344,7 @@ fn the_content_hash_covers_exactly_kinds_1_to_6() {
     let h = Header::from_bytes(&bytes).unwrap();
     for (k, n) in KINDS {
         let present = h.section(k).is_some_and(|s| s.length > 0);
-        assert_eq!(present, n != 11, "the fixture carries {k:?}");
+        assert_eq!(present, n != 10 && n != 11, "the fixture carries {k:?}");
     }
     assert_eq!(hashed_kinds(&h), [1, 2, 3, 4, 6, 5]);
     assert!(verify(&bytes).unwrap());
@@ -361,7 +362,7 @@ fn the_content_hash_covers_exactly_kinds_1_to_6() {
     let h = Header::from_bytes(&bytes).unwrap();
     for (k, n) in KINDS {
         let present = h.section(k).is_some_and(|s| s.length > 0);
-        assert_eq!(present, n != 6, "the fixture carries {k:?}");
+        assert_eq!(present, n != 6 && n != 10, "the fixture carries {k:?}");
     }
     assert_eq!(hashed_kinds(&h), [1, 2, 3, 4, 5]);
     assert!(verify(&bytes).unwrap());
@@ -405,4 +406,102 @@ fn a_card_rewrite_carries_the_label_and_schema_sections() {
     assert_eq!(after.prefix_search("acta", 10), want);
     assert_eq!(after.prefix_search("svobodová", 5), want_people);
     assert!(after.schema().is_some());
+}
+
+/// A quad-index file (kind 10, `--named-graphs quad`) is hashed **by
+/// reference**: the BLAKE3 digest of the quad section is the seal, the last
+/// section of the index container (kind 3), which the content hash covers.
+/// Kind 10 itself is not a hashed range, so a 0.3.x `verify` (which hashes
+/// kind 3) still passes; the new `verify` checks kind 10 against the seal; and
+/// two files that differ only in their quads differ in content hash. A card
+/// rewrite (`rete recard`) moves kind 10 and keeps the seal valid.
+#[test]
+fn the_quad_index_is_hashed_through_the_seal() {
+    let knows = |s: &str, o: &str| -> RawQuad {
+        (
+            format!("<http://ex/{s}>"),
+            "<http://ex/knows>".to_string(),
+            format!("<http://ex/{o}>"),
+            Some("<http://ex/g1>".to_string()),
+        )
+    };
+    let file = |named: Vec<RawQuad>| {
+        let mut q = quads(20);
+        q.extend(named);
+        let opts = AssembleOptions {
+            graph_layout: GraphLayout::Quad,
+            ..sectioned(true)
+        };
+        build(q, &opts)
+    };
+    // Every name is a subject and an object in both files, so the dictionary
+    // is the same and only the quads differ.
+    let bytes = file(vec![knows("a", "b"), knows("b", "c"), knows("c", "a")]);
+    let other = file(vec![knows("a", "c"), knows("c", "b"), knows("b", "a")]);
+    let h = Header::from_bytes(&bytes).unwrap();
+    let ho = Header::from_bytes(&other).unwrap();
+    assert!(h.has_quad_index());
+    let k10 = h.quad_index_section().unwrap();
+    assert!(k10.length > 0);
+    assert!(h
+        .section(SectionKind::NamedGraphs)
+        .is_none_or(|s| s.length == 0));
+
+    // No kind-10 range in the hash; kind 3 is hashed.
+    assert_eq!(hashed_kinds(&h), [2, 3, 4]);
+    // The seal ends kind 3: magic, version, blake3(kind 10)[..16].
+    let root_end = (h.root_dir_offset + h.root_dir_len) as usize;
+    let k10_bytes = &bytes[k10.offset as usize..(k10.offset + k10.length) as usize];
+    assert_eq!(
+        &bytes[root_end - 16..root_end],
+        &blake3::hash(k10_bytes).as_bytes()[..16]
+    );
+    assert!(verify(&bytes).unwrap());
+    assert!(verify_ranged(&SliceReader::new(&bytes)).unwrap());
+
+    // A flipped byte in kind 10 fails both verifies.
+    for at in [
+        k10.offset + 1,
+        k10.offset + k10.length / 2,
+        k10.offset + k10.length - 1,
+    ] {
+        let mut bad = bytes.clone();
+        bad[at as usize] ^= 0x10;
+        assert!(!verify(&bad).unwrap(), "flipped byte at {at}");
+        assert!(!verify_ranged(&SliceReader::new(&bad)).unwrap());
+    }
+
+    // Same dictionary, other quads: the seal differs, so the content hash does.
+    let dict = |b: &[u8], h: &Header| {
+        b[h.dictionary_offset as usize..(h.dictionary_offset + h.dictionary_len) as usize].to_vec()
+    };
+    assert_eq!(dict(&bytes, &h), dict(&other, &ho));
+    assert_ne!(h.content_hash, ho.content_hash);
+
+    // `rete recard`'s rewrite shifts kind 10 behind a longer card; the seal
+    // still holds and the graphs still answer.
+    let mut out = std::io::Cursor::new(Vec::new());
+    rewrite_card(
+        &SliceReader::new(&bytes),
+        &mut out,
+        br#"{"title":"a card long enough to move every section behind it"}"#,
+        b"",
+        &mut |_| {},
+    )
+    .unwrap();
+    let out = out.into_inner();
+    let hr = Header::from_bytes(&out).unwrap();
+    assert_ne!(hr.quad_index_section().unwrap().offset, k10.offset);
+    assert!(verify(&out).unwrap());
+    assert!(verify_ranged(&SliceReader::new(&out)).unwrap());
+    let names = |b: &[u8]| -> Vec<String> {
+        Rete::open(b)
+            .unwrap()
+            .graph_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(names(&out), names(&bytes));
+    assert_eq!(names(&out), ["<http://ex/g1>"]);
 }

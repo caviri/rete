@@ -501,14 +501,15 @@ fn active_index<'a>(
 ) -> &'a GraphIndex {
     match &sel.from[..] {
         [] if sel.union_default => {
-            let names = rete.graph_names();
-            if names.is_empty() {
+            // Counted, not listed: listing resolves every graph name.
+            let named = rete.named_graph_count();
+            if named == 0 {
                 return rete.default_index(); // no named graphs — union is the default graph
             }
             // Emptiness read off the SPO tile *directory* (already resident on
             // a lazy open) — no tile fetch, no materialization.
-            if names.len() == 1 && rete.default_index().tile_sections()[0].is_empty() {
-                if let Some(gi) = rete.graph_index(names[0]) {
+            if named == 1 && rete.default_index().tile_sections()[0].is_empty() {
+                if let Some((_, gi)) = rete.named_graph_at(0) {
                     return gi;
                 }
             }
@@ -549,11 +550,19 @@ fn merge_union_default(rete: &Rete) -> GraphIndex {
     for t in rete.default_index().match_pattern((None, None, None)) {
         b.push(t);
     }
-    for g in rete.graph_names() {
-        if let Some(gi) = rete.graph_index(g) {
-            for t in gi.match_pattern((None, None, None)) {
-                b.push(t);
-            }
+    // By ordinal, a small quad-index graph through a dropped view: the merge
+    // already holds every triple, it need not hold an index per graph too.
+    for i in 0..rete.named_graph_count() {
+        let owned = rete.named_graph_transient(i);
+        let gi = match &owned {
+            Some(view) => view,
+            None => match rete.named_graph_at(i) {
+                Some((_, gi)) => gi,
+                None => continue,
+            },
+        };
+        for t in gi.match_pattern((None, None, None)) {
+            b.push(t);
         }
     }
     b.build()
@@ -1381,26 +1390,43 @@ pub(crate) fn eval_plan_iter<'q>(
             // section in bulk chunks instead of hundreds of incremental
             // reads. Read per pull (a Cell): EXISTS sub-evaluations flip the
             // guarantee mid-iterator.
+            //
+            // A small graph of a quad-index file is evaluated through an
+            // owned view and dropped once its rows are out, so a walk over
+            // millions of graphs holds one view at a time rather than one per
+            // graph (`Rete::named_graph_transient`).
             let graphs = (0..ctx.rete.named_graph_count()).filter_map(move |i| {
                 let exhaustive = named_filter.is_none() && ctx.exhaustive.get();
                 let name = ctx.rete.named_graph_name_at_demand(i, exhaustive)?;
                 if !visible(name) {
                     return None;
                 }
-                ctx.rete.named_graph_at_demand(i, exhaustive)
+                Some((i, name, exhaustive))
             });
-            Box::new(graphs.flat_map(move |(name, gi)| {
-                let gval = ctx.resolver.canon_term(name);
-                eval_plan_iter(ctx, gi, named_filter, inner).filter_map(move |mut sol| {
-                    match &sol[slot] {
+            Box::new(graphs.flat_map(
+                move |(i, name, exhaustive)| -> Box<dyn Iterator<Item = Row> + 'q> {
+                    let gval = ctx.resolver.canon_term(name);
+                    let bind = move |mut sol: Row| match &sol[slot] {
                         Some(existing) if *existing != gval => None,
                         _ => {
                             sol[slot] = Some(gval.clone());
                             Some(sol)
                         }
+                    };
+                    if let Some(view) = ctx.rete.named_graph_transient(i) {
+                        let rows: Vec<Row> = eval_plan_iter(ctx, &view, named_filter, inner)
+                            .filter_map(bind)
+                            .collect();
+                        return Box::new(rows.into_iter());
                     }
-                })
-            }))
+                    match ctx.rete.named_graph_at_demand(i, exhaustive) {
+                        Some((_, gi)) => {
+                            Box::new(eval_plan_iter(ctx, gi, named_filter, inner).filter_map(bind))
+                        }
+                        None => Box::new(std::iter::empty()),
+                    }
+                },
+            ))
         }
     }
 }
