@@ -995,6 +995,8 @@ pub(crate) fn build_external_cmd(
             type_override: type_predicate.map(str::to_string),
             text_index,
             graphs,
+            // A parser's buffers are small: the chunks get the whole budget.
+            input_memory: 0,
         },
     )
     .map_err(|e| match e {

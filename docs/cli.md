@@ -101,8 +101,16 @@ rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index
 ```
 
 **The memory-bounded build (`--memory-budget-mb N`).** It reads the input
-once and cuts it into chunks of about half the budget. Each chunk's
-dictionary and statements go to `--tmp-dir` (default: next to the output). A
+once and cuts it into chunks of about half the budget, or smaller where the
+chunk's dictionary would take its working set past 85% of the budget (0.4.2):
+a term-dense stretch, two new terms per statement like the OpenCitations Meta
+`oc:doiLink` tail, used to take the chunk phase a quarter past the budget
+(14.99 GB under a 16 GB cap at 12,000 MiB). On a synthetic of 8 M ordinary and
+20 M such statements, 1,000 MiB now peaks at 857 MiB instead of 1,348 MiB, and
+3,000 MiB at 2,544 MiB in a 4 GiB container, which killed it before; the file
+is the same bytes at either budget, and an ordinary graph is cut exactly as
+before. Each chunk's dictionary and statements go to `--tmp-dir` (default: next
+to the output). A
 k-way merge then builds the one global dictionary, the chunks are rewritten in
 global ids one at a time, and external sorts build every index. At any moment
 it holds one chunk being sealed, the merge's buffers, or one sort run, and
@@ -370,7 +378,7 @@ defaults are in [BENCHMARK.md](BENCHMARK.md#compression-04).
 | `--tile-kib N` (4–4096) | 64 | Uncompressed size of an index tile, the unit a reader fetches and decompresses. 128 makes the file about 1% smaller and each touched tile larger; above 128 the file grows again (zstd's small-input parameters stop applying) and remote queries fetch more bytes (+9% at 256, +24% at 512). |
 | `--dict-chunk-kib N` (4–4096) | 64 | The same for dictionary chunks. |
 | `--zstd-level N` (1–22) | 9 | Level of every tile and chunk. `19` makes a file 4–9% smaller than `9` for about 2.7× the build CPU, and decodes 8–18% slower: a choice for a file built once and read for a long time. Levels between 9 and 19 gain little or nothing. |
-| `--frequent-objects N` | 0 (off) | Moves the `N` most frequent object-only terms (classes, controlled vocabularies, status literals) into the shared dictionary section, which gives them small ids where they sort ahead of the shared entities — the size effect of declaring the vocabulary in a TBox, without one. `64` made the OpenCitations samples 4.8–6.5% smaller, against 2.7–5.5% for their 499-statement TBox, and two other datasets 2.3–3.2% smaller, at no measurable build cost. Not available with `--memory-budget-mb` (refused). |
+| `--frequent-objects N` | 0 (off) | Moves the `N` most frequent object-only terms (classes, controlled vocabularies, status literals) into the shared dictionary section, which gives them small ids where they sort ahead of the shared entities — the size effect of declaring the vocabulary in a TBox, without one. `64` made the OpenCitations samples 4.8–6.5% smaller, against 2.7–5.5% for their 499-statement TBox, and two other datasets 2.3–3.2% smaller, at no measurable build cost. With `--memory-budget-mb` too (refused up to 0.4.1): its chunks count their objects, one more pass over the chunks' terms picks the same `N` (most statements, ties by term order), and the file is the in-RAM build's, byte for byte — on the OpenCitations sample 5.75% smaller (data only, 10 chunks) and 3.80% (18.9 M statements with provenance, quad index), for about 1% more build time. |
 
 Each flag falls back to an environment variable when left out
 (`RETE_TILE_KIB`, `RETE_DICT_CHUNK_KIB`, `RETE_ZSTD_LEVEL`,
@@ -507,11 +515,14 @@ It does **not** skip the sorting. The dictionary is HDT-style (`shared` /
 subject-only / object-only) and IDs are assigned per section, so a term that is
 subject-only in one shard and object-only in another becomes *shared* in the
 merge and changes ID section: the shards' orderings do not survive the remap and
-every permutation is rebuilt. Memory is bounded at both ends: each input is
-opened lazily and streamed rather than loaded, and the quads feed the same
-memory-bounded external builder `rete build --memory-budget-mb` uses, which
-chunks and spills under this command's own `--memory-budget-mb` (default 4096)
-into `--tmp-dir`. Shards carrying **named graphs** fold like any other: the
+every permutation is rebuilt. Memory is bounded at both ends, by the one
+`--memory-budget-mb` (default 4096): each input is opened by range and
+streamed, never read whole, with its dictionary, tile and block caches capped
+to a quarter of the budget (64 MiB to 1 GiB) and each named graph's index
+dropped once the graph is walked; the quads feed the same memory-bounded
+external builder `rete build --memory-budget-mb` uses, whose chunks take the
+rest of the budget while the inputs are read, and which spills into
+`--tmp-dir`. Shards carrying **named graphs** fold like any other: the
 builder puts the graph in its sort key, so each graph comes back out of the
 merge as one contiguous run.
 
@@ -536,9 +547,15 @@ and the full one took a `rete recard` afterwards; on two halves of the
 OpenCitations sample the one pass costs what the merge alone did (see
 [Maintaining a published card](dataset-cards.md#which-re-card-path)).
 
-The budget bounds the builder, not the merge's walk of its inputs: on that
-sample the merge peaked about 1 GiB over `--memory-budget-mb` (3,025 MiB at
-2,000), card or no card, so leave that much headroom under a container's limit.
+The budget covers the merge's walk of its inputs too (0.4.2). Up to 0.4.1 it
+bounded the builder alone: a shard small enough was read whole, a larger one
+opened with uncapped caches, and on that sample the merge peaked about 1 GiB
+over `--memory-budget-mb` (3,025 MiB at 2,000) and was killed in a 4 GiB
+container at 3,000. Now it peaks at 1,551 MiB at 2,000 and 2,174 MiB at 3,000
+(1,568 and 2,126 MiB with the full card), the same merged file, for 15–19%
+more wall time at 2,000, where the shards' caches are smallest; two shards of
+a term-dense synthetic (14 M statements) merge at 2,047 MiB instead of
+3,204 MiB at 3,000, in the same time.
 
 The build record names what was merged: each input's file name, size and
 BLAKE3 (one sequential read of each shard before the merge, the record's `read`

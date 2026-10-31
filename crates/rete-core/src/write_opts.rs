@@ -159,8 +159,21 @@ pub fn frame_shape() -> FrameShape {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// [`frequent_objects`] for this thread alone: the crate's unit tests run
+    /// in parallel threads, so one that promotes must not change what every
+    /// other test's builder does.
+    pub(crate) static TEST_FREQUENT_OBJECTS: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// How many frequent object-only terms the dictionary builder promotes.
 pub fn frequent_objects() -> usize {
+    #[cfg(test)]
+    if let Some(n) = TEST_FREQUENT_OBJECTS.with(|c| c.get()) {
+        return n;
+    }
     match FREQUENT_OBJECTS.load(Ordering::Relaxed) {
         usize::MAX => {
             let v = env_parse::<usize>("RETE_FREQUENT_OBJECTS").unwrap_or(0);

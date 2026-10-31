@@ -35,8 +35,8 @@ pub(crate) struct WriteArgs {
     /// vocabularies, status literals) into the shared dictionary section,
     /// which gives them small ids wherever they sort ahead of the shared
     /// entities — the size effect of declaring the vocabulary in a TBox,
-    /// without one (default 0 = off). Readers need nothing new. Not available
-    /// with `--memory-budget-mb`.
+    /// without one (default 0 = off). Readers need nothing new. With
+    /// `--memory-budget-mb` the file is the same bytes as without.
     #[arg(long = "frequent-objects", value_name = "N")]
     pub frequent_objects: Option<usize>,
 }

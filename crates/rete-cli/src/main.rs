@@ -416,7 +416,8 @@ enum Command {
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Resident memory budget in MiB (default 4096); the builder spills past it.
+        /// Resident memory budget in MiB (default 4096), the reads of the
+        /// inputs included (a quarter of it); the builder spills past it.
         #[arg(long, default_value_t = 4096)]
         memory_budget_mb: u64,
         /// Directory for spill files (default: next to the output).
@@ -1593,11 +1594,6 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 created,
             };
             if let Some(mb) = memory_budget_mb {
-                if rete_core::write_opts::frequent_objects() > 0 {
-                    anyhow::bail!(
-                        "--memory-budget-mb does not support --frequent-objects (the external                          build merges chunk-local dictionaries by role, before any term's                          frequency over the whole input is known); build with the standard                          path, or drop --frequent-objects"
-                    );
-                }
                 commands::build::build_external_cmd(
                     &inputs,
                     &output,
