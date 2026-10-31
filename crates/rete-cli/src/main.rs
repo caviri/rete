@@ -82,6 +82,8 @@ struct Cli {
     command: Command,
 }
 
+// Parsed once, at startup: a variant's size costs nothing worth boxing for.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Generate shell completions and a man page for release archives.
@@ -337,6 +339,8 @@ enum Command {
         quoted_triple_syntax: String,
         #[command(flatten)]
         write: commands::write_args::WriteArgs,
+        #[command(flatten)]
+        progress: commands::progress::ProgressArgs,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
@@ -448,6 +452,8 @@ enum Command {
         /// are kept unchecked, and the build record carries no costs).
         #[arg(long = "no-card-costs")]
         no_card_costs: bool,
+        #[command(flatten)]
+        progress: commands::progress::ProgressArgs,
     },
     /// Print the header of a `.rete` file.
     Info {
@@ -680,6 +686,8 @@ enum Command {
         /// it into place (one more read of the file).
         #[arg(long)]
         verify: bool,
+        #[command(flatten)]
+        progress: commands::progress::ProgressArgs,
     },
     /// List the named graphs in a dataset.
     Graphs {
@@ -1566,8 +1574,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             strict,
             quoted_triple_syntax,
             write,
+            progress,
         } => {
             write.apply();
+            let _progress = progress.start("build")?;
             let sections = commands::build::BuildSections {
                 label_index,
                 schema: !no_schema,
@@ -1675,22 +1685,26 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             description,
             created,
             no_card_costs,
-        } => commands::merge::merge_cmd(
-            &inputs,
-            &output,
-            memory_budget_mb,
-            tmp_dir.as_deref(),
-            commands::card::CardArgs {
-                enabled: card,
-                file: card_file,
-                title,
-                license,
-                source,
-                description,
-                created,
-            },
-            !no_card_costs,
-        ),
+            progress,
+        } => {
+            let _progress = progress.start("merge")?;
+            commands::merge::merge_cmd(
+                &inputs,
+                &output,
+                memory_budget_mb,
+                tmp_dir.as_deref(),
+                commands::card::CardArgs {
+                    enabled: card,
+                    file: card_file,
+                    title,
+                    license,
+                    source,
+                    description,
+                    created,
+                },
+                !no_card_costs,
+            )
+        }
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),
         Command::Verify { file } => commands::inspect::verify_cmd(&file),
@@ -1774,26 +1788,30 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             no_card_costs,
             memory_budget_mb,
             verify,
-        } => commands::card::recard_cmd(
-            &file,
-            &commands::card::RecardOptions {
-                output,
-                in_place,
-                card: commands::card::CardArgs {
-                    enabled: false,
-                    file: card_file,
-                    title,
-                    license,
-                    source,
-                    description,
-                    created,
+            progress,
+        } => {
+            let _progress = progress.start("recard")?;
+            commands::card::recard_cmd(
+                &file,
+                &commands::card::RecardOptions {
+                    output,
+                    in_place,
+                    card: commands::card::CardArgs {
+                        enabled: false,
+                        file: card_file,
+                        title,
+                        license,
+                        source,
+                        description,
+                        created,
+                    },
+                    keep_curated,
+                    measure_costs: !no_card_costs,
+                    memory_budget_mb,
+                    verify,
                 },
-                keep_curated,
-                measure_costs: !no_card_costs,
-                memory_budget_mb,
-                verify,
-            },
-        ),
+            )
+        }
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export {
             file,

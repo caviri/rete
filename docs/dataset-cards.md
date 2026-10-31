@@ -817,8 +817,9 @@ phases **partition** the run and never overlap. Their names are a closed set:
 shards), `parse` and `reason` (the
 in-RAM text path), `parse+dictionary` and `parse+encode` (the two passes of
 the streaming in-RAM build, where parsing cannot be told apart from what it
-feeds), `parse+chunk`, `dictionary`, `encode` and `named_graphs` (the
-memory-bounded build and `merge`), `card_derive`, `pyramid`, `text_index`,
+feeds), `parse+chunk`, `frequent_objects` (its `--frequent-objects` pass,
+0.4.2), `dictionary`, `encode` and `named_graphs` (the memory-bounded build
+and `merge`), `card_derive`, `pyramid`, `text_index`,
 `labels+schema`, `dictionary_section`, `index_permutations`, `serialize`,
 `starter_queries`, `write` and `content_hash` (the read of every hashed section
 that places a card after the data needs: the memory-bounded build, `merge` and

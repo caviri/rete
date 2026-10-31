@@ -59,6 +59,14 @@ spargebra.workspace = true
 # in the tree: rete-core's content hash is BLAKE3.
 blake3.workspace = true
 
+# `--progress=bar` routes stderr through a pipe so the build's own lines print
+# above the bar, and asks the terminal its width: dup/dup2/pipe/poll and the
+# window size, through rustix's safe wrappers (no `unsafe` in the CLI). Already
+# in the lock (via tempfile); Unix only — elsewhere the bar is drawn without
+# the pipe.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", default-features = false, features = ["std", "event", "pipe", "stdio", "termios"] }
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"

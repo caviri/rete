@@ -248,6 +248,18 @@ check "merge verify" "OK|matches" -- "$B" verify "$T/gm.rete"
 $B recard "$T/gm.rete" -o "$T/gmr.rete" --keep-curated >/dev/null 2>&1
 check "merge card = recard" "^same$" -- bash -c "cmp -s <(dd if='$T/gm.rete' bs=1 skip=8 count=16 2>/dev/null) <(dd if='$T/gmr.rete' bs=1 skip=8 count=16 2>/dev/null) && echo same || echo differ"
 
+echo "== progress (--progress) =="
+# On stderr only: stdout keeps its one result line, the file is the same bytes,
+# and `off` (like the default off a terminal) prints nothing.
+check "progress plain"        "^progress: build done in" -- bash -c "$B build '$T/g.nt' -o '$T/pp.rete' --progress plain 2>&1 >/dev/null"
+check "progress json bounded" '"event":"done"'           -- bash -c "$B build '$T/g.nt' -o '$T/pj.rete' --memory-budget-mb 64 --progress json 2>&1 >/dev/null | tail -1"
+check "progress stdout clean" "^wrote [^ ]+: 5 triples"  -- bash -c "$B build '$T/g.nt' -o '$T/ps.rete' --progress json 2>/dev/null"
+check "progress same bytes"   "^same$"                   -- bash -c "$B build '$T/g.nt' -o '$T/p0.rete' --progress off >/dev/null 2>&1; $B build '$T/g.nt' -o '$T/p1.rete' --progress json >/dev/null 2>&1; cmp -s '$T/p0.rete' '$T/p1.rete' && echo same || echo differ"
+check "progress env merge"    "^progress: merge "        -- bash -c "RETE_PROGRESS=plain $B merge '$T/gcx.rete' '$T/gmx.rete' -o '$T/pm.rete' --memory-budget-mb 64 2>&1 >/dev/null"
+check "progress recard"       '"event":"start"'          -- bash -c "$B recard '$T/gcx.rete' -o '$T/pr.rete' --keep-curated --progress json 2>&1 >/dev/null"
+check "progress off"          "^0$"                      -- bash -c "$B build '$T/g.nt' -o '$T/po.rete' --progress off 2>&1 >/dev/null | grep -cE '^(progress:|[{])'"
+check_code "progress bad mode" 2 "loud"                  -- "$B" build "$T/g.nt" -o "$T/x.rete" --progress loud
+
 echo "== schema pyramid (semantic zoom) =="
 # A tiny subClassOf hierarchy: Astronomer ⊑ Scientist ⊑ Person, with instances.
 cat > "$T/onto.nt" <<'ONTO'

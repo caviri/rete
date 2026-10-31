@@ -1305,8 +1305,9 @@ phases <strong>partition</strong> the run and never overlap. Their names are a c
 shards), <code>parse</code> and <code>reason</code> (the
 in-RAM text path), <code>parse+dictionary</code> and <code>parse+encode</code> (the two passes of
 the streaming in-RAM build, where parsing cannot be told apart from what it
-feeds), <code>parse+chunk</code>, <code>dictionary</code>, <code>encode</code> and <code>named_graphs</code> (the
-memory-bounded build and <code>merge</code>), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
+feeds), <code>parse+chunk</code>, <code>frequent_objects</code> (its <code>--frequent-objects</code> pass,
+0.4.2), <code>dictionary</code>, <code>encode</code> and <code>named_graphs</code> (the memory-bounded build
+and <code>merge</code>), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
 <code>labels+schema</code>, <code>dictionary_section</code>, <code>index_permutations</code>, <code>serialize</code>,
 <code>starter_queries</code>, <code>write</code> and <code>content_hash</code> (the read of every hashed section
 that places a card after the data needs: the memory-bounded build, <code>merge</code> and

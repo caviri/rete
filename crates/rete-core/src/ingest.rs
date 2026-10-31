@@ -1290,17 +1290,26 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
     opts: &AssembleOptions<'_>,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
+    use crate::build_progress::{self as progress, Stat, Ticker, Unit};
+    use crate::build_trace::Phase;
     let graphs = opts.graph_layout;
+    let n = Some(quads.len() as u64);
+    progress::begin(Phase::Dictionary, n, Unit::Statements);
+    let mut ticker = Ticker::new();
     let mut db = DictionaryBuilder::new();
     for (s, p, o, g) in &quads {
         db.observe(s, p, o);
         if let (GraphLayout::Quad, Some(g)) = (graphs, g) {
             db.observe_graph(g);
         }
+        ticker.tick(1);
     }
+    ticker.flush();
     let dict = db.build();
-    crate::build_trace::lap(crate::build_trace::Phase::Dictionary);
+    crate::build_trace::lap(Phase::Dictionary);
+    progress::set_stat(Stat::Terms, dict.term_count().into());
 
+    progress::begin(Phase::Encode, n, Unit::Statements);
     let mut default_triples = Vec::new();
     let mut named = NamedQuads::new(graphs, &dict);
     for (s, p, o, g) in &quads {
@@ -1309,8 +1318,10 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
             None => default_triples.push(t),
             Some(graph) => named.push(&dict, graph.clone(), t),
         }
+        ticker.tick(1);
     }
-    crate::build_trace::lap(crate::build_trace::Phase::Encode);
+    drop(ticker);
+    crate::build_trace::lap(Phase::Encode);
 
     // Derive the metadata blob (the Dataset Card) from the raw quads NOW, while
     // they are resident — then DROP them before the memory-heavy pyramid + index
@@ -1470,7 +1481,11 @@ where
     }
     // Pass 1: observe every term (the dictionary dedups; the string quads are
     // freed line by line and never collected). With the quad index, graph
-    // names are terms too.
+    // names are terms too. The stream sets each pass's progress total (the
+    // input bytes it will read).
+    use crate::build_progress::{self as progress, Stat, Unit};
+    use crate::build_trace::Phase;
+    progress::begin(Phase::ParseDictionary, None, Unit::None);
     let mut db = DictionaryBuilder::new();
     stream(&mut |(s, p, o, g)| {
         db.observe(&s, &p, &o);
@@ -1479,9 +1494,11 @@ where
         }
     })?;
     let dict = db.build();
-    crate::build_trace::lap(crate::build_trace::Phase::ParseDictionary);
+    crate::build_trace::lap(Phase::ParseDictionary);
+    progress::set_stat(Stat::Terms, dict.term_count().into());
 
     // Pass 2: encode each quad to an id-triple, bucketing named graphs.
+    progress::begin(Phase::ParseEncode, None, Unit::None);
     let mut default_triples: Vec<(u32, u32, u32)> = Vec::new();
     let mut named = NamedQuads::new(graphs, &dict);
     stream(&mut |(s, p, o, g)| {
@@ -1525,6 +1542,8 @@ fn finish_assembly<M: IntoMetadata>(
     pending: M,
     mut stats: BuildStats,
 ) -> (Vec<u8>, BuildStats) {
+    use crate::build_progress::{self as progress, Unit};
+    use crate::build_trace::Phase;
     let has_named = named.graph_count() > 0;
     let perms = opts.perms;
 
@@ -1532,6 +1551,7 @@ fn finish_assembly<M: IntoMetadata>(
     // the default id-triples are both still resident — both need the two together.
     // The pyramid sees the triples in input order (Louvain is order-sensitive).
     let (meta, levels) = if opts.with_pyramid {
+        progress::begin(Phase::Pyramid, None, Unit::None);
         crate::file::build_pyramid_meta_layout(
             &dict,
             &default_triples,
@@ -1573,6 +1593,9 @@ fn finish_assembly<M: IntoMetadata>(
             vec![quad_spo.as_slice()]
         }
     };
+    if with_text_index.is_some() {
+        progress::begin(Phase::TextIndex, None, Unit::None);
+    }
     let text_index = match &with_text_index {
         Some(scope) => crate::text_index::build_section(
             &dict,
@@ -1602,6 +1625,7 @@ fn finish_assembly<M: IntoMetadata>(
     let mut label_section = Vec::new();
     let mut schema_section = Vec::new();
     if opts.label_index || opts.schema {
+        progress::begin(Phase::LabelsSchema, None, Unit::None);
         crate::schema_section::sort_dedup_spo(&mut default_triples);
         if opts.label_index {
             let entries = crate::label_index::entries_from_sorted_triples(&dict, &default_triples);
@@ -1626,6 +1650,7 @@ fn finish_assembly<M: IntoMetadata>(
     // (the dictionary) right when the index sort needs the headroom. The output is
     // byte-for-byte identical to serializing the dictionary inline.
     let codec = crate::file::writer_codec();
+    progress::begin(Phase::DictionarySection, None, Unit::None);
     let dict_container = crate::file::encode_dict_container(&dict, codec);
     let term_count = dict.term_count() as u64;
     let has_quoted_triples = dict.has_quoted_triples();
@@ -1637,9 +1662,19 @@ fn finish_assembly<M: IntoMetadata>(
     // six concurrently; below the threshold the faster all-permutations-parallel
     // build is used (its 6x transient copy is negligible there). `build_seq` is
     // byte-identical to `build`.
+    // Every graph's triples, once per permutation (the quad index's quads
+    // once, as it finishes).
+    let (per_graph, quad_rows): (u64, u64) = match &named {
+        NamedQuads::PerGraph(m) => (m.values().map(|t| t.len() as u64).sum(), 0),
+        NamedQuads::Quad { quads, .. } => (0, quads.len() as u64),
+    };
+    let rows = (default_triples.len() as u64 + per_graph) * perms.len() as u64 + quad_rows;
+    progress::begin(Phase::IndexPermutations, Some(rows), Unit::Records);
     let build_index = |triples: Vec<(u32, u32, u32)>| -> crate::GraphIndex {
         let n = triples.len();
-        let b = GraphIndexBuilder::from_triples(triples).with_perms(perms);
+        let b = GraphIndexBuilder::from_triples(triples)
+            .with_perms(perms)
+            .with_progress();
         if n > LOWMEM_TRIPLE_THRESHOLD {
             b.build_seq()
         } else {
@@ -1657,13 +1692,13 @@ fn finish_assembly<M: IntoMetadata>(
                 .collect(),
             None,
         ),
-        NamedQuads::Quad { quads, .. } => (
-            Vec::new(),
-            Some(
-                crate::quad::encode_quad_index(quads, perms, codec)
-                    .expect("the quad index needs the 3- or 6-permutation set"),
-            ),
-        ),
+        NamedQuads::Quad { quads, .. } => {
+            let n = quads.len() as u64;
+            let q = crate::quad::encode_quad_index(quads, perms, codec)
+                .expect("the quad index needs the 3- or 6-permutation set");
+            progress::advance(n);
+            (Vec::new(), Some(q))
+        }
     };
     let named_quads = match &quad_index {
         Some(q) => q.quad_count,
@@ -1685,6 +1720,7 @@ fn finish_assembly<M: IntoMetadata>(
         quads: def.triple_count() as u64 + named_quads,
     };
     let blob = pending.into_metadata(counts);
+    progress::begin(Phase::Serialize, None, Unit::None);
     // Report what was WRITTEN, not what was read: the returned stats drive the
     // CLI's "wrote …: N quads" line, which described the file, not the input.
     stats.statements = counts.quads as usize;

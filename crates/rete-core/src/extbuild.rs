@@ -160,6 +160,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::build_progress::{self as progress, Stat, Ticker, Unit};
 use crate::build_trace::{self as trace, note_merge, Phase};
 use crate::dict::env_restart_interval;
 
@@ -338,6 +339,7 @@ where
         .or_else(|| output.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
     let tmp = TmpDir::create(&tmp_parent)?;
+    progress::set_spill_dir(Some(&tmp.dir));
     let budget = opts.memory_budget.max(64 << 20); // floor: 64 MiB
 
     // ---- Phase 1: chunk the input ------------------------------------------
@@ -405,12 +407,16 @@ where
             opts.type_override.as_deref(),
         )
     });
+    // The caller's stream knows what bounds the parse (input bytes, or a
+    // merge's statements) and sets the phase's total.
+    progress::begin(Phase::ParseChunk, None, Unit::None);
     stream(&mut |q: RawQuad| chunker.push(q))?;
     let chunks = chunker.finish()?;
     let statements: u64 = chunks
         .iter()
         .map(|c| c.triple_count + c.quad_count)
         .sum::<u64>();
+    progress::set_stat(Stat::Statements, statements);
     let has_named = chunks.iter().any(|c| c.quad_count > 0);
     eprintln!(
         "extbuild: {} chunk(s), {} statement(s) spilled",
@@ -423,10 +429,24 @@ where
 
     // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
     let promoted = if promote > 0 {
-        select_frequent_objects(&tmp, &chunks, promote)?
+        let carriers = chunks.iter().map(|c| {
+            let [shared, subj, obj, _] = c.section_terms;
+            shared as u64 + subj as u64 + obj as u64
+        });
+        progress::begin(Phase::FrequentObjects, Some(carriers.sum()), Unit::Terms);
+        let p = select_frequent_objects(&tmp, &chunks, promote)?;
+        trace::lap(Phase::FrequentObjects);
+        p
     } else {
         Vec::new()
     };
+    // Every chunk-local term the merge meets: a shared one in the subject and
+    // the object walks both.
+    let carriers = chunks.iter().map(|c| {
+        let [shared, subj, obj, pred] = c.section_terms;
+        2 * shared as u64 + subj as u64 + obj as u64 + pred as u64 + c.graph_terms as u64
+    });
+    progress::begin(Phase::Dictionary, Some(carriers.sum()), Unit::Terms);
     let schema_preds = crate::extbuild_sections::schema_predicates(opts.type_override.as_deref());
     let (merged, remaps) =
         merge_dictionaries_with(&tmp, &chunks, &schema_preds, budget, &promoted)?;
@@ -439,6 +459,7 @@ where
     }
     note_scratch(&tmp);
     trace::lap(Phase::Dictionary);
+    progress::set_stat(Stat::Terms, merged.term_count);
     eprintln!(
         "extbuild: merged dictionary — {} term(s)",
         merged.term_count
@@ -466,6 +487,7 @@ where
     if let Some(text) = text.as_mut() {
         text.begin_remap(tmp.path("global.tok"))?;
     }
+    progress::begin(Phase::Encode, Some(statements), Unit::Statements);
     // The remap fills the triple and the quad runs at once: half each.
     let (remap_run_len, remap_quad_run_len) = if has_named {
         (run_len / 2, quad_run_len / 2)
@@ -491,6 +513,7 @@ where
     let codec = crate::file::writer_codec();
     let text_section = match text {
         Some(t) => {
+            progress::begin(Phase::TextIndex, None, Unit::None);
             let s = t.finish(&|name| tmp.path(name), text_run_bytes, codec)?;
             note_scratch(&tmp);
             trace::lap(Phase::TextIndex);
@@ -503,6 +526,16 @@ where
     if let Some(x) = ext_schema.as_mut() {
         x.begin_spo()?;
     }
+    // Each permutation merges the spilled default triples once (fewer after
+    // the first, which drops duplicates): `done` steps to k·N as the k-th ends.
+    let spilled: u64 = chunks.iter().map(|c| c.triple_count).sum();
+    let perm_count = opts.perms.len() as u64;
+    progress::begin(
+        Phase::IndexPermutations,
+        Some(perm_count * spilled),
+        Unit::Records,
+    );
+    let mut perms_done = 0u64;
     let (perm_sections, default_count) = index_permutations(
         &tmp,
         tri_runs,
@@ -526,6 +559,8 @@ where
                 n
             );
             trace::lap(Phase::IndexPermutations);
+            perms_done += 1;
+            progress::set_done(perms_done * spilled);
         },
     )?;
     if let Some(x) = ext_schema.as_mut() {
@@ -537,6 +572,11 @@ where
     // contiguous run per graph, in graph-name order — exactly the order the
     // named-graphs section stores them in.
     // ---- Phase 4b (quad index): graph-leading orders over the quad runs -----
+    if has_named {
+        let quads: u64 = chunks.iter().map(|c| c.quad_count).sum();
+        let passes = if quad_layout { perm_count } else { 1 };
+        progress::begin(Phase::NamedGraphs, Some(passes * quads), Unit::Records);
+    }
     let (quad, named) = if !has_named {
         (None, None)
     } else if quad_layout {
@@ -599,6 +639,7 @@ where
         trace::lap(Phase::CardDerive);
     }
     note_scratch(&tmp);
+    progress::begin(Phase::Write, None, Unit::None);
     // Each section's spill file is deleted as soon as it is in the output, so
     // the two never stack — neither during the write nor in the label pass.
     write_final_file(
@@ -621,6 +662,9 @@ where
 
     // ---- Phase 6: LABEL_INDEX / SCHEMA, appended (outside the content hash) --
     // Both read the strings they name through the written file's dictionary.
+    if ext_labels.is_some() || ext_schema.is_some() {
+        progress::begin(Phase::LabelsSchema, None, Unit::None);
+    }
     let label_section = match ext_labels {
         Some(l) => {
             let s = l
@@ -662,6 +706,7 @@ where
             .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?;
         trace::lap(Phase::LabelsSchema);
     }
+    progress::set_spill_dir(None);
     Ok(stats)
 }
 
@@ -1004,6 +1049,7 @@ impl<'a> Chunker<'a> {
         })?;
         write_terms(&format!("c{ci}.pred"), preds, &|i| dict.predicate_term(i))?;
 
+        progress::set_stat(Stat::Chunks, ci as u64 + 1);
         eprintln!(
             "extbuild: chunk {ci} sealed — {} statement(s), {} term(s), {graphs_seen} graph(s)",
             triple_count + quad_count,
@@ -1188,6 +1234,8 @@ impl Ord for HeapEntry {
 struct KWayTerms {
     heap: BinaryHeap<HeapEntry>,
     streams: Vec<SpaceStream>,
+    /// Counts the carriers met, for `--progress`.
+    ticker: Ticker,
 }
 
 impl KWayTerms {
@@ -1203,7 +1251,11 @@ impl KWayTerms {
                 });
             }
         }
-        Ok(KWayTerms { heap, streams })
+        Ok(KWayTerms {
+            heap,
+            streams,
+            ticker: Ticker::new(),
+        })
     }
 
     /// Next distinct term with its (chunk, local_id) carriers.
@@ -1235,6 +1287,7 @@ impl KWayTerms {
                 });
             }
         }
+        self.ticker.tick(carriers.len() as u64);
         Ok(Some((term, carriers)))
     }
 }
@@ -1994,6 +2047,7 @@ fn remap_chunks(
 ) -> Result<(Vec<RunFile>, Vec<RunFile>), ExtBuildError> {
     let mut tri = RunSpiller::<IdTriple>::new(&tmp.dir, first.name(), run_len);
     let mut quads: Option<RunSpiller<IdQuad>> = None;
+    let mut ticker = Ticker::new();
     for (ci, chunk) in chunks.iter().enumerate() {
         let maps = remaps.load(ci)?;
         // The chunk's literal words, onto the same global subject ids.
@@ -2006,6 +2060,7 @@ fn remap_chunks(
             let gp = maps.pred[(p - 1) as usize];
             let go = maps.obj[(o - 1) as usize];
             tri.push(first.forward((gs, gp, go)))?;
+            ticker.tick(1);
             if let Some(x) = schema.as_deref_mut() {
                 x.tee(gs, gp, go)?;
             }
@@ -2028,6 +2083,7 @@ fn remap_chunks(
                     maps.pred[(p - 1) as usize],
                     maps.obj[(o - 1) as usize],
                 ))?;
+                ticker.tick(1);
             }
         } else {
             chunk.qtri.remove();
@@ -2117,9 +2173,15 @@ fn index_chain(
         let mut tiler = StreamingTiler::new(tmp, &format!("{prefix}{}", perm.name()), codec)?;
         note_scratch(tmp);
         let mut seen = 0u64;
+        // `--progress` counts the default graph's chain (a spilled named
+        // graph's runs inside its own phase are not this phase's records).
+        let mut ticker = prefix.is_empty().then(Ticker::new);
         let n = spill::merge_runs(std::mem::take(&mut runs), |t: IdTriple| {
             observe(perm, t)?;
             tiler.push(t)?;
+            if let Some(tk) = ticker.as_mut() {
+                tk.tick(1);
+            }
             if let (Some(sp), Some(np)) = (spill.as_mut(), next) {
                 sp.push(np.forward(perm.back(t)))?;
             }
@@ -2140,6 +2202,7 @@ fn index_chain(
         }
         count = Some(n);
         sections.push(section);
+        drop(ticker);
         done(perm, n);
     }
     for r in &runs {
@@ -2203,7 +2266,9 @@ fn build_named_graphs(
     let mut body_len: u64 = 0;
 
     let mut cur = GraphRun::new();
+    let mut ticker = Ticker::new();
     spill::merge_runs(quad_runs, |q: IdQuad| {
+        ticker.tick(1);
         if cur.graph != 0 && cur.graph != q.0 {
             // The name file is read in lockstep with the ordinals, so a
             // skipped or out-of-order ordinal would silently pair a graph's
@@ -2453,7 +2518,9 @@ fn build_quad_section(
         // G+SPO also yields the graph directory: (graph, deduplicated count).
         let mut cur: Option<(u32, u64)> = None;
         note_scratch(tmp);
+        let mut ticker = Ticker::new();
         spill::merge_runs(std::mem::take(&mut runs), |q: IdQuad| {
+            ticker.tick(1);
             tiler.push(q, &mut |t| pending.push(t));
             if pending.len() >= TILE_COMPRESS_BATCH {
                 drain_quad_tiles(&mut pending, codec, perm, &mut dir, &mut payload)?;

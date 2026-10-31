@@ -7,6 +7,21 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **`--progress` on `rete build`, `rete merge` and `rete recard`** (G25):
+  `auto` (the default: a live bar when stderr is a terminal, nothing
+  otherwise), `bar`, `plain` (a line every `--progress-interval` seconds,
+  default 30, for Docker and CI logs), `json` (one object per line, fields in
+  `docs/cli.md`) or `off`; `RETE_PROGRESS` when the flag is not given. It
+  shows step k of n, how far through it (input bytes for the parse, exact for
+  gzip too; terms, statements, records or starter queries after it), MB/s and
+  statements/s, the statements, terms and chunks so far, memory against the
+  cgroup limit, the spill, the time elapsed, an ETA and the finish time (UTC).
+  Everything goes to stderr, the file written is the same bytes, and the bar
+  keeps the build's own `extbuild:` lines above it (Unix). On a 6 M-statement
+  build every mode stays within 3% of a build without the feature, inside the
+  run-to-run spread. The build record's phases gain `frequent_objects`, the
+  memory-bounded build's `--frequent-objects` pass, which was charged to
+  `dictionary`.
 - **`--frequent-objects N` works with `--memory-budget-mb`** (G3), where it was
   refused. The chunks count their objects' statements, one more pass over the
   chunks' terms before the merge picks the same `N` object-only terms as the

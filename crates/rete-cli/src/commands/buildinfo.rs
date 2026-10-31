@@ -1099,7 +1099,13 @@ pub(crate) fn now_rfc3339() -> String {
 }
 
 /// Format an epoch second as RFC 3339 UTC. (Howard Hinnant's `civil_from_days`.)
-fn epoch_to_rfc3339(secs: i64) -> String {
+pub(crate) fn epoch_to_rfc3339(secs: i64) -> String {
+    let (y, mo, d, h, m, s) = civil_from_epoch(secs);
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+/// An epoch second as UTC `(year, month, day, hour, minute, second)`.
+pub(crate) fn civil_from_epoch(secs: i64) -> (i64, i64, i64, i64, i64, i64) {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (h, m, s) = (rem / 3600, (rem / 60) % 60, rem % 60);
@@ -1113,7 +1119,7 @@ fn epoch_to_rfc3339(secs: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let mo = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if mo <= 2 { y + 1 } else { y };
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+    (y, mo, d, h, m, s)
 }
 
 /// An owning in-memory [`RangeReader`] — `open_ranged_lazy` needs `'static`,
@@ -1462,7 +1468,11 @@ pub(crate) fn measure_query_costs(
 ) -> Vec<Measured> {
     queries
         .iter()
-        .map(|q| measure_starter(ImageReader(image.clone()), q))
+        .map(|q| {
+            let m = measure_starter(ImageReader(image.clone()), q);
+            rete_core::build_progress::advance(1);
+            m
+        })
         .collect()
 }
 

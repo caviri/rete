@@ -21,6 +21,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod bgp;
 #[doc(hidden)]
 pub mod block_cache;
+pub mod build_progress;
 pub mod build_trace;
 #[doc(hidden)]
 pub mod card_derive;
