@@ -644,10 +644,10 @@ so it follows the speed the parse actually reaches. It is marked an estimate (`~
 memory-bounded build and `merge`, until the first chunk is sealed — the seals
 stall the parse, and a rate measured before the first one has none of them —
 and again when a step without a count runs past its estimate. On that
-sample (builds of 20–27 s) the first ETA came in 33% short in RAM, where the
-card took longer than the model gives it, and the first firm one 15% short
-memory-bounded, where three chunk seals are a large part of the parse. The
-finish time is in UTC.
+sample (builds of 20–27 s, two runs each) the first ETA came in 33–43% short
+in RAM, where the card took longer than the model gives it, and the first firm
+one 15–17% short memory-bounded, where three chunk seals are a large part of
+the parse. The finish time is in UTC.
 
 **JSON.** One object per line, `{` first; the other stderr lines are the
 build's own messages. The fields are stable:
