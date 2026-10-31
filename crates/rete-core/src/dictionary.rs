@@ -44,6 +44,12 @@ pub struct DictionaryBuilder {
     /// Object occurrence counts, kept **instead of** `objects` while promotion
     /// is on (so a default build pays nothing for it).
     object_counts: HashMap<String, u64>,
+    /// Count objects without promoting any ([`Self::with_object_counts`]).
+    count_objects: bool,
+    /// Entries in the three term sets — a term once per set it is in — and
+    /// their string bytes ([`Self::footprint`]).
+    entries: u64,
+    entry_bytes: u64,
 }
 
 impl DictionaryBuilder {
@@ -76,6 +82,39 @@ impl DictionaryBuilder {
         self
     }
 
+    /// Count every object's occurrences, as promotion does, but promote
+    /// nothing: [`Self::build_counted`] hands the counts of the object-only
+    /// terms back instead. The memory-bounded build's chunks use it, because
+    /// a term's frequency is only known once every chunk's counts are summed
+    /// (`crate::extbuild`).
+    pub(crate) fn with_object_counts(mut self) -> Self {
+        debug_assert!(
+            self.objects.is_empty() && self.object_counts.is_empty(),
+            "with_object_counts after observe"
+        );
+        self.count_objects = true;
+        self
+    }
+
+    /// Whether objects are kept with their counts rather than as a set.
+    fn counting(&self) -> bool {
+        self.promote > 0 || self.count_objects
+    }
+
+    /// `(entries, bytes)`: the entries of the three term sets observed so far
+    /// — a term once for every set it is in (subject, object, predicate) — and
+    /// the bytes of their strings. What the memory-bounded build charges a
+    /// chunk's dictionary against its budget, since [`Self::build`] costs a
+    /// multiple of each entry.
+    pub(crate) fn footprint(&self) -> (u64, u64) {
+        (self.entries, self.entry_bytes)
+    }
+
+    fn note_entry(&mut self, term: &str) {
+        self.entries += 1;
+        self.entry_bytes += term.len() as u64;
+    }
+
     /// Record one triple's terms (IDs are assigned later, in [`Self::build`]).
     /// We probe with the borrowed `&str` first and only allocate a `String` for
     /// a genuinely new term — so a graph of N triples does far fewer than 3N
@@ -83,18 +122,22 @@ impl DictionaryBuilder {
     pub fn observe(&mut self, subject: &str, predicate: &str, object: &str) {
         if !self.subjects.contains(subject) {
             self.subjects.insert(subject.to_string());
+            self.note_entry(subject);
         }
-        if self.promote > 0 {
+        if self.counting() {
             if let Some(n) = self.object_counts.get_mut(object) {
                 *n += 1;
             } else {
                 self.object_counts.insert(object.to_string(), 1);
+                self.note_entry(object);
             }
         } else if !self.objects.contains(object) {
             self.objects.insert(object.to_string());
+            self.note_entry(object);
         }
         if !self.predicates.contains(predicate) {
             self.predicates.insert(predicate.to_string());
+            self.note_entry(predicate);
         }
     }
 
@@ -105,10 +148,23 @@ impl DictionaryBuilder {
     pub fn observe_graph(&mut self, graph: &str) {
         if !self.subjects.contains(graph) {
             self.subjects.insert(graph.to_string());
+            self.note_entry(graph);
         }
     }
 
     pub fn build(self) -> Dictionary {
+        self.build_inner().0
+    }
+
+    /// [`Self::build`] for a builder made [`Self::with_object_counts`]: also
+    /// returns, for every object-only term in the order of the object-only
+    /// section (local ids `1..`), the number of statements that carry it.
+    /// Empty when objects were not counted.
+    pub(crate) fn build_counted(self) -> (Dictionary, Vec<u64>) {
+        self.build_inner()
+    }
+
+    fn build_inner(self) -> (Dictionary, Vec<u64>) {
         // Sort each role's terms once (ascending) — identical output order to
         // the old BTreeSet iteration, but without the per-insert tree cost.
         let mut subjects: Vec<String> = self.subjects.into_iter().collect();
@@ -121,7 +177,8 @@ impl DictionaryBuilder {
 
         // The object terms: a plain set, or (promotion on) the count map, used
         // as-is rather than converted, so no second table over every object.
-        let object_set = if self.promote > 0 {
+        let count_objects = self.count_objects;
+        let object_set = if self.promote > 0 || count_objects {
             ObjectTerms::Counted(self.object_counts)
         } else {
             ObjectTerms::Plain(self.objects)
@@ -129,7 +186,7 @@ impl DictionaryBuilder {
         // Frequent-object promotion: the top `promote` object-only terms by
         // statement count (ties by term order) join the shared section.
         let mut promoted: Vec<String> = Vec::new();
-        if let ObjectTerms::Counted(counts) = &object_set {
+        if let (true, ObjectTerms::Counted(counts)) = (self.promote > 0, &object_set) {
             let mut top: Vec<(&String, u64)> = counts
                 .iter()
                 .filter(|(t, _)| !subject_set.contains(t.as_str()))
@@ -166,29 +223,59 @@ impl DictionaryBuilder {
         for p in promoted_iter {
             shared_b.push(p.clone());
         }
-        // Objects ascending: object-only (shared terms were emitted above).
-        let mut objects: Vec<String> = object_set.into_terms();
-        sort_terms(&mut objects);
-        for o in &objects {
+        // Objects ascending: object-only (shared terms were emitted above),
+        // with their counts when the caller asked for them.
+        // RDF-star: a quoted triple only ever appears in subject/object position,
+        // so a single prefix scan of those term sets detects the whole file.
+        let mut has_quoted_triples = subjects.iter().any(|s| s.starts_with("<<"));
+        let mut object_only_counts: Vec<u64> = Vec::new();
+        let mut take_object = |o: &String, n: u64| {
+            has_quoted_triples |= o.starts_with("<<");
             if !subject_set.contains(o.as_str()) && !promoted_set.contains(o.as_str()) {
                 obj_b.push(o.clone());
+                if count_objects {
+                    object_only_counts.push(n);
+                }
+            }
+        };
+        match object_set {
+            ObjectTerms::Counted(counts) if count_objects => {
+                let mut objects: Vec<(String, u64)> = counts.into_iter().collect();
+                sort_counted_terms(&mut objects);
+                for (o, n) in &objects {
+                    take_object(o, *n);
+                }
+            }
+            object_set => {
+                let mut objects: Vec<String> = object_set.into_terms();
+                sort_terms(&mut objects);
+                for o in &objects {
+                    take_object(o, 0);
+                }
             }
         }
         for p in &predicates {
             pred_b.push(p.clone());
         }
 
-        // RDF-star: a quoted triple only ever appears in subject/object position,
-        // so a single prefix scan of those term sets detects the whole file.
-        let has_quoted_triples = subjects.iter().any(|s| s.starts_with("<<"))
-            || objects.iter().any(|o| o.starts_with("<<"));
-
         let shared = shared_b.build();
         let mut dict =
             Dictionary::from_sections([shared, subj_b.build(), obj_b.build(), pred_b.build()]);
         dict.has_quoted_triples = has_quoted_triples;
-        dict
+        (dict, object_only_counts)
     }
+}
+
+/// Sort `(term, count)` pairs by term — the terms are distinct, so the
+/// count never decides. In parallel when the `parallel` feature is on.
+fn sort_counted_terms(v: &mut [(String, u64)]) {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::slice::ParallelSliceMut;
+        v.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    }
+    #[cfg(not(feature = "parallel"))]
+    v.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 }
 
 /// The object terms a [`DictionaryBuilder`] observed: a set, or the
