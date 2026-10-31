@@ -109,8 +109,8 @@ a term-dense stretch, two new terms per statement like the OpenCitations Meta
 20 M such statements, 1,000 MiB now peaks at 857 MiB instead of 1,348 MiB, and
 3,000 MiB at 2,544 MiB in a 4 GiB container, which killed it before; the file
 is the same bytes at either budget, and an ordinary graph is cut exactly as
-before. Each chunk's
-dictionary and statements go to `--tmp-dir` (default: next to the output). A
+before. Each chunk's dictionary and statements go to `--tmp-dir` (default: next
+to the output). A
 k-way merge then builds the one global dictionary, the chunks are rewritten in
 global ids one at a time, and external sorts build every index. At any moment
 it holds one chunk being sealed, the merge's buffers, or one sort run, and
