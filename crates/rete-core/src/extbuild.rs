@@ -18,7 +18,9 @@
 //! input ─┬─ chunk 0: dict₀ → {shared,subj,obj,pred}₀ term files + triples₀ (local ids,
 //!        │                    one sorted run)
 //!        ├─ chunk 1: …          (+ graph₀ name file + quads₀ when named graphs exist)
-//!        └─ chunk K: …
+//!        └─ chunk K: …          (+ c<i>.ocnt object counts with --frequent-objects)
+//! top-N:  (`--frequent-objects N` only) k-way walk of the chunks' node terms
+//!           → the N most frequent object-only terms (see "Frequent objects")
 //! merge:  k-way term merge over all chunks
 //!           → global front-coded dict sections (streamed to disk)
 //!           → per-chunk id remap tables (local id → global id), appended to
@@ -131,6 +133,20 @@
 //! container's seal) and streamed after the index. Peak RAM: one sort run plus
 //! one tile batch.
 //!
+//!
+//! ## Frequent objects (`--frequent-objects N`, G3)
+//!
+//! The in-RAM builder moves the `N` object-only terms carried by the most
+//! statements (ties by term order) into the shared section. A chunk cannot
+//! decide that: a term's frequency, and whether it is a subject somewhere, are
+//! only known over the whole input. So with `N > 0` each chunk counts its
+//! objects' statements and spills the counts of its object-only terms beside
+//! its term file (`c<i>.ocnt`); before the merge, one more k-way walk over
+//! the chunks' term files sums them, drops every term some chunk has as a
+//! subject, and keeps the best `N` in a bounded heap. The merge then files
+//! those terms in the shared section, in term order, as the in-RAM builder
+//! does — so the file is the same bytes. The walk costs one more read of the
+//! node term files and holds `N` terms.
 //!
 //! Limits (clear errors, not silent degradation): no community pyramid.
 //! SPARQL/joins/verify are unaffected (they never require the pyramid). The
@@ -365,7 +381,14 @@ where
         .text_index
         .clone()
         .map(crate::text_index_spill::TextSpill::new);
-    let mut chunker = Chunker::new(&tmp, chunk_budget, opts.graphs).with_working_cap(working_cap);
+    // `--frequent-objects N` (G3): the chunks count their objects, and the
+    // N most frequent object-only terms of the whole input are picked before
+    // the merge, which files them in the shared section as the in-RAM
+    // builder does.
+    let promote = crate::write_opts::frequent_objects();
+    let mut chunker = Chunker::new(&tmp, chunk_budget, opts.graphs)
+        .with_working_cap(working_cap)
+        .with_object_counts(promote > 0);
     chunker.text = text.as_mut();
     // LABEL_INDEX / SCHEMA (kinds 8, 9): the passes live in extbuild_sections;
     // each phase below calls one hook. Both work on global ids from the remap
@@ -399,8 +422,15 @@ where
     trace::lap(Phase::ParseChunk);
 
     // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
+    let promoted = if promote > 0 {
+        select_frequent_objects(&tmp, &chunks, promote)?
+    } else {
+        Vec::new()
+    };
     let schema_preds = crate::extbuild_sections::schema_predicates(opts.type_override.as_deref());
-    let (merged, remaps) = merge_dictionaries_with(&tmp, &chunks, &schema_preds, budget)?;
+    let (merged, remaps) =
+        merge_dictionaries_with(&tmp, &chunks, &schema_preds, budget, &promoted)?;
+    drop(promoted);
     if let Some(x) = ext_schema.as_mut() {
         x.set_merge_facts(&merged.schema_facts);
     }
@@ -729,6 +759,10 @@ struct Chunker<'a> {
     /// Chunks sealed by [`Chunker::working_cap`] before their quads reached
     /// `chunk_budget`.
     term_sealed: u64,
+    /// `--frequent-objects` (G3): count every object's statements and spill
+    /// the counts of the chunk's object-only terms (`c<i>.ocnt`), for
+    /// [`select_frequent_objects`].
+    count_objects: bool,
     quads: Vec<(String, String, String)>,
     /// named-graph statements: `(chunk-local graph id, s, p, o)`. The graph is
     /// interned rather than cloned per quad — fedlex averages ~113 quads per
@@ -753,8 +787,9 @@ impl<'a> Chunker<'a> {
             chunk_budget,
             acc_bytes: 0,
             working_cap: u64::MAX,
-            db: DictionaryBuilder::default(),
+            db: Self::new_builder(false),
             term_sealed: 0,
+            count_objects: false,
             quads: Vec::new(),
             named: Vec::new(),
             graph_ids: std::collections::BTreeMap::new(),
@@ -772,19 +807,34 @@ impl<'a> Chunker<'a> {
         self
     }
 
+    /// Count the objects' statements for `--frequent-objects` (G3).
+    fn with_object_counts(mut self, on: bool) -> Self {
+        self.count_objects = on;
+        self.db = Self::new_builder(on);
+        self
+    }
+
     /// A chunk's dictionary is built from role-classified terms only:
-    /// frequent-object promotion happens over the whole input, after the
-    /// chunks are merged.
-    fn new_builder() -> DictionaryBuilder {
-        DictionaryBuilder::default()
+    /// frequent-object promotion is decided over the whole input, once every
+    /// chunk's counts are in ([`select_frequent_objects`]); a chunk only
+    /// counts.
+    fn new_builder(count_objects: bool) -> DictionaryBuilder {
+        let b = DictionaryBuilder::default();
+        if count_objects {
+            b.with_object_counts()
+        } else {
+            b
+        }
     }
 
     /// What the chunk's dictionary costs at its largest, while `build` turns
     /// the observed sets into sections: about twice the term bytes plus
-    /// [`DICT_ENTRY_OVERHEAD`] per entry.
+    /// [`DICT_ENTRY_OVERHEAD`] per entry (16 B more for a counted entry's
+    /// count, in the map and in the sorted pairs).
     fn dict_charge(&self) -> u64 {
         let (entries, bytes) = self.db.footprint();
-        2 * bytes + DICT_ENTRY_OVERHEAD * entries
+        let per_entry = DICT_ENTRY_OVERHEAD + if self.count_objects { 16 } else { 0 };
+        2 * bytes + per_entry * entries
     }
 
     fn push(&mut self, q: RawQuad) -> Result<(), ExtBuildError> {
@@ -840,8 +890,25 @@ impl<'a> Chunker<'a> {
         self.acc_bytes = 0;
 
         // The terms were observed as the quads were pushed (see `push`).
-        let db = std::mem::replace(&mut self.db, Self::new_builder());
-        let dict = db.build();
+        let db = std::mem::replace(&mut self.db, Self::new_builder(self.count_objects));
+        let (dict, object_counts) = db.build_counted();
+        // `--frequent-objects`: the statements carrying each object-only term,
+        // in the order of `c<i>.obj`.
+        if self.count_objects {
+            if object_counts.len() != dict.object_only_count() as usize {
+                return Err(ExtBuildError::Internal(
+                    "object counts do not match the object-only section",
+                ));
+            }
+            let mut w = ZWriter::create(&self.tmp.path(&format!("c{ci}.ocnt")))?;
+            let mut rec = Vec::with_capacity(10);
+            for n in object_counts {
+                rec.clear();
+                write_uvarint(&mut rec, n);
+                w.write_all(&rec)?;
+            }
+            w.finish()?;
+        }
         if dict.has_quoted_triples() {
             self.has_quoted = true;
         }
@@ -1177,7 +1244,149 @@ fn merge_dictionaries(
     tmp: &TmpDir,
     chunks: &[ChunkInfo],
 ) -> Result<(MergedDict, RemapStore), ExtBuildError> {
-    merge_dictionaries_with(tmp, chunks, &[], 64 << 20)
+    merge_dictionaries_with(tmp, chunks, &[], 64 << 20, &[])
+}
+
+/// A candidate of [`select_frequent_objects`], ordered **worst first**: fewer
+/// statements, then the later term — so a max-heap of them keeps the one to
+/// evict on top.
+struct Frequent {
+    count: u64,
+    term: String,
+}
+
+impl Frequent {
+    /// Ahead of `other` in the in-RAM builder's order: more statements, ties
+    /// by term order (`DictionaryBuilder::build`).
+    fn beats(&self, count: u64, term: &str) -> bool {
+        count > self.count || (count == self.count && term < self.term.as_str())
+    }
+}
+
+impl PartialEq for Frequent {
+    fn eq(&self, other: &Self) -> bool {
+        self.count == other.count && self.term == other.term
+    }
+}
+impl Eq for Frequent {}
+impl PartialOrd for Frequent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Frequent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .count
+            .cmp(&self.count)
+            .then_with(|| self.term.cmp(&other.term))
+    }
+}
+
+/// `--frequent-objects n` in the memory-bounded build (G3): the `n` object-only
+/// terms of the whole input carried by the most statements, ties by term
+/// order — the terms [`DictionaryBuilder::build`] promotes into the shared
+/// section, so the merge can file them there and the file is the in-RAM
+/// build's. Returned in term order.
+///
+/// A term's count is the sum of its chunks' counts (`c<i>.ocnt`, one per
+/// chunk-local object-only term): every statement was observed in exactly one
+/// chunk, duplicates included, as the in-RAM builder observes them. A term
+/// object-only in its chunks may still be a subject in another, so the walk
+/// over the object-only terms runs beside one over every chunk's subject
+/// space, and a term found there is no candidate. One more read of the
+/// chunks' node term files, one decoded block per file; `n` terms resident.
+fn select_frequent_objects(
+    tmp: &TmpDir,
+    chunks: &[ChunkInfo],
+    n: usize,
+) -> Result<Vec<String>, ExtBuildError> {
+    let empty = tmp.path("ocnt.empty");
+    File::create(&empty)?;
+    let mut subj_streams = Vec::with_capacity(chunks.len());
+    let mut obj_streams = Vec::with_capacity(chunks.len());
+    let mut counts = Vec::with_capacity(chunks.len());
+    for (ci, c) in chunks.iter().enumerate() {
+        let open = |suffix: &str| TermFileReader::open(&tmp.path(&format!("c{ci}.{suffix}")));
+        subj_streams.push(SpaceStream::new(
+            open("shared")?,
+            open("subj")?,
+            c.section_terms[0],
+        )?);
+        obj_streams.push(SpaceStream::new(
+            open("obj")?,
+            TermFileReader::open(&empty)?,
+            c.section_terms[2],
+        )?);
+        let path = tmp.path(&format!("c{ci}.ocnt"));
+        counts.push(if c.section_terms[2] > 0 {
+            Some(ZReader::open_consuming(&path)?)
+        } else {
+            let _ = std::fs::remove_file(&path);
+            None
+        });
+    }
+    // The next local id each chunk's object-only stream must yield: the
+    // counts are matched to the terms by position.
+    let mut next_local = vec![1u32; chunks.len()];
+    let mut subjects = KWayTerms::new(subj_streams)?;
+    let mut objects = KWayTerms::new(obj_streams)?;
+    let mut subject = subjects.next()?;
+    let mut top: BinaryHeap<Frequent> = BinaryHeap::with_capacity(n + 1);
+    let mut candidates = 0u64;
+    while let Some((term, carriers)) = objects.next()? {
+        // Every carrier's count, in order, whether or not the term qualifies:
+        // the count files are read in step with the term files.
+        let mut count = 0u64;
+        for (ci, local) in carriers {
+            let r = counts[ci]
+                .as_mut()
+                .ok_or(ExtBuildError::Internal("object counts missing for a chunk"))?;
+            let c = spill::read_stream_varint(r)?.ok_or(ExtBuildError::Internal(
+                "object counts end before the object-only terms",
+            ))?;
+            if local != next_local[ci] {
+                return Err(ExtBuildError::Internal(
+                    "object-only terms out of step with their counts",
+                ));
+            }
+            next_local[ci] += 1;
+            count += c;
+        }
+        while subject
+            .as_ref()
+            .is_some_and(|(s, _)| s.as_str() < term.as_str())
+        {
+            subject = subjects.next()?;
+        }
+        if subject.as_ref().is_some_and(|(s, _)| *s == term) {
+            continue; // a subject somewhere: shared, not object-only
+        }
+        candidates += 1;
+        if top.len() < n {
+            top.push(Frequent { count, term });
+        } else if top.peek().is_some_and(|worst| worst.beats(count, &term)) {
+            top.pop();
+            top.push(Frequent { count, term });
+        }
+    }
+    for r in counts.iter_mut().flatten() {
+        if spill::read_stream_varint(r)?.is_some() {
+            return Err(ExtBuildError::Internal(
+                "object counts outlast the object-only terms",
+            ));
+        }
+    }
+    let _ = std::fs::remove_file(&empty);
+    let mut promoted: Vec<Frequent> = top.into_vec();
+    promoted.sort_unstable_by(|a, b| a.term.cmp(&b.term));
+    let least = promoted.iter().map(|f| f.count).min().unwrap_or(0);
+    eprintln!(
+        "extbuild: frequent objects — {} of {candidates} object-only term(s) promoted to the \
+         shared section (each in at least {least} statement(s))",
+        promoted.len()
+    );
+    Ok(promoted.into_iter().map(|f| f.term).collect())
 }
 
 /// [`merge_dictionaries`], also recording what the SCHEMA pass needs: the
@@ -1190,13 +1399,20 @@ fn merge_dictionaries(
 /// [`crate::extbuild_remap`]): within one remap segment of one chunk the
 /// merge meets the local ids in increasing order, so each table is a file of
 /// sequential appends.
+///
+/// `promoted` ([`select_frequent_objects`], in term order) are object-only
+/// terms filed in the shared section, where their order puts them, as the
+/// in-RAM builder files the frequent objects it promotes.
 fn merge_dictionaries_with(
     tmp: &TmpDir,
     chunks: &[ChunkInfo],
     schema_preds: &[String],
     budget: u64,
+    promoted: &[String],
 ) -> Result<(MergedDict, RemapStore), ExtBuildError> {
     let k = chunks.len();
+    // The next promoted term the object-only merge will meet.
+    let mut next_promoted = promoted.iter().peekable();
     let mut schema_facts = crate::extbuild_sections::MergeFacts {
         pred_ids: vec![None; schema_preds.len()],
         ..Default::default()
@@ -1307,7 +1523,14 @@ fn merge_dictionaries_with(
             }
             Class::ObjOnly => {
                 let (term, carriers) = o_item.take().unwrap();
-                let id = role_only_id(ranks[2])?;
+                // A promoted frequent object (G3) takes the next shared id, in
+                // term order among the shared terms, and never a subject's.
+                let promote = next_promoted.next_if(|p| **p == term).is_some();
+                let id = if promote {
+                    shared_id(ranks[0])?
+                } else {
+                    role_only_id(ranks[2])?
+                };
                 for (ci, lid) in carriers {
                     match lid.checked_sub(shared_of(ci)) {
                         Some(rel) if rel > 0 => remaps.push(ci, Seg::ObjOnly, rel, id)?,
@@ -1319,14 +1542,27 @@ fn merge_dictionaries_with(
                     }
                 }
                 has_quoted |= term.starts_with("<<");
-                if term.starts_with('"') {
-                    schema_facts.objonly_literals += 1;
+                if promote {
+                    if term.starts_with('"') {
+                        schema_facts.shared_literals += 1;
+                    }
+                    shared_sec.push(&term)?;
+                    ranks[0] += 1;
+                } else {
+                    if term.starts_with('"') {
+                        schema_facts.objonly_literals += 1;
+                    }
+                    obj_sec.push(&term)?;
+                    ranks[2] += 1;
                 }
-                obj_sec.push(&term)?;
-                ranks[2] += 1;
                 o_item = objects.next()?;
             }
         }
+    }
+    if next_promoted.next().is_some() {
+        return Err(ExtBuildError::Internal(
+            "a promoted frequent object was not met as an object-only term",
+        ));
     }
     // The node merge is over: release its readers and write buffers.
     drop((subjects, objects));
@@ -4341,6 +4577,106 @@ mod tests {
         assert_eq!(bytes, reference, "multi-chunk, multi-run quad build");
         drop(tmp);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Frequent object-only terms with ties at every count, named graphs whose
+    /// names are also objects, and the most frequent object of all, which is
+    /// a subject in one statement at the very end.
+    fn frequent_object_quads() -> Vec<RawQuad> {
+        let rdf_type = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut q = test_quads(1_500);
+        for i in 0..3_000usize {
+            let s = format!("<http://ex/item/{i:05}>");
+            q.push((
+                s.clone(),
+                rdf_type.into(),
+                format!("<http://vocab/C{}>", i % 9),
+                None,
+            ));
+            // forty statuses of 75 statements each: the cut falls in a tie
+            q.push((
+                s.clone(),
+                "<http://ex/status>".into(),
+                format!("\"st{}\"", i % 40),
+                None,
+            ));
+            q.push((
+                s.clone(),
+                "<http://ex/doi>".into(),
+                format!("<https://doi.org/10.1/x{i}>"),
+                None,
+            ));
+            // a graph name is a term of the quad index (a subject), not
+            // otherwise: there it is an object-only term like any other
+            let g = format!("<http://ex/g{}>", i % 3);
+            q.push((s, "<http://ex/inGraph>".into(), g.clone(), Some(g)));
+        }
+        for i in 0..4_000usize {
+            q.push((
+                format!("<http://ex/item/{:05}>", i % 3_000),
+                "<http://ex/about>".into(),
+                "<http://ex/hub>".into(),
+                None,
+            ));
+        }
+        q.push((
+            "<http://ex/hub>".into(),
+            "<http://ex/label>".into(),
+            "\"hub\"".into(),
+            None,
+        ));
+        q
+    }
+
+    /// G3: `--frequent-objects N` in the memory-bounded build. The chunks
+    /// count, the walk before the merge picks the same `N` terms as the in-RAM
+    /// builder — the same counts, duplicates included, the same tie-break —
+    /// and the merge files them where it does: the file is the in-RAM
+    /// build's, byte for byte, in one chunk or many, in either named-graph
+    /// layout, for a cut inside a tie and for `N` past every candidate.
+    #[test]
+    fn frequent_objects_external_build_is_byte_identical() {
+        use crate::write_opts::TEST_FREQUENT_OBJECTS;
+        let quads = frequent_object_quads();
+        let plain = build_reference(quads.clone());
+        for n in [1usize, 9, 64, 100_000] {
+            TEST_FREQUENT_OBJECTS.with(|c| c.set(Some(n)));
+            let reference = build_reference(quads.clone());
+            let (one_chunk, _) = build_ext(quads.clone(), 0);
+            TEST_SPLIT.with(|c| c.set(Some((16 << 10, 1 << 16))));
+            let collector = crate::build_trace::Collector::start();
+            let (chunked, _) = build_ext(quads.clone(), 0);
+            let chunks = collector.snapshot().counter("chunks").unwrap();
+            drop(collector);
+            let (quad_chunked, _) = build_ext_quad(quads.clone(), crate::index::PermSet::ALL);
+            TEST_SPLIT.with(|c| c.set(None));
+            let (quad_one, _) = build_ext_quad(quads.clone(), crate::index::PermSet::ALL);
+            let quad_reference = build_reference_quad(quads.clone(), crate::index::PermSet::ALL);
+            TEST_FREQUENT_OBJECTS.with(|c| c.set(None));
+
+            assert!(chunks >= 8, "{chunks} chunk(s)");
+            assert_ne!(reference, plain, "N = {n}: nothing was promoted");
+            assert_eq!(one_chunk, reference, "N = {n}: one chunk");
+            assert_eq!(chunked, reference, "N = {n}: {chunks} chunks");
+            assert_eq!(quad_one, quad_reference, "N = {n}: quad index, one chunk");
+            assert_eq!(quad_chunked, quad_reference, "N = {n}: quad index, chunked");
+
+            let rete = crate::Rete::open(&chunked).unwrap();
+            let dict = rete.dictionary();
+            let shared = |t: &str| dict.object_id(t).unwrap() <= dict.shared_count();
+            // The hub is a subject once: shared by role, never a candidate.
+            assert!(shared("<http://ex/hub>"));
+            if n >= 9 {
+                assert!(
+                    shared("<http://ex/g0>"),
+                    "N = {n}: the busiest object-only term"
+                );
+            }
+            if n == 64 {
+                // three graphs, nine classes, forty statuses, then a tie
+                assert!(shared("\"st39\"") && shared("<http://vocab/C8>"));
+            }
+        }
     }
 
     /// The quad layout needs the 3- or 6-permutation set (see `quad::check_perms`).

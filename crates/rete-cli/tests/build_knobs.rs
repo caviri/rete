@@ -1,8 +1,8 @@
 //! `rete build --tile-kib / --dict-chunk-kib / --zstd-level / --frequent-objects`
 //! and the zstd frame shape: the knobs change the bytes and never the rows, the
 //! flag beats its environment variable, the external build writes the same
-//! bytes as the in-memory one under every knob it accepts, refuses the one it
-//! cannot honour, and a card build records the settings in its build info.
+//! bytes as the in-memory one under every knob, `--frequent-objects` included,
+//! and a card build records the settings in its build info.
 
 mod common;
 
@@ -173,7 +173,7 @@ fn sized_frames_are_the_default() {
 /// The external build writes the in-memory build's bytes under the knobs it
 /// takes, and refuses frequent-object promotion instead of ignoring it.
 #[test]
-fn external_build_matches_and_refuses_promotion() {
+fn external_build_matches_under_every_knob() {
     let c = case();
     let knobs = [
         "--tile-kib",
@@ -193,16 +193,37 @@ fn external_build_matches_and_refuses_promotion() {
     build(&c.src, &ext, &b, &[]);
     assert_eq!(std::fs::read(&ext).unwrap(), std::fs::read(&mem).unwrap());
 
-    let out = rete()
-        .arg("build")
-        .arg(&c.src)
-        .arg("-o")
-        .arg(c.dir.join("refused.rete"))
-        .args(["--memory-budget-mb", "64", "--frequent-objects", "8"])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("does not support --frequent-objects"));
+    // `--frequent-objects` too (G3, refused up to 0.4.1): the memory-bounded
+    // build promotes the same terms, and says how many it did.
+    for n in ["8", "64"] {
+        let mem = c.dir.join(format!("mem-fo{n}.rete"));
+        let ext = c.dir.join(format!("ext-fo{n}.rete"));
+        build(
+            &c.src,
+            &mem,
+            &["--no-pyramid", "--frequent-objects", n],
+            &[],
+        );
+        let run = rete()
+            .arg("build")
+            .arg(&c.src)
+            .arg("-o")
+            .arg(&ext)
+            .args(["--memory-budget-mb", "64", "--frequent-objects", n])
+            .assert()
+            .success();
+        let log = String::from_utf8_lossy(&run.get_output().stderr).into_owned();
+        assert!(log.contains("extbuild: frequent objects"), "{log}");
+        assert_eq!(
+            std::fs::read(&ext).unwrap(),
+            std::fs::read(&mem).unwrap(),
+            "--frequent-objects {n}: memory-bounded and in-RAM builds differ"
+        );
+        assert_ne!(
+            std::fs::read(&ext).unwrap(),
+            std::fs::read(&c.dir.join("mem.rete")).unwrap()
+        );
+    }
 }
 
 #[test]

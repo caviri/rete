@@ -83,13 +83,13 @@ printf '<http://ex/Z> <http://ex/p> <http://ex/W> .\n' > "$T/extra.nt"
 check "build merge" "triples"           -- "$B" build "$T/g.nt" "$T/extra.nt" -o "$T/merge.rete"
 check "build stdin" "triples"           -- bash -c "cat '$T/g.nt' | $B build - --format nt -o '$T/stdin.rete'"
 check "merge has both" "Z"              -- "$B" query "$T/merge.rete" --subject "<http://ex/Z>"
-# Writer knobs change the bytes, never the answers; promotion is in-memory only.
+# Writer knobs change the bytes, never the answers; the memory-bounded build
+# writes the in-memory build's bytes under every one, promotion included.
 check "build knobs" "5 triples"         -- "$B" build "$T/g.nt" -o "$T/knobs.rete" --tile-kib 16 \
   --dict-chunk-kib 8 --zstd-level 19 --frequent-objects 4
 check "knobs verify" "OK|matches"       -- "$B" verify "$T/knobs.rete"
 check "knobs answer" "ex/Bob"           -- "$B" query "$T/knobs.rete" --object "<http://ex/Person>"
-check_code "knobs ext refused" 1 "does not support --frequent-objects" -- "$B" build "$T/g.nt" \
-  -o "$T/knobs-ext.rete" --memory-budget-mb 64 --frequent-objects 4
+check "knobs ext = ram" "^same$"        -- bash -c "$B build '$T/g.nt' -o '$T/knobs-ram.rete' --no-pyramid --frequent-objects 4 >/dev/null 2>&1; $B build '$T/g.nt' -o '$T/knobs-ext.rete' --memory-budget-mb 64 --frequent-objects 4 >/dev/null 2>&1; cmp -s '$T/knobs-ram.rete' '$T/knobs-ext.rete' && echo same || echo differ"
 check_code "tile-kib range" 2 "4..=4096|4096"  -- "$B" build "$T/g.nt" -o "$T/x.rete" --tile-kib 2
 
 echo "== full-text index =="

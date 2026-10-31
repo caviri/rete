@@ -1593,11 +1593,6 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 created,
             };
             if let Some(mb) = memory_budget_mb {
-                if rete_core::write_opts::frequent_objects() > 0 {
-                    anyhow::bail!(
-                        "--memory-budget-mb does not support --frequent-objects (the external                          build merges chunk-local dictionaries by role, before any term's                          frequency over the whole input is known); build with the standard                          path, or drop --frequent-objects"
-                    );
-                }
                 commands::build::build_external_cmd(
                     &inputs,
                     &output,

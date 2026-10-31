@@ -257,7 +257,7 @@ fn writer_knobs_change_bytes_not_answers() {
                 dict_chunk_budget: 4096,
                 zstd_level: 15,
                 frame: FrameShape::Sized,
-                frequent_objects: 0,
+                frequent_objects: 8,
             },
         ),
     ];
@@ -358,12 +358,25 @@ fn writer_knobs_change_bytes_not_answers() {
         String::from_utf8(in_memory.to_json_bytes()).unwrap(),
         "promoted: the streamed card"
     );
-    // Promotion is an in-memory-build feature: chunk-local dictionaries of the
-    // external build never promote, whatever the setting says.
-    let ext = build_ext(&quads, "promoted");
+    // The memory-bounded build promotes the same terms (G3): its chunks count
+    // their objects and the walk before the merge picks the in-RAM builder's
+    // N, so it writes the same bytes — at 4, and at the 64 the OpenCitations
+    // samples were measured with.
     assert_eq!(
-        ext, base,
-        "the external build ignores frequent-object promotion"
+        build_ext(&quads, "promoted"),
+        promoted,
+        "promoted: external == in-memory"
+    );
+    write_opts::set_write_options(WriteOptions {
+        frequent_objects: 64,
+        ..d
+    });
+    let promoted64 = build_mem(&quads);
+    assert_ne!(promoted64, promoted);
+    assert_eq!(
+        build_ext(&quads, "promoted64"),
+        promoted64,
+        "promoted 64: external == in-memory"
     );
 
     write_opts::set_write_options(WriteOptions::default());
