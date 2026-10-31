@@ -87,6 +87,8 @@ impl DictionaryBuilder {
     /// terms back instead. The memory-bounded build's chunks use it, because
     /// a term's frequency is only known once every chunk's counts are summed
     /// (`crate::extbuild`).
+    // Only the memory-bounded build (`crate::extbuild`, not on wasm32) uses it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn with_object_counts(mut self) -> Self {
         debug_assert!(
             self.objects.is_empty() && self.object_counts.is_empty(),
@@ -106,6 +108,8 @@ impl DictionaryBuilder {
     /// the bytes of their strings. What the memory-bounded build charges a
     /// chunk's dictionary against its budget, since [`Self::build`] costs a
     /// multiple of each entry.
+    // Only the memory-bounded build (`crate::extbuild`, not on wasm32) uses it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn footprint(&self) -> (u64, u64) {
         (self.entries, self.entry_bytes)
     }
@@ -160,6 +164,8 @@ impl DictionaryBuilder {
     /// returns, for every object-only term in the order of the object-only
     /// section (local ids `1..`), the number of statements that carry it.
     /// Empty when objects were not counted.
+    // Only the memory-bounded build (`crate::extbuild`, not on wasm32) uses it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn build_counted(self) -> (Dictionary, Vec<u64>) {
         self.build_inner()
     }
