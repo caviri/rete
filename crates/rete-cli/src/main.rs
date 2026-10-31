@@ -473,7 +473,10 @@ enum Command {
     /// Convert a format 0x05 file to format 0x06: the sections are read through
     /// ranges and their payload copied verbatim (no text round trip); the
     /// directories move to the front of the file. A file whose named graphs are
-    /// stored one index per graph is re-encoded as a quad index.
+    /// stored one index per graph is re-encoded as a quad index. A file whose
+    /// only labels are the pyramid's legacy block (≤ 8,192 entries) gets the
+    /// LABEL_INDEX section `build --label-index` writes, unless
+    /// `--no-label-index`.
     Convert {
         /// The 0x05 input (a path or an http(s) URL).
         input: String,
@@ -484,6 +487,10 @@ enum Command {
         /// `graph`, or `order`.
         #[arg(long = "quad-clustering", value_name = "MODE")]
         quad_clustering: Option<String>,
+        /// Do not build the label index for a file that has only the
+        /// pyramid's legacy label block.
+        #[arg(long = "no-label-index")]
+        no_label_index: bool,
     },
     /// Search a `.rete` for entities. Two modes:
     ///
@@ -1733,7 +1740,8 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             input,
             output,
             quad_clustering,
-        } => commands::v06::convert(&input, &output, quad_clustering.as_deref()),
+            no_label_index,
+        } => commands::v06::convert(&input, &output, quad_clustering.as_deref(), !no_label_index),
         Command::Search {
             file,
             prefix,

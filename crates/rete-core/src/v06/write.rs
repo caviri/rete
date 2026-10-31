@@ -755,8 +755,95 @@ pub fn convert<W: Write + Seek>(
     out: &mut W,
     opts: WriteOpts,
 ) -> Result<Written, FileError> {
-    let parts = parts::from_v05(input)?;
-    assemble(&parts, input, out, opts)
+    convert_with_labels(input, None, out, opts)
+}
+
+/// [`convert`], giving the file the LABEL_INDEX section `labels` (its `0x05`
+/// encoding, from [`label_section`]) when it has none.
+pub fn convert_with_labels<W: Write + Seek>(
+    input: &dyn RangeReader,
+    labels: Option<&[u8]>,
+    out: &mut W,
+    opts: WriteOpts,
+) -> Result<Written, FileError> {
+    let mut parts = parts::from_v05(input)?;
+    let Some(sec) = labels.filter(|s| !s.is_empty() && parts.labels.is_none()) else {
+        return assemble(&parts, input, out, opts);
+    };
+    // The new section is read through an overlay that places it right after
+    // the input, so the assembler copies it like any other.
+    let overlay = Overlay {
+        base: input,
+        extra: sec,
+    };
+    parts.labels = Some(parts::label_part(
+        &overlay,
+        input.len(),
+        sec.len() as u64,
+        parts.block_codec,
+    )?);
+    assemble(&parts, &overlay, out, opts)
+}
+
+/// `base`, then `extra` past its end.
+struct Overlay<'a> {
+    base: &'a dyn RangeReader,
+    extra: &'a [u8],
+}
+
+impl RangeReader for Overlay<'_> {
+    fn len(&self) -> u64 {
+        self.base.len() + self.extra.len() as u64
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let b = self.base.len();
+        if offset + len <= b {
+            return self.base.read_at(offset, len);
+        }
+        if offset >= b {
+            let s = (offset - b) as usize;
+            return self
+                .extra
+                .get(s..s + len as usize)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "oob"));
+        }
+        let mut v = self.base.read_at(offset, b - offset)?;
+        v.extend_from_slice(self.read_at(b, offset + len - b)?.as_slice());
+        Ok(v)
+    }
+}
+
+/// The LABEL_INDEX section (`0x05` encoding) of the default graph of `rete`,
+/// computed as `rete build --label-index` computes it — from the triples of
+/// the label predicates only, read through the index. Empty when the graph
+/// has no label predicate.
+pub fn label_section(rete: &crate::file::Rete) -> Vec<u8> {
+    use crate::label_index::{
+        DIRECT_LABEL_PREDICATES, FAMILY_NAME_PREDICATES, GIVEN_NAME_PREDICATES,
+    };
+    let dict = rete.dictionary();
+    let index = rete.default_index();
+    let mut triples: Vec<(u32, u32, u32)> = Vec::new();
+    for list in [
+        DIRECT_LABEL_PREDICATES,
+        FAMILY_NAME_PREDICATES,
+        GIVEN_NAME_PREDICATES,
+    ] {
+        for p in list {
+            if let Some(pid) = dict.predicate_id(p) {
+                triples.extend(index.scan_iter((None, Some(pid), None)));
+            }
+        }
+    }
+    triples.sort_unstable();
+    triples.dedup();
+    let entries = crate::label_index::entries_from_sorted_triples(dict, &triples);
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    crate::label_index::encode_section(&entries, crate::file::writer_codec())
 }
 
 /// Replace the card (and the build record) of a `0x06` image held in memory:

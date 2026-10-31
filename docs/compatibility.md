@@ -2,6 +2,30 @@
 
 ## Stable `.rete` file compatibility
 
+### Format `0x06` (generation 2)
+
+Every writer now writes format byte `0x06`, generation 2 ([SPEC §4](SPEC.md#4-file-layout)):
+a 128-byte header, a root block and the Dataset Card at the front of the file,
+inside the first 64 KiB a reader fetches, and the data after them. Readers of
+this release read both generations; **readers up to 0.4.2 cannot read `0x06`**.
+They refuse it by name (`unsupported .rete format 0x06; this Rete build reads
+0x05..=0x05`), never misread it.
+
+- **Convert, do not rebuild.** `rete convert in.rete -o out.rete` turns a `0x05`
+  file into `0x06` from its sections: payload copied, never re-parsed. A file
+  whose only labels are the pyramid's legacy label block gains the label index
+  `build --label-index` writes (`--no-label-index` skips it); a file with
+  per-graph named graphs is re-encoded as a quad index.
+- **Identity.** The content hash of a converted file is the content hash a
+  fresh build of the same data writes. It is not the `0x05` file's hash: the
+  generation is part of the identity.
+- **Publish after the readers.** Convert a published dataset only once the
+  readers that fetch it (playground, MCPB, the Python and JS packages) run this
+  release.
+- **`0x05` stays readable** until the catalog is converted.
+
+### Format `0x05` (generation 1)
+
 Format byte `0x05` is stable format generation 1, frozen on **2026-07-14** and
 first released in Rete **0.3.0**. Files carrying the experimental generations
 `0x01`–`0x04` predate that freeze and must be rebuilt from RDF source. Every
@@ -238,10 +262,11 @@ outside the content hash).
 
 ### A card after the data
 
-The memory-bounded build, `rete merge` and `rete recard --in-place` write the
-Dataset Card (and the build record beside it) **after every other section**
-instead of between the header and the dictionary
-([SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)).
+In `0x05`, the memory-bounded build, `rete merge` and `rete recard --in-place`
+wrote the Dataset Card (and the build record beside it) **after every other
+section** instead of between the header and the dictionary
+([SPEC §4.9](SPEC.md#49-generation-1-0x05-legacy-read-only)). In `0x06` the card
+has one place, the card region at the front.
 Nothing about the format changes: the header has always been the directory,
 every reader has always located the card through it, and the content hash folds
 the card first wherever it lies — the same card on the same data hashes the same

@@ -632,6 +632,8 @@ fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
     // The header's fields by name, as for a 0x05 file (`quad_count: …`).
     println!("format version: 0x06");
     println!("{h:#?}");
+    // The 0x05 key scripts read the record's presence from (tests/gate/fixtures.sh).
+    println!("build_info_len: {}", h.build_len);
     let flags: Vec<&str> = [
         (F_NAMED, "named graphs"),
         (F_QUOTED, "quoted triples"),

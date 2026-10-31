@@ -56,7 +56,12 @@ pub(crate) fn patch_record_in_place(path: &std::path::Path, info: &[u8]) -> anyh
 /// through ranges (never text), payload copied verbatim. A file whose named
 /// graphs are stored per graph (kind 5) is re-encoded as a quad index from its
 /// decoded statements, as `repyramid` does.
-pub(crate) fn convert(input: &str, output: &str, quad: Option<&str>) -> anyhow::Result<()> {
+pub(crate) fn convert(
+    input: &str,
+    output: &str,
+    quad: Option<&str>,
+    label_index: bool,
+) -> anyhow::Result<()> {
     use rete_core::v06::write::QuadClustering;
     if std::path::Path::new(input) == std::path::Path::new(output) {
         anyhow::bail!("convert writes a new file: OUT must differ from IN");
@@ -75,15 +80,25 @@ pub(crate) fn convert(input: &str, output: &str, quad: Option<&str>) -> anyhow::
         anyhow::bail!("{input} is already format 0x06");
     }
     let started = std::time::Instant::now();
+    let labels = if label_index {
+        legacy_label_section(input)?
+    } else {
+        None
+    };
     let tmp = std::path::PathBuf::from(format!("{output}.convert-tmp"));
     let written = {
         let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
-        let w = match rete_core::v06::write::convert(&reader, &mut out, opts) {
+        let w = match rete_core::v06::write::convert_with_labels(
+            &reader,
+            labels.as_deref(),
+            &mut out,
+            opts,
+        ) {
             Ok(w) => w,
             Err(rete_core::format::FileError::Container(m)) if m.contains("kind 5") => {
                 drop(out);
                 let _ = std::fs::remove_file(&tmp);
-                return convert_per_graph(input, output);
+                return convert_per_graph(input, output, label_index);
             }
             Err(e) => {
                 drop(out);
@@ -107,9 +122,34 @@ pub(crate) fn convert(input: &str, output: &str, quad: Option<&str>) -> anyhow::
     Ok(())
 }
 
+/// The LABEL_INDEX section `build --label-index` would write, for an input
+/// whose only labels are the pyramid's legacy block (bounded to 8,192
+/// entries, which a prefix search over a large graph outgrows); `None` when
+/// the input has a LABEL_INDEX section already or no legacy labels.
+fn legacy_label_section(input: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let reader = super::range_source::RangedSourceReader::open(input)?;
+    let rete = rete_core::Rete::open_ranged_lazy(reader)?;
+    if rete.has_label_index() || rete.pyramid().is_none_or(|p| p.label_index.is_empty()) {
+        return Ok(None);
+    }
+    let legacy = rete.pyramid().map_or(0, |p| p.label_index.len());
+    let started = std::time::Instant::now();
+    let sec = rete_core::v06::write::label_section(&rete);
+    if sec.is_empty() {
+        return Ok(None);
+    }
+    eprintln!(
+        "convert: {input} has only the pyramid's legacy label block ({legacy} entries); built \
+         the label index ({} bytes) in {:.1}s — --no-label-index skips it",
+        sec.len(),
+        started.elapsed().as_secs_f64()
+    );
+    Ok(Some(sec))
+}
+
 /// Kind-5 inputs: decode every statement and rebuild with the quad index —
 /// the per-graph layout is not one `0x06` can carry.
-fn convert_per_graph(input: &str, output: &str) -> anyhow::Result<()> {
+fn convert_per_graph(input: &str, output: &str, label_index: bool) -> anyhow::Result<()> {
     eprintln!(
         "convert: {input} stores its named graphs per graph (kind 5); re-encoding them as a quad index"
     );
@@ -127,11 +167,14 @@ fn convert_per_graph(input: &str, output: &str) -> anyhow::Result<()> {
             quads.push((s, p, o, Some(g.clone())));
         }
     }
+    let scope = rete.text_index_scope();
+    let legacy_labels = rete.pyramid().is_some_and(|p| !p.label_index.is_empty());
     let mut opts = rete_core::ingest::AssembleOptions::sectioned();
     opts.graph_layout = rete_core::GraphLayout::Quad;
     opts.with_pyramid = rete.header().pyramid_meta_len > 0;
     opts.with_text_index = rete.has_text_index();
-    opts.label_index = rete.has_label_index();
+    opts.text_index_scope = scope.as_ref();
+    opts.label_index = rete.has_label_index() || (label_index && legacy_labels);
     opts.perms = rete.header().perms;
     let (image, _) = rete_core::ingest::assemble_dataset_opts(quads, &opts, |_, _| {
         card.clone().unwrap_or_default()

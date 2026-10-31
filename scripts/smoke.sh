@@ -131,6 +131,26 @@ for artifact in rete.bash _rete rete.fish rete.ps1 rete.1; do
   fi
 done
 
+echo "== format 0x06 =="
+# Every writer writes 0x06; `convert` lifts a 0x05 file (RETE_WRITE_FORMAT=5 is
+# the test hook that still writes one) to the very bytes the 0x06 build writes.
+check "0x06 build"        "format version: 0x06"   -- "$B" info "$T/g.rete"
+check "0x06 verify"       "OK .*format 0x06"       -- "$B" verify "$T/g.rete"
+check "0x06 verify dict"  "section dict matches"   -- "$B" verify "$T/g.rete" --section dict
+check_code "0x06 verify bad section" 1 "unknown section" -- "$B" verify "$T/g.rete" --section nope
+RETE_WRITE_FORMAT=5 "$B" build "$T/g.nt" -o "$T/g05.rete" >/dev/null 2>&1
+check "0x05 still written by the hook" "magic|version: 5" -- "$B" info "$T/g05.rete"
+check "convert"           "format 0x06"            -- "$B" convert "$T/g05.rete" -o "$T/g06.rete"
+check "convert = build"   "^same$"                 -- bash -c "cmp -s '$T/g06.rete' '$T/g.rete' && echo same || echo differ"
+check "convert verify"    "OK|matches"             -- "$B" verify "$T/g06.rete"
+check "convert answers"   "ex/Bob"                 -- "$B" sparql "$T/g06.rete" "SELECT ?o WHERE { <http://ex/Alice> <http://ex/knows> ?o }"
+check_code "convert refuses 0x06" 1 "already format 0x06" -- "$B" convert "$T/g.rete" -o "$T/g07.rete"
+# A per-graph 0x05 file is re-encoded as a quad index.
+RETE_WRITE_FORMAT=5 "$B" build "$T/d.nq" -o "$T/d05.rete" --named-graphs per-graph >/dev/null 2>&1
+check "convert per-graph" "quad index"             -- "$B" convert "$T/d05.rete" -o "$T/d06.rete"
+check "per-graph graphs"  "g1"                     -- "$B" graphs "$T/d06.rete"
+check_code "per-graph refused" 1 "quad index only" -- "$B" build "$T/d.nq" -o "$T/x.rete" --named-graphs per-graph
+
 echo "== inspect =="
 check "info"       "magic|version|pyramid"        -- "$B" info "$T/g.rete"
 check "stats"      "triples|terms|predicate"      -- "$B" stats "$T/g.rete"
@@ -202,7 +222,7 @@ check "card-audit invalid" "invalid +example-2"   -- "$B" card-audit "$T/gcx.ret
 # The build record: how the file was made — flags, engine, inputs by NAME (never
 # a path) with their BLAKE3, counts, wall time per phase, peak RAM.
 check "record engine"   "engine +: rete-cli"        -- "$B" card "$T/gcx.rete"
-check "record command"  "command +: rete build --permutations 6 --named-graphs per-graph" -- "$B" card "$T/gcx.rete"
+check "record command"  "command +: rete build --permutations 6 --named-graphs quad" -- "$B" card "$T/gcx.rete"
 check "record inputs"   "inputs +: g\.nt \(nt\), [0-9,]+ B, blake3 [0-9a-f]{16}" -- "$B" card "$T/gcx.rete"
 check "record counts"   "statements +: 5 read, 5 unique"       -- "$B" card "$T/gcx.rete"
 check "record run"      "wall time +: .* on [0-9]+ CPU"        -- "$B" card "$T/gcx.rete"
@@ -227,21 +247,21 @@ check "recard record" "re-carded"                 -- "$B" card "$T/gcr.rete"
 check_code "recard no overwrite" 1 "already exists" -- "$B" recard "$T/gcx.rete" -o "$T/gcr.rete" --keep-curated
 check_code "recard keeps prose" 1 "curated fields" -- "$B" recard "$T/gcx.rete" -o "$T/gcr2.rete"
 # The memory-bounded build writes the full card — starter queries included —
-# after the data, the card `rete recard` derives from the same file.
+# the card `rete recard` derives from the same file.
 check "bounded full card" "starter queries \([1-9]" -- "$B" card "$T/gcxe.rete"
 check "bounded card phases" "content_hash" -- "$B" card "$T/gcxe.rete"
 $B recard "$T/gcxe.rete" -o "$T/gcxr.rete" --keep-curated >/dev/null 2>&1
 check "bounded card = recard" "^same$" -- bash -c "cmp -s <(dd if='$T/gcxe.rete' bs=1 skip=8 count=16 2>/dev/null) <(dd if='$T/gcxr.rete' bs=1 skip=8 count=16 2>/dev/null) && echo same || echo differ"
-# In place: the card appended after the data, the header rewritten last.
+# In place: the card into the card region's free space, the header rewritten last.
 cp "$T/gcx.rete" "$T/gci.rete"
-check "recard in place" "dead byte" -- "$B" recard "$T/gci.rete" --in-place --keep-curated --verify
+check "recard in place" "no data byte moved|rewritten once" -- "$B" recard "$T/gci.rete" --in-place --keep-curated --verify
 check "recard in place verify" "OK|matches" -- "$B" verify "$T/gci.rete"
 check "recard in place record" '"in_place": ?true' -- "$B" card "$T/gci.rete" --json
 check_code "recard -o or --in-place" 2 "in-place|output" -- "$B" recard "$T/gci.rete" --in-place -o "$T/gci2.rete" --keep-curated
 # `rete merge` with a card writes the full card too — the one `rete recard`
 # derives from the merged file — and its build record names the shards.
 $B build "$T/extra.nt" -o "$T/gmx.rete" >/dev/null 2>&1
-check "merge full card" "card .* after the data" -- "$B" merge "$T/gcx.rete" "$T/gmx.rete" -o "$T/gm.rete" --card-file "$T/gcx.json" --memory-budget-mb 64
+check "merge full card" "card .* in the card region" -- "$B" merge "$T/gcx.rete" "$T/gmx.rete" -o "$T/gm.rete" --card-file "$T/gcx.json" --memory-budget-mb 64
 check "merge card queries" "starter queries \([1-9]" -- "$B" card "$T/gm.rete"
 check "merge record inputs" "inputs +: gcx\.rete \(rete\), [0-9,]+ B, blake3 [0-9a-f]{16}" -- "$B" card "$T/gm.rete"
 check "merge verify" "OK|matches" -- "$B" verify "$T/gm.rete"

@@ -310,3 +310,29 @@ fn recard_streams_and_fits_in_place() {
     );
     assert_eq!(f.into_inner(), c1);
 }
+
+/// `rete convert` gives a file without a LABEL_INDEX section the one
+/// `rete build --label-index` would have written: converting the unlabeled
+/// build with the computed section is byte-identical to converting the
+/// labeled build.
+#[test]
+fn convert_builds_the_label_index_a_build_would() {
+    use super::write::{convert_with_labels, label_section};
+    let bare = image(2000, true, true, false, true);
+    let labeled = image(2000, true, true, true, true);
+    let sec = label_section(&Rete::open(&bare).unwrap());
+    assert!(!sec.is_empty());
+    let mut out = std::io::Cursor::new(Vec::new());
+    convert_with_labels(
+        &crate::reader::SliceReader::new(&bare),
+        Some(&sec),
+        &mut out,
+        WriteOpts::default(),
+    )
+    .unwrap();
+    let got = out.into_inner();
+    let want = convert_image(&labeled, WriteOpts::default()).unwrap();
+    assert_eq!(got, want);
+    let r = lazy(&got);
+    assert!(!r.prefix_search("gamma", 10).is_empty());
+}

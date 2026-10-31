@@ -183,6 +183,45 @@ fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Resu
     Ok(())
 }
 
+/// The [`LabelPart`] of a `0x05` LABEL_INDEX section at `offset..+length`
+/// of `r`: its preamble and root kept, its body split into data blocks and
+/// directory nodes.
+pub(crate) fn label_part<R: RangeReader + ?Sized>(
+    r: &R,
+    offset: u64,
+    length: u64,
+    codec: u8,
+) -> Result<LabelPart, FileError> {
+    let head_len = crate::label_index::HEAD_READ.min(length);
+    let head = r.read_at(offset, head_len)?;
+    let pre = crate::label_index::LabelIndexPreamble::parse(&head)?;
+    let root_end = 32u64 + pre.root_len as u64;
+    let mut lhead = if root_end as usize <= head.len() {
+        head[..root_end as usize].to_vec()
+    } else {
+        r.read_at(offset, root_end)?
+    };
+    lhead[..16].fill(0);
+    let rr = |o: u64, l: u64| r.read_at(offset + o, l).ok();
+    let li = crate::label_index::LabelIndex::from_head(
+        &lhead,
+        length,
+        codec,
+        Box::new(move |_o: u64, _l: u64| None),
+    )?;
+    let data_len = li
+        .v05_data_len(&rr)
+        .ok_or(FileError::Container("label index: unreadable directory"))?;
+    Ok(LabelPart {
+        head: lhead,
+        data_len,
+        body: ByteRange {
+            offset: offset + root_end,
+            len: length - root_end,
+        },
+    })
+}
+
 /// Lift a `0x05` file into [`Parts`]: header, framing and directories are
 /// read; payload is referenced by range. Dictionary chunk keys are re-derived
 /// (so a file written before separator keys gets them). A file with
@@ -334,35 +373,7 @@ pub fn from_v05(r: &dyn RangeReader) -> Result<Parts, FileError> {
     }
     // Label index.
     if let Some(s) = h.label_index_section() {
-        let head_len = crate::label_index::HEAD_READ.min(s.length);
-        let head = r.read_at(s.offset, head_len)?;
-        let pre = crate::label_index::LabelIndexPreamble::parse(&head)?;
-        let root_end = 32u64 + pre.root_len as u64;
-        let mut lhead = if root_end as usize <= head.len() {
-            head[..root_end as usize].to_vec()
-        } else {
-            r.read_at(s.offset, root_end)?
-        };
-        lhead[..16].fill(0);
-        let off = s.offset;
-        let rr = |o: u64, l: u64| r.read_at(off + o, l).ok();
-        let li = crate::label_index::LabelIndex::from_head(
-            &lhead,
-            s.length,
-            h.block_codec,
-            Box::new(move |_o: u64, _l: u64| None),
-        )?;
-        let data_len = li
-            .v05_data_len(&rr)
-            .ok_or(FileError::Container("label index: unreadable directory"))?;
-        p.labels = Some(LabelPart {
-            head: lhead,
-            data_len,
-            body: ByteRange {
-                offset: s.offset + root_end,
-                len: s.length - root_end,
-            },
-        });
+        p.labels = Some(label_part(r, s.offset, s.length, h.block_codec)?);
     }
     // Text index.
     let (toff, tlen) = h.text_index_payload();

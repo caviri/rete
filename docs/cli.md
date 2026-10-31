@@ -158,11 +158,13 @@ every starter query against the file, exactly as
 [`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
 does (one derivation, so the two write the same card for the same file), inside
 the same `--memory-budget-mb` (one byte per subject for the class map, the rest
-for the reader's caches). `--no-card-costs` skips the queries. The card and the
-build record are then written **after the data** rather than copied in front of
-it, which only means one more read of the file to fold the content hash (the card
-is hashed first wherever it lies; on input with no duplicate statements and no
-multi-typed subjects the card, and so the hash, is the in-RAM build's). The
+for the reader's caches). `--no-card-costs` skips the queries. The stream is
+written as `0x05` and then converted to `0x06` (one copy pass; the next release
+streams `0x06` directly), and the card and the build record go into the card
+region by one more copy, after which the starter queries' costs are measured
+again on the file as written (they are a property of its layout). On input
+with no duplicate statements and no multi-typed subjects the card, and so the
+hash, is the in-RAM build's. The
 derivation's time and peak RSS are the `card_derive` and
 `starter_queries` phases of the build record, and the hash pass its
 `content_hash`. On the OpenCitations sample: see
@@ -240,11 +242,11 @@ refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see [compatibility.md](compatibility.md).
 
-`--named-graphs per-graph|quad` (default **per-graph**) chooses how the named
-graphs of an N-Quads/TriG input are stored. `per-graph` writes one permutation
-index per graph (the NAMED_GRAPHS section): the graph's IRI as text, then its
-own tiles, the graphs chained with no directory. `quad` writes the **quad
-index** ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)):
+`--named-graphs quad` (the default, and since format `0x06` the only layout)
+stores the named graphs of an N-Quads/TriG input in the **quad index**. The
+`0x05` alternative, `per-graph` (one permutation index per graph, the
+NAMED_GRAPHS section), is refused; `rete convert` re-encodes a per-graph file as
+a quad index. The quad index is ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)):
 every named-graph quad stored once, the graph as a fourth column of
 graph-leading permutations in tiles that many graphs share, behind a sorted
 graph directory, with graph names as dictionary terms. The rows a query returns
@@ -435,7 +437,18 @@ offsets are fixed, and the content hash is recomputed while the bytes go past
 place. The output must not exist: a re-card writes a new file and never over
 its input.
 
-**`--in-place`** skips the copy. The new card and build record are written
+**`--in-place`** skips the copy. On a format `0x06` file the new card and
+build record are written into the free part of the **card region**, beside the
+old pair; the file is synced; then the 128-byte header is rewritten to point at
+them, with the new content hash, and synced again. No data byte is read or
+moved: the content hash covers the card and the root's section digests, not the
+data itself ([SPEC §4.4](SPEC.md#44-card-region-and-re-card)). When the new pair
+does not fit the region's free space, the file is copied once instead (a fresh
+card region, the data byte for byte) and renamed over the input; the summary
+line says which happened. The writer sizes the region at twice the card and
+record plus 8 KiB, so a re-card of a similar card fits.
+
+On a `0x05` file the new card and build record are written
 **after the file's last section**, followed by a new footer; the file is
 synced; only then is its 1 KiB header rewritten to point at them, with the new
 content hash, and synced again. That costs one read of the hashed sections (the
@@ -474,7 +487,7 @@ the two cards are identical, byte for byte.
 ```sh
 rete recard old.rete -o new.rete --keep-curated --verify
 rete recard old.rete -o new.rete --card-file curated.json     # curated fields from a document
-rete recard big.rete --in-place --keep-curated                # no copy: card appended, header last
+rete recard big.rete --in-place --keep-curated                # no copy: card region, header last
 bash scripts/recard/recard.sh --source /work/old.rete --out /work/new.rete   # with both proofs
 ```
 
@@ -520,6 +533,37 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
+### `rete convert <in.rete> -o <out.rete> [--quad-clustering auto|graph|order] [--no-label-index]`
+Turn a format `0x05` file into format `0x06` ([SPEC §4](SPEC.md#4-file-layout))
+without rebuilding it. The sections are read through ranges and their payload —
+dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
+— copied byte for byte; the directories are re-cut into leaves at the front,
+next to the card and the statistics. Nothing is parsed as RDF, so the cost is
+one read and one write of the file. The input may be a path or an http(s) URL.
+
+The card and the build record are carried as they are. The output has the
+content hash `rete build` gives the same data and flags — not the `0x05` file's,
+since the format is part of the identity — and, when the file has no build
+record, the same bytes. Two inputs take more than a copy:
+
+- **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section) are re-encoded as
+  a quad index from the decoded statements, as `repyramid` would. This reads the
+  file whole.
+- **Legacy labels only.** A file whose only labels are the pyramid's legacy
+  block (at most 8,192 entries) gets the label index `build --label-index`
+  writes, from the label predicates' triples read through the index.
+  `--no-label-index` skips it.
+
+`--quad-clustering` overrides how the quad tiles are laid out: `graph` puts the
+tiles of every order for one block of graphs side by side (one neighbourhood per
+`GRAPH <g>`), `order` keeps each order contiguous, `auto` (the default) picks
+graph-major when the mean graph is under 64 KiB of tiles.
+
+```sh
+rete convert davidrumsey.rete -o davidrumsey-06.rete
+rete verify davidrumsey-06.rete
+```
+
 ### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …] [--no-card-costs]`
 Fold several `.rete` files into one without going back through text — the way to
 consolidate a sharded dataset when the original RDF is gone or expensive to
@@ -554,8 +598,9 @@ on disk they are streamed into the profile and every starter query is run
 against the file, by the derivation
 [`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
 runs (so a re-card of the merged file writes the same card, byte for byte),
-inside this command's `--memory-budget-mb`; the card and the build record are
-then written **after the data**. The data sections are the same bytes as
+inside this command's `--memory-budget-mb`; the card and the build record then
+go into the card region, as for the memory-bounded build. The data sections are
+the same bytes as
 without a card, and the same as `rete build --memory-budget-mb` writes for the
 union of the shards' statements. Up to 0.4.0 a merged card carried counts only
 and the full one took a `rete recard` afterwards; on two halves of the
@@ -799,7 +844,10 @@ updating when a new defect shape turns up.
 ## Inspecting
 
 ### `rete info <file>`
-Print the decoded 1 KB header (the section directory, codecs, counts, content hash) — plus
+Print the decoded header — on a format `0x06` file the 128-byte header's fields,
+then the front (root, card region, data offset) and every section of the root
+with its range and digest; on a `0x05` file the 1 KB header and its section
+directory — plus
 the [Dataset Card](dataset-cards.md) catalog when the file carries one. Reads only
 the header and card byte ranges (the same two small reads `card-url` does over
 HTTP), so a 50 GB file answers in about a second.
@@ -828,13 +876,18 @@ opencitations-2026-06-small-full-labels.rete — 1073354201 bytes
 Before 0.4.0 the first line read `default-graph triples : 18869242`, which
 on this file is the whole dataset, 1.5 M provenance graphs included.
 
-### `rete verify <file>`
-Recompute the blake3 content hash and compare to the header, and check the
-LABEL_INDEX / SCHEMA sections against their own digests (they are outside the
-content hash). Exits non-zero with `FAILED — content hash mismatch, …` on
-corruption/truncation. The hashed sections
-are streamed in 8 MiB reads, so verifying a 49 GB file needs megabytes, not
-49 GB (it used to read the whole file into memory).
+### `rete verify <file> [--section <name>]`
+Check the file's integrity. On a format `0x06` file: the header's bounds, the
+root and card digests, every section against its digest in the root, and the
+content hash recomputed from them; a failure names the section
+(`FAILED — content hash mismatch: the digest of index does not match`).
+`--section <name>` checks one section: `dict`, `index`, `quad`, `labels`,
+`text`, `pyramid`, `schema`, or a directory (`dict-leaves`, `index-leaves`,
+`quad-leaves`, `label-leaves`, `text-leaves`). On a `0x05` file: recompute the
+blake3 content hash and compare to the header, and check the LABEL_INDEX /
+SCHEMA sections against their own digests (they are outside its content hash).
+Exits non-zero on corruption/truncation. Sections are streamed in 8 MiB reads,
+so verifying a 49 GB file needs megabytes, not 49 GB.
 
 ### `rete search <file> [<prefix>] [--contains <word>…] [--contains-prefix P] [--limit N] [--json]`
 Two modes.
@@ -1822,13 +1875,15 @@ Records the run in the file's build-info section, so the next reader gets the
 figures from the CARD tier (two range requests) instead of re-measuring. Local
 files only.
 
-The section sits **outside** the blake3 content hash — that is why two builds of
+The record sits **outside** the blake3 content hash — that is why two builds of
 identical data hash equal — so the file keeps its identity: same checksum, same
-`rete verify`, byte-identical N-Quads. It sits **near the front**, though, right
-after the card, so making room for it shifts everything behind it and the file
-is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
-by rename, but it is still one full pass of I/O and — for a published file — a
-full re-upload.
+`rete verify`, byte-identical N-Quads. On a format `0x06` file the record goes
+into the card region's free space and only the 128-byte header changes; when it
+does not fit, the file is copied once. On a `0x05` file it sits **near the
+front**, right after the card, so making room for it shifts everything behind
+it and the file is rewritten end to end (streamed through a 4 MiB buffer,
+committed by rename: one full pass of I/O and, for a published file, a full
+re-upload).
 
 Where that is worth it: when the queries answer and only the record is
 missing. When they do not, re-card instead — [`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
