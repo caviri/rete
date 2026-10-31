@@ -221,7 +221,7 @@ fn external_build_matches_under_every_knob() {
         );
         assert_ne!(
             std::fs::read(&ext).unwrap(),
-            std::fs::read(&c.dir.join("mem.rete")).unwrap()
+            std::fs::read(c.dir.join("mem.rete")).unwrap()
         );
     }
 }

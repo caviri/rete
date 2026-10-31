@@ -302,7 +302,7 @@ fn merge_reads_its_inputs_inside_the_budget() {
             (i + 1) % 300
         ));
     }
-    let union = f.write("all.nq", &format!("{a}{b}"));
+    let union = f.write("all.nq", format!("{a}{b}"));
     let (a, b) = (f.write("a.nq", &a), f.write("b.nq", &b));
     let (ra, rb) = (f.path("a.rete"), f.path("b.rete"));
     for (src, dst) in [(&a, &ra), (&b, &rb)] {

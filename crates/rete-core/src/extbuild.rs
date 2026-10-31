@@ -1256,9 +1256,10 @@ struct Frequent {
 }
 
 impl Frequent {
-    /// Ahead of `other` in the in-RAM builder's order: more statements, ties
-    /// by term order (`DictionaryBuilder::build`).
-    fn beats(&self, count: u64, term: &str) -> bool {
+    /// Whether a term carried by `count` statements comes ahead of this one
+    /// in the in-RAM builder's order: more statements, ties by term order
+    /// (`DictionaryBuilder::build`).
+    fn is_beaten_by(&self, count: u64, term: &str) -> bool {
         count > self.count || (count == self.count && term < self.term.as_str())
     }
 }
@@ -1365,7 +1366,10 @@ fn select_frequent_objects(
         candidates += 1;
         if top.len() < n {
             top.push(Frequent { count, term });
-        } else if top.peek().is_some_and(|worst| worst.beats(count, &term)) {
+        } else if top
+            .peek()
+            .is_some_and(|worst| worst.is_beaten_by(count, &term))
+        {
             top.pop();
             top.push(Frequent { count, term });
         }

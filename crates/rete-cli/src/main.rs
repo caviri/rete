@@ -416,7 +416,8 @@ enum Command {
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Resident memory budget in MiB (default 4096); the builder spills past it.
+        /// Resident memory budget in MiB (default 4096), the reads of the
+        /// inputs included (a quarter of it); the builder spills past it.
         #[arg(long, default_value_t = 4096)]
         memory_budget_mb: u64,
         /// Directory for spill files (default: next to the output).
