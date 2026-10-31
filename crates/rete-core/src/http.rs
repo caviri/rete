@@ -555,7 +555,7 @@ impl HttpRangeReader {
     }
 
     /// The bytes of `offset..offset+len` when the opening read holds them.
-    fn from_prefix(&self, offset: u64, len: u64) -> Option<Vec<u8>> {
+    fn prefix_slice(&self, offset: u64, len: u64) -> Option<Vec<u8>> {
         let end = offset.checked_add(len)?;
         (end <= self.prefix.len() as u64)
             .then(|| self.prefix[offset as usize..end as usize].to_vec())
@@ -759,7 +759,7 @@ impl RangeReader for HttpRangeReader {
             return Ok(Vec::new());
         }
         self.bounds(offset, len)?;
-        if let Some(b) = self.from_prefix(offset, len) {
+        if let Some(b) = self.prefix_slice(offset, len) {
             return Ok(b);
         }
         if self.policy.trace && self.whole.get().is_none() {
@@ -790,13 +790,13 @@ impl RangeReader for HttpRangeReader {
         }
         if ranges
             .iter()
-            .any(|&(o, l)| l > 0 && self.from_prefix(o, l).is_some())
+            .any(|&(o, l)| l > 0 && self.prefix_slice(o, l).is_some())
         {
             // Serve what the opening read already holds; fetch the rest.
             let rest: Vec<(u64, u64)> = ranges
                 .iter()
                 .copied()
-                .filter(|&(o, l)| l > 0 && self.from_prefix(o, l).is_none())
+                .filter(|&(o, l)| l > 0 && self.prefix_slice(o, l).is_none())
                 .collect();
             let mut fetched = if rest.is_empty() {
                 Vec::new()
@@ -809,7 +809,7 @@ impl RangeReader for HttpRangeReader {
                 .map(|&(o, l)| {
                     if l == 0 {
                         Ok(Vec::new())
-                    } else if let Some(b) = self.from_prefix(o, l) {
+                    } else if let Some(b) = self.prefix_slice(o, l) {
                         Ok(b)
                     } else {
                         fetched.next().ok_or_else(|| {

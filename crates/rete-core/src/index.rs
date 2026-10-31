@@ -156,9 +156,12 @@ pub struct TileLeaf {
 /// A permutation's tile directory whose entries live in leaf blocks faulted
 /// on demand and kept for the session (format `0x06`). Routing narrows by the
 /// leaves' leading-id ranges first, so a bound lookup faults one leaf.
+/// A faulted tile-directory leaf: each tile and its absolute offset.
+type TileCell = std::sync::OnceLock<Box<[(Tile, u64)]>>;
+
 pub struct LeafedTiles {
     leaves: Vec<TileLeaf>,
-    cells: Vec<std::sync::OnceLock<Box<[(Tile, u64)]>>>,
+    cells: Vec<TileCell>,
     total: usize,
     total_bytes: u64,
     fetch: LeafFetch,

@@ -211,30 +211,6 @@ pub fn detect_polyglot_base(head: &[u8]) -> Option<u64> {
     std::str::from_utf8(digits).ok()?.parse::<u64>().ok()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slice_reader_serves_ranges_and_bounds_check() {
-        let data = (0u8..=255).collect::<Vec<_>>();
-        let r = SliceReader::new(&data);
-        assert_eq!(r.len(), 256);
-        assert_eq!(r.read_at(10, 4).unwrap(), vec![10, 11, 12, 13]);
-        assert!(r.read_at(254, 10).is_err()); // overruns
-    }
-
-    #[test]
-    fn counting_reader_tallies() {
-        let data = vec![0u8; 100];
-        let r = CountingReader::new(SliceReader::new(&data));
-        r.read_at(0, 10).unwrap();
-        r.read_at(50, 20).unwrap();
-        assert_eq!(r.requests(), 2);
-        assert_eq!(r.bytes_read(), 30);
-    }
-}
-
 /// A [`RangeReader`] over owned, shared bytes (a whole file image held in
 /// memory — the resident opens of a `0x06` file go through the lazy machinery
 /// over one of these).
@@ -311,5 +287,29 @@ impl<R: RangeReader> RangeReader for PrefixReader<R> {
 
     fn concurrency(&self) -> usize {
         self.inner.concurrency()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slice_reader_serves_ranges_and_bounds_check() {
+        let data = (0u8..=255).collect::<Vec<_>>();
+        let r = SliceReader::new(&data);
+        assert_eq!(r.len(), 256);
+        assert_eq!(r.read_at(10, 4).unwrap(), vec![10, 11, 12, 13]);
+        assert!(r.read_at(254, 10).is_err()); // overruns
+    }
+
+    #[test]
+    fn counting_reader_tallies() {
+        let data = vec![0u8; 100];
+        let r = CountingReader::new(SliceReader::new(&data));
+        r.read_at(0, 10).unwrap();
+        r.read_at(50, 20).unwrap();
+        assert_eq!(r.requests(), 2);
+        assert_eq!(r.bytes_read(), 30);
     }
 }

@@ -146,8 +146,10 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
     let b = convert_image(&v5, WriteOpts::default()).unwrap();
     assert_eq!(a, b);
     // Order-major and graph-major hold the same content.
-    let mut o = WriteOpts::default();
-    o.quad = write::QuadClustering::OrderMajor;
+    let mut o = WriteOpts {
+        quad: write::QuadClustering::OrderMajor,
+        ..WriteOpts::default()
+    };
     let om = convert_image(&v5, o).unwrap();
     o.quad = write::QuadClustering::GraphMajor;
     let gm = convert_image(&v5, o).unwrap();

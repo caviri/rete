@@ -446,9 +446,12 @@ pub struct ChunkLeaf {
 /// kept for the session (format `0x06`, SPEC.md §4.4). `term → id` narrows by
 /// the leaves' first keys, `id → term` by their first runs, so either faults
 /// one leaf.
+/// A faulted dictionary leaf: each chunk's entry, data offset and length.
+type ChunkCell = std::sync::OnceLock<Box<[(SectionChunk, u64, u64)]>>;
+
 pub struct LeafedChunks {
     leaves: Vec<ChunkLeaf>,
-    cells: Vec<std::sync::OnceLock<Box<[(SectionChunk, u64, u64)]>>>,
+    cells: Vec<ChunkCell>,
     total: usize,
     fetch: crate::index::LeafFetch,
     codec: u8,

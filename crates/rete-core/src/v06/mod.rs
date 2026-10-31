@@ -439,6 +439,8 @@ pub struct Cur<'a> {
     pub pos: usize,
 }
 
+// `len` reads a length varint; it is not the cursor's own length.
+#[allow(clippy::len_without_is_empty)]
 impl<'a> Cur<'a> {
     /// A cursor at the start of `b`.
     pub fn new(b: &'a [u8]) -> Self {
@@ -807,8 +809,12 @@ pub struct QuadOrderRoot {
     /// Tiles.
     pub n_tiles: usize,
     /// Leaves.
-    pub leaves: Vec<(LeafRef, (u32, u32), (u32, u32), u64)>,
+    pub leaves: Vec<QuadLeafRoot>,
 }
+
+/// A quad order's leaf in the root: the leaf, the first tile's first `(g, a)`,
+/// the last tile's last `(g, a)`, and the first tile's offset in `quad`.
+pub type QuadLeafRoot = (LeafRef, (u32, u32), (u32, u32), u64);
 
 /// Encode the quad unit root.
 pub fn encode_quad_root(q: &QuadRoot) -> Vec<u8> {

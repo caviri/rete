@@ -641,9 +641,12 @@ pub struct TokenLeaf {
 /// A token table whose entries live in leaf blocks faulted on demand (format
 /// `0x06`): a word lookup faults one leaf, a prefix the leaves of its run, and
 /// only a substring search (`CONTAINS` pushdown) needs them all.
+/// A faulted token-table leaf: each token and its posting range.
+type TokenCell = std::sync::OnceLock<Box<[(String, u64, u64)]>>;
+
 pub struct LeafedTokens {
     leaves: Vec<TokenLeaf>,
-    cells: Vec<std::sync::OnceLock<Box<[(String, u64, u64)]>>>,
+    cells: Vec<TokenCell>,
     total: usize,
     fetch: crate::index::LeafFetch,
     codec: u8,
