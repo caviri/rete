@@ -41,6 +41,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   the merge before; the merged file is the same bytes. The Rust API's
   `ExternalBuildOptions` gains `input_memory`, the share the input stream
   holds while it is read.
+- **A host that ignores `Range` is no longer refused outright by the CLI, the
+  Python wheel or the R package** (G6). Such a host (a plain static server, a
+  proxy that strips the header) answers `200` with the whole file. The body is
+  now kept when it is the file and at most 256 MiB, the cap the browser readers
+  have had since 0.4.0, and every later read is a slice of it, with no further
+  request; a larger body is refused by name (`… not kept in memory`) without
+  being read. Tested against a real nginx with `max_ranges 0`
+  (`tests/interop/range_ignoring_host.sh`).
 
 ### Changed
 
@@ -97,17 +105,6 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   underneath; a memory-bounded build's spill; and `rete recard`'s record (when,
   by what, from which content hash, at what cost). Older records show what
   they carry and nothing else.
-
-### Fixed
-
-- **A host that ignores `Range` is no longer refused outright by the CLI, the
-  Python wheel or the R package** (G6). Such a host (a plain static server, a
-  proxy that strips the header) answers `200` with the whole file. The body is
-  now kept when it is the file and at most 256 MiB, the cap the browser readers
-  have had since 0.4.0, and every later read is a slice of it, with no further
-  request; a larger body is refused by name (`… not kept in memory`) without
-  being read. Tested against a real nginx with `max_ranges 0`
-  (`tests/interop/range_ignoring_host.sh`).
 
 ### Tooling
 
