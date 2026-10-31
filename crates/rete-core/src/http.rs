@@ -752,6 +752,14 @@ mod tests {
     }
 
     /// What the server saw: GETs served, and the most it had in flight at once.
+    ///
+    /// A GET is in flight from the moment its handler counts it until the
+    /// moment it starts to answer — not until the handler thread finishes. A
+    /// client may send its next request as soon as it has read the answer's
+    /// Content-Length bytes, so counting until after the write measured the
+    /// handler's tail: a strictly sequential client was sometimes counted
+    /// twice (2 for `concurrency_one_is_sequential` in CI on #362; 5 for 4 in
+    /// `read_many_overlaps_requests_up_to_the_bound` under load).
     #[derive(Default)]
     struct Stats {
         gets: AtomicU64,
@@ -840,6 +848,10 @@ mod tests {
         let now = st.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         st.max_in_flight.fetch_max(now, Ordering::SeqCst);
         std::thread::sleep(delay);
+        // Out of flight BEFORE the first byte of the answer: the client cannot
+        // send its next request until it has read this one, so the decrement
+        // happens before that request is counted (see `Stats`).
+        st.in_flight.fetch_sub(1, Ordering::SeqCst);
         let ignores_range = matches!(
             mode,
             ServerMode::IgnoreRange
@@ -890,7 +902,6 @@ mod tests {
                 let _ = stream.write_all(data);
             }
         }
-        st.in_flight.fetch_sub(1, Ordering::SeqCst);
     }
 
     /// The default policy with quick retries, so failure tests stay fast.

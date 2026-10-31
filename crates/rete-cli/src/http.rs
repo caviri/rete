@@ -51,6 +51,10 @@ mod tests {
                     let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                     max_seen.fetch_max(now, Ordering::SeqCst);
                     std::thread::sleep(Duration::from_millis(30));
+                    // Out of flight before answering, as in rete-core's test server:
+                    // counting until after the write would let a sequential
+                    // reader's next request overlap this thread's tail.
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
                     let r = text
                         .lines()
                         .find_map(|l| l.strip_prefix("range: bytes="))
@@ -66,7 +70,6 @@ mod tests {
                     );
                     let _ = stream.write_all(h.as_bytes());
                     let _ = stream.write_all(slice);
-                    in_flight.fetch_sub(1, Ordering::SeqCst);
                 });
             }
         });
