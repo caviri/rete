@@ -7,7 +7,7 @@
   <groupId>io.github.caviri</groupId>
   <artifactId>rete-parent</artifactId>
   <!-- Kept in lockstep with the engine version and clients/java/ffi/Cargo.toml. -->
-  <version>0.4.1</version>
+  <version>0.4.2</version>
   <packaging>pom</packaging>
 
   <name>rete (Java clients)</name>

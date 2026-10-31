@@ -53,7 +53,7 @@ RUN --mount=type=bind,from=wheels,target=/wheels \
             /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir \
                 --no-index --find-links /wheels rete-graph; \
         else \
-            /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir "rete-graph>=0.4.1"; \
+            /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir "rete-graph>=0.4.2"; \
         fi && \
         installed=$(/opt/blender/*/python/bin/python3* -c \
             'import importlib.metadata as m; print(m.version("rete-graph"))') && \

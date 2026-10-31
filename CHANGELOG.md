@@ -5,197 +5,103 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-31
+
+0.4.2 makes large builds cheaper and remote queries faster, and shows how far
+a build has got. The memory-bounded build's spill is a third to a quarter of
+what it was, `rete merge` and term-dense input stay inside
+`--memory-budget-mb`, and `--frequent-objects` works there too. The native
+Python and R packages use every core and the CLI's HTTP reader. The format is
+unchanged.
+
 ### Added
 
-- **`--progress` on `rete build`, `rete merge` and `rete recard`** (G25):
-  `auto` (the default: a live bar when stderr is a terminal, nothing
-  otherwise), `bar`, `plain` (a line every `--progress-interval` seconds,
-  default 30, for Docker and CI logs), `json` (one object per line, fields in
-  `docs/cli.md`) or `off`; `RETE_PROGRESS` when the flag is not given. It
-  shows step k of n, how far through it (input bytes for the parse, exact for
-  gzip too; terms, statements, records or starter queries after it), MB/s and
-  statements/s, the statements, terms and chunks so far, memory against the
-  cgroup limit, the spill, the time elapsed, an ETA and the finish time (UTC).
-  Everything goes to stderr, the file written is the same bytes, and the bar
-  keeps the build's own `extbuild:` lines above it (Unix). On a 6 M-statement
-  build every mode stays within 3% of a build without the feature, inside the
-  run-to-run spread. The build record's phases gain `frequent_objects`, the
-  memory-bounded build's `--frequent-objects` pass, which was charged to
-  `dictionary`.
-- **`--frequent-objects N` works with `--memory-budget-mb`** (G3), where it was
-  refused. The chunks count their objects' statements, one more pass over the
-  chunks' terms before the merge picks the same `N` object-only terms as the
-  in-RAM build (most statements, ties by term order, a subject anywhere never),
-  and the merge files them in the shared section: the file is the in-RAM
-  build's, byte for byte. On the OpenCitations sample `--frequent-objects 64`
-  makes the memory-bounded file 5.75% smaller (data only, 10 chunks at
-  256 MiB) and 3.80% (18.9 M statements with provenance, quad index), for
+- **`--progress` on `rete build`, `rete merge` and `rete recard`** (G25, #367):
+  `auto` (a live bar when stderr is a terminal, nothing otherwise), `bar`,
+  `plain` (a line every `--progress-interval` seconds, for Docker and CI
+  logs), `json` (fields in [cli](https://caviri.github.io/rete/cli.html)) or
+  `off`; `RETE_PROGRESS` sets it when the flag is not given. It shows the step,
+  how far through it, speed, statements, memory against the limit, spill,
+  elapsed time, ETA and finish time. Everything goes to stderr and the file
+  written is unchanged; the bar keeps the build's own log lines above it on
+  Unix.
+- **`--frequent-objects N` works with `--memory-budget-mb`** (G3, #363), where
+  it was refused. The file is the in-RAM build's, byte for byte. On the
+  OpenCitations sample `--frequent-objects 64` makes it 3.8–5.8% smaller for
   about 1% more build time.
 
 ### Fixed
 
 - **`FILTER(CONTAINS(STR(?o), …))` no longer loses rows on a file with a text
-  index** — wrong since 0.3.0. The `CONTAINS` pushdown looked through `STR()`
-  and pruned with the text index, which holds literals only, so a row whose
-  `?o` is an IRI (or a blank node, or a quoted triple) whose text contains the
-  needle was dropped: `?s ex:kind ?o FILTER(CONTAINS(STR(?o), "Thing"))` gave 2
-  rows on a plain file and 1 with `--text-index`. Through `STR` the index is
-  now used only where `?o` is provably a literal: the filter requires it
-  (`isLiteral(?o)`, `isNumeric(?o)`, a comparison, `IN` or `langMatches` on
-  `LANG(?o)` or `DATATYPE(?o)`), or the pattern's predicate is a constant whose
-  objects are all literals — read off its tiles' synopses against the
-  dictionary's literal id ranges, a handful of tiles read where a synopsis
-  cannot tell. Anywhere else the filter scans, with the scan's rows. Without
-  `STR`, `CONTAINS`, `LCASE` and `UCASE` reject non-literals, and nothing
-  changes. Of the 11 catalog examples on the 32 text-indexed datasets that
-  search through `STR`, the 9 the pushdown reached keep it (by the predicate
-  proof); none of the cards' starter or example queries searches through
-  `STR`.
-
-- **A term-dense stretch no longer takes the memory-bounded build past its
-  budget** (G24). Chunks were sealed by the bytes of their statements alone;
-  where every statement brings two new terms (the OpenCitations Meta
-  `oc:doiLink` tail) the chunk's dictionary outgrew the half of the budget left
-  for it, and the chunk phase reached 14.99 GB under a 16 GB cap at a budget of
-  12,000 MiB. A chunk is now also sealed when its statements and its
-  dictionary together would pass 85% of the budget. On a synthetic of 8 M
-  ordinary and 20 M such statements the peak at 1,000 MiB falls from 1,348 MiB
-  to 857 MiB, and at 3,000 MiB the build fits a 4 GiB container (2,544 MiB),
-  which killed it before. The file does not depend on where chunks are cut,
-  and an ordinary graph is cut as before.
-- **`rete merge` stays inside `--memory-budget-mb`** (G22). Its reads of the
-  input shards were not in the budget — a small shard was read whole, a large
-  one opened with uncapped caches, every named graph's index kept once walked —
-  so it ran about 1 GiB over it. Each shard is now opened by range with its
-  caches capped to a quarter of the budget, its graphs released as they are
-  walked, and the builder's chunk phase takes the rest. Two halves of the
-  OpenCitations sample merge at 1,551 MiB with a budget of 2,000 (3,026 MiB
-  before) and at 2,174 MiB with 3,000, inside a 4 GiB container that killed
-  the merge before; the merged file is the same bytes. The Rust API's
-  `ExternalBuildOptions` gains `input_memory`, the share the input stream
-  holds while it is read.
-- **A host that ignores `Range` is no longer refused outright by the CLI, the
-  Python wheel or the R package** (G6). Such a host (a plain static server, a
-  proxy that strips the header) answers `200` with the whole file. The body is
-  now kept when it is the file and at most 256 MiB, the cap the browser readers
-  have had since 0.4.0, and every later read is a slice of it, with no further
-  request; a larger body is refused by name (`… not kept in memory`) without
-  being read. Tested against a real nginx with `max_ranges 0`
-  (`tests/interop/range_ignoring_host.sh`).
+  index** (#366), wrong since 0.3.0. The pushdown looked through `STR()` into
+  the text index, which holds literals only, so a row whose `?o` is an IRI or
+  a blank node containing the text was dropped. Through `STR` the index is now
+  used only where `?o` is provably a literal (the filter requires it, or the
+  predicate's objects are all literals); anywhere else the query scans.
+- **Term-dense input no longer takes the memory-bounded build past its
+  budget** (G24, #363). A chunk is now also sealed when its dictionary would
+  push it past the budget. On the OpenCitations Meta `oc:doiLink` tail the
+  chunk phase had reached 14.99 GB at a 12,000 MiB budget; on a synthetic test
+  the peak at 1,000 MiB falls from 1,348 MiB to 857 MiB. Where chunks are cut
+  does not change the file.
+- **`rete merge` stays inside `--memory-budget-mb`** (G22, #363). The reads of
+  the input shards are now in the budget, so the 1 GiB of headroom 0.4.1 asked
+  for is no longer needed: two halves of the OpenCitations sample merge at
+  1,551 MiB with a budget of 2,000 (3,026 MiB before). The merged file is the
+  same bytes.
+- **A host that ignores `Range` is no longer refused by the CLI, Python or R**
+  (G6, #361). Its `200` answer is kept when it is the whole file and at most
+  256 MiB, as in the browser readers since 0.4.0; a larger one is refused by
+  name without being read.
 
 ### Changed
 
 - **The memory-bounded build's spill is compressed, and its statements are on
-  disk once** (G23). Every spill file goes through zstd at a fast level: the
-  statements as sorted runs of delta-varint ids (1.6–2.5 B per statement
-  instead of 12), the chunk term files front-coded, the remap tables, text
-  words and label/schema sorts as compressed blocks. The six permutations are
-  chained — the remap writes the first one's runs, each merge writes the next
-  one's while it deletes its own as it reads them — so there is no `global.tri`
-  beside a permutation's runs (24 B per statement before any index byte, 381 GB
-  for the projected OpenCitations Index). Sections leave the spill as they are
-  copied into the output. On eight renamed copies of the OpenCitations Meta
-  sample (47.8 M statements, `--text-index --label-index`) the build record's
-  peak spill fell from 1.98 GB to 0.51 GB (1.77 GB to 0.46 GB without the text
-  and label indexes), on the sample itself from 245 MB to 76 MB, for 1% more
-  wall time (8%, 1.3 s, on the 6 M-statement sample); the files are
-  byte-identical. `RETE_SPILL_ZSTD_LEVEL` (default 1, `0` for none) trades CPU
-  for disk.
-- **Crash resume** of a memory-bounded build now restarts from the last
-  finished permutation's tiles instead of `global.tri`, which no longer exists:
-  a build killed in the first permutation or in the final write is not
-  resumable.
-- **The native Python and R packages use every core** (G19). Their wheels and
-  builds now enable rete-core's `parallel` feature (rayon), which the CLI
-  already had: a build's sorts, permutations and tile/chunk compression, and a
-  query's dictionary decodes, spread across the machine. The bytes are those of
-  a single-threaded build (the 0.4.1 wheel, this wheel, and this wheel at
-  `RAYON_NUM_THREADS=1` write the same file and answer the same rows). On half
-  of the OpenCitations M=1200 sample (3 M statements, 6 CPUs) those phases
-  take 0.69 s instead of 2.66 s (the CLI's build record, which times the same
-  code at both thread counts); a whole Python build is parse-bound, so it went
-  from 8.64 s to 6.72 s without a pyramid, 11.56 s to 10.17 s with
-  `pyramid(algo="types")`, and 107 s to 99 s with the default Louvain pyramid,
-  whose community detection is single-threaded. The Pyodide wheels and a webR
-  build stay single-threaded. Python already released the GIL around every
-  engine call; `graph_names()` now does too, and `rete_graph.__engine_features__`
-  says what a wheel was built with.
-- **The Python and R clients read remote files through the CLI's HTTP reader.**
-  It moved into rete-core, behind a new `http` feature, so `rete_graph.open(url)`
-  and `rete_open(url)` gain what 0.4.0 gave the CLI: kept-alive connections,
-  coalesced ranges and retries (their own readers had 16 threads but neither),
-  and the `RETE_HTTP_*` knobs. Python's reader also reported a concurrency of 1
-  to the planner, which therefore planned for a serial reader; it now reports
-  its fan-out. The CLI's length probe takes the Python reader's fallback: a
-  host that omits `Content-Length` on `HEAD`, or refuses `HEAD`, is measured
-  with a `bytes=0-0` GET.
-- **The playground's Dataset Card shows the whole build record** (G14). Until
-  now its modal read only the fields builds wrote before 0.4.0 (time, builder,
-  a few flags). It now shows, one row each: the engine's commit (linked),
-  target and features; every flag in force, as the command line that would
-  reproduce it, and the writer's settings; each input by name, size and
-  BLAKE3; wall time, peak RAM, memory limit and CPUs, with the phases folded
-  underneath; a memory-bounded build's spill; and `rete recard`'s record (when,
-  by what, from which content hash, at what cost). Older records show what
-  they carry and nothing else.
-
-- **The `FILTER(CONTAINS(…))` text-index pushdown reaches the shapes that used
-  to scan** (G18), with the same rows. A variable predicate is covered when the
-  filter itself confines it to predicates the index covers: `?p NOT IN (…)`
-  naming every predicate an `--text-index-exclude` index left out, `?p IN (…)`
-  or `?p = <…>` naming only included ones. `FILTER` distributes over `UNION`
-  branch by branch, and over `GRAPH <g>` when it has no `EXISTS`; with
-  `--text-index-graphs all` on a quad-index file, `GRAPH ?g` visits only the
-  graphs that hold a candidate subject, found in one pass over the
-  graph-leading SPO tiles instead of a view of every graph. On the
-  OpenCitations sample (rete 0.4.0 files, 6 words, rows identical to the scan):
-  the kind-11 scoped file with `?p NOT IN (…)` 10.2–10.7 s → 0.07–0.21 s; `{ … }
-  UNION { GRAPH ?g { … } }` on the all-graphs quad file 18.5–19.5 s → 0.43–0.75 s
-  (the scoped all-graphs file with `NOT IN`: 18.0–19.0 s → 0.25–0.47 s).
-  Anything the index does not provably cover still scans.
-- **A query's constant terms resolve in one batched dictionary read** on lazy
-  and remote opens (G5a), instead of one dependent read per term and section,
-  and a constant predicate is no longer looked up as a node for every new
-  predicate a scan meets. Through an 80 ms proxy on the OpenCitations sample:
-  1–3 round trips fewer on the curated and demo queries (c10 23 → 20, 1.93 s →
-  1.69 s), 6–7 fewer on a four-IRI `VALUES` (19 → 12, 1.59 s → 1.02 s).
-- **Label-prefix hits on a pre-0.4.0 file** (the label block inside the
-  pyramid) resolve their subjects in one batched read, like full-text hits
-  (G5b): a 399-hit prefix on a 0.3.6 OpenCitations file took 13 round trips,
-  now 7 (1.10 s → 0.60 s at 80 ms).
-- **The default query memory budget follows the memory available** (G5c): half
-  of it (the smaller of `MemAvailable` and the cgroup limit, read as the
-  memory-aware local open reads it), between 256 and 4096 MiB, instead of a
-  fixed 4096 MiB that a 4 GiB container cannot hold; 4096 where the memory
-  cannot be read. It applies to `rete sparql`/`sparql-url`/`federate` and to
-  every client that opens lazily (Python, R, Java, the relay).
-  `RETE_QUERY_BUDGET_MB` overrides the default (`0` = unlimited) and
-  `--memory-budget-mb` overrides both; `RETE_OPEN_DEBUG` prints the figure and
-  why.
-- **`rete federate` opens URL sources lazily** (G5d), through the same open as
-  `sparql-url`, under the default budget, and reports each URL source's fetches;
-  a failed range request fails the federation instead of dropping that
-  source's rows. It read each URL's whole dictionary and index directory first,
-  unbounded: three 55–63 GB published files ran a 4 GiB container out of
-  memory. Supersedes #324.
+  disk once** (G23, #360). The spill goes through zstd and the six permutations
+  are chained, so there is no `global.tri`. On eight copies of the
+  OpenCitations Meta sample the peak spill fell from 1.98 GB to 0.51 GB for 1%
+  more time, with the same output bytes. `RETE_SPILL_ZSTD_LEVEL` sets the
+  level (default 1, `0` for none). A crashed build resumes from the last
+  finished permutation; one killed in the first permutation or the final write
+  starts over.
+- **The native Python and R packages use every core** (G19, #361): they are
+  built with rete-core's `parallel` feature, like the CLI, and write the same
+  bytes and answer the same rows. Sorts, permutations and compression on 3 M
+  statements take 0.69 s instead of 2.66 s on 6 CPUs; a whole Python build is
+  parse-bound and gains 7–22%. The Pyodide wheels and webR stay
+  single-threaded. `rete_graph.__engine_features__` lists a wheel's features.
+- **Python and R read remote files through the CLI's HTTP reader** (#361), now
+  in rete-core behind an `http` feature: kept-alive connections, coalesced
+  ranges, retries and the `RETE_HTTP_*` settings.
+- **Fewer round trips on remote queries** (G5, #362). A query's constant terms
+  resolve in one batched read (a four-IRI `VALUES` through an 80 ms proxy: 19
+  round trips to 12, 1.59 s to 1.02 s), and so do label-prefix hits on files
+  older than 0.4.0 (13 to 7).
+- **The default query memory budget follows the memory available** (G5, #362):
+  half of it, between 256 and 4,096 MiB, instead of a fixed 4,096 MiB that a
+  4 GiB container cannot hold. `RETE_QUERY_BUDGET_MB` and `--memory-budget-mb`
+  override it. It applies to the CLI's queries and to every client that opens
+  lazily.
+- **`rete federate` opens URL sources lazily** (G5, #362), under that budget,
+  and a failed range request now fails the federation instead of dropping
+  that source's rows. It used to read each URL's whole dictionary first, which
+  ran a 4 GiB container out of memory on the large published files. Supersedes
+  #324.
+- **The `FILTER(CONTAINS(…))` text-index pushdown covers more queries** (G18,
+  #362), with the same rows: a variable predicate confined by `?p IN (…)`,
+  `?p NOT IN (…)` or `?p = <…>`, `UNION` branches, `GRAPH <g>`, and `GRAPH ?g`
+  on a quad-index file indexed with `--text-index-graphs all`. On the
+  OpenCitations sample these went from 10–19 s to under 0.8 s. Anything the
+  index does not provably cover still scans.
+- **The playground's Dataset Card shows the whole build record** (G14, #364):
+  the engine commit, the flags as a command line, the inputs with their
+  BLAKE3, time, memory and phases, the spill, and `rete recard`'s record.
 
 ### Tooling
 
-- **CI lints the browser engine for wasm32** (G15). `cargo clippy --workspace`
-  compiles rete-wasm for the host, where its `wasm32` code is compiled out, so
-  dead code there reached main unseen (#347). The `quality` stage now runs
-  `cargo clippy -p rete-wasm --target wasm32-unknown-unknown -- -D warnings` for
-  the playground's build, the npm/MCPB one (`unicode-regex`) and the Asyncify
-  one.
-- **The memory-bounded build's card and `rete recard`'s are pinned
-  byte-identical** (G17) on a graph built to split them: duplicate statements,
-  multi-typed subjects, a text index, named graphs and more than 100 tied class
-  links. The in-RAM build's card differs there, as documented: it counts its
-  input and classifies a multi-typed subject by its last type, which is why
-  re-carding an OpenCitations file picks a different top 100 `class_links`. Its
-  data sections, the text index included, are the same bytes, so
-  `token_table_bytes` agrees on every path (G16), and re-carding it gives the
-  same card.
+- CI runs clippy on the browser engine for `wasm32` (G15, #364).
+- The memory-bounded build's card and `rete recard`'s are pinned
+  byte-identical by a test (G17, #364).
 
 ## [0.4.1] - 2026-10-30
 
