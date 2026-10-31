@@ -347,10 +347,10 @@ check "federate no-route" "0 pruned" -- bash -c "$B federate '$T/sa.rete' '$T/sc
 # ASK federation is a logical OR across shards.
 check "federate ask" "true|boolean" -- "$B" federate "$T/sa.rete" "$T/sb.rete" --query "ASK { ?x <http://ex/cites> <http://ex/T> }"
 # A URL source opens lazily (as sparql-url does) and reports what it fetched.
-( cd "$T" && python3 "$ROOT/scripts/range_server.py" 8098 . >/dev/null 2>&1 & echo $! > "$T/srv2.pid" )
+( cd "$T" && python3 "$ROOT/scripts/range_server.py" 8097 . >/dev/null 2>&1 & echo $! > "$T/srv2.pid" )
 sleep 1
-check "federate url lazy" "3 merged result" -- bash -c "$B federate 'http://127.0.0.1:8098/sa.rete' '$T/sb.rete' --query '$FEDQ' 2>&1"
-check "federate url fetched" "range request" -- bash -c "$B federate 'http://127.0.0.1:8098/sa.rete' '$T/sb.rete' --query '$FEDQ' 2>&1"
+check "federate url lazy" "3 merged result" -- bash -c "$B federate 'http://127.0.0.1:8097/sa.rete' '$T/sb.rete' --query '$FEDQ' 2>&1"
+check "federate url fetched" "range request" -- bash -c "$B federate 'http://127.0.0.1:8097/sa.rete' '$T/sb.rete' --query '$FEDQ' 2>&1"
 kill "$(cat "$T/srv2.pid")" 2>/dev/null
 
 echo "== default query memory budget =="
