@@ -142,7 +142,8 @@ rewrites the card region and these 128 bytes and nothing else (§4.4).
 ```
 u8        version (1)
 u8        n, the number of sections
-n × 34 B  kind u8 · flags u8 (0) · offset u64 · length u64 · digest [16]
+n × 38 B  kind u8 · flags u8 (0) · max block u32 · offset u64 · length u64
+          · digest [16]
 u32       length L of the unit roots
 L B       the unit roots, compressed with the internal codec:
           repeated  tag u8 · varint length · payload
@@ -152,7 +153,15 @@ A section's **offset** is relative to its region: a front section's (kind
 < 16) to `front_base`, a data section's to the data offset. No offset is
 absolute, so moving a region (a copying re-card that grows the card region)
 changes no digest. A section's **digest** is BLAKE3 of its stored bytes, first
-16 bytes. The table lists the sections present, in file order:
+16 bytes. Its **max block** is the largest decompressed block in it — a
+dictionary chunk, a tile, a leaf, the stats + schema body — as the writer
+measured it (from the zstd frame header, or by decoding), `0` when not
+recorded (label blocks and nodes, postings, the pyramid). A reader checks each
+frame header against it before decoding and caps the output there, so a
+corrupt or hostile frame cannot make it allocate more than the writer did;
+where it is `0`, the cap is 4 MiB, and the root units and the card have fixed
+caps of 16 MiB and 64 MiB. The table lists the sections present, in file
+order:
 
 | Kind | Name | Region | Contents |
 |---|---|---|---|
@@ -263,9 +272,11 @@ overrides it). Readers route through the directories either way.
 ### 4.6 Opening a file
 
 1. Read `min(64 KiB, file length)` from offset 0. Over HTTP this is
-   `GET bytes=0-65535`, which also gives the length (`Content-Range`); no
-   `HEAD` is sent. Byte 4 picks the reader: `0x05` continues with the
-   generation-1 open (§4.9), served from these bytes where it can.
+   `GET bytes=0-65535`, which also gives the length (`Content-Range`, whose
+   start, end and total must all match); no `HEAD` is sent. A remote file of
+   at most 8 MiB is then fetched whole in one more read. Byte 4 picks the
+   reader: `0x05` continues with the generation-1 open (§4.9), served from
+   these bytes where it can.
 2. `0x06`: parse the header; take the root (and in the rare case it does not
    fit, read the rest of it); check the root digest; decode the section table
    and the unit roots. The card, the record and the statistics are in hand, and
@@ -275,8 +286,14 @@ overrides it). Readers route through the directories either way.
    Sequential dictionary misses read ahead (2, 4, 8, up to 16 chunks a batch);
    the result terms of a query decode in one batch across sections.
 
-A local file opens the same way through the file's range reader; nothing is
-read whole.
+A local file opens the same way through the file's range reader; a query
+command reads it whole only when it is at most 1 MiB.
+
+Directory leaves are not shared between permutations. Pairing them (SPO with
+SOP, POS with PSO, OSP with OPS, as an August 2026 experiment did) was measured
+against this layout: it changes no round trip of the 83 measured runs or of the
+Meta projection, the predicate pair grows by 39–44%, and `convert` would have
+to re-tile every permutation instead of copying its tiles.
 
 ### 4.7 Content hash and verify
 

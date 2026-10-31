@@ -1402,14 +1402,20 @@ never an addition: giving both, or neither, is a usage error (exit 2). The
 file must be UTF-8 (a leading byte-order mark is ignored); a file that cannot
 be read, or holds only whitespace, is an error (exit 1).
 
-**Memory & I/O.** Every command that opens a local file (this one, `stats`,
-`search`, `serve`, …) reads it whole only when that is cheap, and otherwise
-opens it through the same lazy range reader the `-url` commands use (block
-size: `RETE_BLOCK_KB`). Reading whole holds the file image, its decoded
+**Memory & I/O.** The query commands (`sparql`, `query`, `bgp`, `why`,
+`cypher`, `search`, `stats`, `graphs`, `schema`, `shacl`) open a local file
+through the same lazy range reader the `-url` commands use (block size:
+`RETE_BLOCK_KB`), and read it whole only when it is at most 1 MiB. On the
+OpenCitations sample (223 MB) reading it whole cost 0.9–1.2 s and 1.2 GB on
+every query; lazily the same queries took 32–305 ms and 21–165 MiB, and the
+lazy open also won every full scan (81 local jobs: 28.9 s against 4.8 s). The
+commands that walk the whole graph (`communities`, `reach`, `reason`, `serve`)
+keep the rule below. For those, reading whole holds the file image, its decoded
 dictionary and every index permutation, none of it evictable: 6.8× the file
 on the OpenCitations sample. So a file is read whole only when it is **at most
-a sixteenth of the memory available to the process**, never past 1 GiB, and
-for `sparql` also at most a quarter of `--memory-budget-mb`. Available memory
+a sixteenth of the memory available to the process**, never past 1 GiB (and
+for `sparql`, within its 1 MiB, also at most a quarter of
+`--memory-budget-mb`). Available memory
 is the smaller of the kernel's `MemAvailable` and the headroom under the
 process's cgroup limit (v2 `memory.max` or v1 `memory.limit_in_bytes`, page
 cache not counted as used), so inside a container the container's limit is
@@ -1423,7 +1429,8 @@ on the 1.07 GB file each read it whole, passed 4 GiB and were killed after
 24–49 s. Now the same file opens lazily: a one-row `sparql` answers in
 0.035 s at 15 MB peak, `search --contains` in 0.11 s at 59 MB, `stats` in
 0.53 s at 421 MB (it reads the pyramid's statistics blocks). Its 0.24 GB
-sibling is still a small enough fraction to read whole (3.1 s, 1.6 GB). Aggregation
+sibling was still read whole by them (3.1 s, 1.6 GB) until the query commands
+went lazy above 1 MiB. Aggregation
 streams through per-group accumulators. Preview a query's byte cost with
 `rete cost`, and see the exact ranges a query read with `rete why`.
 
@@ -1749,9 +1756,18 @@ URL):
   where both start;
 - merges ranges of one batch that lie at most 32 KiB apart into one request
   (never past 8 MiB), and slices them apart again;
+- opens with one `bytes=0-65535` GET, which is also the length probe (the
+  total in its `Content-Range`): no `HEAD`. A file of at most **8 MiB**
+  (`RETE_HTTP_WHOLE_MB`, `0` = never) is then fetched whole in one more
+  request, and no query on it reads the network again: 2 round trips per query
+  on a 7 MB catalog file, where a ranged reader took 11–33;
+- holds every `206` to its `Content-Range`: the start, the end and the total
+  must be the ones asked for, so a file replaced under the same URL is refused
+  by name instead of being read as two versions spliced together, and a body
+  longer or shorter than the range is an error, never cut to fit;
 - retries a transient failure (a dropped connection, a short body, `408`,
   `429`, a `5xx`) twice with backoff, and fails at once on a permanent one: a
-  `Content-Range` for the wrong offset, a `404`. One range failing fails the
+  `Content-Range` that does not match, a `404`. One range failing fails the
   batch, and a query never returns a partial answer as if it were whole;
 - copes with a host that **ignores `Range`** (a plain static server, a proxy
   that strips the header: `200` and the whole body for a range request). Since
@@ -1769,8 +1785,9 @@ below, apply to `rete_graph.open(url)` and `rete_open(url)` too.
 
 Knobs: `RETE_HTTP_CONCURRENCY` (requests in flight, 1–64, default 16; `1`
 fetches one range at a time, the behaviour before 0.4.0),
-`RETE_HTTP_COALESCE_KB` (default 32; `0` merges only touching ranges) and
-`RETE_HTTP_RETRIES` (default 2). The `fetched … in N range request(s)` line
+`RETE_HTTP_COALESCE_KB` (default 32; `0` merges only touching ranges),
+`RETE_HTTP_RETRIES` (default 2) and `RETE_HTTP_WHOLE_MB` (default 8; `0` never
+fetches a file whole). The `fetched … in N range request(s)` line
 counts the ranges handed to the HTTP reader (after the block cache has merged
 adjacent blocks); when the reader merges two nearby ones into one request the
 server sees one fewer, and retries are not counted.
