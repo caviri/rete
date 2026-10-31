@@ -17,10 +17,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   beside a permutation's runs (24 B per statement before any index byte, 381 GB
   for the projected OpenCitations Index). Sections leave the spill as they are
   copied into the output. On eight renamed copies of the OpenCitations Meta
-  sample (47.8 M statements, `--text-index --label-index`) the peak spill fell
-  from 1.98 GB to 0.59 GB (build record), on the sample itself from 265 MB to
-  86 MB; the files are byte-identical. `RETE_SPILL_ZSTD_LEVEL` (default 1, `0`
-  for none) trades CPU for disk.
+  sample (47.8 M statements, `--text-index --label-index`) the build record's
+  peak spill fell from 1.98 GB to 0.51 GB (1.77 GB to 0.46 GB without the text
+  and label indexes), on the sample itself from 245 MB to 76 MB, for 1% more
+  wall time (8%, 1.3 s, on the 6 M-statement sample); the files are
+  byte-identical. `RETE_SPILL_ZSTD_LEVEL` (default 1, `0` for none) trades CPU
+  for disk.
 - **Crash resume** of a memory-bounded build now restarts from the last
   finished permutation's tiles instead of `global.tri`, which no longer exists:
   a build killed in the first permutation or in the final write is not

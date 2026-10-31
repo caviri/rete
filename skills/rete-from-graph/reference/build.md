@@ -101,8 +101,8 @@ Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:
   time. The peak is now usually in the last permutations, and most of it is
   the finished index itself: plan for about **the output's size plus 2–4 B
   per statement** (plus the staged NT, if you put it there). Measured: the
-  OpenCitations Meta sample peaked at 86 MB instead of 265 MB, eight renamed
-  copies of it at 0.61 GB instead of 2.03 GB; up to 0.4.1 a build needed
+  OpenCitations Meta sample peaked at 76 MB instead of 245 MB, eight renamed
+  copies of it at 0.51 GB instead of 1.98 GB; up to 0.4.1 a build needed
   24 B per statement for `global.tri` and one permutation's runs alone (Meta
   v9.2.1: 230 GiB). The id remap tables live there too, not in RAM (0.4.0
   and earlier held them resident: 15 GB for 1.7 B terms). The final write

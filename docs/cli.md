@@ -132,10 +132,10 @@ finished sections are deleted as they are copied into the output, so the write
 does not hold the index twice. The spill now peaks in the last permutations,
 where the finished sections — the index itself — are most of it: plan for about
 the output's size plus 2–4 B per statement. On the OpenCitations Meta sample
-(5.97 M statements, `--text-index --label-index`, 256 MiB) the peak fell from
-265 MB to 86 MB; on eight renamed copies of it (47.8 M statements, 512 MiB),
-from 1.98 GB to 0.59 GB, for about 6–10% more wall time. The files are
-byte-identical. `RETE_SPILL_ZSTD_LEVEL` sets the level (default 1; `0` writes
+(5.97 M statements, `--text-index --label-index`, 256 MiB) the build record's
+peak fell from 245 MB to 76 MB; on eight renamed copies of it (47.8 M
+statements, 512 MiB), from 1.98 GB to 0.51 GB, for 1% more wall time (8% on the
+small sample). The files are byte-identical. `RETE_SPILL_ZSTD_LEVEL` sets the level (default 1; `0` writes
 the delta-varint runs and front-coded terms without zstd; negative levels are
 zstd's faster modes).
 
