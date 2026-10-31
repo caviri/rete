@@ -150,9 +150,7 @@ impl<'a> TripleBlock<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self, TripleError> {
         let mut pos = 0;
         let take = |pos: &mut usize| -> Result<u32, TripleError> {
-            let (v, n) = read_uvarint(&bytes[*pos..]).ok_or(TripleError::Malformed("truncated"))?;
-            *pos += n;
-            Ok(v as u32)
+            rd(bytes, pos).ok_or(TripleError::Malformed("truncated or out-of-range zone map"))
         };
         let zone = ZoneMap {
             min_a: take(&mut pos)?,
@@ -187,24 +185,21 @@ impl<'a> TripleBlock<'a> {
         // buffer length is a safe capacity ceiling (avoids an OOM on a bogus count).
         let mut out = Vec::with_capacity((self.zone.count as usize).min(self.bytes.len()));
         let mut pos = self.body_start;
-        let g = |pos: &mut usize| -> Option<u32> {
-            let (v, n) = read_uvarint(self.bytes.get(*pos..)?)?;
-            *pos += n;
-            Some(v as u32)
-        };
+        let g = |pos: &mut usize| rd(self.bytes, pos);
         let num_a = g(&mut pos)?;
         let mut a = 0u32;
         for _ in 0..num_a {
-            // wrapping_add: corrupt deltas must not overflow-panic in debug builds.
-            a = a.wrapping_add(g(&mut pos)?);
+            // checked_add: a delta chain that leaves the u32 id space is
+            // corrupt; stop rather than wrap around to some other id.
+            a = a.checked_add(g(&mut pos)?)?;
             let num_b = g(&mut pos)?;
             let mut b = 0u32;
             for _ in 0..num_b {
-                b = b.wrapping_add(g(&mut pos)?);
+                b = b.checked_add(g(&mut pos)?)?;
                 let num_c = g(&mut pos)?;
                 let mut c = 0u32;
                 for _ in 0..num_c {
-                    c = c.wrapping_add(g(&mut pos)?);
+                    c = c.checked_add(g(&mut pos)?)?;
                     out.push((a, b, c));
                 }
             }
@@ -227,7 +222,7 @@ impl<'a> TripleBlock<'a> {
             entries.reserve((num_a as usize).min(bytes.len()));
             let mut a = 0u32;
             for i in 0..num_a {
-                a = a.wrapping_add(rd(bytes, &mut p)?);
+                a = a.checked_add(rd(bytes, &mut p)?)?;
                 let num_b = rd(bytes, &mut p)?;
                 entries.push(DirEntry {
                     a,
@@ -369,13 +364,17 @@ impl<'a> TripleBlock<'a> {
     }
 }
 
-/// Read one uvarint at `*pos`, advancing it; `None` if truncated. Panic-free,
-/// mirroring the decoder inside [`TripleBlock::try_triples`].
+/// Read one uvarint at `*pos`, advancing it; `None` if truncated or if the
+/// value does not fit a `u32` (every id, count and delta in a block does).
+/// Panic-free, and the one decoder every block reader uses. Before, `v as u32`
+/// kept the low 32 bits, so a corrupt tile decoded to wrong ids instead of
+/// failing.
 #[inline]
 fn rd(bytes: &[u8], pos: &mut usize) -> Option<u32> {
     let (v, n) = read_uvarint(bytes.get(*pos..)?)?;
+    let v = u32::try_from(v).ok()?;
     *pos += n;
-    Some(v as u32)
+    Some(v)
 }
 
 /// A byte-offset directory of a block's a-groups: one entry per group, sorted
@@ -459,7 +458,7 @@ impl Iterator for BlockCursor<'_> {
             // decoded to keep the delta chain correct; only matches are emitted.
             while self.c_rem > 0 {
                 self.c_rem -= 1;
-                self.c = self.c.wrapping_add(rd(bytes, &mut self.pos)?);
+                self.c = self.c.checked_add(rd(bytes, &mut self.pos)?)?;
                 if self.pc.is_none_or(|z| z == self.c) {
                     return Some((self.a, self.b, self.c));
                 }
@@ -467,7 +466,7 @@ impl Iterator for BlockCursor<'_> {
             // (2) Advance to the next b-group within the current a-group.
             while self.b_rem > 0 {
                 self.b_rem -= 1;
-                self.b = self.b.wrapping_add(rd(bytes, &mut self.pos)?);
+                self.b = self.b.checked_add(rd(bytes, &mut self.pos)?)?;
                 let num_c = rd(bytes, &mut self.pos)?;
                 if self.pb.is_some_and(|y| y != self.b) {
                     for _ in 0..num_c {
@@ -487,7 +486,7 @@ impl Iterator for BlockCursor<'_> {
                 return None;
             }
             self.a_rem -= 1;
-            self.a = self.a.wrapping_add(rd(bytes, &mut self.pos)?);
+            self.a = self.a.checked_add(rd(bytes, &mut self.pos)?)?;
             let num_b = rd(bytes, &mut self.pos)?;
             self.b = 0; // the encoder resets prev_b per a-group
             if let Some(x) = self.pa {

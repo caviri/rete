@@ -5,6 +5,22 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A corrupt or hostile `.rete` is refused cleanly instead of panicking or
+  decoding to wrong ids.** Container lengths and counts are checked before they
+  size a slice (a length near 2^64 overflowed `pos + len`; on wasm32 a length or
+  offset past 4 GiB kept its low 32 bits and read other bytes). Varints refuse a
+  10th byte with more than bit 63 in it. Triple ids, tile-directory ids and
+  dictionary counts that do not fit a `u32` are errors, where `as u32` and
+  `wrapping_add` turned them into other, plausible ids. Dictionary chunk
+  directories must start at run 0 and ascend. The tile-synopsis trailer read is
+  capped at 20 bytes per tile. A short read is a failed load wherever it was
+  sliced or decoded as if whole: lazy tiles (a raw tile read one byte short lost
+  its last rows), the named-graph walk (it panicked), `query_ranged` and the
+  card read. New fuzz-style tests overwrite every position of a file with these
+  varints and shorten every read of an open in turn.
+
 ## [0.4.2] - 2026-10-31
 
 0.4.2 makes large builds cheaper and remote queries faster, and shows how far

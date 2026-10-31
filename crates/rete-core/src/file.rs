@@ -27,6 +27,9 @@ use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
 use crate::triples::Triple;
 use crate::varint::{read_uvarint, write_uvarint};
 
+#[cfg(test)]
+mod hardening_tests;
+
 /// Default per-tile byte budget `T` (SPEC.md Â§7.1).
 pub const DEFAULT_TILE_BUDGET: usize = 64 * 1024;
 
@@ -725,9 +728,7 @@ fn read_coalesced<R: RangeReader + ?Sized>(
     for (k, r) in ranges.iter().enumerate() {
         let (span_start, _) = spans[span_of[k]];
         let blob = &blobs[span_of[k]];
-        let lo = (r.offset - span_start) as usize;
-        let hi = lo.checked_add(r.len as usize)?;
-        out.push(blob.get(lo..hi)?.to_vec());
+        out.push(checked_slice(blob, r.offset - span_start, r.len)?.to_vec());
     }
     Some(out)
 }
@@ -841,15 +842,18 @@ fn decode_container(bytes: &[u8], codec: u8) -> Result<Vec<Vec<u8>>, FileError> 
     // `n` is untrusted; each section needs â‰¥1 byte, so cap the pre-allocation at
     // the buffer length rather than trusting the count (avoids an OOM on a bogus
     // header pointing at a small region).
-    let mut out = Vec::with_capacity((n as usize).min(bytes.len()));
+    let n = wire_usize(n, "section count too large")?;
+    let mut out = Vec::with_capacity(n.min(bytes.len()));
     for _ in 0..n {
-        let (len, used) =
-            read_uvarint(&bytes[pos..]).ok_or(FileError::Container("truncated length"))?;
+        let (len, used) = read_uvarint(bytes.get(pos..).unwrap_or(&[]))
+            .ok_or(FileError::Container("truncated length"))?;
         pos += used;
-        let end = pos + len as usize;
-        if end > bytes.len() {
-            return Err(FileError::Container("section overruns buffer"));
-        }
+        // Checked: a hostile length near u64::MAX used to overflow `pos + len`
+        // (a panic), and on wasm32 `len as usize` kept the low 32 bits.
+        let end = pos
+            .checked_add(wire_usize(len, "section length too large")?)
+            .filter(|&end| end <= bytes.len())
+            .ok_or(FileError::Container("section overruns buffer"))?;
         out.push(decompress(codec, &bytes[pos..end])?);
         pos = end;
     }
@@ -859,6 +863,21 @@ fn decode_container(bytes: &[u8], codec: u8) -> Result<Vec<Vec<u8>>, FileError> 
 fn checked_end(off: u64, len: u64) -> Result<u64, FileError> {
     off.checked_add(len)
         .ok_or(FileError::Container("section range overflows"))
+}
+
+/// A length or count read from the file, as an in-memory `usize` — or a clean
+/// error. `as usize` truncates on wasm32, a 32-bit target: a length of
+/// `2^32 + 5` read 5 bytes there and decoding went on as if nothing were wrong.
+fn wire_usize(v: u64, what: &'static str) -> Result<usize, FileError> {
+    usize::try_from(v).map_err(|_| FileError::Container(what))
+}
+
+/// The in-memory slice `[off, off + len)` of `bytes`, or `None` when the range
+/// does not fit this target's `usize` or overruns the buffer.
+fn checked_slice(bytes: &[u8], off: u64, len: u64) -> Option<&[u8]> {
+    let start = usize::try_from(off).ok()?;
+    let end = start.checked_add(usize::try_from(len).ok()?)?;
+    bytes.get(start..end)
 }
 
 /// Per-chunk budget for dictionary section bodies â€” same reasoning as
@@ -994,7 +1013,7 @@ fn parse_chunked_dict_dir(
         *pos += n;
         Ok(v)
     };
-    let header_len = take(&mut pos)? as usize;
+    let header_len = wire_usize(take(&mut pos)?, "dict header too large")?;
     let header = bytes
         .get(pos..pos.saturating_add(header_len))
         .ok_or(FileError::Container("truncated dict header"))?;
@@ -1002,20 +1021,20 @@ fn parse_chunked_dict_dir(
         .map_err(|_| FileError::Container("malformed dict header"))?;
     pos += header_len;
 
-    let num_chunks = take(&mut pos)? as usize;
+    let num_chunks = wire_usize(take(&mut pos)?, "dict chunk count too large")?;
     let mut entries = Vec::with_capacity(num_chunks.min(bytes.len()));
     let mut lens = Vec::with_capacity(num_chunks.min(bytes.len()));
     let mut prev_run = 0usize;
-    for _ in 0..num_chunks {
-        let drun = take(&mut pos)? as usize;
-        let klen = take(&mut pos)? as usize;
+    for i in 0..num_chunks {
+        let drun = wire_usize(take(&mut pos)?, "dict chunk run too large")?;
+        let klen = wire_usize(take(&mut pos)?, "dict chunk key too large")?;
         let key = bytes
             .get(pos..pos.saturating_add(klen))
             .ok_or(FileError::Container("truncated dict chunk key"))?
             .to_vec();
         pos += klen;
         let clen = take(&mut pos)?;
-        let first_run = prev_run + drun;
+        let first_run = next_chunk_run(i, prev_run, drun)?;
         let body_start = meta
             .restart_offsets
             .get(first_run)
@@ -1042,6 +1061,25 @@ fn parse_chunked_dict_dir(
         start = end;
     }
     Ok((meta, entries))
+}
+
+/// The `i`-th chunk's first run from the previous chunk's and the stored delta.
+/// Both writers start chunk 0 at run 0 and give every later chunk at least one
+/// run, so the runs strictly ascend — which is what routing a term id to its
+/// chunk (a binary search over `first_run`) relies on. A directory that breaks
+/// that, or whose sum overflows, is corrupt: refuse it instead of routing ids
+/// to the wrong chunk.
+fn next_chunk_run(i: usize, prev_run: usize, drun: usize) -> Result<usize, FileError> {
+    match (i, drun) {
+        (0, 0) => Ok(0),
+        (0, _) => Err(FileError::Container(
+            "first dict chunk does not start at run 0",
+        )),
+        (_, 0) => Err(FileError::Container("dict chunk runs do not ascend")),
+        _ => prev_run
+            .checked_add(drun)
+            .ok_or(FileError::Container("dict chunk run overflows")),
+    }
 }
 
 /// Fetch and parse a remote chunked dict section's header + directory: read a
@@ -1086,10 +1124,14 @@ fn read_dict_dir_ranged<R: RangeReader>(
         .ok_or(FileError::Container("dict header overruns section"))?;
     let dir_total = total - dir_start;
     let meta = crate::dict::SectionMeta {
-        term_count: term_count as u32,
-        restart_interval: restart_interval as u32,
+        term_count: u32::try_from(term_count)
+            .map_err(|_| FileError::Container("dict term count too large"))?,
+        restart_interval: u32::try_from(restart_interval)
+            .map_err(|_| FileError::Container("dict restart interval too large"))?,
         restart_offsets: Vec::new(),
     };
+    // Runs in the section: what a chunk's first run must stay below.
+    let num_runs = (meta.term_count as usize).div_ceil(meta.restart_interval as usize);
     let finish = |mut entries: Vec<DictChunkEntry>| {
         for e in &mut entries {
             e.start += dir_start; // dir-relative → section-relative
@@ -1102,7 +1144,7 @@ fn read_dict_dir_ranged<R: RangeReader>(
     // A short prefix is not wasted: those bytes seed the probe below.
     let mut have: Vec<u8> = Vec::new();
     if dir_start < head.len() as u64 {
-        match parse_chunk_dir_only(&head[dir_start as usize..], dir_total)? {
+        match parse_chunk_dir_only(&head[dir_start as usize..], dir_total, num_runs)? {
             ChunkDirParse::Done(entries) => return Ok(finish(entries)),
             ChunkDirParse::Truncated { .. } => have = head[dir_start as usize..].to_vec(),
         }
@@ -1130,7 +1172,7 @@ fn read_dict_dir_ranged<R: RangeReader>(
             have.extend_from_slice(&extra);
         }
         let held = have.len() as u64;
-        match parse_chunk_dir_only(&have, dir_total)? {
+        match parse_chunk_dir_only(&have, dir_total, num_runs)? {
             ChunkDirParse::Done(entries) => return Ok(finish(entries)),
             ChunkDirParse::Truncated { .. } if held >= dir_total => {
                 return Err(FileError::Container("truncated dict chunk directory"));
@@ -1183,9 +1225,13 @@ enum ChunkDirParse {
 /// offsets per chunk). Bodies aren't needed here, so `dir` may end at the first
 /// body as long as it covers the whole directory. A `dir` that stops mid-entry
 /// is reported as [`ChunkDirParse::Truncated`], not an error: only bytes that
-/// cannot be a directory at any length (a chunk range overrunning the section)
-/// fail.
-fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, FileError> {
+/// cannot be a directory at any length (a chunk range overrunning the section,
+/// chunk runs that do not ascend from 0 or pass `num_runs`) fail.
+fn parse_chunk_dir_only(
+    dir: &[u8],
+    dir_total: u64,
+    num_runs: usize,
+) -> Result<ChunkDirParse, FileError> {
     let mut pos = 0usize;
     let take = |pos: &mut usize| -> Option<u64> {
         let (v, n) = read_uvarint(dir.get(*pos..).unwrap_or(&[]))?;
@@ -1199,11 +1245,11 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, Fil
             total: 0,
         });
     };
-    let num_chunks = num_chunks as usize;
+    let num_chunks = wire_usize(num_chunks, "dict chunk count too large")?;
     let mut entries = Vec::with_capacity(num_chunks.min(dir.len()));
     let mut lens: Vec<u64> = Vec::with_capacity(num_chunks.min(dir.len()));
     let mut prev_run = 0usize;
-    for _ in 0..num_chunks {
+    for i in 0..num_chunks {
         let entry_start = pos;
         let short = ChunkDirParse::Truncated {
             parsed: entries.len(),
@@ -1213,7 +1259,8 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, Fil
         let (Some(drun), Some(klen)) = (take(&mut pos), take(&mut pos)) else {
             return Ok(short);
         };
-        let (drun, klen) = (drun as usize, klen as usize);
+        let drun = wire_usize(drun, "dict chunk run too large")?;
+        let klen = wire_usize(klen, "dict chunk key too large")?;
         let Some(key) = dir.get(pos..pos.saturating_add(klen)) else {
             return Ok(short);
         };
@@ -1222,7 +1269,10 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, Fil
         let Some(clen) = take(&mut pos) else {
             return Ok(short);
         };
-        let first_run = prev_run + drun;
+        let first_run = next_chunk_run(i, prev_run, drun)?;
+        if first_run >= num_runs {
+            return Err(FileError::Container("dict chunk run out of range"));
+        }
         entries.push(DictChunkEntry {
             first_run,
             key,
@@ -1413,18 +1463,27 @@ fn parse_tile_directory(bytes: &[u8], total_len: u64) -> Result<Vec<TileDirEntry
         *pos += n;
         Ok(v)
     };
-    let num_tiles = take(&mut pos)? as usize;
+    let num_tiles = wire_usize(take(&mut pos)?, "tile count too large")?;
     let mut entries = Vec::with_capacity(num_tiles.min(bytes.len()));
     let mut prev_min = 0u32;
     let mut lens = Vec::with_capacity(num_tiles.min(bytes.len()));
+    // Leading ids are u32. A delta or span past that, or a sum that leaves
+    // the id space, is corrupt: `as u32` and `wrapping_add` used to turn it
+    // into some other, plausible id range and route lookups to the wrong tile.
+    let id = |v: u64| u32::try_from(v).map_err(|_| FileError::Container("tile id out of range"));
     for _ in 0..num_tiles {
-        let dmin = take(&mut pos)? as u32;
-        let span = take(&mut pos)? as u32;
+        let dmin = id(take(&mut pos)?)?;
+        let span = id(take(&mut pos)?)?;
         let len = take(&mut pos)?;
-        let min_a = prev_min.wrapping_add(dmin);
+        let min_a = prev_min
+            .checked_add(dmin)
+            .ok_or(FileError::Container("tile id out of range"))?;
+        let max_a = min_a
+            .checked_add(span)
+            .ok_or(FileError::Container("tile id out of range"))?;
         entries.push(TileDirEntry {
             min_a,
-            max_a: min_a.wrapping_add(span),
+            max_a,
             start: 0,
             end: 0,
         });
@@ -1481,8 +1540,15 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
     if n == 0 || trailer_start >= total {
         return none; // no trailer bytes present
     }
-    let trailer_len = total - trailer_start;
-    let Ok(bytes) = reader.read_at(section.offset + trailer_start, trailer_len) else {
+    // Four varints per tile, each a u32 (at most 5 bytes): never read more,
+    // whatever the section claims. The trailer is the section's tail, so a
+    // hostile section length used to make this one read as large as it said.
+    let max_trailer = (n as u64).saturating_mul(4 * 5);
+    let trailer_len = (total - trailer_start).min(max_trailer);
+    let Some(offset) = section.offset.checked_add(trailer_start) else {
+        return none;
+    };
+    let Ok(bytes) = reader.read_at(offset, trailer_len) else {
         return none;
     };
     match parse_tile_synopsis(&bytes, 0, n) {
@@ -1507,8 +1573,8 @@ fn tile_file_ranges(
         if range.len == 0 || range.offset < container_offset {
             continue;
         }
-        let start = (range.offset - container_offset) as usize;
-        let Some(payload) = index_bytes.get(start..start + range.len as usize) else {
+        let Some(payload) = checked_slice(index_bytes, range.offset - container_offset, range.len)
+        else {
             continue;
         };
         if let Ok(dir) = parse_tile_directory(payload, payload.len() as u64) {
@@ -1819,13 +1885,21 @@ fn open_index_container_lazy(
     // loader serves multi-tile scans by coalescing adjacent tile ranges
     // into single range reads (tiles are back-to-back in their section,
     // so a full-section scan is typically one request).
+    //
+    // Either loader returns `None` (a failed load: the index marks itself
+    // incomplete and a reset retries) unless the tile arrived whole and its
+    // zone map parses. Without the length check, a short read of a raw
+    // (uncompressed) tile decoded as a shorter tile and silently lost rows.
     let codec = block_codec;
     let loader_ranges = tile_ranges.clone();
     let loader_reader = reader.clone();
     let loader: crate::index::TileLoader = Box::new(move |si, ti| {
         let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
         let bytes = loader_reader.read_at(range.offset, range.len).ok()?;
-        decompress(codec, &bytes).ok()
+        if bytes.len() as u64 != range.len {
+            return None;
+        }
+        checked_tile(codec, &bytes)
     });
     let bulk_ranges = tile_ranges.clone();
     let bulk_reader = reader.clone();
@@ -1836,7 +1910,7 @@ fn open_index_container_lazy(
             .map(|&ti| section.get(ti).map(|&(_, _, r)| r))
             .collect();
         let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
-        blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+        blobs.iter().map(|b| checked_tile(codec, b)).collect()
     });
     let mut index =
         GraphIndex::from_remote_directories(directories, perms, loader).with_bulk_loader(bulk);
@@ -1853,6 +1927,15 @@ fn open_index_container_lazy(
     // than a phone's serial sync-XHR path.
     index.set_read_concurrency(read_concurrency);
     Ok((index, index_section_ranges, tile_ranges))
+}
+
+/// A fetched tile, decompressed, or `None` when it does not decompress or its
+/// zone map does not parse: a lazy tile load fails on the first scan that
+/// touches it, instead of a corrupt tile reading as an empty or partial one.
+fn checked_tile(codec: u8, bytes: &[u8]) -> Option<Vec<u8>> {
+    let tile = decompress(codec, bytes).ok()?;
+    crate::triples::TripleBlock::parse(&tile).ok()?;
+    Some(tile)
 }
 
 /// Serialize a complete `.rete` file image from a dictionary, index, and an
@@ -1917,12 +2000,14 @@ fn decode_named_graphs(
     // Bounds-checked slice within this (already bounded) section. Lengths read
     // below are untrusted, so every range is validated before indexing.
     let bound = |start: usize, len: u64| -> Result<usize, FileError> {
-        start
-            .checked_add(len as usize)
+        usize::try_from(len)
+            .ok()
+            .and_then(|len| start.checked_add(len))
             .filter(|&e| e <= bytes.len())
             .ok_or(FileError::Container("named-graph field overruns buffer"))
     };
-    let mut out = Vec::with_capacity((n as usize).min(bytes.len()));
+    let n = wire_usize(n, "named-graph count too large")?;
+    let mut out = Vec::with_capacity(n.min(bytes.len()));
     for _ in 0..n {
         let (ilen, u1) = read_uvarint(bytes.get(pos..).unwrap_or(&[]))
             .ok_or(FileError::Container("truncated iri len"))?;
@@ -2346,7 +2431,10 @@ pub fn read_card_and_build_info_with_header<R: RangeReader>(
     if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
         // Adjacent (the layout this crate writes): one read spans both.
         let both = reader.read_at(meta.0, meta.1 + build.1)?;
-        let (m, b) = both.split_at(meta.1 as usize);
+        let (m, b) = usize::try_from(meta.1)
+            .ok()
+            .and_then(|mid| both.split_at_checked(mid))
+            .ok_or(FileError::Container("short card read"))?;
         return Ok((header, Some(m.to_vec()), Some(b.to_vec())));
     }
     let fetch = |off: u64, len: u64| -> Result<Option<Vec<u8>>, FileError> {
@@ -2367,12 +2455,9 @@ pub fn read_build_info(bytes: &[u8]) -> Result<Option<Vec<u8>>, FileError> {
     if header.build_info_len == 0 {
         return Ok(None);
     }
-    let start = header.build_info_offset as usize;
-    let end = start
-        .checked_add(header.build_info_len as usize)
-        .filter(|&e| e <= bytes.len())
+    let section = checked_slice(bytes, header.build_info_offset, header.build_info_len)
         .ok_or(FileError::Container("build-info section overruns buffer"))?;
-    Ok(Some(bytes[start..end].to_vec()))
+    Ok(Some(section.to_vec()))
 }
 
 /// Everything needed to splice a build-info section into a finished file
@@ -2579,10 +2664,9 @@ fn hash_of_sections(header: &Header, bytes: &[u8]) -> Result<[u8; 16], FileError
         // chance to reject the range. Found by the weekly fuzz run
         // (fuzz_targets/open.rs, "attempt to add with overflow"). Saturating the
         // sum turns both cases into the same clean Container error.
-        let end = off.saturating_add(len);
-        bytes
-            .get(off as usize..end as usize)
-            .ok_or(FileError::Container("section overruns buffer"))
+        // `checked_slice` also refuses an offset past this target's usize
+        // (wasm32), which `as usize` used to wrap onto other bytes.
+        checked_slice(bytes, off, len).ok_or(FileError::Container("section overruns buffer"))
     };
     let parts = content_hash_parts(header)
         .into_iter()
@@ -2642,9 +2726,7 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     if header.has_quad_index() || header.quad_index_section().is_some() {
         check_named_layout(&header)?;
         let slice = |off: u64, len: u64| -> Result<&[u8], FileError> {
-            bytes
-                .get(off as usize..off.saturating_add(len) as usize)
-                .ok_or(FileError::Container("section overruns buffer"))
+            checked_slice(bytes, off, len).ok_or(FileError::Container("section overruns buffer"))
         };
         let root = slice(header.root_dir_offset, header.root_dir_len)?;
         let ranges = container_section_payload_ranges(
@@ -2664,9 +2746,7 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
         }
     }
     for s in self_digested_sections(&header) {
-        let end = s.offset.saturating_add(s.length);
-        let section = bytes
-            .get(s.offset as usize..end as usize)
+        let section = checked_slice(bytes, s.offset, s.length)
             .ok_or(FileError::Container("section overruns buffer"))?;
         if !crate::label_index::digest_ok(section) {
             return Ok(false);
@@ -3332,7 +3412,10 @@ impl LazyNamedGraphs {
             self.fail();
             return None;
         }
-        let n = n as usize;
+        let Ok(n) = usize::try_from(n) else {
+            self.fail();
+            return None;
+        };
         let slabs = n.div_ceil(NAMED_SLAB);
         let table: Box<[std::sync::OnceLock<Box<[NamedEntry]>>]> =
             (0..slabs).map(|_| std::sync::OnceLock::new()).collect();
@@ -3424,16 +3507,23 @@ impl LazyNamedGraphs {
                 };
                 w.buf_off = pos;
             }
+            // Every slice of `buf` below is checked: a reader may return fewer
+            // bytes than asked, and the lengths are untrusted.
             let rel = (pos - w.buf_off) as usize;
-            let Some((ilen, u1)) = read_uvarint(&w.buf[rel..]) else {
+            let Some((ilen, u1)) = w.buf.get(rel..).and_then(read_uvarint) else {
                 self.fail();
                 return None;
             };
-            let header_need = u1 as u64 + ilen + 10; // iri_len + iri + container_len varint
-            if pos + u1 as u64 + ilen > end {
+            let Some(iri_end) = (u1 as u64)
+                .checked_add(ilen)
+                .and_then(|n| pos.checked_add(n))
+                .filter(|&e| e <= end)
+            else {
                 self.fail(); // IRI overruns the section: malformed
                 return None;
-            }
+            };
+            // iri_len + iri + container_len varint
+            let header_need = (iri_end - pos).saturating_add(10);
             if !have(&w.buf, w.buf_off, header_need.min(end - pos)) {
                 let len = Self::next_read_len(&mut w, pos, end, header_need);
                 w.buf = match self.reader.read_at(pos, len) {
@@ -3447,14 +3537,23 @@ impl LazyNamedGraphs {
             }
             let rel = (pos - w.buf_off) as usize;
             let istart = rel + u1;
-            let iend = istart + ilen as usize;
+            let Some(iend) = usize::try_from(ilen)
+                .ok()
+                .and_then(|l| istart.checked_add(l))
+                .filter(|&e| e <= w.buf.len())
+            else {
+                self.fail(); // short read: the header is not all here
+                return None;
+            };
             let iri = String::from_utf8_lossy(&w.buf[istart..iend]).into_owned();
             let Some((clen, u2)) = read_uvarint(&w.buf[iend..]) else {
                 self.fail();
                 return None;
             };
-            let cstart = pos + u1 as u64 + ilen + u2 as u64;
-            let cend = match cstart.checked_add(clen) {
+            let cend = match iri_end
+                .checked_add(u2 as u64)
+                .and_then(|cstart| cstart.checked_add(clen))
+            {
                 Some(e) if e <= end => e,
                 _ => {
                     self.fail(); // container overruns the section: malformed
@@ -3470,7 +3569,7 @@ impl LazyNamedGraphs {
                 w.chunk = NAMED_WALK_CHUNK;
             }
             let range = ByteRange {
-                offset: cstart,
+                offset: cend - clen,
                 len: clen,
             };
             if let Some(e) = self.entry(w.next) {
@@ -3515,8 +3614,9 @@ impl LazyNamedGraphs {
             }
         }
         match self.reader.read_at(range.offset, range.len) {
-            Ok(b) => Some(b),
-            Err(_) => {
+            // A short read is a failed read, not a shorter container.
+            Ok(b) if b.len() as u64 == range.len => Some(b),
+            _ => {
                 self.fail();
                 None
             }
@@ -3803,12 +3903,8 @@ impl Rete {
         // or corrupt from an arbitrary URL). Slice through a checked helper so a
         // bad region yields an error instead of panicking on an OOB index.
         let region = |off: u64, len: u64| -> Result<&[u8], FileError> {
-            let start = off as usize;
-            let end = start
-                .checked_add(len as usize)
-                .filter(|&e| e <= bytes.len())
-                .ok_or(FileError::Container("section range out of bounds"))?;
-            Ok(&bytes[start..end])
+            checked_slice(bytes, off, len)
+                .ok_or(FileError::Container("section range out of bounds"))
         };
 
         let dict = decode_dictionary_container(
@@ -5577,7 +5673,11 @@ fn fetch_routed_matches<R: RangeReader>(
         // mega-group; one otherwise).
         Some(a) => {
             for e in dir.iter().filter(|e| e.min_a <= a && a <= e.max_a) {
-                let bytes = reader.read_at(routed.section.offset + e.start, e.end - e.start)?;
+                let len = e.end - e.start;
+                let bytes = reader.read_at(checked_end(routed.section.offset, e.start)?, len)?;
+                if bytes.len() as u64 != len {
+                    return Err(FileError::Container("short tile read"));
+                }
                 let tile = decompress(codec, &bytes)?;
                 out.extend(GraphIndex::match_serialized_block(
                     &tile,
@@ -5591,12 +5691,13 @@ fn fetch_routed_matches<R: RangeReader>(
         None => {
             if let (Some(first), Some(last)) = (dir.first(), dir.last()) {
                 let base = first.start;
-                let body = reader.read_at(routed.section.offset + base, last.end - base)?;
+                let body =
+                    reader.read_at(checked_end(routed.section.offset, base)?, last.end - base)?;
                 for e in &dir {
-                    let tile = decompress(
-                        codec,
-                        &body[(e.start - base) as usize..(e.end - base) as usize],
-                    )?;
+                    // Checked: a reader may return fewer bytes than asked.
+                    let stored = checked_slice(&body, e.start - base, e.end - e.start)
+                        .ok_or(FileError::Container("short tile read"))?;
+                    let tile = decompress(codec, stored)?;
                     out.extend(GraphIndex::match_serialized_block(
                         &tile,
                         routed.permutation,
