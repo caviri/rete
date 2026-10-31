@@ -123,6 +123,53 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   data sections, the text index included, are the same bytes, so
   `token_table_bytes` agrees on every path (G16), and re-carding it gives the
   same card.
+- **A host that ignores `Range` is no longer refused outright by the CLI, the
+  Python wheel or the R package** (G6). Such a host (a plain static server, a
+  proxy that strips the header) answers `200` with the whole file. The body is
+  now kept when it is the file and at most 256 MiB, the cap the browser readers
+  have had since 0.4.0, and every later read is a slice of it, with no further
+  request; a larger body is refused by name (`… not kept in memory`) without
+  being read. Tested against a real nginx with `max_ranges 0`
+  (`tests/interop/range_ignoring_host.sh`).
+- **The `FILTER(CONTAINS(…))` text-index pushdown reaches the shapes that used
+  to scan** (G18), with the same rows. A variable predicate is covered when the
+  filter itself confines it to predicates the index covers: `?p NOT IN (…)`
+  naming every predicate an `--text-index-exclude` index left out, `?p IN (…)`
+  or `?p = <…>` naming only included ones. `FILTER` distributes over `UNION`
+  branch by branch, and over `GRAPH <g>` when it has no `EXISTS`; with
+  `--text-index-graphs all` on a quad-index file, `GRAPH ?g` visits only the
+  graphs that hold a candidate subject, found in one pass over the
+  graph-leading SPO tiles instead of a view of every graph. On the
+  OpenCitations sample (rete 0.4.0 files, 6 words, rows identical to the scan):
+  the kind-11 scoped file with `?p NOT IN (…)` 10.2–10.7 s → 0.07–0.21 s; `{ … }
+  UNION { GRAPH ?g { … } }` on the all-graphs quad file 18.5–19.5 s → 0.43–0.75 s
+  (the scoped all-graphs file with `NOT IN`: 18.0–19.0 s → 0.25–0.47 s).
+  Anything the index does not provably cover still scans.
+- **A query's constant terms resolve in one batched dictionary read** on lazy
+  and remote opens (G5a), instead of one dependent read per term and section,
+  and a constant predicate is no longer looked up as a node for every new
+  predicate a scan meets. Through an 80 ms proxy on the OpenCitations sample:
+  1–3 round trips fewer on the curated and demo queries (c10 23 → 20, 1.93 s →
+  1.69 s), 6–7 fewer on a four-IRI `VALUES` (19 → 12, 1.59 s → 1.02 s).
+- **Label-prefix hits on a pre-0.4.0 file** (the label block inside the
+  pyramid) resolve their subjects in one batched read, like full-text hits
+  (G5b): a 399-hit prefix on a 0.3.6 OpenCitations file took 13 round trips,
+  now 7 (1.10 s → 0.60 s at 80 ms).
+- **The default query memory budget follows the memory available** (G5c): half
+  of it (the smaller of `MemAvailable` and the cgroup limit, read as the
+  memory-aware local open reads it), between 256 and 4096 MiB, instead of a
+  fixed 4096 MiB that a 4 GiB container cannot hold; 4096 where the memory
+  cannot be read. It applies to `rete sparql`/`sparql-url`/`federate` and to
+  every client that opens lazily (Python, R, Java, the relay).
+  `RETE_QUERY_BUDGET_MB` overrides the default (`0` = unlimited) and
+  `--memory-budget-mb` overrides both; `RETE_OPEN_DEBUG` prints the figure and
+  why.
+- **`rete federate` opens URL sources lazily** (G5d), through the same open as
+  `sparql-url`, under the default budget, and reports each URL source's fetches;
+  a failed range request fails the federation instead of dropping that
+  source's rows. It read each URL's whole dictionary and index directory first,
+  unbounded: three 55–63 GB published files ran a 4 GiB container out of
+  memory. Supersedes #324.
 
 ## [0.4.1] - 2026-10-30
 

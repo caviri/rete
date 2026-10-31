@@ -1200,8 +1200,9 @@ enum Command {
         /// the raw data with no materialization (opt-in; off = exact-match).
         #[arg(long)]
         entail: bool,
-        /// Memory budget in MiB for reading the file (default 4096; 0 =
-        /// unlimited): bounds the dictionary chunk cache, the index tile cache
+        /// Memory budget in MiB for reading the file (0 = unlimited; default:
+        /// half the memory available, 256–4096, or RETE_QUERY_BUDGET_MB):
+        /// bounds the dictionary chunk cache, the index tile cache
         /// and the raw block cache of a lazily-opened file, which a file goes
         /// to once it is larger than a quarter of the budget. Query operators
         /// (hash tables, groups, DISTINCT sets) are not part of it. See
@@ -1340,8 +1341,10 @@ enum Command {
         /// while reading only the bytes the rewritten query touches.
         #[arg(long)]
         entail: bool,
-        /// Memory budget in MiB for reading the remote file (default 4096; 0 =
-        /// unlimited): bounds the dictionary chunk cache, the index tile cache
+        /// Memory budget in MiB for reading the remote file (0 = unlimited;
+        /// default: half the memory available, 256–4096, or
+        /// RETE_QUERY_BUDGET_MB): bounds the dictionary chunk cache, the index
+        /// tile cache
         /// and the raw block cache of a lazily-opened file, Query operators
         /// (hash tables, groups, DISTINCT sets) are not part of it. See
         /// "Memory budget" in docs/sparql.md.

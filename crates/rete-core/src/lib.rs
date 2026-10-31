@@ -81,6 +81,10 @@ pub mod service;
 pub mod shacl;
 #[doc(hidden)]
 pub mod sparql;
+/// The memory available to this process and the default query budget sized
+/// from it (native targets only).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod sysmem;
 #[doc(hidden)]
 pub mod terms;
 #[doc(hidden)]
@@ -285,6 +289,10 @@ pub use sparql::{
     warnings_json, Agg, CommunityPartial, CommunitySelect, FExpr, GraphTarget, GroupSpec, Op,
     PartitionPlan, PathAst, Plan, QueryOpts, QueryOutput, QueryWarning, Rep, RoutedTriplePattern,
     Select, SparqlError, SummaryQueryShape, WarningSeverity,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use sysmem::{
+    available_memory, default_query_budget_mb, MIN_DEFAULT_QUERY_BUDGET_MB, QUERY_BUDGET_ENV,
 };
 #[doc(hidden)]
 pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};

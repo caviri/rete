@@ -100,99 +100,34 @@ pub(crate) fn lazy_threshold_from(
     LazyThreshold { bytes, reason }
 }
 
-/// Bytes this process can still allocate before something kills it: the
-/// smaller of the kernel's `MemAvailable` and the headroom under every cgroup
-/// memory limit above the process (v2 `memory.max`, or v1
-/// `memory.limit_in_bytes`). Inside a container `MemAvailable` describes the
-/// whole VM, so the cgroup limit is the one that matters there. Reclaimable
-/// page cache (`inactive_file`) does not count as used. `None` when neither
-/// source is readable (not Linux).
+/// Bytes this process can still allocate (`MemAvailable` and every cgroup
+/// limit above the process), or `None` where neither can be read. The probe
+/// lives in the core ([`rete_core::available_memory`]), which also sizes the
+/// default query budget from it.
 pub(crate) fn available_memory() -> Option<u64> {
-    let meminfo = std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|s| meminfo_available(&s));
-    let cgroup = cgroup_headroom(std::path::Path::new("/sys/fs/cgroup"));
-    match (meminfo, cgroup) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    }
+    rete_core::available_memory()
 }
 
-/// `MemAvailable` from a `/proc/meminfo` text, in bytes.
-fn meminfo_available(meminfo: &str) -> Option<u64> {
-    meminfo.lines().find_map(|line| {
-        let rest = line.strip_prefix("MemAvailable:")?;
-        let kb: u64 = rest.trim().trim_end_matches("kB").trim().parse().ok()?;
-        Some(kb.saturating_mul(1024))
-    })
-}
-
-/// One `key value` field of a cgroup `memory.stat` file.
-fn stat_field(stat: &str, key: &str) -> Option<u64> {
-    stat.lines().find_map(|line| {
-        let (k, v) = line.split_once(' ')?;
-        (k == key).then(|| v.trim().parse().ok())?
-    })
-}
-
-fn read_u64(path: &std::path::Path) -> Option<u64> {
-    std::fs::read_to_string(path).ok()?.trim().parse().ok()
-}
-
-/// Headroom under one cgroup v2 directory's `memory.max` (`None` when it has
-/// no limit: `max`, or no such file).
-fn cgroup_v2_headroom(dir: &std::path::Path) -> Option<u64> {
-    let max = read_u64(&dir.join("memory.max"))?;
-    let current = read_u64(&dir.join("memory.current")).unwrap_or(0);
-    let inactive = std::fs::read_to_string(dir.join("memory.stat"))
-        .ok()
-        .and_then(|s| stat_field(&s, "inactive_file"))
-        .unwrap_or(0);
-    Some(max.saturating_sub(current.saturating_sub(inactive)))
-}
-
-/// Headroom under a cgroup v1 memory controller directory. v1 reports "no
-/// limit" as a page-rounded `i64::MAX`, so anything past 2^60 is no limit.
-fn cgroup_v1_headroom(dir: &std::path::Path) -> Option<u64> {
-    let limit = read_u64(&dir.join("memory.limit_in_bytes")).filter(|&l| l < 1 << 60)?;
-    let usage = read_u64(&dir.join("memory.usage_in_bytes")).unwrap_or(0);
-    let inactive = std::fs::read_to_string(dir.join("memory.stat"))
-        .ok()
-        .and_then(|s| stat_field(&s, "total_inactive_file"))
-        .unwrap_or(0);
-    Some(limit.saturating_sub(usage.saturating_sub(inactive)))
-}
-
-/// The tightest headroom of the cgroups this process sits in, under the
-/// cgroup filesystem mounted at `root`. For v2 that walks from the process's
-/// own group (`0::<path>` in `/proc/self/cgroup`) up to `root`, since a limit
-/// set on any ancestor binds; inside a container with its own cgroup
-/// namespace the path is `/` and `root` itself carries the container's limit.
-fn cgroup_headroom(root: &std::path::Path) -> Option<u64> {
-    let own = std::fs::read_to_string("/proc/self/cgroup").ok();
-    let v2 = own
-        .as_deref()
-        .and_then(|s| s.lines().find_map(|l| l.strip_prefix("0::")))
-        .map(|p| p.trim().trim_start_matches('/').to_string());
-    let mut best: Option<u64> = None;
-    if let Some(rel) = v2 {
-        let mut dir = root.join(rel);
-        loop {
-            if let Some(h) = cgroup_v2_headroom(&dir) {
-                best = Some(best.map_or(h, |b| b.min(h)));
-            }
-            if dir.as_path() == root || !dir.pop() || !dir.starts_with(root) {
-                break;
-            }
-        }
-    }
-    best.or_else(|| cgroup_v1_headroom(&root.join("memory")))
-}
-
-/// The byte budget a query command runs under, from its `--memory-budget-mb`:
-/// omitted = [`rete_core::DEFAULT_QUERY_BUDGET_MB`], `0` = unlimited (`None`).
+/// The byte budget a query command runs under, from its `--memory-budget-mb`
+/// (`0` = unlimited, `None`). Omitted, it is the default sized from the memory
+/// available ([`rete_core::default_query_budget_mb`]: half of it, 256–4096
+/// MiB), or `RETE_QUERY_BUDGET_MB` when that is set. The flag wins over both.
 pub(crate) fn query_budget(mb: Option<u64>) -> Option<u64> {
-    match mb.unwrap_or(rete_core::DEFAULT_QUERY_BUDGET_MB) {
+    let mb = mb.unwrap_or_else(|| {
+        let mb = rete_core::default_query_budget_mb();
+        if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+            let why = match std::env::var(rete_core::QUERY_BUDGET_ENV) {
+                Ok(v) => format!("{}={}", rete_core::QUERY_BUDGET_ENV, v.trim()),
+                Err(_) => match available_memory() {
+                    Some(a) => format!("half of {} MiB available, 256–4096", a >> 20),
+                    None => "available memory unknown".to_string(),
+                },
+            };
+            eprintln!("[query_budget] default {mb} MiB ({why})");
+        }
+        mb
+    });
+    match mb {
         0 => None,
         mb => Some(mb.saturating_mul(1 << 20)),
     }
@@ -509,59 +444,6 @@ mod tests {
         // Memory tighter than the budget: memory decides.
         let t = lazy_threshold_from(None, Some(GIB), Some(4096 * MIB));
         assert_eq!(t.bytes, GIB / 16);
-    }
-
-    #[test]
-    fn parses_meminfo() {
-        let s =
-            "MemTotal:       49283460 kB\nMemFree:         1234 kB\nMemAvailable:   40000000 kB\n";
-        assert_eq!(meminfo_available(s), Some(40_000_000 * 1024));
-        assert_eq!(meminfo_available("MemTotal: 1 kB\n"), None);
-    }
-
-    /// A fake cgroup v2 tree: a limit on the group, a tighter one on its
-    /// parent; reclaimable page cache does not count as used.
-    #[test]
-    fn cgroup_v2_headroom_takes_the_tightest_limit() {
-        let root = tempfile::tempdir().unwrap();
-        let leaf = root.path().join("a/b");
-        std::fs::create_dir_all(&leaf).unwrap();
-        std::fs::write(leaf.join("memory.max"), "max\n").unwrap();
-        std::fs::write(root.path().join("a/memory.max"), format!("{}\n", 4 * GIB)).unwrap();
-        std::fs::write(
-            root.path().join("a/memory.current"),
-            format!("{}\n", GIB + 256 * MIB),
-        )
-        .unwrap();
-        std::fs::write(
-            root.path().join("a/memory.stat"),
-            format!("anon 1\ninactive_file {}\nactive_file 9\n", 256 * MIB),
-        )
-        .unwrap();
-        assert_eq!(cgroup_v2_headroom(&leaf), None, "`max` is no limit");
-        assert_eq!(
-            cgroup_v2_headroom(&root.path().join("a")),
-            Some(3 * GIB),
-            "4 GiB limit, 1.25 GiB charged of which 256 MiB is page cache"
-        );
-    }
-
-    #[test]
-    fn cgroup_v1_unlimited_is_no_limit() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("memory.limit_in_bytes"),
-            "9223372036854771712\n",
-        )
-        .unwrap();
-        assert_eq!(cgroup_v1_headroom(dir.path()), None);
-        std::fs::write(
-            dir.path().join("memory.limit_in_bytes"),
-            format!("{}", 2 * GIB),
-        )
-        .unwrap();
-        std::fs::write(dir.path().join("memory.usage_in_bytes"), format!("{GIB}")).unwrap();
-        assert_eq!(cgroup_v1_headroom(dir.path()), Some(GIB));
     }
 
     /// On the Linux this suite runs on (the dev container), the probe finds

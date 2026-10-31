@@ -153,9 +153,13 @@ A file opened lazily — every `-url` command, a local file larger than a
 quarter of the budget, and every client that opens through the ranged reader
 (Python, R, Java, the relay) — keeps three caches: decoded dictionary chunks,
 decoded index tiles (with the per-tile group directories that point lookups
-build) and raw file blocks. They are capped by one memory budget, **4096 MiB by
-default** (`rete sparql --memory-budget-mb N`, `0` = unlimited; a client that
-wants another figure calls `set_memory_budget`). Least recently used entries
+build) and raw file blocks. They are capped by one memory budget, by default
+**half the memory the process can still use, between 256 and 4096 MiB** (the
+smaller of `MemAvailable` and the cgroup limit; 4096 MiB where neither can be
+read, as on macOS and Windows), so a 4 GiB container no longer gets a default
+it cannot hold. `RETE_QUERY_BUDGET_MB` overrides the default (`0` = unlimited),
+and an explicit figure overrides both (`rete sparql --memory-budget-mb N`; a
+client calls `set_memory_budget`). Least recently used entries
 are evicted and re-read when touched again, so the budget trades speed for
 memory and never changes an answer. The per-query term and number memos are
 capped at 64 MiB each. The browser engine is not capped: its 32-bit heap is
@@ -163,7 +167,7 @@ smaller than the default, and its callers bound their own range budgets.
 
 `COUNT(DISTINCT …)` is bounded by the same figure: its distinct values are
 kept as a sorted, deduplicated buffer of dictionary ids (8 bytes each), and
-past an eighth of the budget (512 MiB by default) the buffer is written to the
+past an eighth of the budget (512 MiB at 4096) the buffer is written to the
 temporary directory (`TMPDIR`) as a sorted, delta-encoded run; the count is
 then a merge of the runs. It is exact at any budget. On DataCite,
 `COUNT(DISTINCT ?r)` over the 610 M `dcite:PidRelation`s ran out of memory at

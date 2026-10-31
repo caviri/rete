@@ -1171,6 +1171,106 @@ impl QuadCore {
         Some(self.tiles.insert((si as u8, ti as u32), body))
     }
 
+    /// The ids of the graphs holding at least one quad whose subject is in
+    /// `subjects`, ascending: one sequential pass over the `G+SPO` tiles (the
+    /// subject is the column after the graph there), in read-ahead windows of
+    /// [`READ_AHEAD_MAX`] tiles. A segment whose first subject is wanted
+    /// answers without decoding its body. Tiles already in the shared cache
+    /// are used as they are; the others are decoded and dropped, so the pass
+    /// does not flood the cache. `None` on a failed read or a malformed tile
+    /// (the failure is recorded, as for every lazy read).
+    fn graphs_with_subjects(&self, subjects: &std::collections::BTreeSet<u32>) -> Option<Vec<u32>> {
+        let perm = IndexPermutation::Spo;
+        self.perms.position(perm)?;
+        let si = perm.section_index();
+        let dir = self.dir(si)?;
+        let cols = subject_columns(perm);
+        let mut out: Vec<u32> = Vec::new();
+        let mut rows: Vec<Triple> = Vec::new();
+        let mut scan = |t: &QTile, body: &[u8]| -> Option<()> {
+            let mut ok = true;
+            walk_segments(body, t.first_g, |g, first_a, seg| {
+                // A graph cut across tiles opens one segment in each.
+                if out.last() == Some(&g) {
+                    return true;
+                }
+                if subjects.contains(&first_a) {
+                    out.push(g);
+                    return true;
+                }
+                rows.clear();
+                ok = decode_segment_body(seg, first_a, cols, &mut rows).is_some();
+                if ok && rows.iter().any(|(a, _, _)| subjects.contains(a)) {
+                    out.push(g);
+                }
+                ok
+            })?;
+            ok.then_some(())
+        };
+        let mut ti = 0;
+        while ti < dir.len() {
+            let end = (ti + READ_AHEAD_MAX).min(dir.len());
+            let mut spans: Vec<(u64, u64)> = Vec::new();
+            let mut members: Vec<Vec<usize>> = Vec::new();
+            let mut cached: Vec<Option<Arc<CacheEntry>>> = Vec::with_capacity(end - ti);
+            for (k, t) in dir[ti..end].iter().enumerate() {
+                let hit = self.tiles.get((si as u8, (ti + k) as u32));
+                if hit.is_none() {
+                    match spans.last_mut() {
+                        Some(last) if last.0 + last.1 == t.range.offset => {
+                            last.1 += t.range.len;
+                            members.last_mut()?.push(ti + k);
+                        }
+                        _ => {
+                            spans.push((t.range.offset, t.range.len));
+                            members.push(vec![ti + k]);
+                        }
+                    }
+                }
+                cached.push(hit);
+            }
+            let mut bodies: Vec<Option<Arc<[u8]>>> = vec![None; end - ti];
+            if !spans.is_empty() {
+                let blobs = match self.reader.read_many(&spans) {
+                    Ok(b) if b.len() == spans.len() => b,
+                    _ => {
+                        self.fail();
+                        return None;
+                    }
+                };
+                for ((start, _), (blob, tis)) in spans.iter().zip(blobs.iter().zip(&members)) {
+                    for &k in tis {
+                        let t = &dir[k];
+                        let lo = (t.range.offset - start) as usize;
+                        let body = blob
+                            .get(lo..lo + t.range.len as usize)
+                            .and_then(|stored| self.unpack(t, stored));
+                        match body {
+                            Some(b) => bodies[k - ti] = Some(b),
+                            None => {
+                                self.fail();
+                                return None;
+                            }
+                        }
+                    }
+                }
+            }
+            for k in ti..end {
+                let r = match (&cached[k - ti], &bodies[k - ti]) {
+                    (Some(e), _) => scan(&dir[k], e.body()),
+                    (None, Some(b)) => scan(&dir[k], b),
+                    (None, None) => None,
+                };
+                if r.is_none() {
+                    self.fail();
+                    return None;
+                }
+            }
+            ti = end;
+        }
+        Some(out)
+    }
+
     /// A view of graph `g`: a remote-style [`GraphIndex`] over its slice of
     /// every order's tiles. Reads the tile directories it needs, no tile.
     fn view(self: &Arc<Self>, g: u32, tile_cap: u64) -> Option<GraphIndex> {
@@ -1537,6 +1637,22 @@ impl QuadNamed {
             return None;
         }
         self.core.view(g, self.tile_cap.load(Ordering::Relaxed))
+    }
+
+    /// The ordinals (ascending) of the graphs holding a quad whose subject is
+    /// one of `subjects` (subject ids) — what a `GRAPH ?g` walk restricted to
+    /// those subjects has to visit. One pass over the `G+SPO` tiles plus the
+    /// directory blocks of the graphs found, never a view per graph. `None` on
+    /// a failed read.
+    pub(crate) fn graphs_with_subjects(
+        &self,
+        subjects: &std::collections::BTreeSet<u32>,
+    ) -> Option<Vec<usize>> {
+        self.core
+            .graphs_with_subjects(subjects)?
+            .into_iter()
+            .map(|g| self.core.ordinal_of(g))
+            .collect()
     }
 
     fn ordinal_of_name(&self, dict: &Dictionary, iri: &str) -> Option<usize> {

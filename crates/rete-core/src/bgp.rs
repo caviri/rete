@@ -656,6 +656,19 @@ fn pattern_slots(t: &(SlotTerm, SlotTerm, SlotTerm)) -> Vec<usize> {
     slots
 }
 
+/// The row value of a matched triple's predicate `p_id`, for a pattern whose
+/// predicate slot is `slot`. Only a variable predicate binds it, so only then
+/// is it canonicalized (a predicate that is also a node becomes the node id):
+/// that is a dictionary lookup of the predicate as a node, memoized per query,
+/// but up to three dependent chunk reads on a lazy open for each new predicate
+/// — reads a constant predicate never needed. Otherwise the value is unused.
+fn pred_val(ctx: &Ctx, slot: &SlotTerm, p_id: u32) -> i64 {
+    match slot {
+        SlotTerm::Var(_) => ctx.resolver.canon_id(pred_tag(p_id)),
+        _ => pred_tag(p_id),
+    }
+}
+
 /// Build a solution row for one scanned triple, enforcing repeated variables
 /// *within* the pattern (e.g. `?x p ?x`). `None` = the triple doesn't satisfy
 /// a repeated variable.
@@ -666,7 +679,7 @@ fn triple_row(
 ) -> Option<Row> {
     let dict = ctx.rete.dictionary();
     let s_val = dict.subject_node(s_id) as i64;
-    let p_val = ctx.resolver.canon_id(pred_tag(p_id));
+    let p_val = pred_val(ctx, &t.1, p_id);
     let o_val = dict.object_node(o_id) as i64;
     let mut row = ctx.slots.empty_row();
     for (term, val) in [(&t.0, s_val), (&t.1, p_val), (&t.2, o_val)] {
@@ -1535,7 +1548,7 @@ fn probe_rows<'q>(
             .scan_iter((sid, pid, oid))
             .filter_map(move |(s_id, p_id, o_id)| {
                 let s_val = dict.subject_node(s_id) as i64;
-                let p_val = ctx.resolver.canon_id(pred_tag(p_id));
+                let p_val = pred_val(ctx, &t.1, p_id);
                 let o_val = dict.object_node(o_id) as i64;
                 let mut row = base.clone();
                 for (term, val) in [(&t.0, s_val), (&t.1, p_val), (&t.2, o_val)] {
