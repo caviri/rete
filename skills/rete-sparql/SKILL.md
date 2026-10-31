@@ -69,11 +69,14 @@ BIND first).
 ## Fast text search
 
 `FILTER(CONTAINS(...))` scans every literal. Files built with
-`--text-index` carry a word index that is ~40× faster — but it is a
-**separate API**, not a SPARQL builtin: `g.text_search([...])`,
-`rete search --contains`, the Space's `find_entities`, or the
-playground's search box. Resolve entities there first, then use the IRIs
-in SPARQL.
+`--text-index` carry a word index that is ~40× faster. SPARQL uses it by
+itself where it covers the query (`FILTER(CONTAINS(?o, "…"))` on a pattern
+whose `?o` it indexed). The index holds **literals only**: through `STR()`
+an IRI's text matches too, so `CONTAINS(LCASE(STR(?x)), "…")` keeps the fast
+path only when `?x` is provably a literal — add `FILTER(isLiteral(?x))`, or
+search a predicate whose objects are all literals (titles, labels). It is
+also a separate API: `g.text_search([...])`, `rete search --contains`, the
+Space's `find_entities`, or the playground's search box.
 
 ## Result formats
 

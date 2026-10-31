@@ -1527,35 +1527,126 @@ const TEXT_PUSHDOWN_MAX_CANDIDATES: usize = 8192;
 /// The variable inside a CONTAINS haystack argument, looking through the
 /// value-preserving wrappers `STR` / `LCASE` / `UCASE` (they change case or
 /// strip the tag — the index is case-folded anyway, and the original filter
-/// re-verifies exactly).
-fn contains_var(e: &FExpr) -> Option<&str> {
+/// re-verifies exactly), and whether the chain goes through `STR`.
+///
+/// That flag is what the index's coverage hinges on. The index holds the words
+/// of **literals** only. `CONTAINS`, `LCASE` and `UCASE` take string literals and
+/// fail (a type error, so the filter rejects the row) on an IRI, a blank node
+/// or a quoted triple; `STR` turns those into strings, and
+/// `CONTAINS(STR(?o), "x")` is then true for an IRI `<…x…>` the index never saw.
+fn contains_var(e: &FExpr) -> Option<(&str, bool)> {
     match e {
-        FExpr::Var(v) => Some(v),
-        FExpr::Func(Builtin::Str | Builtin::LCase | Builtin::UCase, args) if args.len() == 1 => {
-            contains_var(&args[0])
+        FExpr::Var(v) => Some((v, false)),
+        FExpr::Func(f @ (Builtin::Str | Builtin::LCase | Builtin::UCase), args)
+            if args.len() == 1 =>
+        {
+            let (v, via_str) = contains_var(&args[0])?;
+            Some((v, via_str || *f == Builtin::Str))
         }
         _ => None,
     }
 }
 
-/// Collect `(variable, needle)` from the REQUIRED conjuncts of a filter: walk
-/// `And` nodes only (a CONTAINS under OR / NOT / IF is not a necessary
-/// condition and must not prune), taking `CONTAINS(<var-ish>, "literal")`.
-fn required_contains(e: &FExpr, out: &mut Vec<(String, String)>) {
+/// One required `CONTAINS(<var-ish>, "needle")` conjunct of a filter.
+struct Needle {
+    /// The variable whose value is searched.
+    var: String,
+    /// The needle's lexical text.
+    text: String,
+    /// The haystack goes through `STR`, so a non-literal value can match too
+    /// (see [`contains_var`]).
+    via_str: bool,
+}
+
+/// Collect the [`Needle`]s of the REQUIRED conjuncts of a filter: walk `And`
+/// nodes only (a CONTAINS under OR / NOT / IF is not a necessary condition and
+/// must not prune), taking `CONTAINS(<var-ish>, "literal")`.
+fn required_contains(e: &FExpr, out: &mut Vec<Needle>) {
     match e {
         FExpr::And(a, b) => {
             required_contains(a, out);
             required_contains(b, out);
         }
         FExpr::Func(Builtin::Contains, args) if args.len() == 2 => {
-            if let (Some(v), FExpr::Const(c)) = (contains_var(&args[0]), &args[1]) {
-                if let Some(needle) = crate::terms::literal_lexical(c) {
-                    out.push((v.to_string(), needle));
+            if let (Some((v, via_str)), FExpr::Const(c)) = (contains_var(&args[0]), &args[1]) {
+                if let Some(text) = crate::terms::literal_lexical(c) {
+                    out.push(Needle {
+                        var: v.to_string(),
+                        text,
+                        via_str,
+                    });
                 }
             }
         }
         _ => {}
     }
+}
+
+/// Most tiles [`predicate_objects_literal`] reads, on a lazy open, to settle
+/// what the tile synopses could not.
+const LITERAL_PROOF_MAX_TILES: usize = 4;
+
+/// Does every row the filter accepts bind `v` to a literal, by the filter's
+/// own REQUIRED conjuncts? `isLiteral(?v)` and `isNumeric(?v)` say so, and so
+/// does any comparison, `IN` or `langMatches` over `LANG(?v)` or
+/// `DATATYPE(?v)`, negated or not: both are errors on an IRI, a blank node or
+/// a quoted triple, the error propagates through the comparison and its `!`,
+/// and an error rejects the row. (`!isLiteral(?v)` is no such proof.)
+fn filter_proves_literal(e: &FExpr, v: &str) -> bool {
+    let is_v = |x: &FExpr| matches!(x, FExpr::Var(name) if name == v);
+    let of_v = |x: &FExpr| {
+        matches!(x, FExpr::Func(Builtin::Lang | Builtin::Datatype, args)
+            if args.len() == 1 && is_v(&args[0]))
+    };
+    // An error whenever `v` is not a literal.
+    let errs = |x: &FExpr| match x {
+        FExpr::Func(Builtin::LangMatches, args) => args.first().is_some_and(of_v),
+        FExpr::Compare(_, a, b) | FExpr::SameTerm(a, b) => of_v(a) || of_v(b),
+        FExpr::In(x, _) => of_v(x),
+        _ => false,
+    };
+    match e {
+        FExpr::And(a, b) => filter_proves_literal(a, v) || filter_proves_literal(b, v),
+        FExpr::Func(Builtin::IsLiteral | Builtin::IsNumeric, args) => {
+            args.len() == 1 && is_v(&args[0])
+        }
+        FExpr::Not(x) => errs(x),
+        _ => errs(e),
+    }
+}
+
+/// [`filter_proves_literal`] over the filters on `plan`'s REQUIRED spine (both
+/// `Join` sides, a `LeftJoin`'s left, a nested `Filter`): every row the plan
+/// yields passed them.
+fn plan_proves_literal(plan: &Plan, v: &str) -> bool {
+    match plan {
+        Plan::Filter(e, inner) => filter_proves_literal(e, v) || plan_proves_literal(inner, v),
+        Plan::Join(l, r) => plan_proves_literal(l, v) || plan_proves_literal(r, v),
+        Plan::LeftJoin(l, _, _) => plan_proves_literal(l, v),
+        _ => false,
+    }
+}
+
+/// Is the object of every triple with predicate `p` in `index` a literal? The
+/// literal object ids are known ranges of the dictionary
+/// ([`crate::dictionary::Dictionary::literal_objects`]); the predicate's
+/// objects are read off its tiles' synopses, and only the tiles a synopsis
+/// cannot settle are read (see [`GraphIndex::predicate_objects_within`]).
+/// `false` = not proven.
+fn predicate_objects_literal(ctx: &Ctx, index: &GraphIndex, p: &str) -> bool {
+    let dict = ctx.rete.dictionary();
+    let Some(pid) = dict.predicate_id(p) else {
+        // No such predicate: the pattern matches nothing, whatever the index.
+        return true;
+    };
+    let Some(literals) = dict.literal_objects() else {
+        return false;
+    };
+    index.predicate_objects_within(
+        pid,
+        |lo, hi| literals.covers(lo, hi),
+        LITERAL_PROOF_MAX_TILES,
+    )
 }
 
 /// FILTER-CONTAINS pushdown through the TEXT_INDEX (`word → subjects`).
@@ -1600,7 +1691,7 @@ fn text_contains_pushdown<'q>(
     if !ctx.rete.has_text_index() {
         return None;
     }
-    let mut needles: Vec<(String, String)> = Vec::new();
+    let mut needles: Vec<Needle> = Vec::new();
     required_contains(expr, &mut needles);
     if needles.is_empty() {
         return None;
@@ -1646,11 +1737,20 @@ fn text_contains_pushdown<'q>(
 /// `?p = <…>` naming only included ones). An index never saw the literals of
 /// the predicates it left out, and an unconfined variable predicate can bind
 /// exactly those.
+///
+/// A needle searched through `STR` counts only where the searched value is
+/// provably a literal: the filter says so ([`filter_proves_literal`], on the
+/// filter or on one along `inner`'s required spine), or the pattern's
+/// predicate is a constant whose objects in `index` are all literals
+/// ([`predicate_objects_literal`]; `index` is `None` when the pattern is
+/// evaluated over several graphs). Otherwise `CONTAINS(STR(?o), …)` can hold
+/// for an IRI the index never saw, and the needle must not prune.
 fn contains_candidates(
     ctx: &Ctx,
     expr: &FExpr,
     inner: &Plan,
-    needles: &[(String, String)],
+    needles: &[Needle],
+    index: Option<&GraphIndex>,
 ) -> Option<(String, std::collections::BTreeSet<u32>)> {
     use std::collections::BTreeSet;
     let ti = ctx.rete.text_index()?;
@@ -1662,7 +1762,12 @@ fn contains_candidates(
     // variable (the first that qualifies keeps this simple and sound: further
     // constraints only ever come back through the re-verifying filter).
     let mut seed: Option<(String, BTreeSet<u32>)> = None;
-    for (cv, needle) in needles {
+    for Needle {
+        var: cv,
+        text: needle,
+        via_str,
+    } in needles
+    {
         let Some((sv, pred)) = contains_subject_var(inner, cv) else {
             continue;
         };
@@ -1673,6 +1778,14 @@ fn contains_candidates(
             }
         };
         if !covered {
+            continue;
+        }
+        if *via_str
+            && !(filter_proves_literal(expr, cv)
+                || plan_proves_literal(inner, cv)
+                || matches!((pred, index), (PatternTerm::Const(p), Some(ix))
+                    if predicate_objects_literal(ctx, ix, p)))
+        {
             continue;
         }
         let pieces: Vec<String> = crate::text_index::tokenize(needle).collect();
@@ -1714,14 +1827,14 @@ fn seeded_pushdown(
     nf: Option<&[String]>,
     expr: &FExpr,
     inner: &Plan,
-    needles: &[(String, String)],
+    needles: &[Needle],
 ) -> Option<Vec<Row>> {
     use std::collections::BTreeSet;
     // Decided from the header, before anything faults the token table.
     if !text_index_covers(ctx, index) {
         return None;
     }
-    let (sv, cands) = contains_candidates(ctx, expr, inner, needles)?;
+    let (sv, cands) = contains_candidates(ctx, expr, inner, needles, Some(index))?;
     if cands.len() > TEXT_PUSHDOWN_MAX_CANDIDATES {
         return None;
     }
@@ -1782,13 +1895,15 @@ fn graph_walk_pushdown<'q>(
     expr: &'q FExpr,
     var: &'q str,
     inner: &'q Plan,
-    needles: &[(String, String)],
+    needles: &[Needle],
 ) -> Option<RowIter<'q>> {
     let header = ctx.rete.header();
     if !header.text_index_covers_named_graphs() || !header.has_quad_index() {
         return None;
     }
-    let (_, cands) = contains_candidates(ctx, expr, inner, needles)?;
+    // No single index to prove a predicate's objects literal over: a needle
+    // through `STR` needs the filter's own proof here.
+    let (_, cands) = contains_candidates(ctx, expr, inner, needles, None)?;
     if cands.is_empty() {
         // No covered literal holds the needle: no row can pass.
         return Some(Box::new(std::iter::empty()));

@@ -1388,28 +1388,110 @@ impl GraphIndex {
                     self.prefetch_span(si, ti, (ti + w).min(end));
                     window.set(w.saturating_mul(2).min(PREFETCH_WINDOW_MAX));
                 }
-                // Decode the tile once and materialize its matching rows into an
-                // owned `Vec`, so the borrowed block/cursor never outlives the
-                // tile's cache handle (an `Arc` dropped at the end of this
-                // closure). The buffer is bounded to one tile's rows; the scan
-                // stays lazy *across* tiles, so a `LIMIT` still stops early.
-                let rows: Vec<Triple> = match self.tile_entry(si, ti) {
-                    Some(entry) => TripleBlock::parse(entry.body())
-                        .ok()
-                        .filter(|b| b.zone().may_contain(pa, pb, pc))
-                        .map(|b| match pa {
-                            Some(a) => {
-                                let dir = self.tile_dir(si, ti, &entry, &b);
-                                b.scan_from(dir, a, pb, pc).collect()
-                            }
-                            None => b.scan(pa, pb, pc).collect(),
-                        })
-                        .unwrap_or_default(),
-                    None => Vec::new(),
-                };
+                // A failed fetch is recorded by the index and scans as empty.
+                let rows: Vec<Triple> = self.tile_rows(si, ti, pa, pb, pc).unwrap_or_default();
                 rows.into_iter()
             })
             .map(move |abc| perm.back(abc))
+    }
+
+    /// The rows of tile `ti` of section `si` matching `(pa, pb, pc)` (in that
+    /// section's `a, b, c` order). The tile is decoded once and its matching
+    /// rows materialized into an owned `Vec`, so the borrowed block/cursor never
+    /// outlives the tile's cache handle (an `Arc` dropped on return); the buffer
+    /// is bounded to one tile's rows. `None` = the tile could not be fetched
+    /// (the failure is recorded, see [`Self::load_incomplete`]); a malformed or
+    /// zone-pruned tile yields no rows.
+    fn tile_rows(
+        &self,
+        si: usize,
+        ti: usize,
+        pa: Option<u32>,
+        pb: Option<u32>,
+        pc: Option<u32>,
+    ) -> Option<Vec<Triple>> {
+        let entry = self.tile_entry(si, ti)?;
+        Some(
+            TripleBlock::parse(entry.body())
+                .ok()
+                .filter(|b| b.zone().may_contain(pa, pb, pc))
+                .map(|b| match pa {
+                    Some(a) => {
+                        let dir = self.tile_dir(si, ti, &entry, &b);
+                        b.scan_from(dir, a, pb, pc).collect()
+                    }
+                    None => b.scan(pa, pb, pc).collect(),
+                })
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Is the object of every triple with predicate `p` inside an object-id
+    /// range `covers` accepts? Read off the predicate-leading tiles (POS, or PSO):
+    /// a tile whose synopsis object range `covers` accepts is proven without
+    /// being read — the synopsis bounds every row of the tile, whatever its
+    /// predicate, so a tile shared with other predicates only makes the test
+    /// stricter. The tiles left (no synopsis, or a range it does not accept) are
+    /// read and their rows of `p` checked one by one: on a lazy index only when
+    /// there are at most `max_read` of them, in one batch, else the answer is
+    /// `false`; on a resident one always, in memory. `false` also when a tile
+    /// cannot be read. An index without `p` proves it trivially.
+    pub(crate) fn predicate_objects_within(
+        &self,
+        p: u32,
+        covers: impl Fn(u32, u32) -> bool,
+        max_read: usize,
+    ) -> bool {
+        // (perm, which synopsis/row column holds the object)
+        let (perm, object_is_b) = if self.perms.contains(IndexPermutation::Pos) {
+            (IndexPermutation::Pos, true)
+        } else if self.perms.contains(IndexPermutation::Pso) {
+            (IndexPermutation::Pso, false)
+        } else {
+            return false;
+        };
+        let si = perm.section_index();
+        let (start, end) = self.tile_span(si, Some(p));
+        let unproven: Vec<usize> = (start..end)
+            .filter(|&ti| match self.sections[si][ti].syn {
+                Some((min_b, max_b, min_c, max_c)) => {
+                    let (lo, hi) = if object_is_b {
+                        (min_b, max_b)
+                    } else {
+                        (min_c, max_c)
+                    };
+                    !covers(lo, hi)
+                }
+                None => true,
+            })
+            .collect();
+        if unproven.is_empty() {
+            return true;
+        }
+        if self.is_lazy() {
+            if unproven.len() > max_read {
+                return false;
+            }
+            let missing: Vec<usize> = unproven
+                .iter()
+                .copied()
+                .filter(|&ti| !self.tile_resident(si, ti))
+                .collect();
+            self.bulk_fault(si, &missing);
+        }
+        for ti in unproven {
+            let Some(rows) = self.tile_rows(si, ti, Some(p), None, None) else {
+                return false;
+            };
+            let all = rows.iter().all(|&(_, b, c)| {
+                let o = if object_is_b { b } else { c };
+                covers(o, o)
+            });
+            if !all {
+                return false;
+            }
+        }
+        true
     }
 
     /// A planner estimate of how many triples match `pattern`, read off the

@@ -34,6 +34,24 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **`FILTER(CONTAINS(STR(?o), …))` no longer loses rows on a file with a text
+  index** — wrong since 0.3.0. The `CONTAINS` pushdown looked through `STR()`
+  and pruned with the text index, which holds literals only, so a row whose
+  `?o` is an IRI (or a blank node, or a quoted triple) whose text contains the
+  needle was dropped: `?s ex:kind ?o FILTER(CONTAINS(STR(?o), "Thing"))` gave 2
+  rows on a plain file and 1 with `--text-index`. Through `STR` the index is
+  now used only where `?o` is provably a literal: the filter requires it
+  (`isLiteral(?o)`, `isNumeric(?o)`, a comparison, `IN` or `langMatches` on
+  `LANG(?o)` or `DATATYPE(?o)`), or the pattern's predicate is a constant whose
+  objects are all literals — read off its tiles' synopses against the
+  dictionary's literal id ranges, a handful of tiles read where a synopsis
+  cannot tell. Anywhere else the filter scans, with the scan's rows. Without
+  `STR`, `CONTAINS`, `LCASE` and `UCASE` reject non-literals, and nothing
+  changes. Of the 11 catalog examples on the 32 text-indexed datasets that
+  search through `STR`, the 9 the pushdown reached keep it (by the predicate
+  proof); none of the cards' starter or example queries searches through
+  `STR`.
+
 - **A term-dense stretch no longer takes the memory-bounded build past its
   budget** (G24). Chunks were sealed by the bytes of their statements alone;
   where every statement brings two new terms (the OpenCitations Meta

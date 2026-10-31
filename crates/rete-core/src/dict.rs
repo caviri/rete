@@ -995,6 +995,41 @@ impl ChunkedSection {
         }
     }
 
+    /// How many terms of this section sort (bytewise) before `bound`: the
+    /// routed chunk is the only one the boundary can lie in (every term of an
+    /// earlier chunk sorts before its routing key, every term of a later one at
+    /// or after the next key), so this faults that one chunk and binary-searches
+    /// its ids. `None` when a chunk cannot be read.
+    pub(crate) fn rank(&self, bound: &str) -> Option<u32> {
+        let tc = self.meta.term_count;
+        let ri = self.meta.restart_interval as usize;
+        if tc == 0 || ri == 0 {
+            return Some(0);
+        }
+        let Some(ci) = self.chunk_for_term(bound) else {
+            return Some(0); // `bound` sorts before the first chunk's key
+        };
+        // Ids of chunk `ci`: its first run's first id up to the id before the
+        // next chunk's first run (or the last id).
+        let first = (self.chunks[ci].first_run.checked_mul(ri)? as u64 + 1).min(tc as u64 + 1);
+        let last = match self.chunks.get(ci + 1) {
+            Some(next) => (next.first_run.checked_mul(ri)? as u64).min(tc as u64),
+            None => tc as u64,
+        };
+        // The first id in [first, last] whose term is >= bound (last + 1 if none).
+        let (mut lo, mut hi) = (first, last + 1);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let term = self.term(u32::try_from(mid).ok()?)?;
+            if term.as_bytes() < bound.as_bytes() {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        u32::try_from(lo - 1).ok()
+    }
+
     /// Does this section fault chunk bodies in on demand (a lazy or ranged
     /// open), rather than hold them all resident?
     pub(crate) fn faults_chunks(&self) -> bool {

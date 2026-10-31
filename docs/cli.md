@@ -311,10 +311,15 @@ the file covers rather than on how it was built:
   ones. The filter is pushed through a `UNION` branch by branch, into
   `GRAPH <g>` (when it has no `EXISTS`), and, under `all` on a quad-index file
   (`--named-graphs quad`), into `GRAPH ?g`, which then visits only the graphs
-  holding a candidate subject. Anywhere else the filter scans and returns the
-  same rows, just without the shortcut. (Before 0.4.0 the pushdown also ran
-  inside `GRAPH` against a default-graph index, where it returned no rows at
-  all.)
+  holding a candidate subject. The index holds literals only, and `STR()` makes
+  an IRI's or a blank node's text searchable too, so `CONTAINS(STR(?o), …)`
+  takes the index only where `?o` is provably a literal: `isLiteral(?o)`, a
+  comparison on `LANG(?o)` or `DATATYPE(?o)`, or a constant predicate whose
+  objects are all literals (read off its tiles' synopses, in the default graph
+  or a `GRAPH <g>`). Anywhere else the filter scans and returns the same rows,
+  just without the shortcut. (Before 0.4.0 the pushdown also ran inside `GRAPH`
+  against a default-graph index, where it returned no rows at all; from 0.3.0
+  to 0.4.1 it dropped the rows whose `STR(?o)` matched an IRI.)
 - **An include/exclude index is stored as section kind 11**, not 6. Readers
   older than 0.4.0 do not know kind 11 and see no text index: `rete search
   --contains` says the file has none, and `CONTAINS` scans. That is on purpose.
