@@ -197,8 +197,9 @@ pub struct ExternalBuildOptions {
     /// is cut into and how large each external-sort run is. Not a hard cgroup
     /// limit — a working-set target the phases size themselves against.
     pub memory_budget: u64,
-    /// Where intermediate spill files live (a `.rete-extbuild-<pid>` directory is
-    /// created inside). Defaults to the output file's parent directory — same
+    /// Where intermediate spill files live (a fresh
+    /// `.rete-extbuild-<pid>-<seq>-<random>` directory is created inside, never
+    /// an existing one). Defaults to the output file's parent directory — same
     /// filesystem, no surprise `/tmp` exhaustion.
     pub tmp_dir: Option<PathBuf>,
     /// Metadata payload (the Dataset Card), derived after counts are known.
@@ -742,14 +743,48 @@ struct TmpDir {
 }
 
 impl TmpDir {
+    /// A fresh spill directory in `parent`, owned by this build alone.
+    ///
+    /// The name was `.rete-extbuild-<pid>-<seq>`, made with `create_dir_all`.
+    /// In a container the pid is usually 1, so every container's first build
+    /// got the same name: two builds sharing a `--tmp-dir` wrote into one
+    /// directory, and the first to finish deleted the other's spill. A
+    /// directory left behind by a killed build was adopted the same way. Now
+    /// the name also carries 64 random bits, and `create_dir` refuses a name
+    /// that exists, so a directory is never shared or reused; on a clash the
+    /// next name is tried. Nothing here enters or deletes a directory this
+    /// process did not create, so a build still running (any version) keeps
+    /// its spill.
     fn create(parent: &Path) -> Result<Self, std::io::Error> {
-        // pid + a process-wide counter: two concurrent external builds in the
-        // same process (or parallel tests) must never share a spill directory.
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = parent.join(format!(".rete-extbuild-{}-{}", std::process::id(), seq));
-        std::fs::create_dir_all(&dir)?;
-        Ok(TmpDir { dir })
+        Self::create_named(parent, || {
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let pid = std::process::id();
+            format!(".rete-extbuild-{pid}-{seq}-{:016x}", spill_nonce())
+        })
+    }
+
+    /// [`create`](Self::create) with the names to try supplied by `name`.
+    fn create_named(
+        parent: &Path,
+        mut name: impl FnMut() -> String,
+    ) -> Result<Self, std::io::Error> {
+        std::fs::create_dir_all(parent)?;
+        for _ in 0..TMP_DIR_ATTEMPTS {
+            let dir = parent.join(name());
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(TmpDir { dir }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "no fresh spill directory in {}: {TMP_DIR_ATTEMPTS} names were taken",
+                parent.display()
+            ),
+        ))
     }
     fn path(&self, name: &str) -> PathBuf {
         self.dir.join(name)
@@ -760,6 +795,25 @@ impl Drop for TmpDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// Names [`TmpDir::create`] tries before it gives up. With 64 random bits in
+/// each, a second attempt already means something else is wrong.
+const TMP_DIR_ATTEMPTS: u32 = 16;
+
+/// 64 random bits for a spill directory name: std's per-process hash keys
+/// (seeded from the OS, different on every call) over the clock. Exclusivity
+/// does not rest on these bits — `create_dir` refuses a name that exists —
+/// they only make a clash, and so a retry, rare.
+fn spill_nonce() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    h.write_u128(now);
+    h.finish()
 }
 
 // ---------------------------------------------------------------------------
@@ -3168,6 +3222,88 @@ mod tests {
         )
         .unwrap();
         bytes
+    }
+
+    /// A scratch parent for the spill-directory tests, removed by the caller.
+    fn spill_parent(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "rete-spill-parent-{tag}-{}-{:016x}",
+            std::process::id(),
+            spill_nonce()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Two builds in two containers that share a `--tmp-dir`: both pid 1, both
+    /// their process's first build. They used to get the same directory, and
+    /// the first to finish deleted the other's spill.
+    #[test]
+    fn spill_directories_are_exclusive_even_with_one_pid() {
+        let parent = spill_parent("pid1");
+        let first_build = || format!(".rete-extbuild-1-0-{:016x}", spill_nonce());
+        let a = TmpDir::create_named(&parent, first_build).unwrap();
+        let b = TmpDir::create_named(&parent, first_build).unwrap();
+        assert_ne!(a.dir, b.dir);
+        std::fs::write(a.path("c0.tri"), b"spill").unwrap();
+        drop(b);
+        assert_eq!(std::fs::read(a.path("c0.tri")).unwrap(), b"spill");
+        drop(a);
+        assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    /// The production names: distinct within one process too, and recognisable.
+    #[test]
+    fn spill_directory_names_carry_pid_seq_and_random_bits() {
+        let parent = spill_parent("names");
+        let dirs: Vec<TmpDir> = (0..8).map(|_| TmpDir::create(&parent).unwrap()).collect();
+        let mut names: Vec<String> = dirs
+            .iter()
+            .map(|d| d.dir.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        let prefix = format!(".rete-extbuild-{}-", std::process::id());
+        for n in &names {
+            assert!(n.starts_with(&prefix), "{n}");
+            let rand = n.rsplit('-').next().unwrap();
+            assert_eq!(rand.len(), 16, "{n}");
+            assert!(u64::from_str_radix(rand, 16).is_ok(), "{n}");
+        }
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 8);
+        drop(dirs);
+        let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    /// A directory that already exists — a live build's, or one a killed build
+    /// left — is never adopted, entered or deleted: the next name is tried, and
+    /// when every name is taken the build fails instead of sharing one.
+    #[test]
+    fn an_existing_spill_directory_is_never_reused() {
+        let parent = spill_parent("taken");
+        for name in ["taken-0", "taken-1"] {
+            std::fs::create_dir(parent.join(name)).unwrap();
+            std::fs::write(parent.join(name).join("owner"), name).unwrap();
+        }
+        let mut names = ["taken-0", "taken-1", "fresh"].into_iter();
+        let fresh = TmpDir::create_named(&parent, || names.next().unwrap().to_string()).unwrap();
+        assert_eq!(fresh.dir, parent.join("fresh"));
+        drop(fresh);
+        assert!(!parent.join("fresh").exists());
+
+        let err = TmpDir::create_named(&parent, || "taken-0".to_string())
+            .err()
+            .expect("every name taken must be an error, not a shared directory");
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+
+        for name in ["taken-0", "taken-1"] {
+            assert_eq!(
+                std::fs::read_to_string(parent.join(name).join("owner")).unwrap(),
+                name
+            );
+        }
+        let _ = std::fs::remove_dir_all(&parent);
     }
 
     fn build_ext(quads: Vec<RawQuad>, budget: u64) -> (Vec<u8>, BuildStats) {
