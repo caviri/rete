@@ -115,6 +115,14 @@
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete"
     },
     {
+      "key": "opencitations-meta",
+      "url": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete",
+      "formatVersion": 5,
+      "contentHash": "36bdd8d7b84a9ad29cd78d4401efbfec",
+      "size": 62903326850,
+      "cardUrl": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete"
+    },
+    {
       "key": "tree-city-inventory",
       "url": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory.rete",
       "formatVersion": 5,

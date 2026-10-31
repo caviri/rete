@@ -54982,6 +54982,615 @@
    "elapsedMs": 45,
    "shot": "web/preview/shots/openalex-astrocytes-6.png"
   },
+  "opencitations-meta:0": {
+   "id": "opencitations-meta:0",
+   "dataset": "opencitations-meta",
+   "index": 0,
+   "view": "table",
+   "ok": true,
+   "qmeta": "3 row(s) | 116 range req · 334.8 MB of 58.58 GB fetched (incl. opening the file) · 263.8 MB cached this session · 47818 ms",
+   "count": 3,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Position",
+     "var": "position"
+    },
+    {
+     "label": "Family name",
+     "var": "family"
+    },
+    {
+     "label": "Given name",
+     "var": "given"
+    },
+    {
+     "label": "Agent",
+     "var": "agent"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "Comparative Studies Of Kriging Methods For Estimation Of Groundwater Level Distribution",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "Oh",
+      "media": false
+     },
+     {
+      "text": "Young-hun",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/ra/06330175",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Comparative Studies Of Kriging Methods For Estimation Of Groundwater Level Distribution",
+      "media": false
+     },
+     {
+      "text": "2",
+      "media": false
+     },
+     {
+      "text": "Park",
+      "media": false
+     },
+     {
+      "text": "Dong-Il",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/ra/06330176",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Comparative Studies Of Kriging Methods For Estimation Of Groundwater Level Distribution",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "Koh",
+      "media": false
+     },
+     {
+      "text": "Byoung-Ryoun",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/ra/06330177",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 47851
+  },
+  "opencitations-meta:1": {
+   "id": "opencitations-meta:1",
+   "dataset": "opencitations-meta",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "2 row(s) | 8 range req · 4.0 MB of 58.58 GB fetched · 267.8 MB cached this session · 1724 ms",
+   "count": 2,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Scheme",
+     "var": "scheme"
+    },
+    {
+     "label": "Value",
+     "var": "value"
+    },
+    {
+     "label": "Identifier node",
+     "var": "id"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "http://purl.org/spar/datacite/doi",
+      "media": false
+     },
+     {
+      "text": "10.17640/kswst.2016.24.6.137",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/id/0633052",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://purl.org/spar/datacite/openalex",
+      "media": false
+     },
+     {
+      "text": "W2588128349",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/id/06510955253",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1741
+  },
+  "opencitations-meta:2": {
+   "id": "opencitations-meta:2",
+   "dataset": "opencitations-meta",
+   "index": 2,
+   "view": "table",
+   "ok": true,
+   "qmeta": "3 row(s) | 4 range req · 2.0 MB of 58.58 GB fetched · 269.8 MB cached this session · 1821 ms",
+   "count": 3,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Container",
+     "var": "container"
+    },
+    {
+     "label": "Class",
+     "var": "kind"
+    },
+    {
+     "label": "Number",
+     "var": "number"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/063301607",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/fabio/Journal",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Journal Of Korean Society Of Water Science And Technology",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/063301627",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/fabio/JournalVolume",
+      "media": false
+     },
+     {
+      "text": "24",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/063301628",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/fabio/JournalIssue",
+      "media": false
+     },
+     {
+      "text": "6",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1833
+  },
+  "opencitations-meta:3": {
+   "id": "opencitations-meta:3",
+   "dataset": "opencitations-meta",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "2 row(s) | 4 range req · 2.0 MB of 58.58 GB fetched · 271.8 MB cached this session · 1911 ms",
+   "count": 2,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Container",
+     "var": "container"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Scheme",
+     "var": "scheme"
+    },
+    {
+     "label": "Value",
+     "var": "value"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/063301607",
+      "media": false
+     },
+     {
+      "text": "Journal Of Korean Society Of Water Science And Technology",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/datacite/openalex",
+      "media": false
+     },
+     {
+      "text": "S2764420701",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/063301607",
+      "media": false
+     },
+     {
+      "text": "Journal Of Korean Society Of Water Science And Technology",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/datacite/issn",
+      "media": false
+     },
+     {
+      "text": "1225-7192",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1931
+  },
+  "opencitations-meta:4": {
+   "id": "opencitations-meta:4",
+   "dataset": "opencitations-meta",
+   "index": 4,
+   "view": "table",
+   "ok": true,
+   "qmeta": "1 row(s) | 6 range req · 3.0 MB of 58.58 GB fetched · 274.8 MB cached this session · 3018 ms",
+   "count": 1,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Date",
+     "var": "date"
+    },
+    {
+     "label": "First page",
+     "var": "first"
+    },
+    {
+     "label": "Last page",
+     "var": "last"
+    },
+    {
+     "label": "Publisher",
+     "var": "publisher"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "Comparative Studies Of Kriging Methods For Estimation Of Groundwater Level Distribution",
+      "media": false
+     },
+     {
+      "text": "2016-12-31",
+      "media": false
+     },
+     {
+      "text": "137",
+      "media": false
+     },
+     {
+      "text": "148",
+      "media": false
+     },
+     {
+      "text": "Korean Society Of Water Science And Technology",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 3032
+  },
+  "opencitations-meta:5": {
+   "id": "opencitations-meta:5",
+   "dataset": "opencitations-meta",
+   "index": 5,
+   "view": "table",
+   "ok": true,
+   "qmeta": "2 row(s) | 0 range req · 0 B of 58.58 GB fetched — 0 new bytes, all served from this session's cache (274.8 MB) · 2 ms",
+   "count": 2,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Resource",
+     "var": "work"
+    },
+    {
+     "label": "Role",
+     "var": "roleKind"
+    },
+    {
+     "label": "Roles",
+     "var": "roles"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/0633052",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/0633052",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/publisher",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 17
+  },
+  "opencitations-meta:6": {
+   "id": "opencitations-meta:6",
+   "dataset": "opencitations-meta",
+   "index": 6,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 238 range req · 135.0 MB of 58.58 GB fetched · 409.8 MB cached this session · 50457 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Work",
+     "var": "work"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Date",
+     "var": "date"
+    },
+    {
+     "label": "Role",
+     "var": "kind"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/06304699197",
+      "media": false
+     },
+     {
+      "text": "Comments On “Maternal–fetal Safety Evaluation Of An Aqueous Extract Of Casearia Sylvestris [AECS] Leaves In...",
+      "media": false
+     },
+     {
+      "text": "2024-03",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/06904028335",
+      "media": false
+     },
+     {
+      "text": "The Status Of Developmental And Reproductive Toxicology: The Conundrum Of Acquiring Pragmatic Training",
+      "media": false
+     },
+     {
+      "text": "2023-06",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/06140979082",
+      "media": false
+     },
+     {
+      "text": "Comment On “Concentrations Of Vanadium In Urine And Seminal Plasma In Relation To Semen Quality Parameters,...",
+      "media": false
+     },
+     {
+      "text": "2019-10",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/061201411517",
+      "media": false
+     },
+     {
+      "text": "Review Of TCE Cardiac Defects Data By Makris Et Al. Is Not Systematic",
+      "media": false
+     },
+     {
+      "text": "2017-08",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/061201411607",
+      "media": false
+     },
+     {
+      "text": "Vascular Ontogeny Within Selected Thoracoabdominal Organs And The Limbs",
+      "media": false
+     },
+     {
+      "text": "2017-06",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/062501062120",
+      "media": false
+     },
+     {
+      "text": "Future Of Developmental Toxicity Testing",
+      "media": false
+     },
+     {
+      "text": "2017-04",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/061201411641",
+      "media": false
+     },
+     {
+      "text": "Comment On Sweeting And Wells (2015)",
+      "media": false
+     },
+     {
+      "text": "2016-12",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/062201693138",
+      "media": false
+     },
+     {
+      "text": "Congenital Embryonic Arterial And Skeletal Dysgeneses",
+      "media": false
+     },
+     {
+      "text": "2016-07",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/pro/author",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 50481
+  },
   "opencitations:0": {
    "id": "opencitations:0",
    "dataset": "opencitations",
