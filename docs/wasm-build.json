@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "gitCommit": "96eb4a32864f5bbd0d16de647125439ca720134b",
-  "engineSource": "b37b5c6cbfc5a23393266ada6acea7a14dd9b826ada9e1d56931fbe3b9b00b2a",
+  "gitCommit": "4ad98dac46e20b0f361bca8c4f003341b42d3b0a",
+  "engineSource": "8fa89b9f7ecd26bb35657424449e6382be27a1595dd2f8a428b31e78f19476cc",
   "buildStamp": "0.4.1",
   "toolchain": {
     "rust": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
