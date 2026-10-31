@@ -1195,13 +1195,17 @@ pub(crate) struct FullCard {
 /// the index, and a starter query's budget is counted past the open.
 ///
 /// The phases go to `rec` as `card_derive` and `starter_queries`, each with its
-/// own peak RSS. `who` prefixes the progress lines.
+/// own peak RSS. `who` prefixes the progress lines. `default_triples`, when
+/// the caller knows it, bounds `--progress` through the derivation's two
+/// passes over the default graph.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_full_card(
     path: &str,
     curated: CardInput,
     coherence: Option<Coherence>,
     measure_costs: bool,
     memory: DeriveMemory,
+    default_triples: Option<u64>,
     rec: &super::buildinfo::Recorder,
     who: &str,
 ) -> anyhow::Result<FullCard> {
@@ -1209,8 +1213,14 @@ pub(crate) fn derive_full_card(
         cost_context, file_name, keep_answering, measure_starter, QueryCosts,
     };
     use crate::commands::range_source::LocalRangeReader;
+    use rete_core::build_progress::{self as live, Unit};
     use rete_core::build_trace::Phase;
 
+    live::begin(
+        Phase::CardDerive,
+        default_triples.map(|n| 2 * n),
+        Unit::Records,
+    );
     rec.begin_measured();
     let started = std::time::Instant::now();
     let rete = match memory {
@@ -1273,8 +1283,14 @@ pub(crate) fn derive_full_card(
             rete_core::card::STARTER_MAX_BYTES >> 20
         );
         let mut measured = Vec::with_capacity(card.queries.len());
+        live::begin(
+            Phase::StarterQueries,
+            Some(card.queries.len() as u64),
+            Unit::Queries,
+        );
         for q in &card.queries {
             let m = measure_starter(source.clone(), q);
+            live::advance(1);
             eprintln!(
                 "{who}: {:<16} {:>7} row(s) {:>12} B {:>5} req {:>7} ms{}",
                 q.id,
@@ -1341,7 +1357,13 @@ pub(crate) fn append_card(
     }
     let started = std::time::Instant::now();
     let mut last = 0u64;
+    rete_core::build_progress::begin(
+        rete_core::build_trace::Phase::ContentHash,
+        Some(plan.old_len),
+        rete_core::build_progress::Unit::Bytes,
+    );
     let hash = rete_core::format::card_append_hash(&reader, &plan, metadata, &mut |n| {
+        rete_core::build_progress::set_done(n);
         if n - last >= 4 << 30 {
             last = n;
             eprintln!(
@@ -1401,6 +1423,22 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
 
     let started = std::time::Instant::now();
     let rec = Recorder::start(&[]);
+    let mut phases = vec![Phase::Read, Phase::CardDerive];
+    if opts.measure_costs {
+        phases.push(Phase::StarterQueries);
+    }
+    phases.push(if opts.in_place {
+        Phase::ContentHash
+    } else {
+        Phase::Write
+    });
+    crate::commands::progress::plan(crate::commands::progress::Plan {
+        kind: crate::commands::progress::Kind::Recard,
+        phases,
+        perms: 6,
+        label_index: false,
+    });
+    rete_core::build_progress::begin(Phase::Read, None, rete_core::build_progress::Unit::None);
     let output = match (&opts.output, opts.in_place) {
         (Some(_), true) => anyhow::bail!("--in-place writes the input itself; drop -o"),
         (None, false) => anyhow::bail!("give -o <out.rete>, or --in-place"),
@@ -1424,13 +1462,22 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     rec.lap(Phase::Read);
 
     // 2–3. The profile, streamed from the file's sections, and every starter
-    // query run against the file inside the starter budget.
+    // query run against the file inside the starter budget. The default
+    // graph's size bounds `--progress`: from the old build record, or the
+    // header when the file has no named graphs.
+    let default_triples = old
+        .build
+        .as_ref()
+        .and_then(|b| b.counts.as_ref())
+        .map(|c| c.default_graph_triples)
+        .or_else(|| (!old.header.has_quads()).then_some(old.header.quad_count));
     let full = derive_full_card(
         input,
         curated,
         old.card.as_ref().map(|c| c.coherence.clone()),
         opts.measure_costs,
         DeriveMemory::Caches(opts.memory_budget_mb << 20),
+        default_triples,
         &rec,
         "recard",
     )?;
@@ -1484,6 +1531,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
             }
             eprintln!("recard: verified the new content hash");
         }
+        crate::commands::progress::finish(header.quad_count, input);
         println!(
             "{} (in place): {} starter quer{} ({} dropped), content hash {} → {}, {} B card \
              after the data; the old card, build record and footer are {} dead byte(s) until \
@@ -1508,12 +1556,18 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     let blob = info.reserve_bytes(Pending::Write, &rec);
     let tmp = std::path::PathBuf::from(format!("{output}.recard-tmp"));
     let copy_started = std::time::Instant::now();
+    rete_core::build_progress::begin(
+        Phase::Write,
+        Some(file_len),
+        rete_core::build_progress::Unit::Bytes,
+    );
     let header = {
         let file = std::fs::File::create(&tmp)
             .map_err(|e| anyhow::anyhow!("creating {}: {e}", tmp.display()))?;
         let mut out = std::io::BufWriter::with_capacity(8 << 20, file);
         let mut last = 0u64;
         let written = rete_core::format::rewrite_card(&reader, &mut out, &meta, &blob, &mut |n| {
+            rete_core::build_progress::set_done(n);
             if n - last >= 4 << 30 {
                 last = n;
                 eprintln!(
@@ -1562,6 +1616,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         eprintln!("recard: verified the new content hash");
     }
     std::fs::rename(&tmp, out_path)?;
+    crate::commands::progress::finish(header.quad_count, output);
     println!(
         "{} → {}: {} starter quer{} ({} dropped), content hash {} → {}, {:.0} s",
         input,

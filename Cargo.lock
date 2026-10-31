@@ -1376,6 +1376,7 @@ dependencies = [
  "oxttl 0.1.8",
  "predicates",
  "rete-core",
+ "rustix",
  "serde",
  "serde_json",
  "spargebra 0.3.5",

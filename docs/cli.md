@@ -29,6 +29,9 @@ rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
 ```
 
+A long build shows where it is with `--progress` (a live bar on a terminal by
+default; `plain` lines for logs): see [Progress](#progress).
+
 `--materialize` bakes RDFS/OWL-RL entailments into the file at build time (see
 [Reasoning](reasoning.md)). `--reason` runs the same reasoner but instead of
 adding triples it stamps the **coherence verdict** into the Dataset Card (implies
@@ -586,6 +589,85 @@ shards as published files, list them in the card file's `derived_from`.
 rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
   --card-file curated.json
 ```
+
+### Progress
+
+`rete build` (in RAM and with `--memory-budget-mb`), `rete merge` and
+`rete recard` take `--progress auto|bar|plain|json|off`, or the
+`RETE_PROGRESS` variable when the flag is not given. It shows the step and how
+many remain, how far through it, the speed, the statements, terms and chunks so
+far, memory against the container's limit, the spill on disk, the time elapsed,
+an ETA and the finish time.
+
+| Mode | Prints |
+|---|---|
+| `auto` (default) | the bar when stderr is a terminal, nothing otherwise — logs do not change unless asked |
+| `bar` | one line redrawn in place; the build's own lines (`extbuild: …`) print above it |
+| `plain` | a line every `--progress-interval` seconds (default 30) and one when a step begins, for Docker and CI logs |
+| `json` | the same events, one JSON object per line, for scripts |
+| `off` | nothing |
+
+All of it goes to stderr. Stdout keeps its one result line, and the file is the
+same bytes with or without progress (the test suite holds every mode to it).
+The builders only bump counters; a separate thread samples them, so a build
+with progress is no slower: on the OpenCitations M=1200 sample (6 M
+statements) the median of five or six runs per mode stayed within 3% of a
+build without the feature, either way, inside the run-to-run spread.
+
+```text
+progress: build in 10 steps: parse+chunk, dictionary, encode, index_permutations, named_graphs, write, labels+schema, card_derive, starter_queries, content_hash
+progress: build 1/10 parse+chunk 61.7% 53.3 MB/s, 714 k st/s | 3.57 M st, 1 chunk | RAM 330 MiB, peak 757 MiB of 4.0 GiB | spill 11.5 MiB | 7s elapsed, ETA 9s ≈ 12:04 31 Oct UTC
+progress: build 4/10 index_permutations 29.5% | 5.97 M st, 2.35 M terms, 3 chunks | RAM 191 MiB, peak 757 MiB of 4.0 GiB | spill 27.3 MiB | 16s elapsed, ETA 4s ≈ 12:04 31 Oct UTC (after dictionary 1s, encode 0s)
+progress: build done in 20s: 5,971,936 statements, peak RAM 757 MiB, spill peak 56.7 MiB, output 63.7 MB (out.rete)
+```
+
+The bar, at the same point:
+
+```text
+[4/10] index permutations  ▕██████████          ▏  50.0%  14.44 M rec/s  RAM 186 MiB / 4.0 GiB  0:16  ETA 3s  ≈ 12:05 31 Oct UTC
+```
+
+**Steps** carry the build record's phase names ([Phases](dataset-cards.md#phases)).
+A step the run turns out not to take — `named_graphs` for an `.nq` input that
+has none — leaves the count when a later one begins. The percentage counts
+input bytes as stored for the parse (exact for gzip too), chunk-local terms
+for the dictionary merge, statements for the remap, merged records for the
+permutations, triples for the card's passes, starter queries, and bytes for
+the content hash and a re-card's copy. A step with nothing to count shows a
+spinner and its counts, not a percentage.
+
+**The ETA** is the current step's measured rate plus the steps still to come,
+each priced as a multiple of the parse step's duration: the `rete estimate`
+rule that a build takes 3–5× its parse, split per step from recorded builds,
+so it follows the speed the parse actually reaches. It is marked an estimate (`~` on the bar, `(estimate)` in
+`plain`, `eta_estimate` in `json`) until the parse is 5% done and, in the
+memory-bounded build and `merge`, until the first chunk is sealed — the seals
+stall the parse, and a rate measured before the first one has none of them —
+and again when a step without a count runs past its estimate. On that
+sample (builds of 20–27 s, two runs each) the first ETA came in 33–43% short
+in RAM, where the card took longer than the model gives it, and the first firm
+one 15–17% short memory-bounded, where three chunk seals are a large part of
+the parse. The finish time is in UTC.
+
+**JSON.** One object per line, `{` first; the other stderr lines are the
+build's own messages. The fields are stable:
+
+| Field | Meaning |
+|---|---|
+| `event` | `start` (first line), `phase` (a step began), `progress` (every interval), then `done` or `failed` (last line) |
+| `command`, `t` | `build`, `merge` or `recard`; seconds since the start |
+| `phases` (`start`) | the planned steps, in order; `steps` their count |
+| `step`, `steps`, `phase` | step k of n and its name |
+| `ended` (`phase`) | the steps that ended since the last line: `{"phase", "seconds"}` |
+| `done`, `total`, `unit`, `percent` | progress through the step; `total` and `percent` are `null` without a total; `unit` is `bytes`, `statements`, `terms`, `records`, `queries` or `none` |
+| `rate`, `mb_per_s`, `statements_per_s` | smoothed speeds: `unit`s per second, input MB/s while parsing, statements per second while they are counted |
+| `statements`, `terms`, `chunks` | running totals |
+| `rss_bytes`, `peak_rss_bytes`, `memory_limit_bytes`, `spill_bytes` | memory now and at peak, the cgroup limit (`null` when there is none), the spill directory's size (`null` when nothing spills) |
+| `elapsed_s`, `eta_s`, `eta_estimate`, `finish_at` | time so far, time to go (`null` until it can be estimated), whether it is still an estimate, and the finish as RFC 3339 UTC |
+| `output`, `output_bytes`, `spill_peak_bytes` (`done`) | the file written; `done` also has `statements` and `peak_rss_bytes` |
+
+On Unix the bar reads stderr through a pipe so that other lines land above it;
+elsewhere they may land on the bar's line.
 
 ## Validating
 

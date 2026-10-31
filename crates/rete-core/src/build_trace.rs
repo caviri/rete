@@ -36,6 +36,9 @@ pub enum Phase {
     ParseEncode,
     /// The memory-bounded build's single pass: read + parse + spill chunks.
     ParseChunk,
+    /// The memory-bounded build's `--frequent-objects` pass: one k-way walk of
+    /// the chunks' object counts that picks the terms to promote.
+    FrequentObjects,
     /// Building the dictionary from parsed statements (in-RAM), or merging the
     /// chunk dictionaries (memory-bounded).
     Dictionary,
@@ -72,13 +75,14 @@ pub enum Phase {
 
 impl Phase {
     /// Every phase, in declaration order.
-    pub const ALL: [Phase; 19] = [
+    pub const ALL: [Phase; 20] = [
         Phase::Read,
         Phase::Parse,
         Phase::Reason,
         Phase::ParseDictionary,
         Phase::ParseEncode,
         Phase::ParseChunk,
+        Phase::FrequentObjects,
         Phase::Dictionary,
         Phase::Encode,
         Phase::CardDerive,
@@ -103,6 +107,7 @@ impl Phase {
             Phase::ParseDictionary => "parse+dictionary",
             Phase::ParseEncode => "parse+encode",
             Phase::ParseChunk => "parse+chunk",
+            Phase::FrequentObjects => "frequent_objects",
             Phase::Dictionary => "dictionary",
             Phase::Encode => "encode",
             Phase::CardDerive => "card_derive",

@@ -1105,6 +1105,10 @@ pub fn derive_card(
     named_graph_count: u64,
     curated: CardInput,
 ) -> DatasetCard {
+    if crate::build_progress::listening() {
+        let default = quads.iter().filter(|q| q.3.is_none()).count() as u64;
+        crate::build_progress::set_total(Some(2 * default), crate::build_progress::Unit::Records);
+    }
     struct Quads<'a>(&'a [(String, String, String, Option<String>)]);
     impl CardTripleSource for Quads<'_> {
         fn replay(&self, f: &mut dyn FnMut(&str, &str, &str)) {
@@ -1137,6 +1141,10 @@ pub fn derive_card_encoded(
     named_graph_count: u64,
     curated: CardInput,
 ) -> DatasetCard {
+    crate::build_progress::set_total(
+        Some(2 * triples.len() as u64),
+        crate::build_progress::Unit::Records,
+    );
     struct Encoded<'a> {
         dict: &'a crate::Dictionary,
         triples: &'a [(u32, u32, u32)],
@@ -1182,7 +1190,10 @@ pub fn derive_card_from(
     let mut class_of: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut quoted_subject_preds: BTreeSet<String> = BTreeSet::new();
     let mut annotated_tokens: BTreeMap<String, String> = BTreeMap::new();
+    // `--progress`: two passes over the default graph.
+    let mut ticker = crate::build_progress::Ticker::new();
     src.replay(&mut |s, p, o| {
+        ticker.tick(1);
         if p == RDF_TYPE {
             class_of.insert(s.to_string(), o.to_string());
         }
@@ -1217,6 +1228,7 @@ pub fn derive_card_from(
     let mut in_degree: BTreeMap<String, u64> = BTreeMap::new();
 
     src.replay(&mut |s, p, o| {
+        ticker.tick(1);
         prof.triple_count += 1;
         *prof.pred_counts.entry(p.to_string()).or_default() += 1;
         *out_degree.entry(s.to_string()).or_default() += 1;
@@ -2264,8 +2276,11 @@ pub fn derive_card_streaming(
     };
     let mut cur_s = 0u32;
     let mut cur_n = 0u64;
+    // `--progress`: passes 2 and 3 read the default graph once each.
+    let mut ticker = crate::build_progress::Ticker::new();
     let stored = index.for_each_in_order(IndexPermutation::Spo, &mut |s, p, o| {
         prof.triple_count += 1;
+        ticker.tick(1);
         if let Some(c) = pred_counts.get_mut(p as usize) {
             *c += 1;
         }
@@ -2349,6 +2364,7 @@ pub fn derive_card_streaming(
     let mut cur_n = 0u64;
     let mut cur_preds: Vec<(u32, u64)> = Vec::new();
     index.for_each_in_order(IndexPermutation::Osp, &mut |o, _s, p| {
+        ticker.tick(1);
         if o != cur_o {
             if cur_n > 0 {
                 if is_literal(cur_o) {

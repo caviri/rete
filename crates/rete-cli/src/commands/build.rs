@@ -6,6 +6,9 @@
 
 use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
+use crate::commands::progress;
+use rete_core::build_progress::{self as live, Stat, Unit};
+use rete_core::build_trace::Phase;
 use rete_core::ingest;
 use rete_core::{IntoTextIndex, TextIndexScope};
 
@@ -233,6 +236,11 @@ fn write_carded(
     let card = card::load_card(&bytes)?.filter(|c| flags.measure_costs && !c.queries.is_empty());
     let bytes = match card {
         Some(card) => {
+            live::begin(
+                Phase::StarterQueries,
+                Some(card.queries.len() as u64),
+                Unit::Queries,
+            );
             let (bytes, costs, dropped) = drop_measured_empty_queries(bytes, card)?;
             info.query_costs = Some(costs);
             info.dropped_queries = dropped;
@@ -248,6 +256,7 @@ fn write_carded(
     }
     let reserve = info.reserve_bytes(buildinfo::Pending::Write, rec);
     let path = std::path::Path::new(output);
+    live::begin(Phase::Write, None, Unit::None);
     let len = buildinfo::write_image_with_build_info(path, &bytes, &reserve)?;
     drop(bytes);
     rec.lap(rete_core::build_trace::Phase::Write);
@@ -285,6 +294,8 @@ impl<R: std::io::Read> std::io::Read for CountedRead<R> {
         }
         let n = self.inner.read(buf)?;
         self.counter.set(self.counter.get() + n as u64);
+        // `--progress`: a parse step's done, in input bytes as stored.
+        live::advance(n as u64);
         if let Some(h) = &self.hasher {
             h.borrow_mut().update(&buf[..n]);
         }
@@ -619,6 +630,16 @@ pub(crate) fn build(
         && inputs
             .iter()
             .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq"));
+    progress::plan(in_ram_plan(
+        streamable,
+        materialize || reason,
+        card_args.requested() || reason,
+        !no_card_costs,
+        !no_pyramid,
+        text_index.is_some(),
+        sections,
+        perms,
+    ));
     if streamable {
         let curated = if card_args.requested() {
             Some(card::load_curated(&card_args)?)
@@ -639,6 +660,8 @@ pub(crate) fn build(
         // two-pass assembler invokes it once to observe terms, once to encode.
         let stream = |visit: &mut dyn FnMut(ingest::RawQuad)| -> Result<(), ingest::IngestError> {
             let first = pass.replace(pass.get() + 1) == 0;
+            // Each pass reads every input once: its progress is in input bytes.
+            live::set_total(progress::input_bytes(inputs), Unit::Bytes);
             let mut guard = audit.borrow_mut();
             let mut sink = if first { Some(&mut *guard) } else { None };
             for (i, (path, fmt)) in inputs_fmt.iter().enumerate() {
@@ -651,6 +674,9 @@ pub(crate) fn build(
                 let mut counted = |q: ingest::RawQuad| {
                     if first {
                         read.set(read.get() + 1);
+                        if read.get() & 0xFFF == 0 {
+                            live::set_stat(Stat::Statements, read.get());
+                        }
                     }
                     if collapse_graphs {
                         visit((q.0, q.1, q.2, None))
@@ -660,12 +686,14 @@ pub(crate) fn build(
                 };
                 ingest::stream_reader_audited(rd, fmt, sink.as_deref_mut(), &mut counted)?;
             }
+            live::set_stat(Stat::Statements, read.get());
             Ok(())
         };
         let (bytes, stats) =
             ingest::assemble_dataset_streaming_opts(stream, &opts, |stats, dict, triples| {
                 match curated {
                     Some(curated) => {
+                        live::begin(Phase::CardDerive, None, Unit::None);
                         // Derive NOW (the dictionary and id-triples are resident and
                         // about to be consumed), stamp the counts LATER: the number
                         // of quads the file actually holds is only known once the
@@ -703,18 +731,35 @@ pub(crate) fn build(
                 &audit.report,
             )?
         } else {
+            live::begin(Phase::Write, None, Unit::None);
             std::fs::write(output, &bytes)?;
             bytes.len()
         };
+        progress::finish(stats.statements as u64, output);
         print_build_summary(output, &stats, len);
         crate::commands::iri_report::warn_after_build(&audit.report);
         return Ok(());
     }
 
     // 1. Parse every input into quads (triples → default graph, `None`).
+    // Progress is in input bytes; they bound the parse only when every input
+    // is a line-based file, parsed as it is read.
+    let line_files = inputs
+        .iter()
+        .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq"));
+    live::begin(
+        Phase::Parse,
+        if line_files {
+            progress::input_bytes(inputs)
+        } else {
+            None
+        },
+        Unit::Bytes,
+    );
     let mut audit = iri_audit(strict);
     let mut quads = parse_inputs(inputs, format, &mut audit, surface, &rec.taps)?;
     let read = quads.len() as u64;
+    live::set_stat(Stat::Statements, read);
     // 1a. `--collapse-graphs`: drop the graph term so everything lands in the
     // default graph. Done before reasoning, which only sees the default graph —
     // so collapsing a named-graph dump is also what makes it reasonable over.
@@ -733,6 +778,7 @@ pub(crate) fn build(
     // materializes internally, so the verdict is the same whether computed here or
     // after the bake — coherence is invariant under adding entailments.
     let reasoning = if materialize || reason {
+        live::begin(Phase::Reason, None, Unit::None);
         let base: Vec<(String, String, String)> = quads
             .iter()
             .filter(|(_, _, _, g)| g.is_none())
@@ -779,6 +825,7 @@ pub(crate) fn build(
     let (bytes, stats) =
         ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
             Some(curated) => {
+                live::begin(Phase::CardDerive, None, Unit::None);
                 let mut dataset_card = card::derive_card(
                     quads,
                     stats.terms as u64,
@@ -810,12 +857,118 @@ pub(crate) fn build(
             &audit.report,
         )?
     } else {
+        live::begin(Phase::Write, None, Unit::None);
         std::fs::write(output, &bytes)?;
         bytes.len()
     };
+    progress::finish(stats.statements as u64, output);
     print_build_summary(output, &stats, len);
     crate::commands::iri_report::warn_after_build(&audit.report);
     Ok(())
+}
+
+/// The steps an in-RAM build takes, in order, for `--progress`.
+#[allow(clippy::too_many_arguments)]
+fn in_ram_plan(
+    streamable: bool,
+    reasoning: bool,
+    card: bool,
+    measure_costs: bool,
+    pyramid: bool,
+    text_index: bool,
+    sections: BuildSections,
+    perms: rete_core::PermSet,
+) -> progress::Plan {
+    let mut phases = if streamable {
+        vec![Phase::ParseDictionary, Phase::ParseEncode]
+    } else {
+        let mut p = vec![Phase::Parse];
+        if reasoning {
+            p.push(Phase::Reason);
+        }
+        p.extend([Phase::Dictionary, Phase::Encode]);
+        p
+    };
+    if card {
+        phases.push(Phase::CardDerive);
+    }
+    if pyramid {
+        phases.push(Phase::Pyramid);
+    }
+    if text_index {
+        phases.push(Phase::TextIndex);
+    }
+    if sections.label_index || sections.schema {
+        phases.push(Phase::LabelsSchema);
+    }
+    phases.extend([
+        Phase::DictionarySection,
+        Phase::IndexPermutations,
+        Phase::Serialize,
+    ]);
+    if card && measure_costs {
+        phases.push(Phase::StarterQueries);
+    }
+    phases.push(Phase::Write);
+    progress::Plan {
+        kind: if streamable {
+            progress::Kind::InRamStream
+        } else {
+            progress::Kind::InRamText
+        },
+        phases,
+        perms: perms.len(),
+        label_index: sections.label_index,
+    }
+}
+
+/// The steps of the memory-bounded external builder, in order, for
+/// `--progress`: `rete build --memory-budget-mb` and `rete merge` (`read`
+/// is the merge hashing its shards for the build record).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn external_plan(
+    kind: progress::Kind,
+    read: bool,
+    named_graphs: bool,
+    text_index: bool,
+    sections: BuildSections,
+    card: bool,
+    measure_costs: bool,
+    perms: rete_core::PermSet,
+) -> progress::Plan {
+    let mut phases = Vec::new();
+    if read {
+        phases.push(Phase::Read);
+    }
+    phases.push(Phase::ParseChunk);
+    if rete_core::write_opts::frequent_objects() > 0 {
+        phases.push(Phase::FrequentObjects);
+    }
+    phases.extend([Phase::Dictionary, Phase::Encode]);
+    if text_index {
+        phases.push(Phase::TextIndex);
+    }
+    phases.push(Phase::IndexPermutations);
+    if named_graphs {
+        phases.push(Phase::NamedGraphs);
+    }
+    phases.push(Phase::Write);
+    if sections.label_index || sections.schema {
+        phases.push(Phase::LabelsSchema);
+    }
+    if card {
+        phases.push(Phase::CardDerive);
+        if measure_costs {
+            phases.push(Phase::StarterQueries);
+        }
+        phases.push(Phase::ContentHash);
+    }
+    progress::Plan {
+        kind,
+        phases,
+        perms: perms.len(),
+        label_index: sections.label_index,
+    }
 }
 
 /// `rete build --memory-budget-mb <N>`: the **memory-bounded external build** —
@@ -940,18 +1093,34 @@ pub(crate) fn build_external_cmd(
         info
     });
     let out_path = std::path::Path::new(output).to_path_buf();
+    // Named graphs come from N-Quads and TriG unless they are folded away.
+    let named = !collapse_graphs && inputs_fmt.iter().any(|(_, f)| matches!(*f, "nq" | "trig"));
+    progress::plan(external_plan(
+        progress::Kind::Bounded,
+        false,
+        named,
+        text_index.is_some(),
+        sections,
+        curated.is_some(),
+        measure_costs,
+        perms,
+    ));
     // The external build reads its input exactly once, so — unlike the two-pass
     // streaming assembler — the audit needs no pass guard.
     let audit = std::cell::RefCell::new(iri_audit(strict));
     let read = rec.statements_read.clone();
     let stats = rete_core::extbuild::build_external(
         |visit| {
+            live::set_total(progress::input_bytes(inputs), Unit::Bytes);
             let mut guard = audit.borrow_mut();
             for (i, (path, fmt)) in inputs_fmt.iter().enumerate() {
                 let mut err: Option<rete_core::extbuild::ExtBuildError> = None;
                 let mut on_quad = |q: ingest::RawQuad| {
                     if err.is_none() {
                         read.set(read.get() + 1);
+                        if read.get() & 0xFFF == 0 {
+                            live::set_stat(Stat::Statements, read.get());
+                        }
                         let q = if collapse_graphs {
                             (q.0, q.1, q.2, None)
                         } else {
@@ -1018,6 +1187,7 @@ pub(crate) fn build_external_cmd(
         )?;
     }
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
+    progress::finish(stats.statements as u64, output);
     print_build_summary(output, &stats, byte_len);
     crate::commands::iri_report::warn_after_build(&audit.report);
     Ok(())
@@ -1076,6 +1246,7 @@ pub(crate) fn append_full_card(
         None,
         measure_costs,
         card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
+        Some(stats.default_triples as u64),
         rec,
         who,
     )

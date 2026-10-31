@@ -59,6 +59,8 @@ use std::path::Path;
 
 use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
+use crate::commands::progress;
+use rete_core::build_progress::{self as live, Stat, Ticker, Unit};
 
 /// Quads per `dump_batch` call. Same reasoning as the wasm cursor's batch: big
 /// enough that the per-call overhead disappears, small enough that the transient
@@ -135,7 +137,7 @@ fn stream_file<E>(
 fn hash_input(path: &str, tap: &buildinfo::InputTap) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let file = std::fs::File::open(path).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
-    let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
+    let mut reader = std::io::BufReader::with_capacity(1 << 20, progress::CountingRead(file));
     let mut hasher = tap.hasher.borrow_mut();
     let n = std::io::copy(&mut reader, &mut *hasher).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
     tap.bytes.set(n);
@@ -214,8 +216,13 @@ pub(crate) fn merge_cmd(
     let mut graphs = rete_core::GraphLayout::PerGraph;
     let budget = memory_budget_mb.saturating_mul(1 << 20);
     let share = reader_share(budget);
+    // What the walk will read, for `--progress`: every input's statements.
+    let mut statements = 0u64;
+    let mut named = false;
     for path in inputs {
         let rete = open_input(path, share)?;
+        statements += rete.header().quad_count;
+        named |= rete.header().has_quads();
         perms_bits |= rete.header().perms.bits();
         label_index |= rete.has_label_index();
         if rete.header().has_quad_index() {
@@ -272,6 +279,28 @@ pub(crate) fn merge_cmd(
         rec.begin(&mut info);
         info
     });
+    progress::plan(crate::commands::build::external_plan(
+        progress::Kind::Merge,
+        !rec.taps.is_empty(),
+        named,
+        false,
+        flags.sections,
+        curated.is_some(),
+        measure_costs,
+        perms,
+    ));
+    if !rec.taps.is_empty() {
+        let bytes = inputs
+            .iter()
+            .take(buildinfo::MAX_INPUTS_LISTED)
+            .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+            .sum();
+        live::begin(
+            rete_core::build_trace::Phase::Read,
+            Some(bytes),
+            Unit::Bytes,
+        );
+    }
     for (path, tap) in inputs
         .iter()
         .zip(&rec.taps)
@@ -294,8 +323,14 @@ pub(crate) fn merge_cmd(
     let read = rec.statements_read.clone();
     let stats = rete_core::extbuild::build_external(
         |visit| {
+            live::set_total(Some(statements), Unit::Statements);
+            let mut ticker = Ticker::new();
             let mut counted = |q: RawQuad| {
                 read.set(read.get() + 1);
+                ticker.tick(1);
+                if read.get() & 0xFFF == 0 {
+                    live::set_stat(Stat::Statements, read.get());
+                }
                 visit(q)
             };
             for path in inputs {
@@ -353,6 +388,7 @@ pub(crate) fn merge_cmd(
     }
 
     let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+    progress::finish(stats.statements as u64, output);
     eprintln!(
         "merge: wrote {output}: {} statement(s), {} term(s), {:.2} MB",
         stats.statements,

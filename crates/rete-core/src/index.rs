@@ -355,6 +355,8 @@ pub struct GraphIndexBuilder {
     triples: Vec<Triple>,
     tile_budget: usize,
     perms: PermSet,
+    /// Report each finished permutation to [`crate::build_progress`].
+    progress: bool,
 }
 
 impl Default for GraphIndexBuilder {
@@ -363,6 +365,7 @@ impl Default for GraphIndexBuilder {
             triples: Vec::new(),
             tile_budget: crate::write_opts::tile_budget(),
             perms: PermSet::ALL,
+            progress: false,
         }
     }
 }
@@ -378,8 +381,7 @@ impl GraphIndexBuilder {
     pub fn from_triples(triples: Vec<Triple>) -> Self {
         Self {
             triples,
-            tile_budget: crate::write_opts::tile_budget(),
-            perms: PermSet::ALL,
+            ..Self::default()
         }
     }
 
@@ -397,6 +399,13 @@ impl GraphIndexBuilder {
         self
     }
 
+    /// Advance [`crate::build_progress`] by the triple count as each
+    /// permutation is built (the in-RAM build's `index_permutations` phase).
+    pub(crate) fn with_progress(mut self) -> Self {
+        self.progress = true;
+        self
+    }
+
     pub fn push(&mut self, t: Triple) {
         self.triples.push(t);
     }
@@ -409,6 +418,7 @@ impl GraphIndexBuilder {
     pub fn build_seq(self) -> GraphIndex {
         let triples = &self.triples;
         let budget = self.tile_budget;
+        let progress = self.progress;
         let wanted: Vec<IndexPermutation> = self.perms.iter().collect();
         // Permute (parallel) + sort (parallel inside `build_tiles`) one permutation
         // at a time, so only a single permuted copy of the triples is resident — but
@@ -423,7 +433,11 @@ impl GraphIndexBuilder {
             };
             #[cfg(not(feature = "parallel"))]
             let permuted: Vec<Triple> = triples.iter().map(|&t| perm.forward(t)).collect();
-            build_tiles(permuted, budget)
+            let tiles = build_tiles(permuted, budget);
+            if progress {
+                crate::build_progress::advance(triples.len() as u64);
+            }
+            tiles
         };
         #[cfg(feature = "parallel")]
         let built: Vec<Vec<Tile>> = {
@@ -449,10 +463,15 @@ impl GraphIndexBuilder {
         let wanted: Vec<IndexPermutation> = self.perms.iter().collect();
         let triples = &self.triples;
         let budget = self.tile_budget;
+        let progress = self.progress;
         // The permutations are independent — permute + sort + tile each.
         let build_one = move |perm: IndexPermutation| -> Vec<Tile> {
             let permuted: Vec<Triple> = triples.iter().map(|&t| perm.forward(t)).collect();
-            build_tiles(permuted, budget)
+            let tiles = build_tiles(permuted, budget);
+            if progress {
+                crate::build_progress::advance(triples.len() as u64);
+            }
+            tiles
         };
         // Build the permutations concurrently when the `parallel` feature is on
         // (they share no state); the per-permutation sort inside is also
