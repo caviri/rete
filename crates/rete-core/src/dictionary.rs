@@ -343,6 +343,41 @@ pub struct Dictionary {
     /// Faults the chunks of several sections in one batch (a ranged open);
     /// `None` = section by section (local, or no batch reader).
     multi_bulk: Option<MultiChunkBulkLoader>,
+    /// The literal object ids ([`Self::literal_objects`]), once found.
+    literal_objects: std::sync::OnceLock<LiteralObjects>,
+}
+
+/// Which object ids are literals. Literal tokens (`"…`) sort before IRIs
+/// (`<…`), blank nodes (`_:…`) and quoted triples (`<<…`) in every dictionary
+/// section, so the literals of a section are one run of consecutive ids: the
+/// shared section's are normally none (a literal is never a subject), the
+/// object-only section's come first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiteralObjects {
+    /// Shared object ids `shared.0+1..=shared.1` are literals.
+    pub shared: (u32, u32),
+    /// `S`, the shared-term count: object ids above it are object-only.
+    pub n_shared: u32,
+    /// Object-only object ids `S+only.0+1..=S+only.1` are literals.
+    pub only: (u32, u32),
+}
+
+impl LiteralObjects {
+    /// Is every object id in `lo..=hi` a literal?
+    pub fn covers(&self, lo: u32, hi: u32) -> bool {
+        let within = |(a, b): (u64, u64)| lo as u64 > a && hi as u64 <= b;
+        lo <= hi
+            && (within((self.shared.0 as u64, self.shared.1 as u64))
+                || within((
+                    self.n_shared as u64 + self.only.0 as u64,
+                    self.n_shared as u64 + self.only.1 as u64,
+                )))
+    }
+
+    /// Is object id `o` a literal?
+    pub fn contains(&self, o: u32) -> bool {
+        self.covers(o, o)
+    }
 }
 
 impl Dictionary {
@@ -369,7 +404,31 @@ impl Dictionary {
             shared_len,
             has_quoted_triples: false,
             multi_bulk: None,
+            literal_objects: std::sync::OnceLock::new(),
         }
+    }
+
+    /// The object ids that are literals (see [`LiteralObjects`]): two binary
+    /// searches per section for where the `"` tokens start and end, each in the
+    /// one chunk the boundary routes to — two chunk faults at most on a lazy
+    /// open, done once. `None` when a chunk cannot be read, which a caller
+    /// treats as "not proven".
+    pub fn literal_objects(&self) -> Option<LiteralObjects> {
+        if let Some(found) = self.literal_objects.get() {
+            return Some(*found);
+        }
+        // `"` is 0x22 and `#` the next byte: a literal token sorts in
+        // [`"`, `#`), and nothing a well-formed file holds sorts before it.
+        // A failed read is not cached, so the next query tries again.
+        let run = |si: usize| -> Option<(u32, u32)> {
+            Some((self.sections[si].rank("\"")?, self.sections[si].rank("#")?))
+        };
+        let found = LiteralObjects {
+            shared: run(0)?,
+            n_shared: self.shared_len,
+            only: run(2)?,
+        };
+        Some(*self.literal_objects.get_or_init(|| found))
     }
 
     /// Attach a cross-section chunk fetcher (see [`MultiChunkBulkLoader`]):

@@ -881,10 +881,15 @@ out (or <code>?p != &lt;…&gt;</code> for each), <code>?p IN (…)</code> / <co
 ones. The filter is pushed through a <code>UNION</code> branch by branch, into
 <code>GRAPH &lt;g&gt;</code> (when it has no <code>EXISTS</code>), and, under <code>all</code> on a quad-index file
 (<code>--named-graphs quad</code>), into <code>GRAPH ?g</code>, which then visits only the graphs
-holding a candidate subject. Anywhere else the filter scans and returns the
-same rows, just without the shortcut. (Before 0.4.0 the pushdown also ran
-inside <code>GRAPH</code> against a default-graph index, where it returned no rows at
-all.)</li>
+holding a candidate subject. The index holds literals only, and <code>STR()</code> makes
+an IRI's or a blank node's text searchable too, so <code>CONTAINS(STR(?o), …)</code>
+takes the index only where <code>?o</code> is provably a literal: <code>isLiteral(?o)</code>, a
+comparison on <code>LANG(?o)</code> or <code>DATATYPE(?o)</code>, or a constant predicate whose
+objects are all literals (read off its tiles' synopses, in the default graph
+or a <code>GRAPH &lt;g&gt;</code>). Anywhere else the filter scans and returns the same rows,
+just without the shortcut. (Before 0.4.0 the pushdown also ran inside <code>GRAPH</code>
+against a default-graph index, where it returned no rows at all; from 0.3.0
+to 0.4.1 it dropped the rows whose <code>STR(?o)</code> matched an IRI.)</li>
 <li><strong>An include/exclude index is stored as section kind 11</strong>, not 6. Readers
 older than 0.4.0 do not know kind 11 and see no text index: <code>rete search --contains</code> says the file has none, and <code>CONTAINS</code> scans. That is on purpose.
 Those readers prune <code>CONTAINS</code> with whatever text index they find, as if it
