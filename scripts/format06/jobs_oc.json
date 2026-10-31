@@ -1,0 +1,196 @@
+[
+ {
+  "id": "oc.open",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "oc.card",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "oc.demo1-doi-to-work",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX oc: <https://w3id.org/rete/opencitations#>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX frbr: <http://purl.org/vocab/frbr/core#>\nPREFIX fabio: <http://purl.org/spar/fabio/>\nPREFIX datacite: <http://purl.org/spar/datacite/>\nPREFIX literal: <http://www.essepuntato.it/2010/06/literalreification/>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nSELECT ?work ?title WHERE { ?work oc:doiLink <https://doi.org/10.11118/actaun201866020571> ; dcterms:title ?title }"
+  ]
+ },
+ {
+  "id": "oc.c02",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "# Every identifier of a work: datacite:Identifier nodes with their scheme and value\nPREFIX datacite: <http://purl.org/spar/datacite/>\nPREFIX literal: <http://www.essepuntato.it/2010/06/literalreification/>\nSELECT ?scheme ?value ?id WHERE {\n  <https://w3id.org/oc/meta/br/06270426> datacite:hasIdentifier ?id .\n  ?id datacite:usesIdentifierScheme ?scheme ; literal:hasLiteralValue ?value .\n}"
+  ]
+ },
+ {
+  "id": "oc.c06",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "# From a DOI to the Meta resources that carry it (oc:doiLink, the one link rete adds), with their roles\nPREFIX oc: <https://w3id.org/rete/opencitations#>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nSELECT ?work ?roleKind (COUNT(?role) AS ?roles) WHERE {\n  ?work oc:doiLink <https://doi.org/10.11118/actaun201866020571> ; pro:isDocumentContextFor ?role .\n  ?role pro:withRole ?roleKind .\n} GROUP BY ?work ?roleKind"
+  ]
+ },
+ {
+  "id": "oc.c07",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "# Everything one researcher is credited with, by ORCID iD: identifier -> agent -> role -> work\nPREFIX datacite: <http://purl.org/spar/datacite/>\nPREFIX literal: <http://www.essepuntato.it/2010/06/literalreification/>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX prism: <http://prismstandard.org/namespaces/basic/2.0/>\nSELECT ?work ?title ?date ?kind WHERE {\n  ?id literal:hasLiteralValue \"0000-0002-4465-7034\" .\n  ?agent datacite:hasIdentifier ?id .\n  ?role pro:isHeldBy ?agent ; pro:withRole ?kind .\n  ?work pro:isDocumentContextFor ?role ; dcterms:title ?title .\n  OPTIONAL { ?work prism:publicationDate ?date }\n} ORDER BY DESC(?date) LIMIT 25"
+  ]
+ },
+ {
+  "id": "oc.demo3-journal-issn",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX oc: <https://w3id.org/rete/opencitations#>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX frbr: <http://purl.org/vocab/frbr/core#>\nPREFIX fabio: <http://purl.org/spar/fabio/>\nPREFIX datacite: <http://purl.org/spar/datacite/>\nPREFIX literal: <http://www.essepuntato.it/2010/06/literalreification/>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nSELECT ?journal ?title ?issn WHERE {\n  <https://w3id.org/oc/meta/br/06270426> frbr:partOf+ ?journal .\n  ?journal a fabio:Journal ; dcterms:title ?title ; datacite:hasIdentifier ?id .\n  ?id datacite:usesIdentifierScheme datacite:issn ; literal:hasLiteralValue ?issn .\n}"
+  ]
+ },
+ {
+  "id": "oc.c05",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "# A work's date, pages (frbr:embodiment -> fabio:Manifestation) and publisher (a pro:publisher role)\nPREFIX frbr: <http://purl.org/vocab/frbr/core#>\nPREFIX fabio: <http://purl.org/spar/fabio/>\nPREFIX prism: <http://prismstandard.org/namespaces/basic/2.0/>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?title ?date ?first ?last ?publisher WHERE {\n  <https://w3id.org/oc/meta/br/06270426> dcterms:title ?title .\n  OPTIONAL { <https://w3id.org/oc/meta/br/06270426> prism:publicationDate ?date }\n  OPTIONAL { <https://w3id.org/oc/meta/br/06270426> frbr:embodiment ?e . ?e prism:startingPage ?first ; prism:endingPage ?last }\n  OPTIONAL { <https://w3id.org/oc/meta/br/06270426> pro:isDocumentContextFor ?r . ?r pro:withRole pro:publisher ; pro:isHeldBy ?p .\n             ?p foaf:name ?publisher }\n}"
+  ]
+ },
+ {
+  "id": "oc.journal_of",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "prefix",
+  "args": [
+   "journal of"
+  ]
+ },
+ {
+  "id": "oc.acta_universitatis",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "prefix",
+  "args": [
+   "acta universitatis"
+  ]
+ },
+ {
+  "id": "oc.t01-common-study",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "study"
+  ]
+ },
+ {
+  "id": "oc.t03-rare-mendelianae",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "mendelianae"
+  ]
+ },
+ {
+  "id": "oc.t05-and-border-regions",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "border",
+   "regions"
+  ]
+ },
+ {
+  "id": "oc.c08",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "# A work's provenance: every snapshot of its record (created, modified, merged, deleted), when, from which source and by whom, in the named graph <work/prov/>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?snapshot ?generated ?invalidated ?description ?source ?agent WHERE {\n  GRAPH <https://w3id.org/oc/meta/br/06270426/prov/> {\n    ?snapshot prov:specializationOf <https://w3id.org/oc/meta/br/06270426> ; prov:generatedAtTime ?generated .\n    OPTIONAL { ?snapshot dcterms:description ?description }\n    OPTIONAL { ?snapshot prov:invalidatedAtTime ?invalidated }\n    OPTIONAL { ?snapshot prov:hadPrimarySource ?source }\n    OPTIONAL { ?snapshot prov:wasAttributedTo ?agent }\n  }\n} ORDER BY ?generated"
+  ]
+ },
+ {
+  "id": "oc.c09",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "# What changed in a work's record: the SPARQL update OpenCitations applied at each modification (oco:hasUpdateQuery), with the snapshot it derives from\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nSELECT ?snapshot ?generated ?previous ?update WHERE {\n  GRAPH <https://w3id.org/oc/meta/br/06270426/prov/> {\n    ?snapshot prov:specializationOf <https://w3id.org/oc/meta/br/06270426> ; prov:generatedAtTime ?generated ;\n              oco:hasUpdateQuery ?update .\n    OPTIONAL { ?snapshot prov:wasDerivedFrom ?previous }\n  }\n} ORDER BY ?generated"
+  ]
+ },
+ {
+  "id": "oc.X3-text-title-history",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX oc: <https://w3id.org/rete/opencitations#>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX frbr: <http://purl.org/vocab/frbr/core#>\nPREFIX fabio: <http://purl.org/spar/fabio/>\nPREFIX datacite: <http://purl.org/spar/datacite/>\nPREFIX literal: <http://www.essepuntato.it/2010/06/literalreification/>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX oc: <https://w3id.org/rete/opencitations#>\nSELECT ?snapshot ?generated WHERE { GRAPH <https://w3id.org/oc/meta/br/06101056607/prov/> { ?snapshot prov:specializationOf <https://w3id.org/oc/meta/br/06101056607> ; oco:hasUpdateQuery ?u ; prov:generatedAtTime ?generated . FILTER(REGEX(?u, \"purl.org/dc/terms/title\"))  } } ORDER BY ?generated"
+  ]
+ },
+ {
+  "id": "oc.ng-list",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX owl:  <http://www.w3.org/2002/07/owl#>\nPREFIX void: <http://rdfs.org/ns/void#>\nPREFIX dct:  <http://purl.org/dc/terms/>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo:  <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nPREFIX wgs:  <http://www.w3.org/2003/01/geo/wgs84_pos#>\nPREFIX time: <http://www.w3.org/2006/time#>\nPREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>\nSELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 100"
+  ]
+ },
+ {
+  "id": "oc.ng-sample",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX owl:  <http://www.w3.org/2002/07/owl#>\nPREFIX void: <http://rdfs.org/ns/void#>\nPREFIX dct:  <http://purl.org/dc/terms/>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo:  <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nPREFIX wgs:  <http://www.w3.org/2003/01/geo/wgs84_pos#>\nPREFIX time: <http://www.w3.org/2006/time#>\nPREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>\nSELECT ?g ?s ?p ?o WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 10"
+  ]
+ },
+ {
+  "id": "oc.X2-text-deletions-by-source",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX oc: <https://w3id.org/rete/opencitations#>\nPREFIX pro: <http://purl.org/spar/pro/>\nPREFIX oco: <https://w3id.org/oc/ontology/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX frbr: <http://purl.org/vocab/frbr/core#>\nPREFIX fabio: <http://purl.org/spar/fabio/>\nPREFIX datacite: <http://purl.org/spar/datacite/>\nPREFIX literal: <http://www.essepuntato.it/2010/06/literalreification/>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX oc: <https://w3id.org/rete/opencitations#>\nSELECT ?snapshot ?generated WHERE { GRAPH ?g { ?snapshot prov:hadPrimarySource <https://doi.org/10.5281/zenodo.18172742> ; oco:hasUpdateQuery ?u ; prov:generatedAtTime ?generated . FILTER(REGEX(?u, \"DELETE DATA\"))  } } ORDER BY ?generated LIMIT 50"
+  ]
+ },
+ {
+  "id": "oc.ov-one-row",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX owl:  <http://www.w3.org/2002/07/owl#>\nPREFIX void: <http://rdfs.org/ns/void#>\nPREFIX dct:  <http://purl.org/dc/terms/>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo:  <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nPREFIX wgs:  <http://www.w3.org/2003/01/geo/wgs84_pos#>\nPREFIX time: <http://www.w3.org/2006/time#>\nPREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>\nSELECT ?s ?p ?o WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } } LIMIT 1"
+  ]
+ },
+ {
+  "id": "oc.ov-ask-pred",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX owl:  <http://www.w3.org/2002/07/owl#>\nPREFIX void: <http://rdfs.org/ns/void#>\nPREFIX dct:  <http://purl.org/dc/terms/>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo:  <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nPREFIX wgs:  <http://www.w3.org/2003/01/geo/wgs84_pos#>\nPREFIX time: <http://www.w3.org/2006/time#>\nPREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>\nASK { ?s <http://purl.org/spar/pro/isDocumentContextFor> ?o }"
+  ]
+ },
+ {
+  "id": "oc.ty-class-hist",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX owl:  <http://www.w3.org/2002/07/owl#>\nPREFIX void: <http://rdfs.org/ns/void#>\nPREFIX dct:  <http://purl.org/dc/terms/>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo:  <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nPREFIX wgs:  <http://www.w3.org/2003/01/geo/wgs84_pos#>\nPREFIX time: <http://www.w3.org/2006/time#>\nPREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>\nSELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 50"
+  ]
+ },
+ {
+  "id": "oc.lb-labels",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX owl:  <http://www.w3.org/2002/07/owl#>\nPREFIX void: <http://rdfs.org/ns/void#>\nPREFIX dct:  <http://purl.org/dc/terms/>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo:  <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nPREFIX wgs:  <http://www.w3.org/2003/01/geo/wgs84_pos#>\nPREFIX time: <http://www.w3.org/2006/time#>\nPREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>\nSELECT ?s ?label WHERE { ?s a <http://purl.org/spar/fabio/Expression> ; <http://purl.org/dc/terms/title> ?label } LIMIT 50"
+  ]
+ },
+ {
+  "id": "oc.ti-extent",
+  "file": "oc/opencitations-2026-06-small-full-labels-quad.rete",
+  "kind": "sparql",
+  "args": [
+   "PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX owl:  <http://www.w3.org/2002/07/owl#>\nPREFIX void: <http://rdfs.org/ns/void#>\nPREFIX dct:  <http://purl.org/dc/terms/>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo:  <http://www.opengis.net/ont/geosparql#>\nPREFIX geof: <http://www.opengis.net/def/function/geosparql/>\nPREFIX wgs:  <http://www.w3.org/2003/01/geo/wgs84_pos#>\nPREFIX time: <http://www.w3.org/2006/time#>\nPREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>\nSELECT (MIN(?d) AS ?from) (MAX(?d) AS ?to) WHERE { ?s <http://prismstandard.org/namespaces/basic/2.0/publicationDate> ?d }"
+  ]
+ }
+]

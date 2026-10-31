@@ -1,0 +1,50 @@
+{
+ "dict:s0.chunk-dir": {
+  "bytes": 5810804,
+  "sampled": 5810804,
+  "z": 789548,
+  "ratio": 0.136
+ },
+ "dict:s1.chunk-dir": {
+  "bytes": 551352,
+  "sampled": 551352,
+  "z": 76746,
+  "ratio": 0.139
+ },
+ "dict:s2.chunk-dir": {
+  "bytes": 4676009,
+  "sampled": 4676009,
+  "z": 1918989,
+  "ratio": 0.41
+ },
+ "index:SPO.tile-dir": {
+  "bytes": 3798736,
+  "sampled": 3798736,
+  "z": 2451141,
+  "ratio": 0.645
+ },
+ "index:SPO.synopsis": {
+  "bytes": 6890355,
+  "sampled": 6890355,
+  "z": 3844625,
+  "ratio": 0.558
+ },
+ "index:POS.tile-dir": {
+  "bytes": 1283655,
+  "sampled": 1283655,
+  "z": 599887,
+  "ratio": 0.467
+ },
+ "index:POS.synopsis": {
+  "bytes": 4644509,
+  "sampled": 4644509,
+  "z": 3474388,
+  "ratio": 0.748
+ },
+ "labels:preamble+root": {
+  "bytes": 37222,
+  "sampled": 37222,
+  "z": 37232,
+  "ratio": 1.0
+ }
+}
