@@ -9910,8 +9910,9 @@ mod tests {
     #[test]
     fn legacy_label_hits_resolve_in_one_batched_read() {
         use std::sync::{Arc, Mutex};
+        type CallLog = Arc<Mutex<Vec<Vec<(u64, u64)>>>>;
         #[derive(Clone)]
-        struct Calls(Arc<Vec<u8>>, Arc<Mutex<Vec<Vec<(u64, u64)>>>>);
+        struct Calls(Arc<Vec<u8>>, CallLog);
         impl crate::RangeReader for Calls {
             fn len(&self) -> u64 {
                 self.0.len() as u64

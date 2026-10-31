@@ -8,12 +8,15 @@ use std::sync::{Arc, Mutex};
 use rete_core::ingest::{assemble_dataset_with_opts, RawQuad};
 use rete_core::{eval_query, Header, QueryOutput, RangeReader, Rete, SliceReader};
 
+/// The ranges of each read call, in call order.
+type CallLog = Arc<Mutex<Vec<Vec<(u64, u64)>>>>;
+
 /// Every read call, in order: one entry per `read_at`, one per `read_many`
 /// batch (with all its ranges) — what a remote reader turns into round trips.
 #[derive(Clone)]
 struct Calls {
     data: Arc<Vec<u8>>,
-    calls: Arc<Mutex<Vec<Vec<(u64, u64)>>>>,
+    calls: CallLog,
 }
 
 impl Calls {
