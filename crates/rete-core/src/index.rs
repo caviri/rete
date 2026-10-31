@@ -131,6 +131,351 @@ impl Tile {
     }
 }
 
+/// Fetches stored leaf blocks of a two-level directory (format `0x06`, SPEC.md
+/// §4.4): absolute `(offset, len)` ranges in, their bytes out, in order — one
+/// batched read. `None` = the batch failed.
+pub type LeafFetch = Arc<dyn Fn(&[(u64, u64)]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+
+/// One leaf of a permutation's tile directory, as the `0x06` root describes it.
+#[derive(Debug, Clone)]
+pub struct TileLeaf {
+    /// Index of the leaf's first tile in the permutation.
+    pub first: usize,
+    /// Tiles in the leaf.
+    pub n: usize,
+    /// Leading-id range of the leaf (first tile's min, last tile's max).
+    pub min_a: u32,
+    /// See `min_a`.
+    pub max_a: u32,
+    /// Absolute range of the stored leaf block.
+    pub leaf: (u64, u64),
+    /// Absolute offset of the leaf's first tile.
+    pub tile_base: u64,
+}
+
+/// A permutation's tile directory whose entries live in leaf blocks faulted
+/// on demand and kept for the session (format `0x06`). Routing narrows by the
+/// leaves' leading-id ranges first, so a bound lookup faults one leaf.
+pub struct LeafedTiles {
+    leaves: Vec<TileLeaf>,
+    cells: Vec<std::sync::OnceLock<Box<[(Tile, u64)]>>>,
+    total: usize,
+    total_bytes: u64,
+    fetch: LeafFetch,
+    codec: u8,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+/// The tile standing in for one whose leaf could not be read: it routes
+/// nowhere and its synopsis admits nothing. The failure is recorded.
+static UNREADABLE_TILE: Tile = Tile {
+    min_a: u32::MAX,
+    max_a: u32::MAX,
+    syn: Some((1, 0, 1, 0)),
+    len: 0,
+    staged: None,
+};
+
+impl LeafedTiles {
+    /// A leafed directory of `total` tiles and `total_bytes` stored bytes.
+    pub fn new(
+        leaves: Vec<TileLeaf>,
+        total: usize,
+        total_bytes: u64,
+        fetch: LeafFetch,
+        codec: u8,
+    ) -> Self {
+        let cells = leaves.iter().map(|_| std::sync::OnceLock::new()).collect();
+        LeafedTiles {
+            leaves,
+            cells,
+            total,
+            total_bytes,
+            fetch,
+            codec,
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn leaf_of(&self, ti: usize) -> usize {
+        self.leaves
+            .partition_point(|l| l.first <= ti)
+            .saturating_sub(1)
+    }
+
+    fn decode_leaf(&self, li: usize, stored: &[u8]) -> Option<Box<[(Tile, u64)]>> {
+        let l = &self.leaves[li];
+        let raw = crate::file::decompress(self.codec, stored).ok()?;
+        let ents = crate::v06::decode_tile_leaf(&raw, l.n).ok()?;
+        let mut at = l.tile_base;
+        let mut out = Vec::with_capacity(ents.len());
+        for e in ents {
+            let mut t = Tile::remote(e.min_a, e.max_a, Some(e.syn));
+            t.len = e.clen.min(u32::MAX as u64) as u32;
+            out.push((t, at));
+            at = at.checked_add(e.clen)?;
+        }
+        Some(out.into_boxed_slice())
+    }
+
+    /// Fault every not-yet-resident leaf of `lis` in one batched read.
+    pub fn ensure_leaves(&self, lis: &[usize]) {
+        let missing: Vec<usize> = lis
+            .iter()
+            .copied()
+            .filter(|&li| li < self.cells.len() && self.cells[li].get().is_none())
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let ranges: Vec<(u64, u64)> = missing.iter().map(|&li| self.leaves[li].leaf).collect();
+        match (self.fetch)(&ranges) {
+            Some(blobs) if blobs.len() == missing.len() => {
+                for (&li, b) in missing.iter().zip(blobs) {
+                    match self.decode_leaf(li, &b) {
+                        Some(v) => {
+                            let _ = self.cells[li].set(v);
+                        }
+                        None => self
+                            .failed
+                            .store(true, std::sync::atomic::Ordering::Relaxed),
+                    }
+                }
+            }
+            _ => self
+                .failed
+                .store(true, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Fault the leaves covering tiles `[start, end)`.
+    pub fn ensure_span(&self, start: usize, end: usize) {
+        if start >= end || start >= self.total {
+            return;
+        }
+        let a = self.leaf_of(start);
+        let b = self.leaf_of(end.min(self.total) - 1);
+        self.ensure_leaves(&(a..=b).collect::<Vec<_>>());
+    }
+
+    fn entry(&self, ti: usize) -> Option<&(Tile, u64)> {
+        if ti >= self.total {
+            return None;
+        }
+        let li = self.leaf_of(ti);
+        if self.cells[li].get().is_none() {
+            self.ensure_leaves(&[li]);
+        }
+        self.cells[li].get()?.get(ti - self.leaves[li].first)
+    }
+
+    /// Tile `ti`'s absolute stored range, faulting its leaf.
+    pub fn range(&self, ti: usize) -> Option<(u64, u64)> {
+        self.entry(ti).map(|(t, off)| (*off, t.len as u64))
+    }
+
+    /// Did a leaf fault fail?
+    pub fn load_failed(&self) -> bool {
+        self.failed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Forget a recorded leaf-fault failure.
+    pub fn reset_load_failure(&self) {
+        self.failed
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Bytes held by the leaves faulted so far.
+    fn resident_bytes(&self) -> u64 {
+        let n: usize = self
+            .cells
+            .iter()
+            .filter_map(|c| c.get())
+            .map(|v| v.len())
+            .sum();
+        (n * (std::mem::size_of::<Tile>() + 8)) as u64
+            + (self.leaves.len() * std::mem::size_of::<TileLeaf>()) as u64
+    }
+}
+
+/// A permutation's tile directory: resident in full (`0x05`, built indexes),
+/// or two-level with leaves faulted on demand (`0x06`).
+pub enum TileList {
+    /// Every tile descriptor resident.
+    Full(Vec<Tile>),
+    /// Root resident, leaves on demand.
+    Leafed(Arc<LeafedTiles>),
+}
+
+impl Default for TileList {
+    fn default() -> Self {
+        TileList::Full(Vec::new())
+    }
+}
+
+impl std::ops::Index<usize> for TileList {
+    type Output = Tile;
+    fn index(&self, ti: usize) -> &Tile {
+        match self {
+            TileList::Full(v) => &v[ti],
+            TileList::Leafed(l) => match l.entry(ti) {
+                Some((t, _)) => t,
+                None => {
+                    l.failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    &UNREADABLE_TILE
+                }
+            },
+        }
+    }
+}
+
+impl TileList {
+    /// Number of tiles.
+    pub fn len(&self) -> usize {
+        match self {
+            TileList::Full(v) => v.len(),
+            TileList::Leafed(l) => l.total,
+        }
+    }
+
+    /// No tiles?
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The resident descriptors of a full list (`None` for a leafed one).
+    pub fn as_full(&self) -> Option<&[Tile]> {
+        match self {
+            TileList::Full(v) => Some(v),
+            TileList::Leafed(_) => None,
+        }
+    }
+
+    /// Every tile, in order, faulting all leaves first (one batch).
+    pub fn iter(&self) -> impl Iterator<Item = &Tile> {
+        if let TileList::Leafed(l) = self {
+            l.ensure_span(0, l.total);
+        }
+        (0..self.len()).map(move |i| &self[i])
+    }
+
+    /// The first tile, if any.
+    pub fn first(&self) -> Option<&Tile> {
+        (!self.is_empty()).then(|| &self[0])
+    }
+
+    /// The last tile, if any.
+    pub fn last(&self) -> Option<&Tile> {
+        (!self.is_empty()).then(|| &self[self.len() - 1])
+    }
+
+    /// Fault the leaves covering `[start, end)` in one batch (a no-op on a full
+    /// list).
+    pub fn ensure_span(&self, start: usize, end: usize) {
+        if let TileList::Leafed(l) = self {
+            l.ensure_span(start, end);
+        }
+    }
+
+    /// Index of the first tile whose `max_a >= a` (`len()` if none). A leafed
+    /// list narrows to the one leaf that can hold it before faulting.
+    pub fn first_max_ge(&self, a: u32) -> usize {
+        match self {
+            TileList::Full(v) => v.partition_point(|t| t.max_a < a),
+            TileList::Leafed(l) => {
+                let li = l.leaves.partition_point(|lf| lf.max_a < a);
+                if li >= l.leaves.len() {
+                    return l.total;
+                }
+                let lf = &l.leaves[li];
+                let mut i = lf.first;
+                let end = lf.first + lf.n;
+                l.ensure_leaves(&[li]);
+                while i < end && self[i].max_a < a {
+                    i += 1;
+                }
+                i
+            }
+        }
+    }
+
+    /// Stored bytes of every tile (from the root on a leafed list).
+    pub fn total_bytes(&self) -> u64 {
+        match self {
+            TileList::Full(v) => v.iter().map(Tile::encoded_len).sum(),
+            TileList::Leafed(l) => l.total_bytes,
+        }
+    }
+
+    /// Stored bytes of the tiles whose leading range holds `a`, **without
+    /// faulting**: exact where the leaf is resident, else the mean tile size
+    /// (a bound leading id is one tile, rarely two) — the planner's cost
+    /// estimate must not cost a round trip.
+    pub fn routed_bytes(&self, a: u32) -> u64 {
+        match self {
+            TileList::Full(v) => v
+                .iter()
+                .filter(|t| t.min_a <= a && a <= t.max_a)
+                .map(Tile::encoded_len)
+                .sum(),
+            TileList::Leafed(l) => {
+                let lis: Vec<usize> = l
+                    .leaves
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, lf)| lf.min_a <= a && a <= lf.max_a)
+                    .map(|(i, _)| i)
+                    .collect();
+                if lis.is_empty() {
+                    return 0;
+                }
+                if lis.iter().all(|&li| l.cells[li].get().is_some()) {
+                    lis.iter()
+                        .flat_map(|&li| l.cells[li].get().into_iter().flat_map(|v| v.iter()))
+                        .filter(|(t, _)| t.min_a <= a && a <= t.max_a)
+                        .map(|(t, _)| t.encoded_len())
+                        .sum()
+                } else {
+                    l.total_bytes / l.total.max(1) as u64
+                }
+            }
+        }
+    }
+
+    /// Is the leaf holding tile `ti` resident (always, for a full list)?
+    pub fn resident_at(&self, ti: usize) -> bool {
+        match self {
+            TileList::Full(_) => true,
+            TileList::Leafed(l) => ti < l.total && l.cells[l.leaf_of(ti)].get().is_some(),
+        }
+    }
+
+    /// The absolute stored range of tile `ti` (leafed lists only).
+    pub fn range(&self, ti: usize) -> Option<(u64, u64)> {
+        match self {
+            TileList::Full(_) => None,
+            TileList::Leafed(l) => l.range(ti),
+        }
+    }
+
+    fn load_failed(&self) -> bool {
+        matches!(self, TileList::Leafed(l) if l.load_failed())
+    }
+
+    fn reset_load_failure(&self) {
+        if let TileList::Leafed(l) = self {
+            l.reset_load_failure();
+        }
+    }
+
+    fn directory_bytes(&self) -> u64 {
+        match self {
+            TileList::Full(v) => (v.capacity() * std::mem::size_of::<Tile>()) as u64,
+            TileList::Leafed(l) => l.resident_bytes(),
+        }
+    }
+}
+
 /// What a routed scan of one pattern will touch, from the tile directories
 /// alone — see [`GraphIndex::scan_plan`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -652,7 +997,7 @@ pub struct GraphIndex {
     /// Tiles per permutation (SPO, SOP, PSO, POS, OSP, OPS — see [`ALL_PERMS`]),
     /// ascending in their leading-id ranges; consecutive tiles may share a
     /// leading id when a mega-group was split (see [`build_tiles`]).
-    pub(crate) sections: [Vec<Tile>; NUM_PERMS],
+    pub(crate) sections: [TileList; NUM_PERMS],
     /// Which of those six slots this file actually carries. Sections outside
     /// the set are empty and must never be consulted — an empty section is
     /// indistinguishable from an empty *graph*, which is why the planner asks
@@ -689,7 +1034,7 @@ impl GraphIndex {
             }
         }
         GraphIndex {
-            sections,
+            sections: sections.map(TileList::Full),
             perms,
             loader: None,
             bulk: None,
@@ -756,12 +1101,7 @@ impl GraphIndex {
     /// touches.
     pub fn directory_bytes(&self) -> u64 {
         let tiles: u64 = self.sections.iter().map(|s| s.len() as u64).sum();
-        let caps: u64 = self
-            .sections
-            .iter()
-            .map(|s| s.capacity() as u64)
-            .sum::<u64>()
-            * std::mem::size_of::<Tile>() as u64;
+        let caps: u64 = self.sections.iter().map(TileList::directory_bytes).sum();
         let ranges = if self.loader.is_some() {
             2 * 24 * tiles
         } else {
@@ -782,9 +1122,11 @@ impl GraphIndex {
         loader: TileLoader,
     ) -> Self {
         let sections = directories.map(|dir| {
-            dir.into_iter()
-                .map(|(min_a, max_a, syn)| Tile::remote(min_a, max_a, syn))
-                .collect()
+            TileList::Full(
+                dir.into_iter()
+                    .map(|(min_a, max_a, syn)| Tile::remote(min_a, max_a, syn))
+                    .collect(),
+            )
         });
         GraphIndex {
             sections,
@@ -809,8 +1151,10 @@ impl GraphIndex {
     /// planner's fatness gates; never triggers a fetch.
     pub(crate) fn set_tile_lens(&mut self, lens: [Vec<u32>; NUM_PERMS]) {
         for (section, ls) in self.sections.iter_mut().zip(lens) {
-            for (tile, l) in section.iter_mut().zip(ls) {
-                tile.len = l;
+            if let TileList::Full(section) = section {
+                for (tile, l) in section.iter_mut().zip(ls) {
+                    tile.len = l;
+                }
             }
         }
     }
@@ -832,6 +1176,7 @@ impl GraphIndex {
     /// [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {
         self.load_failed.load(std::sync::atomic::Ordering::Relaxed)
+            || self.sections.iter().any(TileList::load_failed)
     }
 
     /// Forget recorded fetch failures — the start-of-evaluation reset for a
@@ -842,6 +1187,9 @@ impl GraphIndex {
     pub fn reset_load_failure(&self) {
         self.load_failed
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        for s in &self.sections {
+            s.reset_load_failure();
+        }
     }
 
     /// True for a remote/lazy index (tiles fault in over a `RangeReader`). The
@@ -857,6 +1205,59 @@ impl GraphIndex {
     /// (a single missing tile costs the same either way). A failed batch is
     /// not an error here: the tiles stay unloaded and the per-tile loader
     /// retries each one (recording failures) when the scan reaches it.
+    /// Fault, in one batch per permutation, the tile-directory leaves the
+    /// bound leading ids of `patterns` route to (format `0x06`; a no-op on a
+    /// resident directory).
+    pub(crate) fn prefault_leaves(&self, patterns: &[Pattern]) {
+        let mut want: [Vec<usize>; NUM_PERMS] = Default::default();
+        for &pat in patterns {
+            let perm = Self::best_permutation_in(self.perms, pat);
+            let [pa, _, _] = perm.order_pattern(pat);
+            let si = perm.section_index();
+            if let (TileList::Leafed(l), Some(a)) = (&self.sections[si], pa) {
+                for (li, lf) in l.leaves.iter().enumerate() {
+                    if lf.min_a <= a && a <= lf.max_a {
+                        want[si].push(li);
+                    }
+                }
+            }
+        }
+        for (si, lis) in want.iter().enumerate() {
+            if let TileList::Leafed(l) = &self.sections[si] {
+                if !lis.is_empty() {
+                    l.ensure_leaves(lis);
+                }
+            }
+        }
+    }
+
+    /// The absolute stored range of tile `(section, tile)` on a leafed
+    /// (`0x06`) index, faulting its directory leaf.
+    pub fn tile_range(&self, section: usize, tile: usize) -> Option<(u64, u64)> {
+        self.sections.get(section)?.range(tile)
+    }
+
+    /// A remote `0x06` index: per stored permutation a two-level tile
+    /// directory, tiles faulted through `loader`/`bulk`.
+    pub fn from_leafed(
+        lists: [Option<Arc<LeafedTiles>>; NUM_PERMS],
+        perms: PermSet,
+        loader: TileLoader,
+    ) -> Self {
+        GraphIndex {
+            sections: lists.map(|l| match l {
+                Some(l) => TileList::Leafed(l),
+                None => TileList::Full(Vec::new()),
+            }),
+            perms,
+            loader: Some(loader),
+            bulk: None,
+            load_failed: std::sync::atomic::AtomicBool::new(false),
+            read_concurrency: 1,
+            cache: ChunkCache::unlimited_arc(),
+        }
+    }
+
     fn prefetch_span(&self, section: usize, start: usize, end: usize) {
         let missing: Vec<usize> = (start..end)
             .filter(|&ti| !self.tile_resident(section, ti))
@@ -903,6 +1304,7 @@ impl GraphIndex {
             return;
         }
         let mut want: [std::collections::BTreeSet<usize>; NUM_PERMS] = Default::default();
+        self.prefault_leaves(patterns);
         for &pat in patterns {
             let perm = Self::best_permutation(pat);
             let [pa, pb, pc] = perm.order_pattern(pat);
@@ -1033,7 +1435,7 @@ impl GraphIndex {
 
     /// The tiles of each permutation section (in `ALL_PERMS` order), for the
     /// file writer.
-    pub fn tile_sections(&self) -> [&[Tile]; NUM_PERMS] {
+    pub fn tile_sections(&self) -> [&TileList; NUM_PERMS] {
         [
             &self.sections[0],
             &self.sections[1],
@@ -1195,7 +1597,8 @@ impl GraphIndex {
         let (start, end) = self.tile_span(si, perm.order_pattern(pattern)[0]);
         let mut admitted = 0usize;
         let mut tile_bytes = 0u64;
-        for t in &tiles[start..end] {
+        for ti in start..end {
+            let t = &tiles[ti];
             if t.syn_admits(pb, pc) {
                 admitted += 1;
                 tile_bytes += t.encoded_len();
@@ -1207,7 +1610,7 @@ impl GraphIndex {
             tiles_routed: end - start,
             tiles_admitted: admitted,
             tile_bytes,
-            section_bytes: tiles.iter().map(|t| t.encoded_len()).sum(),
+            section_bytes: tiles.total_bytes(),
         }
     }
 
@@ -1521,11 +1924,24 @@ impl GraphIndex {
                 return 0.0;
             }
             let per_tile = total as f64 / tiles.len() as f64;
-            let (start, end) = self.tile_span(si, pa);
-            let admitted = tiles[start..end]
-                .iter()
-                .filter(|t| t.syn_admits(pb, pc))
-                .count();
+            // A leafed list whose leaf is not resident estimates one admitted
+            // tile rather than fault it: a cost estimate must not cost a read.
+            let admitted = match (tiles, pa) {
+                (TileList::Leafed(l), Some(a))
+                    if !l
+                        .leaves
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, lf)| lf.min_a <= a && a <= lf.max_a)
+                        .all(|(li, _)| l.cells[li].get().is_some()) =>
+                {
+                    1
+                }
+                _ => {
+                    let (start, end) = self.tile_span(si, pa);
+                    (start..end).filter(|&ti| tiles[ti].syn_admits(pb, pc)).count()
+                }
+            };
             let est = if admitted == 0 {
                 0.0
             } else {
@@ -1545,7 +1961,7 @@ impl GraphIndex {
     /// reads; a failed fault ends the search (`load_incomplete` says so).
     pub(crate) fn next_leading(&self, section: usize, a: u32) -> Option<u32> {
         let tiles = &self.sections[section];
-        let mut ti = tiles.partition_point(|t| t.max_a < a);
+        let mut ti = tiles.first_max_ge(a);
         while ti < tiles.len() {
             let from = a.max(tiles[ti].min_a);
             let entry = self.tile_entry(section, ti)?;
@@ -1569,9 +1985,13 @@ impl GraphIndex {
     pub(crate) fn tile_span(&self, section: usize, pa: Option<u32>) -> (usize, usize) {
         let tiles = &self.sections[section];
         match pa {
-            None => (0, tiles.len()),
+            None => {
+                // An unbound scan visits every tile: fault every leaf at once.
+                tiles.ensure_span(0, tiles.len());
+                (0, tiles.len())
+            }
             Some(a) => {
-                let i = tiles.partition_point(|t| t.max_a < a);
+                let i = tiles.first_max_ge(a);
                 let mut j = i;
                 while j < tiles.len() && tiles[j].min_a <= a {
                     j += 1;
@@ -1714,7 +2134,7 @@ mod tests {
             }
             // Tile ranges must be ascending; a split mega-group may leave
             // consecutive tiles SHARING a leading id (never overlapping past it).
-            for w in idx.tile_sections()[0].windows(2) {
+            for w in idx.tile_sections()[0].as_full().unwrap().windows(2) {
                 assert!(w[0].leading_range().1 <= w[1].leading_range().0);
             }
             assert_eq!(idx.triple_count() as usize, data.len(), "budget {budget}");

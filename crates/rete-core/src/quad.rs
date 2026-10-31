@@ -822,6 +822,105 @@ struct QuadCore {
     /// `[0..6)` the orders' tile streams, `[6]` the directory blocks.
     ramps: Mutex<[Ramp; NUM_PERMS + 1]>,
     failed: AtomicBool,
+    /// A `0x06` file: the preamble and block index come from the root, the
+    /// orders' tile directories from leaf blocks (SPEC.md §4.4).
+    v06: Option<Arc<V06Quad>>,
+}
+
+/// The `0x06` view of a quad index: everything the `0x05` preamble and `P0`
+/// said, from the root, plus where each order's leaves and tiles are.
+pub(crate) struct V06Quad {
+    pre: Preamble,
+    blocks: Vec<BlockRef>,
+    /// Per section index: `(leaf absolute range, tiles in leaf, absolute offset
+    /// of the leaf's first tile)` for each leaf of that order.
+    orders: [Vec<(ByteRange, usize, u64)>; NUM_PERMS],
+    /// Absolute offset of QUAD_DATA (tile offsets in leaves are relative to it).
+    data_base: u64,
+    /// Codec of the leaf blocks.
+    leaf_codec: u8,
+}
+
+impl V06Quad {
+    /// From the decoded root: `leaves_base` / `data_base` are the absolute
+    /// offsets of QUAD_LEAVES and QUAD_DATA.
+    pub(crate) fn new(
+        root: &crate::v06::QuadRoot,
+        leaves_base: u64,
+        data_base: u64,
+        leaf_codec: u8,
+    ) -> Result<Self, FileError> {
+        let mut pos = 0usize;
+        let b = &root.p0;
+        let mut take = || -> Option<u64> {
+            let (v, n) = read_uvarint(b.get(pos..)?)?;
+            pos += n;
+            Some(v)
+        };
+        let num = take().ok_or(FileError::Container("0x06 quad P0 truncated"))?;
+        if num != root.graph_count.div_ceil(root.block_graphs.max(1)) {
+            return Err(FileError::Container("0x06 quad P0 block count mismatch"));
+        }
+        let mut blocks = Vec::with_capacity((num as usize).min(b.len()));
+        let mut first_g = 0u32;
+        let mut at = 0u64;
+        for i in 0..num {
+            let d = take().and_then(|d| u32::try_from(d).ok());
+            let packed = take();
+            let (Some(d), Some(packed)) = (d, packed) else {
+                return Err(FileError::Container("0x06 quad P0 truncated"));
+            };
+            if i > 0 && d == 0 {
+                return Err(FileError::Container("0x06 quad blocks do not ascend"));
+            }
+            first_g = first_g
+                .checked_add(d)
+                .ok_or(FileError::Container("0x06 quad P0 overflow"))?;
+            let clen = packed >> 1;
+            let end = at
+                .checked_add(clen)
+                .filter(|&e| e <= root.gdir_len)
+                .ok_or(FileError::Container("0x06 quad block overruns"))?;
+            blocks.push(BlockRef {
+                first_g,
+                range: ByteRange {
+                    offset: leaves_base + at,
+                    len: clen,
+                },
+                raw: packed & 1 == 1,
+            });
+            at = end;
+        }
+        let mut orders: [Vec<(ByteRange, usize, u64)>; NUM_PERMS] = Default::default();
+        for o in &root.orders {
+            orders[o.si] = o
+                .leaves
+                .iter()
+                .map(|(l, _, _, toff)| {
+                    (
+                        ByteRange {
+                            offset: leaves_base + l.off,
+                            len: l.len,
+                        },
+                        l.n,
+                        *toff,
+                    )
+                })
+                .collect();
+        }
+        Ok(V06Quad {
+            pre: Preamble {
+                graph_count: root.graph_count,
+                quad_count: root.quad_count,
+                block_graphs: root.block_graphs.max(1),
+                parts: Vec::new(),
+            },
+            blocks,
+            orders,
+            data_base,
+            leaf_codec,
+        })
+    }
 }
 
 impl QuadCore {
@@ -830,6 +929,9 @@ impl QuadCore {
     }
 
     fn pre(&self) -> Option<&Preamble> {
+        if let Some(v) = &self.v06 {
+            return Some(&v.pre);
+        }
         if let Some(p) = self.pre.get() {
             return Some(p);
         }
@@ -869,6 +971,14 @@ impl QuadCore {
     fn blocks_index(&self) -> Option<&Arc<[BlockRef]>> {
         if let Some(b) = self.blocks_index.get() {
             return Some(b);
+        }
+        if let Some(v) = &self.v06 {
+            let n = v.blocks.len();
+            let _ = self.blocks_index.set(Arc::from(v.blocks.clone()));
+            let _ = self
+                .blocks
+                .set((0..n).map(|_| OnceLock::new()).collect::<Vec<_>>().into());
+            return self.blocks_index.get();
         }
         let pre = self.pre()?.clone();
         let bytes = self.read_part(0)?;
@@ -1027,6 +1137,9 @@ impl QuadCore {
         if let Some(d) = self.dirs[si].get() {
             return Some(d.clone());
         }
+        if let Some(v) = &self.v06 {
+            return self.dir_v06(v, si);
+        }
         let pre = self.pre()?.clone();
         let n = self.n_orders();
         let first = pre.parts[1];
@@ -1076,6 +1189,46 @@ impl QuadCore {
                 }
             }
         }
+        self.dirs[si].get().cloned()
+    }
+
+    /// A `0x06` order's directory: its leaves read in one batch (adjacent, so
+    /// usually one request), decoded and kept.
+    fn dir_v06(&self, v: &V06Quad, si: usize) -> Option<Arc<[QTile]>> {
+        let leaves = &v.orders[si];
+        let ranges: Vec<(u64, u64)> = leaves.iter().map(|(r, _, _)| (r.offset, r.len)).collect();
+        let blobs = match self.reader.read_many(&ranges) {
+            Ok(b) if b.len() == ranges.len() => b,
+            _ => {
+                self.fail();
+                return None;
+            }
+        };
+        let mut out = Vec::new();
+        for ((_, n, toff), stored) in leaves.iter().zip(blobs) {
+            let parsed = decompress(v.leaf_codec, &stored)
+                .ok()
+                .and_then(|raw| crate::v06::decode_qtile_leaf(&raw, *n, *toff).ok());
+            let Some(ents) = parsed else {
+                self.fail();
+                return None;
+            };
+            for e in ents {
+                out.push(QTile {
+                    first_g: e.first.0,
+                    first_a: e.first.1,
+                    last_g: e.last.0,
+                    last_a: e.last.1,
+                    range: ByteRange {
+                        offset: v.data_base + e.off,
+                        len: e.clen,
+                    },
+                    raw: e.raw,
+                    syn: e.syn,
+                });
+            }
+        }
+        let _ = self.dirs[si].set(Arc::from(out));
         self.dirs[si].get().cloned()
     }
 
@@ -1336,6 +1489,51 @@ impl QuadCore {
     }
 }
 
+/// Lift a `0x05` quad-index section into the parts a `0x06` file is
+/// assembled from (`v06::parts`): counts, `P0`, the graph-directory blocks'
+/// range and every order's tiles with their absolute input ranges.
+pub(crate) fn v05_parts(
+    reader: &dyn RangeReader,
+    section: ByteRange,
+    perms: PermSet,
+) -> Result<crate::v06::parts::QuadPart, FileError> {
+    let head = reader.read_at(section.offset, section.len.min(PREAMBLE_MAX))?;
+    let pre = parse_preamble(&head, section.offset, section.len, perms)?;
+    let n = perms.len();
+    let p0 = pre.parts[0];
+    let p0_bytes = reader.read_at(p0.offset, p0.len)?;
+    let gdir = pre.parts[1 + n];
+    let mut orders = Vec::with_capacity(n);
+    for (k, perm) in perms.iter().enumerate() {
+        let part = pre.parts[1 + k];
+        let bytes = reader.read_at(part.offset, part.len)?;
+        let tiles = parse_tile_dir(&bytes, pre.parts[2 + n + k])
+            .ok_or(FileError::Container("malformed quad-index tile directory"))?;
+        orders.push((
+            perm.section_index(),
+            tiles
+                .iter()
+                .map(|t| crate::v06::QTileEnt {
+                    first: (t.first_g, t.first_a),
+                    last: (t.last_g, t.last_a),
+                    clen: t.range.len,
+                    raw: t.raw,
+                    syn: t.syn,
+                    off: t.range.offset,
+                })
+                .collect(),
+        ));
+    }
+    Ok(crate::v06::parts::QuadPart {
+        graph_count: pre.graph_count,
+        quad_count: pre.quad_count,
+        block_graphs: pre.block_graphs,
+        p0: p0_bytes,
+        gdir,
+        orders,
+    })
+}
+
 /// Parse one order's tile directory part; tile ranges are resolved against
 /// `payload`, the order's payload part. Every field is untrusted.
 fn parse_tile_dir(b: &[u8], payload: ByteRange) -> Option<Vec<QTile>> {
@@ -1539,10 +1737,32 @@ impl QuadNamed {
                 tiles: ChunkCache::unlimited(),
                 ramps: Mutex::new(Default::default()),
                 failed: AtomicBool::new(false),
+                v06: None,
             }),
             entries: OnceLock::new(),
             tile_cap: AtomicU64::new(u64::MAX),
         }
+    }
+
+    /// The named graphs of a `0x06` file.
+    pub(crate) fn new_v06(
+        reader: Arc<dyn RangeReader + Send + Sync>,
+        v06: V06Quad,
+        codec: u8,
+        perms: PermSet,
+        read_concurrency: usize,
+    ) -> Self {
+        let mut q = Self::new(
+            reader,
+            ByteRange { offset: 0, len: 0 },
+            codec,
+            perms,
+            read_concurrency,
+        );
+        if let Some(core) = Arc::get_mut(&mut q.core) {
+            core.v06 = Some(Arc::new(v06));
+        }
+        q
     }
 
     /// Over an owned copy of the section's bytes (the resident opens).

@@ -633,6 +633,23 @@ impl LabelIndex {
         })
     }
 
+    /// Where the data blocks end in the body (the directory nodes follow
+    /// them, lowest level first): the offset of the leftmost level-1 node, or
+    /// the whole body on a one-level index. `fetch` reads `(offset, len)`
+    /// relative to the **section** start. What the `0x06` writer splits on.
+    pub(crate) fn v05_data_len(&self, fetch: &dyn Fn(u64, u64) -> Option<Vec<u8>>) -> Option<u64> {
+        if self.preamble.levels == 0 {
+            return Some(self.section_len - self.body_base);
+        }
+        let mut e = self.root.first()?.clone();
+        for _ in 1..self.preamble.levels {
+            let raw = fetch(self.body_base + e.off, e.len)?;
+            let node = decode_node(&decompress(self.codec, &raw).ok()?).ok()?;
+            e = node.first()?.clone();
+        }
+        Some(e.off)
+    }
+
     /// Number of entries in the index.
     pub fn entry_count(&self) -> u64 {
         self.preamble.entry_count

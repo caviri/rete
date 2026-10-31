@@ -688,7 +688,7 @@ fn fmt_cap(cap: u64) -> String {
 /// [`RangeReader::read_many`] (which a parallelizable reader issues
 /// concurrently). Returns each requested range's bytes in order; `None` if any
 /// read fails.
-fn read_coalesced<R: RangeReader + ?Sized>(
+pub(crate) fn read_coalesced<R: RangeReader + ?Sized>(
     reader: &R,
     ranges: &[ByteRange],
     gap: u64,
@@ -778,7 +778,7 @@ pub struct LayoutSegment {
 }
 
 /// A byte range in the `.rete` file image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ByteRange {
     pub offset: u64,
     pub len: u64,
@@ -972,12 +972,12 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
 /// A parsed chunked-dict-section directory entry: the chunk's run/key/body
 /// coordinates plus its compressed byte range *within the payload*. `key` is a
 /// routing separator, not a term — see [`crate::dict::SectionChunk::key`].
-struct DictChunkEntry {
-    first_run: usize,
-    key: Vec<u8>,
+pub(crate) struct DictChunkEntry {
+    pub(crate) first_run: usize,
+    pub(crate) key: Vec<u8>,
     body_start: u64,
-    start: u64,
-    end: u64,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
 }
 
 /// Parse a chunked dictionary section's header + directory (not the chunks).
@@ -1055,7 +1055,7 @@ fn parse_chunked_dict_dir(
 /// restart-table bytes entirely; per-run offsets are derived per chunk on fault
 /// (`SectionChunk::run_offsets`). The returned meta has an empty
 /// `restart_offsets`, which the chunked lookups read as "derive per chunk".
-fn read_dict_dir_ranged<R: RangeReader>(
+pub(crate) fn read_dict_dir_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     section: ByteRange,
 ) -> Result<(crate::dict::SectionMeta, Vec<DictChunkEntry>), FileError> {
@@ -1362,11 +1362,11 @@ fn encode_tiled_section(index: &GraphIndex, si: usize, codec: u8) -> Vec<u8> {
 
 /// A parsed v0.2 tile-directory entry: leading-id range plus the tile's byte
 /// range *within the section payload*.
-struct TileDirEntry {
-    min_a: u32,
-    max_a: u32,
-    start: u64,
-    end: u64,
+pub(crate) struct TileDirEntry {
+    pub(crate) min_a: u32,
+    pub(crate) max_a: u32,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
 }
 
 /// One tile's synopsis: inclusive min/max of the two non-leading columns.
@@ -1447,7 +1447,7 @@ fn parse_tile_directory(bytes: &[u8], total_len: u64) -> Result<Vec<TileDirEntry
 /// Fetch and parse a remote tiled section's directory: read a small prefix and
 /// grow it geometrically until the directory parses, never fetching past the
 /// section. A directory that still fails on the whole section is corrupt.
-fn read_tile_directory_ranged<R: RangeReader>(
+pub(crate) fn read_tile_directory_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     section: ByteRange,
 ) -> Result<Vec<TileDirEntry>, FileError> {
@@ -1469,7 +1469,7 @@ fn read_tile_directory_ranged<R: RangeReader>(
 /// missing/short/garbled trailer degrades to all-`None` — pruning simply doesn't
 /// fire, never a wrong result. The directory gives the trailer's start (the last
 /// tile's end).
-fn read_tile_synopsis_ranged<R: RangeReader>(
+pub(crate) fn read_tile_synopsis_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     section: ByteRange,
     dir: &[TileDirEntry],
@@ -1710,7 +1710,7 @@ fn read_uvarint_at<R: RangeReader + ?Sized>(
 
 /// Locate one section's payload byte range inside a remote container, walking
 /// only the (tiny) varint framing â€” no payload bytes are fetched.
-fn locate_container_section_ranged<R: RangeReader + ?Sized>(
+pub(crate) fn locate_container_section_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     container_offset: u64,
     container_len: u64,
@@ -2143,7 +2143,7 @@ pub(crate) fn write_dataset_from_parts(
     // index container carries its digest, so the content hash covers it — and a
     // reader that predates it computes the same hash over the same parts.
     let header = Header {
-        version: crate::header::CURRENT_FORMAT_VERSION,
+        version: crate::header::LEGACY_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
             | if has_quads { FLAG_HAS_QUADS } else { 0 }
             | if quad.is_some() {
@@ -2301,6 +2301,10 @@ pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
 /// keep the query path minimal); this is the explicit "I want the card" path.
 pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>>, FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
+    if crate::v06::open::is_v06(&head) {
+        let h = crate::v06::Header06::from_bytes(&head)?;
+        return Ok(crate::v06::open::read_card_build(reader, &h)?.0);
+    }
     let header = Header::from_bytes(&head)?;
     if header.metadata_len == 0 {
         return Ok(None);
@@ -2341,6 +2345,11 @@ pub fn read_card_and_build_info_with_header<R: RangeReader>(
 ) -> Result<(Header, Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
+    if header.version == crate::v06::VERSION {
+        let h = crate::v06::Header06::from_bytes(&head)?;
+        let (card, build) = crate::v06::open::read_card_build(reader, &h)?;
+        return Ok((header, card, build));
+    }
     let meta = (header.metadata_offset, header.metadata_len);
     let build = (header.build_info_offset, header.build_info_len);
     if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
@@ -2363,6 +2372,11 @@ pub fn read_card_and_build_info_with_header<R: RangeReader>(
 /// JSON there); it is **not** covered by the content hash — see
 /// [`attach_build_info`].
 pub fn read_build_info(bytes: &[u8]) -> Result<Option<Vec<u8>>, FileError> {
+    if crate::v06::open::is_v06(bytes) {
+        let h = crate::v06::Header06::from_bytes(bytes)?;
+        let r = crate::reader::SliceReader::new(bytes);
+        return Ok(crate::v06::open::read_card_build(&r, &h)?.1);
+    }
     let header = Header::from_bytes(bytes)?;
     if header.build_info_len == 0 {
         return Ok(None);
@@ -2625,6 +2639,64 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
     parts
 }
 
+/// `verify` for a `0x06` file over any reader: what failed (empty = all good).
+/// `only` restricts the section checks to one kind (`verify --section`).
+pub fn verify_ranged_v06(
+    reader: &dyn crate::reader::RangeReader,
+    head: &[u8],
+    only: Option<u8>,
+) -> Result<Vec<String>, FileError> {
+    const SLICE: u64 = 8 << 20;
+    let h = crate::v06::Header06::from_bytes(head)?;
+    if h.file_len != reader.len() {
+        return Ok(vec!["file length".to_string()]);
+    }
+    let mut bad = Vec::new();
+    let root_bytes = reader.read_at(crate::v06::HEADER_LEN as u64, h.root_len as u64)?;
+    if crate::v06::digest16(&root_bytes) != h.root_digest {
+        bad.push("root".to_string());
+        return Ok(bad);
+    }
+    let root = crate::v06::Root06::decode(&root_bytes, h.internal_codec)?;
+    if crate::v06::content_hash(&h) != h.content_hash {
+        bad.push("content hash".to_string());
+    }
+    let card = h.card_range();
+    if only.is_none() && card.len > 0 {
+        let stored = reader.read_at(card.offset, card.len)?;
+        if crate::v06::digest16(&stored) != h.card_digest {
+            bad.push("card".to_string());
+        }
+    }
+    for s in &root.sections {
+        if only.is_some_and(|k| k != s.kind) {
+            continue;
+        }
+        let a = s.abs(&h);
+        if a.offset.checked_add(a.len).is_none_or(|e| e > h.file_len) {
+            bad.push(crate::v06::kind::name(s.kind).to_string());
+            continue;
+        }
+        let mut hs = blake3::Hasher::new();
+        let mut at = a.offset;
+        while at < a.offset + a.len {
+            let n = (a.offset + a.len - at).min(SLICE);
+            hs.update(&reader.read_at(at, n)?);
+            at += n;
+        }
+        if hs.finalize().as_bytes()[..16] != s.digest {
+            bad.push(crate::v06::kind::name(s.kind).to_string());
+        }
+    }
+    if only.is_none() {
+        let n = crate::v06::FOOTER.len() as u64;
+        if reader.read_at(h.file_len - n, n)? != crate::v06::FOOTER {
+            bad.push("footer".to_string());
+        }
+    }
+    Ok(bad)
+}
+
 /// Recompute the content hash from a file image and check it against the header
 /// — detects corruption or truncation of the payload sections. The
 /// LABEL_INDEX, SCHEMA and predicate-restricted TEXT_INDEX sections (kinds 8,
@@ -2633,6 +2705,11 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
 /// digest instead. The QUAD_INDEX section (kind 10) is hashed by reference: its
 /// digest is the seal inside the (hashed) index container, checked here.
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
+    if crate::v06::open::is_v06(bytes) {
+        let r: std::sync::Arc<dyn RangeReader + Send + Sync> =
+            std::sync::Arc::new(crate::reader::BytesReader(std::sync::Arc::from(bytes)));
+        return crate::v06::open::V06File::open(r, bytes)?.verify(None);
+    }
     let header = Header::from_bytes(bytes)?;
     if hash_of_sections(&header, bytes)? != header.content_hash {
         return Ok(false);
@@ -2838,7 +2915,11 @@ pub fn verify_ranged(reader: &dyn crate::reader::RangeReader) -> Result<bool, Fi
     if len < HEADER_LEN as u64 {
         return Err(FileError::Container("file shorter than its header"));
     }
-    let header = Header::from_bytes(&reader.read_at(0, HEADER_LEN as u64)?)?;
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    if crate::v06::open::is_v06(&head) {
+        return verify_ranged_v06(reader, &head, None).map(|bad| bad.is_empty());
+    }
+    let header = Header::from_bytes(&head)?;
     let mut h = blake3::Hasher::new();
     for (off, n) in content_hash_parts(&header) {
         // Offsets come straight from the header: reject an overrun (or an
@@ -3035,6 +3116,10 @@ fn read_schema_with_header<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<crate::schema_section::SchemaMeta> {
+    if header.version == crate::v06::VERSION {
+        let b = crate::v06::open::read_schema_bytes(reader).ok()??;
+        return crate::schema_section::SchemaMeta::decode(&b).ok();
+    }
     let s = header.schema_section()?;
     let bytes = reader.read_at(s.offset, s.length).ok()?;
     crate::schema_section::SchemaMeta::decode(&bytes).ok()
@@ -3132,6 +3217,9 @@ pub fn read_text_index_token_table_len_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<u64> {
+    if header.version == crate::v06::VERSION {
+        return crate::v06::open::read_token_table_bytes(reader);
+    }
     let (ti_off, ti_len) = header.text_index_payload();
     if ti_len == 0 {
         return None;
@@ -3791,12 +3879,27 @@ pub struct Rete {
     /// Bytes a query's `COUNT(DISTINCT …)` set may hold before it spills to
     /// disk — see [`Rete::spill_threshold`].
     spill_threshold: std::sync::atomic::AtomicU64,
+    /// The open `0x06` file (header, root, reader), for a `0x06` open.
+    v06: Option<std::sync::Arc<crate::v06::open::V06File>>,
 }
 
 impl Rete {
     /// Parse a full file image (v0 loads everything; a range-reading client
     /// will fetch only the sections it needs â€” same container format).
     pub fn open(bytes: &[u8]) -> Result<Self, FileError> {
+        if crate::v06::open::is_v06(bytes) {
+            // A 0x06 image opens through the lazy machinery over the bytes in
+            // memory: the same structures, faulted from RAM.
+            let r: std::sync::Arc<dyn RangeReader + Send + Sync> =
+                std::sync::Arc::new(crate::reader::BytesReader(std::sync::Arc::from(bytes)));
+            let mut rete = Self::open_v06(r, bytes, false)?;
+            rete.metadata = rete
+                .v06
+                .as_ref()
+                .and_then(|f| f.card().ok().flatten())
+                .unwrap_or_default();
+            return Ok(rete);
+        }
         let header = Header::from_bytes(bytes)?;
 
         // Header offsets/lengths are untrusted (a `.rete` may be fetched truncated
@@ -3884,6 +3987,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: None,
         })
     }
 
@@ -4636,9 +4740,9 @@ impl Rete {
         /// `None` when `sid` is past the last tile. Tiles ascend by leading
         /// range, so this is a binary search; it returns `sid` itself when a tile
         /// already covers it (an ordinary "this subject has no triples" step).
-        fn next_tile_start(tiles: &[crate::index::Tile], sid: u32) -> Option<u32> {
-            let i = tiles.partition_point(|t| t.leading_range().1 < sid);
-            tiles.get(i).map(|t| t.leading_range().0.max(sid))
+        fn next_tile_start(tiles: &crate::index::TileList, sid: u32) -> Option<u32> {
+            let i = tiles.first_max_ge(sid);
+            (i < tiles.len()).then(|| tiles[i].leading_range().0.max(sid))
         }
 
         let index = match graph {
@@ -4878,6 +4982,12 @@ impl Rete {
     /// open touches at most 4 ranges (header, dictionary, index, pyramid-meta).
     pub fn open_ranged<R: RangeReader>(reader: &R) -> Result<Self, FileError> {
         let head = reader.read_at(0, HEADER_LEN as u64)?;
+        if crate::v06::open::is_v06(&head) {
+            // The eager path reads the whole image; a 0x06 one then opens from
+            // memory.
+            let all = reader.read_at(0, reader.len())?;
+            return Self::open(&all);
+        }
         let header = Header::from_bytes(&head)?;
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
@@ -4949,7 +5059,62 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: None,
         })
+    }
+
+    /// Open a `0x06` file whose first bytes are `first`: the header and root
+    /// come from them; the dictionary and index are two-level directories whose
+    /// leaves fault on demand; text, labels, schema, pyramid and named graphs
+    /// are deferred. `budget` applies the default memory budget (the lazy
+    /// remote path) as [`open_ranged_lazy`](Self::open_ranged_lazy) does.
+    fn open_v06(
+        reader: std::sync::Arc<dyn RangeReader + Send + Sync>,
+        first: &[u8],
+        budget: bool,
+    ) -> Result<Self, FileError> {
+        let f = std::sync::Arc::new(crate::v06::open::V06File::open(reader.clone(), first)?);
+        let header = crate::v06::logical_header(&f.h);
+        let rc = reader.concurrency();
+        let dict = f.dictionary([true; 4])?;
+        let index = f.index(rc)?;
+        let (pyramid, text_index, labels, schema) = v06_slots(&f);
+        let named_graphs = match f.quad(rc) {
+            Some(q) => NamedGraphsSlot::Quad(q?),
+            None => NamedGraphsSlot::Resident(Vec::new()),
+        };
+        let rete = Self {
+            header,
+            dict,
+            index,
+            index_section_ranges: [ByteRange::default(); NUM_PERMS],
+            tile_ranges: Default::default(),
+            pyramid,
+            text_index,
+            labels,
+            schema,
+            named_graphs,
+            metadata: Vec::new(),
+            service_client: None,
+            service_error: std::sync::Mutex::new(None),
+            spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: Some(f),
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        if budget {
+            rete.set_memory_budget(match crate::sysmem::default_query_budget_mb() {
+                0 => None,
+                mb => Some(mb << 20),
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = budget;
+        Ok(rete)
+    }
+
+    /// The open `0x06` file (header, root, reader), `None` for a `0x05` open.
+    pub fn v06(&self) -> Option<&crate::v06::open::V06File> {
+        self.v06.as_deref()
     }
 
     /// Open via an **owned** [`RangeReader`] with lazy tile faulting (tiled
@@ -4966,6 +5131,15 @@ impl Rete {
     pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
+        // One first read — 64 KiB, or the whole file when smaller — decides the
+        // format, and every later read inside it is served from memory.
+        let first_len = crate::v06::FIRST_READ.min(reader.len());
+        let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
+        let reader = crate::reader::PrefixReader::new(reader, first.clone());
+        if crate::v06::open::is_v06(&first) {
+            let r: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
+            return Self::open_v06(r, &first, true);
+        }
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         check_named_layout(&header)?;
@@ -5076,6 +5250,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: None,
         };
         // A lazy open is the path for files too big to read whole, and the
         // one a long-lived session (relay, Python/R/Java clients, `rete serve`)
@@ -5774,6 +5949,62 @@ fn open_side_by_side<A, B>(
     (a(), b())
 }
 
+/// The deferred slots of a `0x06` open: pyramid, text index, label index and
+/// schema, each faulted on first use.
+#[allow(clippy::type_complexity)]
+fn v06_slots(
+    f: &std::sync::Arc<crate::v06::open::V06File>,
+) -> (
+    PyramidSlot,
+    TextIndexSlot,
+    SectionSlot<crate::label_index::LabelIndex>,
+    SectionSlot<crate::schema_section::SchemaMeta>,
+) {
+    use crate::v06::{P_LABELS, P_PYRAMID, P_SCHEMA, P_TEXT};
+    let pyramid = if f.h.has(P_PYRAMID) {
+        let a = f.clone();
+        PyramidSlot::Lazy {
+            loader: Box::new(move || PyramidMeta::decode(&a.pyramid_bytes()?).ok()),
+            cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        PyramidSlot::Resident(None)
+    };
+    let text_index = if f.h.has(P_TEXT) {
+        let (a, b) = (f.clone(), f.clone());
+        TextIndexSlot::Lazy {
+            loader: Box::new(move || a.text_index()?.ok()),
+            cell: std::sync::OnceLock::new(),
+            token_table: Box::new(move || b.token_table_bytes()),
+            token_table_cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        TextIndexSlot::Resident {
+            index: None,
+            token_table_len: None,
+        }
+    };
+    let labels = if f.h.has(P_LABELS) {
+        let a = f.clone();
+        SectionSlot::Lazy {
+            loader: Box::new(move || a.label_index()?.ok()),
+            cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        SectionSlot::Resident(None)
+    };
+    let schema = if f.h.has(P_SCHEMA) {
+        let a = f.clone();
+        SectionSlot::Lazy {
+            loader: Box::new(move || a.schema()),
+            cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        SectionSlot::Resident(None)
+    };
+    (pyramid, text_index, labels, schema)
+}
+
 /// The pyramid meta is large on real graphs (tens of MB) and SPARQL never reads
 /// it, so a ranged open defers its fetch: it faults in only if `pyramid()` is
 /// called (community / pyramid_tree / label-prefix queries).
@@ -5949,6 +6180,32 @@ impl SearchView {
     pub fn open_ranged<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
+        let first_len = crate::v06::FIRST_READ.min(reader.len());
+        let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
+        let reader = crate::reader::PrefixReader::new(reader, first.clone());
+        if crate::v06::open::is_v06(&first) {
+            let r: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
+            let f = std::sync::Arc::new(crate::v06::open::V06File::open(r, &first)?);
+            let header = crate::v06::logical_header(&f.h);
+            let (pyramid, text_index, labels, _) = v06_slots(&f);
+            let want = [true, true, false, false];
+            let dict = if f.h.has(crate::v06::P_LABELS) {
+                let a = f.clone();
+                SectionSlot::Lazy {
+                    loader: Box::new(move || a.dictionary(want).ok()),
+                    cell: std::sync::OnceLock::new(),
+                }
+            } else {
+                SectionSlot::Resident(Some(f.dictionary(want)?))
+            };
+            return Ok(Self {
+                header,
+                dict,
+                pyramid,
+                text_index,
+                labels,
+            });
+        }
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         let reader = std::sync::Arc::new(reader);
@@ -6077,6 +6334,9 @@ impl SummaryView {
         if header.pyramid_meta_len == 0 {
             return Ok(None);
         }
+        if header.version == crate::v06::VERSION {
+            return Self::open_ranged_v06(reader, &header).map(Some);
+        }
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
         let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
@@ -6107,6 +6367,46 @@ impl SummaryView {
             equivalent_pairs: meta.equivalent_pairs,
             dict,
         }))
+    }
+
+    /// [`open_ranged`](Self::open_ranged) for a `0x06` file: the pyramid
+    /// section, the schema, and the dictionary (its leaves and chunks read
+    /// whole, as the `0x05` path reads the whole dictionary container).
+    fn open_ranged_v06<R: RangeReader>(reader: &R, header: &Header) -> Result<Self, FileError> {
+        use crate::v06::{kind, open};
+        let (h, root) = open::read_front(reader)?;
+        let mb = open::read_section(reader, &h, &root, kind::PYRAMID)?
+            .ok_or(FileError::Container("0x06 file has no pyramid"))?;
+        let mut meta =
+            PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
+        if let Some(s) = read_schema_with_header(reader, header) {
+            meta.class_hierarchy = s.class_hierarchy;
+            meta.level_rollups = s.level_rollups;
+            meta.level_links = s.level_links;
+            meta.subclass_cycles = s.subclass_cycles;
+            meta.disjoint_pairs = s.disjoint_pairs;
+            meta.equivalent_pairs = s.equivalent_pairs;
+        }
+        let first = reader.read_at(0, crate::v06::FIRST_READ.min(reader.len()))?;
+        let want: Vec<ByteRange> = [kind::DICT_LEAVES, kind::DICT_DATA]
+            .iter()
+            .filter_map(|&k| root.section(k).map(|s| s.abs(&h)))
+            .collect();
+        let sparse = open::SparseReader::fetch(reader, first.clone(), &want)?;
+        let f = open::V06File::open(std::sync::Arc::new(sparse), &first)?;
+        let dict = f.dictionary([true; 4])?;
+        Ok(SummaryView {
+            round: meta.round,
+            summary: meta.summary,
+            class_hierarchy: meta.class_hierarchy,
+            level_rollups: meta.level_rollups,
+            level_links: meta.level_links,
+            descriptors: meta.descriptors,
+            subclass_cycles: meta.subclass_cycles,
+            disjoint_pairs: meta.disjoint_pairs,
+            equivalent_pairs: meta.equivalent_pairs,
+            dict,
+        })
     }
 
     /// A schema-only view of a file **without a pyramid**, from its SCHEMA
@@ -6354,7 +6654,11 @@ pub fn read_schema_coherence_ranged<R: RangeReader>(
         )));
     }
     // Fallback (pre-v0.2.1 files with no header field): decode the whole pyramid-meta.
-    let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+    let mb = if header.version == crate::v06::VERSION {
+        crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
+    } else {
+        reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?
+    };
     let meta =
         PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
     Ok(Some(schema_coherence(
@@ -6403,7 +6707,11 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
             return Ok(Some(summary));
         }
         // Fallback (pre-v0.2.1 files): decode the whole pyramid-meta, pull finest levels.
-        let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+        let mb = if header.version == crate::v06::VERSION {
+            crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
+        } else {
+            reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?
+        };
         PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?
     };
     if meta.level_rollups.is_empty() && meta.level_links.is_empty() {

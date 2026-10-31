@@ -234,3 +234,79 @@ mod tests {
         assert_eq!(r.bytes_read(), 30);
     }
 }
+
+/// A [`RangeReader`] over owned, shared bytes (a whole file image held in
+/// memory — the resident opens of a `0x06` file go through the lazy machinery
+/// over one of these).
+pub struct BytesReader(pub std::sync::Arc<[u8]>);
+
+impl RangeReader for BytesReader {
+    fn len(&self) -> u64 {
+        self.0.len() as u64
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let end = offset
+            .checked_add(len)
+            .filter(|&e| e <= self.0.len() as u64)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "range out of bounds"))?;
+        Ok(self.0[offset as usize..end as usize].to_vec())
+    }
+}
+
+/// A reader **seeded** with the file's leading bytes: any range inside them is
+/// served from memory, the rest goes to `inner`. The open reads the first
+/// [`crate::v06::FIRST_READ`] bytes once; a `0x05` open's header, card and
+/// first container prefixes then cost nothing more.
+pub struct PrefixReader<R> {
+    inner: R,
+    prefix: std::sync::Arc<[u8]>,
+}
+
+impl<R: RangeReader> PrefixReader<R> {
+    /// Seed `inner` with `prefix` (its bytes from offset 0).
+    pub fn new(inner: R, prefix: std::sync::Arc<[u8]>) -> Self {
+        PrefixReader { inner, prefix }
+    }
+
+    fn cut(&self, offset: u64, len: u64) -> Option<Vec<u8>> {
+        let end = offset.checked_add(len)?;
+        (end <= self.prefix.len() as u64).then(|| self.prefix[offset as usize..end as usize].to_vec())
+    }
+}
+
+impl<R: RangeReader> RangeReader for PrefixReader<R> {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        match self.cut(offset, len) {
+            Some(b) => Ok(b),
+            None => self.inner.read_at(offset, len),
+        }
+    }
+
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        let mut out: Vec<Option<Vec<u8>>> = ranges.iter().map(|&(o, l)| self.cut(o, l)).collect();
+        let rest: Vec<(u64, u64)> = ranges
+            .iter()
+            .zip(&out)
+            .filter(|(_, b)| b.is_none())
+            .map(|(r, _)| *r)
+            .collect();
+        if !rest.is_empty() {
+            let mut fetched = self.inner.read_many(&rest)?.into_iter();
+            for slot in out.iter_mut().filter(|b| b.is_none()) {
+                *slot = fetched.next();
+            }
+        }
+        out.into_iter()
+            .map(|b| b.ok_or_else(|| std::io::Error::other("read_many left a range unfetched")))
+            .collect()
+    }
+
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+}

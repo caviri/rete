@@ -3027,7 +3027,7 @@ fn write_final_file(
     hash.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
 
     let header = Header {
-        version: crate::header::CURRENT_FORMAT_VERSION,
+        version: crate::header::LEGACY_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
             | if named_len > 0 || quad.is_some() {
                 FLAG_HAS_QUADS

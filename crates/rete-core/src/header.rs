@@ -30,7 +30,13 @@ pub const MAGIC: [u8; 4] = *b"RETE";
 /// does it pin reader capability: writer semantics changed inside `0x05` nine
 /// days after the freeze (#68 split oversized index groups across tiles), so a
 /// `0x05` file can need a reader newer than the one that froze `0x05`.
-pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
+pub const CURRENT_FORMAT_VERSION: u8 = 0x06;
+
+/// Format generation `0x05` (stable generation 1, the 1 KiB section-directory
+/// layout this module parses). Every reader still reads it while the catalog is
+/// converted; the memory-bounded build, `merge` and `recard` still write it
+/// until they move to `0x06`.
+pub const LEGACY_FORMAT_VERSION: u8 = 0x05;
 
 /// Oldest stable format generation accepted by this reader.
 ///
@@ -212,6 +218,8 @@ pub enum HeaderError {
     BadSectionCount(usize),
     #[error("unusable index permutation mask {mask:#04x}: {why}")]
     BadPermMask { mask: u8, why: &'static str },
+    #[error("malformed 0x06 header: {0}")]
+    Malformed06(&'static str),
 }
 
 /// Decoded file header. All multi-byte fields are little-endian on disk. The
@@ -379,6 +387,16 @@ impl Header {
         }
         if b[0..4] != MAGIC {
             return Err(HeaderError::BadMagic);
+        }
+        if b[4] == crate::v06::VERSION {
+            // A 0x06 file: its 128-byte header, seen as a logical header (no
+            // physical offsets — see `v06::logical_header`).
+            return crate::v06::Header06::from_bytes(b)
+                .map(|h| crate::v06::logical_header(&h))
+                .map_err(|e| match e {
+                    crate::file::FileError::Container(m) => HeaderError::Malformed06(m),
+                    _ => HeaderError::Malformed06("unreadable"),
+                });
         }
         if !(MIN_STABLE_READ_VERSION..=CURRENT_FORMAT_VERSION).contains(&b[4]) {
             return Err(HeaderError::UnsupportedVersion {
