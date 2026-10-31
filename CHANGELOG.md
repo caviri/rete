@@ -5,6 +5,29 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The memory-bounded build's spill is compressed, and its statements are on
+  disk once** (G23). Every spill file goes through zstd at a fast level: the
+  statements as sorted runs of delta-varint ids (1.6–2.5 B per statement
+  instead of 12), the chunk term files front-coded, the remap tables, text
+  words and label/schema sorts as compressed blocks. The six permutations are
+  chained — the remap writes the first one's runs, each merge writes the next
+  one's while it deletes its own as it reads them — so there is no `global.tri`
+  beside a permutation's runs (24 B per statement before any index byte, 381 GB
+  for the projected OpenCitations Index). Sections leave the spill as they are
+  copied into the output. On eight renamed copies of the OpenCitations Meta
+  sample (47.8 M statements, `--text-index --label-index`) the build record's
+  peak spill fell from 1.98 GB to 0.51 GB (1.77 GB to 0.46 GB without the text
+  and label indexes), on the sample itself from 245 MB to 76 MB, for 1% more
+  wall time (8%, 1.3 s, on the 6 M-statement sample); the files are
+  byte-identical. `RETE_SPILL_ZSTD_LEVEL` (default 1, `0` for none) trades CPU
+  for disk.
+- **Crash resume** of a memory-bounded build now restarts from the last
+  finished permutation's tiles instead of `global.tri`, which no longer exists:
+  a build killed in the first permutation or in the final write is not
+  resumable.
+
 ## [0.4.1] - 2026-10-30
 
 0.4.1 is for people who build large files with `--memory-budget-mb`. The build

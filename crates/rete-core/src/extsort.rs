@@ -9,10 +9,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::collections::BinaryHeap;
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use crate::extbuild_spill::{ZReader, ZWriter};
 use crate::varint::write_uvarint;
 
 /// A record the external sort can spill and reload.
@@ -250,14 +250,15 @@ impl<T: SortRecord> ExtSorter<T> {
         let path = self
             .dir
             .join(format!("{}.run{}", self.name, self.runs.len()));
-        let mut w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
+        // runs are compressed (`extbuild_spill`): sorted records shrink well
+        let mut w = ZWriter::create(&path)?;
         let mut enc = Vec::new();
         for r in self.buf.drain(..) {
             enc.clear();
             r.write_to(&mut enc);
             w.write_all(&enc)?;
         }
-        w.flush()?;
+        w.finish()?;
         self.runs.push(path);
         self.buf_bytes = 0;
         self.buf.shrink_to_fit();
@@ -279,7 +280,7 @@ impl<T: SortRecord> ExtSorter<T> {
         let mut readers = Vec::with_capacity(self.runs.len());
         let mut heap = BinaryHeap::new();
         for (i, p) in self.runs.iter().enumerate() {
-            let mut rd = BufReader::with_capacity(1 << 18, File::open(p)?);
+            let mut rd = ZReader::open(p)?;
             if let Some(r) = T::read_from(&mut rd)? {
                 heap.push(std::cmp::Reverse((r, i)));
             }
@@ -301,7 +302,7 @@ pub(crate) enum Sorted<T: SortRecord> {
     Memory(std::vec::IntoIter<T>),
     /// A k-way merge over spilled runs.
     Runs {
-        readers: Vec<BufReader<File>>,
+        readers: Vec<ZReader>,
         heap: BinaryHeap<std::cmp::Reverse<(T, usize)>>,
         runs: Vec<PathBuf>,
         last: Option<T>,

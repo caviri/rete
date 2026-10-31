@@ -94,23 +94,33 @@ Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:
   attached `--rm` container dies with its host process tree — one 4 h build was
   lost to a bash bug in the pipeline that launched it. Add
   `--oom-score-adj -500` so a busy Docker VM OOM-kills something else first.
-- **Spill sizing**: the spill (`--tmp-dir`) needs roughly ¼–½ of the input NT
-  size (id-encoded + zstd) *plus* the staged NT itself if you put it there;
-  ORCID's 198 GB NT spilled ~45 GB. It lives in a `.rete-extbuild-<pid>-<seq>`
-  SUBDIR of `--tmp-dir`. While the dictionary merge runs it also holds the id
-  remap tables, about 4 B per chunk-local term (~4% more spill on the
-  OpenCitations sample). They live there, not in RAM (0.4.0 and earlier held
-  them resident: 15 GB for 1.7 B terms), so the peak RAM no longer grows with
-  the graph. `--label-index` no longer adds to the spill peak (in 0.4.0 it
-  added ~20% on a data-only graph: its string records sat beside every
-  chunk's files).
-- **Crash resume**: the spill survives a kill. Completed `<PERM>.tiles.sec`
-  sections, the merged dictionary and `global.tri` are all reusable — the
+- **Spill sizing**: the spill (`--tmp-dir`) lives in a
+  `.rete-extbuild-<pid>-<seq>` SUBDIR of `--tmp-dir`. Every spill file is
+  compressed (delta-varint id runs, front-coded terms, zstd blocks) and the
+  six permutations are chained, so the statements are on disk once at a
+  time. The peak is now usually in the last permutations, and most of it is
+  the finished index itself: plan for about **the output's size plus 2–4 B
+  per statement** (plus the staged NT, if you put it there). Measured: the
+  OpenCitations Meta sample peaked at 76 MB instead of 245 MB, eight renamed
+  copies of it at 0.51 GB instead of 1.98 GB; up to 0.4.1 a build needed
+  24 B per statement for `global.tri` and one permutation's runs alone (Meta
+  v9.2.1: 230 GiB). The id remap tables live there too, not in RAM (0.4.0
+  and earlier held them resident: 15 GB for 1.7 B terms). The final write
+  deletes each section once it is in the output, so spill and output do not
+  stack. `RETE_SPILL_ZSTD_LEVEL` (default 1; `0` = no zstd) trades CPU for
+  disk.
+- **Crash resume**: the spill survives a kill. A build killed in the
+  permutation phase (after the first permutation) is resumable: the merged
+  dictionary and every finished permutation's `<PERM>.tiles` are reusable,
+  and the last finished one holds every statement, sorted — the
   `resume_from_spill` harness (`cargo test -p rete-core --release --lib
   extbuild::tests::resume_from_spill -- --ignored`, driven by
-  `RETE_RESUME_SPILL/OUT/TERMS/QUADS/CARD[/BUDGET_MB]`) rebuilds only the missing
-  permutations and writes the final file (~19 min instead of ~5 h, twice proven).
-  Resume with a smaller `RETE_RESUME_BUDGET_MB` if the machine is busier now.
+  `RETE_RESUME_SPILL/OUT/TERMS/QUADS/CARD[/PERMS/BUDGET_MB]`) re-reads it,
+  re-runs the cut-short permutation and the ones after it, and writes the final
+  file. Not resumable: a kill in the first permutation (its runs are consumed
+  as they are merged; up to 0.4.1 a raw `global.tri` survived) or during the
+  final write. Resume with a smaller `RETE_RESUME_BUDGET_MB` if the machine is
+  busier now.
 - **Verify/query the output LAZILY**: `rete verify` and plain `rete sparql` read
   the whole file into RAM (17.5 GB file OOM-killed a capped container) — use
   `rete sparql-url <local path or URL>` / `card-url` / `query-url`, which accept

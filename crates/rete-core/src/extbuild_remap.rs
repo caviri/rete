@@ -37,6 +37,12 @@
 //! dictionary class, refused cleanly past it (the old in-RAM encoding put the
 //! class in the top two bits and silently wrapped at 2³⁰).
 //!
+//! **On disk** each flush is one compressed block ([`crate::extbuild_spill`])
+//! of class-aware deltas: within a segment the final ids and the provisional
+//! ranks are two increasing sequences, so each value is written as the delta
+//! from the previous one of its own class, with the class in the low bit —
+//! about 8% of the 4 bytes per id measured on OpenCitations Meta.
+//!
 //! **Memory.** The merge holds one write buffer per segment being filled, per
 //! chunk, sized so that they all fit in a sixteenth of the budget
 //! ([`remap_buf_bytes`]); phase 3 holds one chunk's tables, 4 B per local id —
@@ -47,11 +53,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::build_trace as trace;
 use crate::extbuild::ExtBuildError;
+use crate::extbuild_spill::{put_block, spill_level, take_block};
+use crate::varint::write_uvarint;
 
 /// One chunk's local-id segments, in the order of [`SEG_FILE`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,9 +80,6 @@ pub(crate) const ROLE_ONLY: u32 = 1 << 31;
 
 /// Local-id counts of one chunk's segments, as [`Seg`] indexes them.
 pub(crate) type SegCounts = [u32; SEGS];
-
-/// Read and write unit of a segment file.
-const IO_BUF: usize = 64 << 10;
 
 /// Per-segment write buffer for a merge over `chunks` chunks within
 /// `budget` bytes: the three segments the node merge fills at once share a
@@ -120,7 +125,32 @@ fn table_bytes(c: &SegCounts) -> u64 {
 struct SegState {
     expected: u32,
     written: u32,
+    /// buffered ids, little-endian
     buf: Vec<u8>,
+    /// the last id written of each class (final, provisional)
+    prev: [u32; 2],
+}
+
+/// Class-aware delta of one id: `(delta << 1) | class`, where class 1 is a
+/// provisional [`ROLE_ONLY`] rank and the delta is from the previous id of
+/// the same class.
+fn put_id(out: &mut Vec<u8>, prev: &mut [u32; 2], v: u32) {
+    let class = (v >> 31) as usize;
+    let x = v & !ROLE_ONLY;
+    let d = x.wrapping_sub(prev[class]) & !ROLE_ONLY;
+    prev[class] = x;
+    write_uvarint(out, ((d as u64) << 1) | class as u64);
+}
+
+/// The inverse of [`put_id`].
+fn get_id(raw: &[u8], pos: &mut usize, prev: &mut [u32; 2]) -> Result<u32, ExtBuildError> {
+    let (w, n) = crate::varint::read_uvarint(&raw[*pos..])
+        .ok_or(ExtBuildError::Internal("a remap spill block is truncated"))?;
+    *pos += n;
+    let class = (w & 1) as usize;
+    let x = prev[class].wrapping_add((w >> 1) as u32) & !ROLE_ONLY;
+    prev[class] = x;
+    Ok(if class == 1 { x | ROLE_ONLY } else { x })
 }
 
 /// The merge side: appends every chunk's global ids to its segment files.
@@ -176,23 +206,34 @@ impl RemapWriter {
         }
         st.buf.extend_from_slice(&id.to_le_bytes());
         if st.buf.len() >= self.buf_bytes {
-            Self::append(&self.dir, ci, seg as usize, &mut st.buf)?;
+            Self::append(&self.dir, ci, seg as usize, st)?;
         }
         Ok(())
     }
 
-    fn append(dir: &Path, ci: usize, seg: usize, buf: &mut Vec<u8>) -> Result<(), ExtBuildError> {
-        if buf.is_empty() {
+    /// Append the buffered ids to the segment file as one block.
+    fn append(dir: &Path, ci: usize, seg: usize, st: &mut SegState) -> Result<(), ExtBuildError> {
+        if st.buf.is_empty() {
             return Ok(());
         }
+        let mut raw = Vec::with_capacity(st.buf.len() / 2);
+        for w in st.buf.chunks_exact(4) {
+            put_id(
+                &mut raw,
+                &mut st.prev,
+                u32::from_le_bytes([w[0], w[1], w[2], w[3]]),
+            );
+        }
+        let mut block = Vec::with_capacity(raw.len() / 4 + 16);
+        put_block(&mut block, &raw, (st.buf.len() / 4) as u32, spill_level())?;
         // Opened per flush rather than held: a merge over K chunks would
         // otherwise keep up to 3K more descriptors open beside its 4K readers.
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)
             .open(seg_path(dir, ci, seg))?;
-        f.write_all(buf)?;
-        buf.clear();
+        f.write_all(&block)?;
+        st.buf.clear();
         Ok(())
     }
 
@@ -201,7 +242,7 @@ impl RemapWriter {
     pub(crate) fn flush(&mut self, seg: Seg) -> Result<(), ExtBuildError> {
         for (ci, c) in self.chunks.iter_mut().enumerate() {
             let st = &mut c[seg as usize];
-            Self::append(&self.dir, ci, seg as usize, &mut st.buf)?;
+            Self::append(&self.dir, ci, seg as usize, st)?;
             st.buf = Vec::new();
         }
         Ok(())
@@ -320,20 +361,25 @@ impl RemapStore {
         }
         let path = seg_path(&self.dir, ci, seg as usize);
         let mut file = File::open(&path)?;
-        if file.metadata()?.len() != 4 * expected {
+        let (mut payload, mut raw) = (Vec::new(), Vec::new());
+        let mut prev = [0u32; 2];
+        let mut got = 0u64;
+        while let Some(count) = take_block(&mut file, &mut payload, &mut raw)? {
+            let mut pos = 0;
+            for _ in 0..count {
+                out.push(f(get_id(&raw, &mut pos, &mut prev)?)?);
+            }
+            if pos != raw.len() {
+                return Err(ExtBuildError::Internal(
+                    "a remap spill block has trailing bytes",
+                ));
+            }
+            got += count as u64;
+        }
+        if got != expected {
             return Err(ExtBuildError::Internal(
                 "a remap spill file has the wrong length",
             ));
-        }
-        let mut buf = vec![0u8; IO_BUF];
-        let mut left = (4 * expected) as usize;
-        while left > 0 {
-            let n = left.min(IO_BUF);
-            file.read_exact(&mut buf[..n])?;
-            for w in buf[..n].chunks_exact(4) {
-                out.push(f(u32::from_le_bytes([w[0], w[1], w[2], w[3]]))?);
-            }
-            left -= n;
         }
         Ok(())
     }
