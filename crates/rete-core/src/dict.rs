@@ -4,7 +4,7 @@
 //! predicates / graphs), sorted and assigned dense 1-based IDs. Terms are stored
 //! in runs of `R`; each run starts with a full term and front-codes the rest.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::chunk_cache::{CacheEntry, ChunkCache};
@@ -704,7 +704,16 @@ pub struct ChunkedSection {
     /// This section's discriminant in the shared cache's key space (0 shared,
     /// 1 subject-only, 2 object-only, 3 predicates).
     section_index: u8,
+    /// Read-ahead on sequential faults: the chunk whose miss would continue
+    /// the current run of misses, plus one (0 = none) ...
+    ra_next: AtomicU64,
+    /// ... and the window the next sequential miss fetches (doubling up to
+    /// [`READAHEAD_MAX_CHUNKS`]; back to 1 on a non-sequential miss).
+    ra_window: AtomicU32,
 }
+
+/// The most chunks one sequential read-ahead fetches (16 × ~64 KiB ≈ 1 MiB).
+pub const READAHEAD_MAX_CHUNKS: u32 = 16;
 
 impl ChunkedSection {
     /// A local section: the whole serialized section (header + body) as one
@@ -726,6 +735,8 @@ impl ChunkedSection {
             loader: None,
             bulk: None,
             failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -748,6 +759,8 @@ impl ChunkedSection {
             loader,
             bulk: None,
             failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -776,6 +789,8 @@ impl ChunkedSection {
             loader: None,
             bulk: None,
             failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -796,6 +811,8 @@ impl ChunkedSection {
             loader: Some(loader),
             bulk: None,
             failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -931,13 +948,36 @@ impl ChunkedSection {
             return Some(e);
         }
         match &self.loader {
-            Some(load) => match load(ci) {
-                Some(bytes) => Some(self.cache.insert(key, Arc::from(bytes))),
-                None => {
-                    self.failed.store(true, Ordering::Relaxed);
-                    None
+            Some(load) => {
+                // Sequential misses (a walk over ascending ids or terms) read
+                // ahead: the second miss in a row fetches 2 chunks in one
+                // batch, then 4, 8, … up to READAHEAD_MAX_CHUNKS; any other
+                // miss resets the window. Scattered lookups pay nothing extra.
+                if self.bulk.is_some() {
+                    let seq = self.ra_next.load(Ordering::Relaxed) == ci as u64 + 1;
+                    let w = if seq {
+                        (self.ra_window.load(Ordering::Relaxed) * 2).min(READAHEAD_MAX_CHUNKS)
+                    } else {
+                        1
+                    };
+                    self.ra_window.store(w, Ordering::Relaxed);
+                    let end = (ci + w as usize).min(self.chunks.len());
+                    self.ra_next.store(end as u64 + 1, Ordering::Relaxed);
+                    if end > ci + 1 {
+                        self.prefetch_chunks(&(ci..end).collect::<Vec<_>>());
+                        if let Some(e) = self.cache.get(key) {
+                            return Some(e);
+                        }
+                    }
                 }
-            },
+                match load(ci) {
+                    Some(bytes) => Some(self.cache.insert(key, Arc::from(bytes))),
+                    None => {
+                        self.failed.store(true, Ordering::Relaxed);
+                        None
+                    }
+                }
+            }
             None => Some(self.cache.insert(key, Arc::from(Vec::new()))),
         }
     }
