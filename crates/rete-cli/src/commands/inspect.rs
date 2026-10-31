@@ -4,7 +4,7 @@
 //! (`predicates`), and the type-level schema (`schema`). Several of these answer
 //! from the summary alone, never touching the triple index.
 
-use crate::commands::range_source::{open_local, LocalRangeReader};
+use crate::commands::range_source::{open_local_query, LocalRangeReader};
 use rete_core::{SummaryView, CODEC_ZSTD};
 
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
@@ -104,7 +104,7 @@ pub(crate) fn graph_split(
 /// per-predicate totals + community count come from the summary alone (the
 /// triple index is never read).
 pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     let h = rete.header();
     let file_len = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
     // The card is two small range reads; it carries the build-time split.
@@ -273,7 +273,7 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
 /// literal scan. `--json` emits a versioned
 /// `{schemaVersion, matches:[{label, subject}]}` envelope.
 pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     let hits = rete.prefix_search(prefix, limit);
     if json {
         let items: Vec<String> = hits
@@ -317,7 +317,7 @@ pub(crate) fn search_contains(
     limit: usize,
     json: bool,
 ) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     if !rete.has_text_index() {
         if json {
             println!(
@@ -383,7 +383,7 @@ pub(crate) fn json_str(s: &str) -> String {
 
 /// List the named graphs in a dataset (or note that there are none).
 pub(crate) fn graphs(file: &str) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     let names = rete.graph_names();
     if names.is_empty() {
         println!("(default graph only — no named graphs)");
@@ -583,7 +583,7 @@ fn render_schema_level(view: &SummaryView, k: usize) -> anyhow::Result<()> {
 /// Ontology-aware coarse graph: relations between `rdf:type` classes with
 /// instance counts (the dataset's effective schema).
 pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
 
     let classes = rete_core::schema_classes(&rete);
     if classes.is_empty() {

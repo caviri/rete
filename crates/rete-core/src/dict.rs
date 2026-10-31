@@ -455,10 +455,18 @@ pub struct LeafedChunks {
     total: usize,
     fetch: crate::index::LeafFetch,
     codec: u8,
+    /// Decompression bound on a leaf.
+    max_block: u64,
     failed: AtomicBool,
 }
 
 impl LeafedChunks {
+    /// Bound every leaf decompression at `max` bytes (from the `0x06` root).
+    pub fn with_max_block(mut self, max: u64) -> Self {
+        self.max_block = max;
+        self
+    }
+
     /// A leafed directory of `total` chunks.
     pub fn new(
         leaves: Vec<ChunkLeaf>,
@@ -473,6 +481,7 @@ impl LeafedChunks {
             total,
             fetch,
             codec,
+            max_block: u64::MAX,
             failed: AtomicBool::new(false),
         }
     }
@@ -485,7 +494,7 @@ impl LeafedChunks {
 
     fn decode_leaf(&self, li: usize, stored: &[u8]) -> Option<Box<[(SectionChunk, u64, u64)]>> {
         let l = &self.leaves[li];
-        let raw = crate::file::decompress(self.codec, stored).ok()?;
+        let raw = crate::file::decompress_bounded(self.codec, stored, self.max_block).ok()?;
         let ents = crate::v06::decode_chunk_leaf(&raw, l.n).ok()?;
         let mut at = l.chunk_base;
         let mut out = Vec::with_capacity(ents.len());

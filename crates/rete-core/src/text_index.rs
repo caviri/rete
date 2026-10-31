@@ -650,10 +650,18 @@ pub struct LeafedTokens {
     total: usize,
     fetch: crate::index::LeafFetch,
     codec: u8,
+    /// Decompression bound on a leaf.
+    max_block: u64,
     failed: std::sync::atomic::AtomicBool,
 }
 
 impl LeafedTokens {
+    /// Bound every leaf decompression at `max` bytes (from the `0x06` root).
+    pub fn with_max_block(mut self, max: u64) -> Self {
+        self.max_block = max;
+        self
+    }
+
     /// A leafed token table of `total` tokens.
     pub fn new(
         leaves: Vec<TokenLeaf>,
@@ -668,12 +676,13 @@ impl LeafedTokens {
             total,
             fetch,
             codec,
+            max_block: u64::MAX,
             failed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     fn decode(&self, li: usize, stored: &[u8]) -> Option<Box<[(String, u64, u64)]>> {
-        let raw = decompress(self.codec, stored).ok()?;
+        let raw = crate::file::decompress_bounded(self.codec, stored, self.max_block).ok()?;
         let ents = crate::v06::decode_token_leaf(&raw, self.leaves[li].n).ok()?;
         ents.into_iter()
             .map(|e| Some((String::from_utf8(e.token).ok()?, e.off, e.len)))

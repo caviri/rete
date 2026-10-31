@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::dictionary::Dictionary;
-use crate::file::{compress, decompress, ByteRange, FileError, CODEC_NONE};
+use crate::file::{compress, ByteRange, FileError, CODEC_NONE};
 use crate::index::{GraphIndex, GroupSizer, IndexPermutation, PermSet, ALL_PERMS, NUM_PERMS};
 use crate::reader::RangeReader;
 use crate::triples::{Triple, TripleBlockBuilder};
@@ -839,6 +839,9 @@ pub(crate) struct V06Quad {
     data_base: u64,
     /// Codec of the leaf blocks.
     leaf_codec: u8,
+    /// Decompression bounds: a quad tile, and a leaf or graph-directory block.
+    pub(crate) tile_max: u64,
+    pub(crate) leaf_max: u64,
 }
 
 impl V06Quad {
@@ -919,6 +922,8 @@ impl V06Quad {
             orders,
             data_base,
             leaf_codec,
+            tile_max: u64::MAX,
+            leaf_max: u64::MAX,
         })
     }
 }
@@ -1045,7 +1050,8 @@ impl QuadCore {
         let body = if r.raw {
             stored.to_vec()
         } else {
-            decompress(self.codec, stored).ok()?
+            let max = self.v06.as_ref().map_or(u64::MAX, |v| v.leaf_max);
+            crate::file::decompress_bounded(self.codec, stored, max).ok()?
         };
         let start = (b as u64).checked_mul(block_graphs)?;
         let n = graph_count.checked_sub(start)?.min(block_graphs) as usize;
@@ -1206,7 +1212,7 @@ impl QuadCore {
         };
         let mut out = Vec::new();
         for ((_, n, toff), stored) in leaves.iter().zip(blobs) {
-            let parsed = decompress(v.leaf_codec, &stored)
+            let parsed = crate::file::decompress_bounded(v.leaf_codec, &stored, v.leaf_max)
                 .ok()
                 .and_then(|raw| crate::v06::decode_qtile_leaf(&raw, *n, *toff).ok());
             let Some(ents) = parsed else {
@@ -1236,7 +1242,10 @@ impl QuadCore {
         if t.raw {
             Some(Arc::from(stored))
         } else {
-            decompress(self.codec, stored).ok().map(Arc::from)
+            let max = self.v06.as_ref().map_or(u64::MAX, |v| v.tile_max);
+            crate::file::decompress_bounded(self.codec, stored, max)
+                .ok()
+                .map(Arc::from)
         }
     }
 

@@ -32,6 +32,15 @@ const EAGER_SHARE: u64 = 16;
 /// open is never wrong, only sometimes slower on a full scan.
 const UNKNOWN_MEMORY_LAZY_ABOVE_BYTES: u64 = 256 << 20; // 256 MiB
 
+/// The largest file a **query command** reads whole. Measured on the
+/// OpenCitations sample (223 MB): the eager open cost 0.9–1.2 s and 1.2 GB of
+/// RSS on every query, the lazy open 32–305 ms and 21–165 MiB, and the lazy
+/// open also won every full scan (81 local jobs: 28.9 s eager, 4.8 s lazy;
+/// a 16 MB file: 85 ms eager, 40 ms lazy). Below this the two cost the same:
+/// a format `0x06` open reads the first 64 KiB, which on a file this small is
+/// most of it.
+pub(crate) const QUERY_EAGER_MAX_BYTES: u64 = 1 << 20; // 1 MiB
+
 /// The file size above which a local `.rete` is opened lazily, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LazyThreshold {
@@ -143,7 +152,7 @@ pub(crate) fn query_budget(mb: Option<u64>) -> Option<u64> {
 /// the threshold.
 pub(crate) fn open_local_budget(path: &str, budget: Option<u64>) -> anyhow::Result<Rete> {
     let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    let threshold = lazy_threshold(budget);
+    let threshold = query_threshold(lazy_threshold(budget));
     debug_open("open_local_budget", path, len, &threshold);
     if len <= threshold.bytes {
         let rete = Rete::open(&std::fs::read(path)?)?;
@@ -153,6 +162,38 @@ pub(crate) fn open_local_budget(path: &str, budget: Option<u64>) -> anyhow::Resu
         return Ok(rete);
     }
     open_local_lazy(path, len, budget)
+}
+
+/// The query commands' threshold: the memory-aware one, capped at
+/// [`QUERY_EAGER_MAX_BYTES`] unless `RETE_LOCAL_LAZY_ABOVE_MB` set it.
+fn query_threshold(t: LazyThreshold) -> LazyThreshold {
+    if t.reason.starts_with("RETE_LOCAL_LAZY_ABOVE_MB") || t.bytes <= QUERY_EAGER_MAX_BYTES {
+        return t;
+    }
+    LazyThreshold {
+        bytes: QUERY_EAGER_MAX_BYTES,
+        reason: format!(
+            "query commands read whole only up to {} KiB",
+            QUERY_EAGER_MAX_BYTES >> 10
+        ),
+    }
+}
+
+/// Open a local `.rete` for a **query command** (`sparql`, `query`, `bgp`,
+/// `why`, `cypher`, `search`, `stats`, `graphs`, `schema`, `shacl`): lazily,
+/// unless the file is at most [`QUERY_EAGER_MAX_BYTES`]. A query touches the
+/// directories and the payload it routes to; reading every dictionary chunk
+/// and every permutation first is what made a query on a 223 MB file take a
+/// second and 1.2 GB. Commands that walk the whole graph (`communities`,
+/// `reach`, `reason`, `serve`) keep [`open_local`].
+pub(crate) fn open_local_query(path: &str) -> anyhow::Result<Rete> {
+    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let threshold = query_threshold(lazy_threshold(None));
+    debug_open("open_local_query", path, len, &threshold);
+    if len <= threshold.bytes {
+        return Ok(Rete::open(&std::fs::read(path)?)?);
+    }
+    open_local_lazy(path, len, None)
 }
 
 /// `RETE_OPEN_DEBUG`: say which way an open went and what decided it.
@@ -426,6 +467,18 @@ mod tests {
         let t = lazy_threshold_from(None, Some(48 * GIB), None);
         assert_eq!(t.bytes, GIB);
         assert!(t.reason.contains("cap"), "{}", t.reason);
+    }
+
+    /// Query commands read a file whole only when it is tiny, however much
+    /// memory there is; the environment override still wins.
+    #[test]
+    fn query_commands_open_lazily_above_a_mebibyte() {
+        let t = query_threshold(lazy_threshold_from(None, Some(48 * GIB), None));
+        assert_eq!(t.bytes, QUERY_EAGER_MAX_BYTES);
+        let t = query_threshold(lazy_threshold_from(None, Some(4 * MIB), None));
+        assert_eq!(t.bytes, MIB / 4, "a tighter memory rule is kept");
+        let t = query_threshold(lazy_threshold_from(Some(300), Some(48 * GIB), None));
+        assert_eq!(t.bytes, 300 * MIB, "RETE_LOCAL_LAZY_ABOVE_MB wins");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::*;
 use crate::dict::{ChunkLeaf, ChunkedSection, LeafedChunks, SectionMeta};
 use crate::dictionary::Dictionary;
-use crate::file::{decompress, ByteRange, FileError};
+use crate::file::{decompress_bounded, ByteRange, FileError};
 use crate::index::{GraphIndex, LeafFetch, LeafedTiles, TileLeaf, NUM_PERMS};
 use crate::reader::RangeReader;
 
@@ -82,6 +82,12 @@ impl V06File {
         Ok(V06File { h, root, reader })
     }
 
+    /// The decompression bound of section `k`'s blocks: its recorded largest
+    /// block, or [`BLOCK_CEILING`] where none is recorded.
+    pub fn bound(&self, k: u8) -> u64 {
+        section_bound(&self.root, k)
+    }
+
     /// The absolute range of section `k`, if present.
     pub fn section(&self, k: u8) -> Option<ByteRange> {
         self.root.section(k).map(|s| s.abs(&self.h))
@@ -104,7 +110,11 @@ impl V06File {
         if digest16(&stored) != self.h.card_digest {
             return Err(FileError::Container("0x06 card digest mismatch"));
         }
-        Ok(Some(decompress(self.h.internal_codec, &stored)?))
+        Ok(Some(decompress_bounded(
+            self.h.internal_codec,
+            &stored,
+            CARD_MAX,
+        )?))
     }
 
     /// The build record (raw), if the file has one.
@@ -121,7 +131,8 @@ impl V06File {
     pub fn schema_section_bytes(&self) -> Option<Vec<u8>> {
         let r = self.section(kind::SCHEMA)?;
         let stored = self.reader.read_at(r.offset, r.len).ok()?;
-        let body = decompress(self.h.internal_codec, &stored).ok()?;
+        let body =
+            decompress_bounded(self.h.internal_codec, &stored, self.bound(kind::SCHEMA)).ok()?;
         let mut out = digest16(&body).to_vec();
         out.extend_from_slice(&body);
         Some(out)
@@ -150,6 +161,7 @@ impl V06File {
         let data_base = self.section(kind::DICT_DATA).map_or(0, |r| r.offset);
         let cache = crate::chunk_cache::ChunkCache::unlimited_arc();
         let codec = self.h.dict_codec;
+        let max = self.bound(kind::DICT_DATA);
         let mut dirs: Vec<Option<Arc<LeafedChunks>>> = Vec::with_capacity(4);
         let mut sections = Vec::with_capacity(4);
         for (si, s) in roots.iter().enumerate() {
@@ -181,24 +193,25 @@ impl V06File {
                     chunk_base: data_base + s.data_off + coff,
                 })
                 .collect();
-            let dir = Arc::new(LeafedChunks::new(
-                leaves,
-                s.n_chunks,
-                self.fetch(),
-                self.h.internal_codec,
-            ));
+            let dir = Arc::new(
+                LeafedChunks::new(leaves, s.n_chunks, self.fetch(), self.h.internal_codec)
+                    .with_max_block(self.bound(kind::DICT_LEAVES)),
+            );
             let (r, d) = (self.reader.clone(), dir.clone());
             let loader: crate::dict::ChunkLoader = Box::new(move |ci| {
                 let (off, len) = d.range(ci)?;
                 let b = r.read_at(off, len).ok()?;
-                decompress(codec, &b).ok()
+                decompress_bounded(codec, &b, max).ok()
             });
             let (r, d) = (self.reader.clone(), dir.clone());
             let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis| {
                 d.ensure_leaves(&d.leaves_of(cis));
                 let ranges: Option<Vec<(u64, u64)>> = cis.iter().map(|&ci| d.range(ci)).collect();
                 let blobs = read_coalesced(&*r, &ranges?, DICT_GAP)?;
-                blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+                blobs
+                    .iter()
+                    .map(|b| decompress_bounded(codec, b, max).ok())
+                    .collect()
             });
             sections.push(
                 ChunkedSection::leafed(meta, dir.clone(), loader, cache.clone(), si as u8)
@@ -230,7 +243,10 @@ impl V06File {
                 .map(|&(si, ci)| dirs.get(si as usize)?.as_ref()?.range(ci))
                 .collect();
             let blobs = read_coalesced(&*r, &ranges?, DICT_GAP)?;
-            blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+            blobs
+                .iter()
+                .map(|b| decompress_bounded(codec, b, max).ok())
+                .collect()
         });
         let mut dict = Dictionary::from_chunked_sections(arr).with_multi_bulk_loader(multi);
         dict.set_has_quoted_triples(self.h.flags & F_QUOTED != 0);
@@ -264,13 +280,16 @@ impl V06File {
                     tile_base: data_base + p.data_off + toff,
                 })
                 .collect();
-            lists[p.si] = Some(Arc::new(LeafedTiles::new(
-                leaves,
-                p.n_tiles,
-                p.data_len,
-                self.fetch(),
-                self.h.internal_codec,
-            )));
+            lists[p.si] = Some(Arc::new(
+                LeafedTiles::new(
+                    leaves,
+                    p.n_tiles,
+                    p.data_len,
+                    self.fetch(),
+                    self.h.internal_codec,
+                )
+                .with_max_block(self.bound(kind::INDEX_LEAVES)),
+            ));
         }
         for perm in perms.iter() {
             if lists[perm.section_index()].is_none() {
@@ -280,11 +299,12 @@ impl V06File {
             }
         }
         let codec = self.h.block_codec;
+        let max = self.bound(kind::INDEX_DATA);
         let (r, l) = (self.reader.clone(), lists.clone());
         let loader: crate::index::TileLoader = Box::new(move |si, ti| {
             let (off, len) = l.get(si)?.as_ref()?.range(ti)?;
             let b = r.read_at(off, len).ok()?;
-            decompress(codec, &b).ok()
+            decompress_bounded(codec, &b, max).ok()
         });
         let (r, l) = (self.reader.clone(), lists.clone());
         let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
@@ -294,7 +314,10 @@ impl V06File {
             }
             let ranges: Option<Vec<(u64, u64)>> = tis.iter().map(|&ti| list.range(ti)).collect();
             let blobs = read_coalesced(&*r, &ranges?, TILE_GAP)?;
-            blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+            blobs
+                .iter()
+                .map(|b| decompress_bounded(codec, b, max).ok())
+                .collect()
         });
         let mut index = GraphIndex::from_leafed(lists, perms, loader).with_bulk_loader(bulk);
         index.set_read_concurrency(read_concurrency);
@@ -320,12 +343,15 @@ impl V06File {
                     leaf: (leaves_base + l.off, l.len),
                 })
                 .collect();
-            let tokens = Arc::new(crate::text_index::LeafedTokens::new(
-                leaves,
-                t.n_tokens,
-                self.fetch(),
-                self.h.internal_codec,
-            ));
+            let tokens = Arc::new(
+                crate::text_index::LeafedTokens::new(
+                    leaves,
+                    t.n_tokens,
+                    self.fetch(),
+                    self.h.internal_codec,
+                )
+                .with_max_block(self.bound(kind::TEXT_LEAVES)),
+            );
             let r = self.reader.clone();
             let loader = Box::new(move |off: u64, len: u64| {
                 if off.checked_add(len)? > data.len {
@@ -376,12 +402,16 @@ impl V06File {
                     None
                 }
             });
+            let max = self
+                .bound(kind::LABEL_LEAVES)
+                .max(self.bound(kind::LABEL_DATA));
             crate::label_index::LabelIndex::from_head(
                 &l.head,
                 section_len,
                 self.h.block_codec,
                 loader,
             )
+            .map(|li| li.with_max_block(max))
         })())
     }
 
@@ -410,7 +440,9 @@ impl V06File {
         let leaves = self.section(kind::QUAD_LEAVES).map_or(0, |r| r.offset);
         let data = self.section(kind::QUAD_DATA).map_or(0, |r| r.offset);
         Some(
-            crate::quad::V06Quad::new(&root, leaves, data, self.h.internal_codec).map(|v| {
+            crate::quad::V06Quad::new(&root, leaves, data, self.h.internal_codec).map(|mut v| {
+                v.tile_max = self.bound(kind::QUAD_DATA);
+                v.leaf_max = self.bound(kind::QUAD_LEAVES);
                 crate::quad::QuadNamed::new_v06(
                     self.reader.clone(),
                     v,
@@ -531,7 +563,7 @@ pub fn read_card_build<R: RangeReader + ?Sized>(
         if digest16(stored) != h.card_digest {
             return Err(FileError::Container("0x06 card digest mismatch"));
         }
-        Some(decompress(h.internal_codec, stored)?)
+        Some(decompress_bounded(h.internal_codec, stored, CARD_MAX)?)
     } else {
         None
     };
@@ -540,13 +572,26 @@ pub fn read_card_build<R: RangeReader + ?Sized>(
     Ok((card, build))
 }
 
+/// Section `k`'s decompression bound in `root`: its recorded largest block,
+/// or [`BLOCK_CEILING`].
+pub fn section_bound(root: &Root06, k: u8) -> u64 {
+    root.section(k)
+        .map(|s| s.max_block as u64)
+        .filter(|&m| m > 0)
+        .unwrap_or(BLOCK_CEILING)
+}
+
 /// The stats + schema section as the digest-prefixed bytes its decoder takes.
 pub fn read_schema_bytes<R: RangeReader + ?Sized>(r: &R) -> Result<Option<Vec<u8>>, FileError> {
     let (h, root) = read_front(r)?;
     let Some(stored) = read_section(r, &h, &root, kind::SCHEMA)? else {
         return Ok(None);
     };
-    let body = decompress(h.internal_codec, &stored)?;
+    let body = decompress_bounded(
+        h.internal_codec,
+        &stored,
+        section_bound(&root, kind::SCHEMA),
+    )?;
     let mut out = digest16(&body).to_vec();
     out.extend_from_slice(&body);
     Ok(Some(out))

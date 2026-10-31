@@ -69,12 +69,20 @@ pub struct Written {
 struct Seg {
     input: u64,
     len: u64,
+    /// The block is stored uncompressed (a raw quad tile).
+    raw: bool,
 }
 
 /// A data section: its kind and the input segments, in output order.
 struct DataSec {
     kind: u8,
     segs: Vec<Seg>,
+    /// Each segment is one compressed block of this codec, whose decompressed
+    /// size the writer records ([`Sec06::max_block`]); `None` = not measured.
+    measure: Option<u8>,
+    /// A largest block known without measuring (the dictionary's, from the
+    /// rekey), or 0.
+    known_max: u64,
 }
 
 impl DataSec {
@@ -99,6 +107,9 @@ struct Front {
     index_leaves: Vec<u8>,
     quad_leaves: Vec<u8>,
     text_leaves: Vec<u8>,
+    /// The largest leaf of each leaves section, decompressed: dict, index,
+    /// quad, text.
+    leaf_max: [u64; 4],
     /// Leaves per group, to pick which group to grow: `(group id, count)`.
     counts: Vec<(usize, usize)>,
 }
@@ -124,6 +135,7 @@ fn layout_data(
             segs.push(Seg {
                 input: *inp,
                 len: c.clen,
+                raw: false,
             });
             at += c.clen;
         }
@@ -132,6 +144,8 @@ fn layout_data(
         secs.push(DataSec {
             kind: kind::DICT_DATA,
             segs,
+            measure: None,
+            known_max: parts.dict.iter().map(|d| d.max_raw).max().unwrap_or(0),
         });
     }
     // Index: permutations in section-index order.
@@ -144,6 +158,7 @@ fn layout_data(
             segs.push(Seg {
                 input: *inp,
                 len: t.clen,
+                raw: false,
             });
             at += t.clen;
         }
@@ -152,6 +167,8 @@ fn layout_data(
         secs.push(DataSec {
             kind: kind::INDEX_DATA,
             segs,
+            measure: Some(parts.block_codec),
+            known_max: 0,
         });
     }
     // Quad: order-major, or graph-major by directory block.
@@ -176,6 +193,7 @@ fn layout_data(
                         segs.push(Seg {
                             input: t.off,
                             len: t.clen,
+                            raw: t.raw,
                         });
                         at += t.clen;
                         cursor[k] += 1;
@@ -191,6 +209,7 @@ fn layout_data(
                     segs.push(Seg {
                         input: t.off,
                         len: t.clen,
+                        raw: t.raw,
                     });
                     at += t.clen;
                     cursor[k] += 1;
@@ -203,6 +222,7 @@ fn layout_data(
                     segs.push(Seg {
                         input: t.off,
                         len: t.clen,
+                        raw: t.raw,
                     });
                     at += t.clen;
                 }
@@ -212,6 +232,8 @@ fn layout_data(
             secs.push(DataSec {
                 kind: kind::QUAD_DATA,
                 segs,
+                measure: Some(parts.block_codec),
+                known_max: 0,
             });
         }
     }
@@ -222,7 +244,10 @@ fn layout_data(
                 segs: vec![Seg {
                     input: l.body.offset,
                     len: l.data_len,
+                    raw: false,
                 }],
+                measure: None,
+                known_max: 0,
             });
         }
     }
@@ -233,7 +258,10 @@ fn layout_data(
                 segs: vec![Seg {
                     input: t.postings.offset,
                     len: t.postings.len,
+                    raw: false,
                 }],
+                measure: None,
+                known_max: 0,
             });
         }
     }
@@ -244,7 +272,10 @@ fn layout_data(
                 segs: vec![Seg {
                     input: py.offset,
                     len: py.len,
+                    raw: false,
                 }],
+                measure: None,
+                known_max: 0,
             });
         }
     }
@@ -276,6 +307,7 @@ fn leaves_of<E>(
     target: usize,
     codec: u8,
     section: &mut Vec<u8>,
+    max_raw: &mut u64,
     encode: impl Fn(&[E], usize) -> Vec<u8>,
 ) -> Vec<LeafRef> {
     let sizes: Vec<usize> = entries
@@ -286,6 +318,7 @@ fn leaves_of<E>(
     let mut out = Vec::new();
     for (a, b) in cut(&sizes, target) {
         let raw = encode(&entries[a..b], a);
+        *max_raw = (*max_raw).max(raw.len() as u64);
         let stored = compress(codec, &raw);
         out.push(LeafRef {
             first: a,
@@ -313,6 +346,7 @@ fn build_front(
         index_leaves: Vec::new(),
         quad_leaves: Vec::new(),
         text_leaves: Vec::new(),
+        leaf_max: [0; 4],
         counts: Vec::new(),
     };
     // Dictionary.
@@ -320,9 +354,14 @@ fn build_front(
     for &s in &DICT_ORDER {
         let d = &parts.dict[s];
         let ents: Vec<ChunkEnt> = d.chunks.iter().map(|(c, _)| c.clone()).collect();
-        let leaves = leaves_of(&ents, t.dict[s], codec, &mut f.dict_leaves, |e, _| {
-            encode_chunk_leaf(e)
-        });
+        let leaves = leaves_of(
+            &ents,
+            t.dict[s],
+            codec,
+            &mut f.dict_leaves,
+            &mut f.leaf_max[0],
+            |e, _| encode_chunk_leaf(e),
+        );
         // Offset of each chunk within the section's data.
         let mut coff = Vec::with_capacity(ents.len());
         let mut at = 0u64;
@@ -354,9 +393,14 @@ fn build_front(
     let mut proots = Vec::new();
     for (pi, p) in parts.index.iter().enumerate() {
         let ents: Vec<TileEnt> = p.tiles.iter().map(|(t, _)| *t).collect();
-        let leaves = leaves_of(&ents, t.index[p.si], codec, &mut f.index_leaves, |e, _| {
-            encode_tile_leaf(e)
-        });
+        let leaves = leaves_of(
+            &ents,
+            t.index[p.si],
+            codec,
+            &mut f.index_leaves,
+            &mut f.leaf_max[1],
+            |e, _| encode_tile_leaf(e),
+        );
         let mut toff = Vec::with_capacity(ents.len());
         let mut at = 0u64;
         for e in &ents {
@@ -394,10 +438,17 @@ fn build_front(
                     ..*e
                 })
                 .collect();
-            let leaves = leaves_of(&ents, t.quad[*si], codec, &mut f.quad_leaves, |e, i| {
-                let _ = i;
-                encode_qtile_leaf(e, e[0].off)
-            });
+            let leaves = leaves_of(
+                &ents,
+                t.quad[*si],
+                codec,
+                &mut f.quad_leaves,
+                &mut f.leaf_max[2],
+                |e, i| {
+                    let _ = i;
+                    encode_qtile_leaf(e, e[0].off)
+                },
+            );
             f.counts.push((10 + si, leaves.len()));
             orders.push(QuadOrderRoot {
                 si: *si,
@@ -437,9 +488,14 @@ fn build_front(
     }
     // Text.
     if let Some(tp) = &parts.text {
-        let leaves = leaves_of(&tp.tokens, t.text, codec, &mut f.text_leaves, |e, _| {
-            encode_token_leaf(e)
-        });
+        let leaves = leaves_of(
+            &tp.tokens,
+            t.text,
+            codec,
+            &mut f.text_leaves,
+            &mut f.leaf_max[3],
+            |e, _| encode_token_leaf(e),
+        );
         f.counts.push((16, leaves.len()));
         f.units.push((
             tag::TEXT,
@@ -464,10 +520,15 @@ fn build_front(
 fn copy_segs(
     input: &dyn RangeReader,
     segs: &[Seg],
+    measure: Option<u8>,
     out: &mut dyn Write,
     h: &mut blake3::Hasher,
-) -> Result<(), FileError> {
+) -> Result<u64, FileError> {
     const SPAN: u64 = 8 << 20;
+    // The ceiling for measuring a block whose frame does not state its size:
+    // generous, since this only bounds the writer's own check.
+    const MEASURE_CEILING: u64 = 1 << 30;
+    let mut max_raw = 0u64;
     let mut i = 0;
     while i < segs.len() {
         let start = segs[i].input;
@@ -477,17 +538,57 @@ fn copy_segs(
             end += segs[j].len;
             j += 1;
         }
-        let mut at = start;
-        while at < end {
-            let n = (end - at).min(SPAN);
-            let b = input.read_at(at, n)?;
+        if let Some(codec) = measure {
+            // Blocks are measured whole, so the run is read in one piece.
+            let b = input.read_at(start, end - start)?;
+            for sg in &segs[i..j] {
+                let lo = (sg.input - start) as usize;
+                let blk = &b[lo..lo + sg.len as usize];
+                let n = if sg.raw {
+                    sg.len
+                } else {
+                    crate::file::block_raw_len(codec, blk, MEASURE_CEILING)?
+                };
+                max_raw = max_raw.max(n);
+            }
             h.update(&b);
             out.write_all(&b)?;
-            at += n;
+        } else {
+            let mut at = start;
+            while at < end {
+                let n = (end - at).min(SPAN);
+                let b = input.read_at(at, n)?;
+                h.update(&b);
+                out.write_all(&b)?;
+                at += n;
+            }
         }
         i = j;
     }
-    Ok(())
+    Ok(max_raw)
+}
+
+/// The largest graph-directory block of a quad index, decompressed.
+fn gdir_max(p0: &[u8], gdir: &[u8], codec: u8) -> Result<u64, FileError> {
+    let mut c = Cur::new(p0);
+    let n = c.count(u32::MAX as u64)?;
+    let (mut at, mut max) = (0usize, 0u64);
+    for _ in 0..n {
+        let _ = c.u32v()?;
+        let packed = c.uv()?;
+        let len = (packed >> 1) as usize;
+        let blk = gdir
+            .get(at..at + len)
+            .ok_or(FileError::Container("quad graph directory overruns"))?;
+        let raw = if packed & 1 == 1 {
+            len as u64
+        } else {
+            crate::file::block_raw_len(codec, blk, 1 << 30)?
+        };
+        max = max.max(raw);
+        at += len;
+    }
+    Ok(max)
 }
 
 /// Assemble a `0x06` file from `parts`, whose payload ranges point into `input`.
@@ -536,6 +637,7 @@ pub fn assemble<W: Write + Seek>(
             sections: vec![
                 Sec06 {
                     kind: 0,
+                    max_block: 0,
                     offset: 0,
                     len: 0,
                     digest: [0; 16]
@@ -561,27 +663,51 @@ pub fn assemble<W: Write + Seek>(
         }
     }
 
-    // Front sections, in file order.
-    let schema = parts.schema.as_ref().map(|s| compress(codec, s));
-    let mut fronts: Vec<(u8, Vec<u8>)> = Vec::new();
-    if let Some(s) = schema {
-        fronts.push((kind::SCHEMA, s));
+    // Front sections, in file order, with their largest block.
+    let schema = parts
+        .schema
+        .as_ref()
+        .map(|s| (compress(codec, s), s.len() as u64));
+    let quad_gdir_max = match &parts.quad {
+        Some(q) if !quad_gdir.is_empty() => gdir_max(&q.p0, &quad_gdir, parts.block_codec)?,
+        _ => 0,
+    };
+    let mut fronts: Vec<(u8, Vec<u8>, u64)> = Vec::new();
+    if let Some((s, raw)) = schema {
+        fronts.push((kind::SCHEMA, s, raw));
     }
     if !front.dict_leaves.is_empty() {
-        fronts.push((kind::DICT_LEAVES, std::mem::take(&mut front.dict_leaves)));
+        fronts.push((
+            kind::DICT_LEAVES,
+            std::mem::take(&mut front.dict_leaves),
+            front.leaf_max[0],
+        ));
     }
     if !front.index_leaves.is_empty() {
-        fronts.push((kind::INDEX_LEAVES, std::mem::take(&mut front.index_leaves)));
+        fronts.push((
+            kind::INDEX_LEAVES,
+            std::mem::take(&mut front.index_leaves),
+            front.leaf_max[1],
+        ));
     }
     if !front.quad_leaves.is_empty() {
-        fronts.push((kind::QUAD_LEAVES, std::mem::take(&mut front.quad_leaves)));
+        fronts.push((
+            kind::QUAD_LEAVES,
+            std::mem::take(&mut front.quad_leaves),
+            front.leaf_max[2].max(quad_gdir_max),
+        ));
     }
     if !label_nodes.is_empty() {
-        fronts.push((kind::LABEL_LEAVES, label_nodes));
+        fronts.push((kind::LABEL_LEAVES, label_nodes, 0));
     }
     if !front.text_leaves.is_empty() {
-        fronts.push((kind::TEXT_LEAVES, std::mem::take(&mut front.text_leaves)));
+        fronts.push((
+            kind::TEXT_LEAVES,
+            std::mem::take(&mut front.text_leaves),
+            front.leaf_max[3],
+        ));
     }
+    let clamp = |n: u64| n.min(u32::MAX as u64) as u32;
 
     // Card region: card | record | slack.
     let card = parts
@@ -597,9 +723,10 @@ pub fn assemble<W: Write + Seek>(
     // Section table (digests filled once the data is hashed).
     let mut sections = Vec::new();
     let mut at = 0u64;
-    for (k, b) in &fronts {
+    for (k, b, raw) in &fronts {
         sections.push(Sec06 {
             kind: *k,
+            max_block: clamp(*raw),
             offset: at,
             len: b.len() as u64,
             digest: digest16(b),
@@ -611,6 +738,7 @@ pub fn assemble<W: Write + Seek>(
     for d in &data {
         sections.push(Sec06 {
             kind: d.kind,
+            max_block: clamp(d.known_max),
             offset: at,
             len: d.len(),
             digest: [0; 16],
@@ -641,10 +769,12 @@ pub fn assemble<W: Write + Seek>(
     let n_front = fronts.len();
     for (i, d) in data.iter().enumerate() {
         let mut h = blake3::Hasher::new();
-        copy_segs(input, &d.segs, out, &mut h)?;
-        root.sections[n_front + i]
-            .digest
-            .copy_from_slice(&h.finalize().as_bytes()[..16]);
+        let measured = copy_segs(input, &d.segs, d.measure, out, &mut h)?;
+        let sec = &mut root.sections[n_front + i];
+        sec.digest.copy_from_slice(&h.finalize().as_bytes()[..16]);
+        if d.measure.is_some() {
+            sec.max_block = clamp(measured);
+        }
     }
     out.write_all(&FOOTER)?;
     let root_bytes = root.encode(codec);
@@ -694,7 +824,7 @@ pub fn assemble<W: Write + Seek>(
     }
     region.resize(region_len as usize, 0);
     out.write_all(&region)?;
-    for (_, b) in &fronts {
+    for (_, b, _) in &fronts {
         out.write_all(b)?;
     }
     out.seek(SeekFrom::Start(header.file_len))?;

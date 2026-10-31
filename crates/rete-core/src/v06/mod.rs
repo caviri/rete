@@ -319,6 +319,10 @@ pub fn content_hash(h: &Header06) -> [u8; 16] {
 pub struct Sec06 {
     /// [`kind`].
     pub kind: u8,
+    /// The largest decompressed block of the section (a dictionary chunk, a
+    /// tile, a leaf, …), as the writer measured it; `0` = not recorded, read
+    /// under [`BLOCK_CEILING`]. Readers refuse to decode past it.
+    pub max_block: u32,
     /// Offset relative to its region base (the front base, or `data_offset`).
     pub offset: u64,
     /// Stored length.
@@ -328,7 +332,15 @@ pub struct Sec06 {
 }
 
 /// Size of one section-table entry.
-pub const SEC_ENTRY_LEN: usize = 34;
+pub const SEC_ENTRY_LEN: usize = 38;
+
+/// The decompression bound of a section whose largest block is not recorded
+/// (label blocks and nodes; the writer cuts them at 16 KiB).
+pub const BLOCK_CEILING: u64 = 4 << 20;
+/// The bound on the root's unit roots, decompressed (Meta's are ~100 KiB).
+pub const UNIT_MAX: u64 = 16 << 20;
+/// The bound on the Dataset Card, decompressed.
+pub const CARD_MAX: u64 = 64 << 20;
 
 impl Sec06 {
     /// The absolute byte range of this section in a file with header `h`.
@@ -384,6 +396,7 @@ impl Root06 {
         for s in &self.sections {
             out.push(s.kind);
             out.push(0);
+            out.extend_from_slice(&s.max_block.to_le_bytes());
             out.extend_from_slice(&s.offset.to_le_bytes());
             out.extend_from_slice(&s.len.to_le_bytes());
             out.extend_from_slice(&s.digest);
@@ -408,11 +421,12 @@ impl Root06 {
         for i in 0..n {
             let e = &bytes[2 + i * SEC_ENTRY_LEN..2 + (i + 1) * SEC_ENTRY_LEN];
             let mut digest = [0u8; 16];
-            digest.copy_from_slice(&e[18..34]);
+            digest.copy_from_slice(&e[22..38]);
             sections.push(Sec06 {
                 kind: e[0],
-                offset: u64::from_le_bytes(e[2..10].try_into().unwrap()),
-                len: u64::from_le_bytes(e[10..18].try_into().unwrap()),
+                max_block: u32::from_le_bytes(e[2..6].try_into().unwrap()),
+                offset: u64::from_le_bytes(e[6..14].try_into().unwrap()),
+                len: u64::from_le_bytes(e[14..22].try_into().unwrap()),
                 digest,
             });
         }
@@ -420,7 +434,7 @@ impl Root06 {
         let stored = bytes
             .get(table_end + 4..table_end + 4 + ulen)
             .ok_or(bad("0x06 root units overrun"))?;
-        let units_raw = crate::file::decompress(codec, stored)?;
+        let units_raw = crate::file::decompress_bounded(codec, stored, UNIT_MAX)?;
         let mut units = Vec::new();
         let mut c = Cur::new(&units_raw);
         while !c.done() {

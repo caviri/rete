@@ -383,3 +383,50 @@ fn a_probe_join_faults_each_leaf_once() {
     assert!(leaf_reads <= 6, "{leaf_reads} index-leaf reads");
     assert!(reads.len() < 40, "{} reads for the query", reads.len());
 }
+
+/// The writer records each section's largest block, every block fits its
+/// section's bound, and a bound one byte short is refused.
+#[test]
+fn every_section_records_its_largest_block() {
+    let v5 = image(3000, true, true, true, true);
+    let v6 = convert_image(&v5, WriteOpts::default()).unwrap();
+    let r = crate::reader::SliceReader::new(&v6);
+    let (h, root) = open::read_front(&r).unwrap();
+    for k in [
+        kind::SCHEMA,
+        kind::DICT_LEAVES,
+        kind::INDEX_LEAVES,
+        kind::QUAD_LEAVES,
+        kind::TEXT_LEAVES,
+        kind::DICT_DATA,
+        kind::INDEX_DATA,
+        kind::QUAD_DATA,
+    ] {
+        let s = root
+            .section(k)
+            .unwrap_or_else(|| panic!("{}", kind::name(k)));
+        assert!(s.max_block > 0, "{} records no maximum", kind::name(k));
+    }
+    // Every tile of the index fits its bound exactly: the largest one is it.
+    let f = open::V06File::open(
+        std::sync::Arc::new(BytesReader(std::sync::Arc::from(&v6[..]))),
+        &v6,
+    )
+    .unwrap();
+    let max = f.bound(kind::INDEX_DATA);
+    let index = f.index(1).unwrap();
+    let mut largest = 0u64;
+    for (si, list) in index.tile_sections().iter().enumerate() {
+        list.ensure_span(0, list.len());
+        for ti in 0..list.len() {
+            let (off, len) = index.tile_range(si, ti).unwrap();
+            let stored = &v6[off as usize..(off + len) as usize];
+            let raw = crate::file::decompress_bounded(h.block_codec, stored, max).unwrap();
+            largest = largest.max(raw.len() as u64);
+            if raw.len() as u64 == max {
+                assert!(crate::file::decompress_bounded(h.block_codec, stored, max - 1).is_err());
+            }
+        }
+    }
+    assert_eq!(largest, max, "the recorded maximum is the largest tile");
+}

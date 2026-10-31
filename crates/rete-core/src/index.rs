@@ -166,6 +166,8 @@ pub struct LeafedTiles {
     total_bytes: u64,
     fetch: LeafFetch,
     codec: u8,
+    /// Decompression bound on a leaf.
+    max_block: u64,
     failed: std::sync::atomic::AtomicBool,
 }
 
@@ -180,6 +182,12 @@ static UNREADABLE_TILE: Tile = Tile {
 };
 
 impl LeafedTiles {
+    /// Bound every leaf decompression at `max` bytes (from the `0x06` root).
+    pub fn with_max_block(mut self, max: u64) -> Self {
+        self.max_block = max;
+        self
+    }
+
     /// A leafed directory of `total` tiles and `total_bytes` stored bytes.
     pub fn new(
         leaves: Vec<TileLeaf>,
@@ -196,6 +204,7 @@ impl LeafedTiles {
             total_bytes,
             fetch,
             codec,
+            max_block: u64::MAX,
             failed: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -208,7 +217,7 @@ impl LeafedTiles {
 
     fn decode_leaf(&self, li: usize, stored: &[u8]) -> Option<Box<[(Tile, u64)]>> {
         let l = &self.leaves[li];
-        let raw = crate::file::decompress(self.codec, stored).ok()?;
+        let raw = crate::file::decompress_bounded(self.codec, stored, self.max_block).ok()?;
         let ents = crate::v06::decode_tile_leaf(&raw, l.n).ok()?;
         let mut at = l.tile_base;
         let mut out = Vec::with_capacity(ents.len());

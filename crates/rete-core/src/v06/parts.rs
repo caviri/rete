@@ -17,6 +17,8 @@ pub struct DictPart {
     pub restart_interval: u32,
     /// Chunks, each with the absolute input offset of its stored bytes.
     pub chunks: Vec<(ChunkEnt, u64)>,
+    /// The largest chunk, decompressed.
+    pub max_raw: u64,
 }
 
 /// One permutation's tiles (with their input offsets).
@@ -144,14 +146,9 @@ fn first_last(body: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// Read and decompress the chunks of a dictionary section in batches, and
 /// re-derive every routing key as the shortest separator (SPEC.md §6.2).
-fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Result<(), FileError> {
-    if chunks.len() < 2 {
-        if let Some(c) = chunks.first_mut() {
-            c.0.key.clear();
-        }
-        return Ok(());
-    }
+fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Result<u64, FileError> {
     const BATCH: u64 = 8 << 20;
+    let mut max_raw = 0u64;
     let mut prev_last: Option<Vec<u8>> = None;
     let mut i = 0usize;
     while i < chunks.len() {
@@ -170,6 +167,7 @@ fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Resu
                 .get(lo..lo + c.0.clen as usize)
                 .ok_or(FileError::Container("dictionary chunk overruns"))?;
             let body = crate::file::decompress(codec, stored)?;
+            max_raw = max_raw.max(body.len() as u64);
             let (first, last) =
                 first_last(&body).ok_or(FileError::Container("malformed dictionary chunk"))?;
             c.0.key = match &prev_last {
@@ -180,7 +178,7 @@ fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Resu
         }
         i = j;
     }
-    Ok(())
+    Ok(max_raw)
 }
 
 /// The [`LabelPart`] of a `0x05` LABEL_INDEX section at `offset..+length`
@@ -302,11 +300,12 @@ pub fn from_v05(r: &dyn RangeReader) -> Result<Parts, FileError> {
                 )
             })
             .collect();
-        rekey(r, h.dict_codec, &mut chunks)?;
+        let max_raw = rekey(r, h.dict_codec, &mut chunks)?;
         p.dict[si] = DictPart {
             term_count: meta.term_count,
             restart_interval: meta.restart_interval,
             chunks,
+            max_raw,
         };
     }
     // Index: one tiled section per stored permutation (plus a quad seal).

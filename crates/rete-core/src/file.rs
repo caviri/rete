@@ -541,6 +541,112 @@ pub(crate) fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> 
     }
 }
 
+/// The `Frame_Content_Size` a zstd frame header declares (RFC 8878 §3.1.1.1),
+/// or `None` when the frame does not state it (or `bytes` is not a zstd
+/// frame). Reads the header only.
+pub(crate) fn zstd_frame_content_size(b: &[u8]) -> Option<u64> {
+    if b.len() < 5 || b[..4] != [0x28, 0xB5, 0x2F, 0xFD] {
+        return None;
+    }
+    let fhd = b[4];
+    let fcs_flag = fhd >> 6;
+    let single_segment = fhd & 0x20 != 0;
+    let did_size = [0usize, 1, 2, 4][(fhd & 0x03) as usize];
+    let mut pos = 5 + usize::from(!single_segment) + did_size;
+    let fcs_size = match (fcs_flag, single_segment) {
+        (0, false) => return None,
+        (0, true) => 1,
+        (1, _) => 2,
+        (2, _) => 4,
+        _ => 8,
+    };
+    let f = b.get(pos..pos + fcs_size)?;
+    pos += fcs_size;
+    let _ = pos;
+    let mut v = 0u64;
+    for (i, x) in f.iter().enumerate() {
+        v |= (*x as u64) << (8 * i);
+    }
+    Some(if fcs_size == 2 { v + 256 } else { v })
+}
+
+/// [`decompress`] with the output bounded by `max` bytes: a frame whose header
+/// declares more is refused before any decoding, and a frame that does not
+/// declare its size is decoded at most `max + 1` bytes far and refused past
+/// `max`. Format `0x06` records each section's largest block, so a corrupt or
+/// hostile frame cannot make a reader allocate more than the writer did.
+pub(crate) fn decompress_bounded(codec: u8, bytes: &[u8], max: u64) -> Result<Vec<u8>, FileError> {
+    let too_big = |n: u64| {
+        FileError::Decompress(std::io::Error::other(format!(
+            "a block of {n} bytes exceeds its section's {max}-byte maximum"
+        )))
+    };
+    match codec {
+        CODEC_NONE => {
+            if bytes.len() as u64 > max {
+                return Err(too_big(bytes.len() as u64));
+            }
+            Ok(bytes.to_vec())
+        }
+        CODEC_ZSTD => {
+            let declared = zstd_frame_content_size(bytes);
+            if let Some(n) = declared.filter(|&n| n > max) {
+                return Err(too_big(n));
+            }
+            #[cfg(feature = "compression")]
+            {
+                if let Some(n) = declared {
+                    // One-shot into exactly the declared size: a frame that
+                    // lies about it fails here instead of growing the buffer.
+                    return zstd::bulk::decompress(bytes, n as usize)
+                        .map_err(FileError::Decompress);
+                }
+                use std::io::Read;
+                let mut out = Vec::new();
+                let mut dec = zstd::stream::read::Decoder::with_buffer(bytes)
+                    .map_err(FileError::Decompress)?;
+                dec.window_log_max(27).map_err(FileError::Decompress)?;
+                dec.take(max.saturating_add(1))
+                    .read_to_end(&mut out)
+                    .map_err(FileError::Decompress)?;
+                if out.len() as u64 > max {
+                    return Err(too_big(out.len() as u64));
+                }
+                Ok(out)
+            }
+            #[cfg(not(feature = "compression"))]
+            {
+                use std::io::Read;
+                let dec = ruzstd::decoding::StreamingDecoder::new(bytes)
+                    .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
+                let mut out = Vec::new();
+                dec.take(max.saturating_add(1))
+                    .read_to_end(&mut out)
+                    .map_err(FileError::Decompress)?;
+                if out.len() as u64 > max {
+                    return Err(too_big(out.len() as u64));
+                }
+                Ok(out)
+            }
+        }
+        other => Err(FileError::UnknownCodec(other)),
+    }
+}
+
+/// The decompressed length of one stored block — from its frame header when
+/// it states it, else by decoding it (bounded by `ceiling`). What the `0x06`
+/// writer records as a section's largest block.
+pub(crate) fn block_raw_len(codec: u8, bytes: &[u8], ceiling: u64) -> Result<u64, FileError> {
+    match codec {
+        CODEC_NONE => Ok(bytes.len() as u64),
+        CODEC_ZSTD => match zstd_frame_content_size(bytes) {
+            Some(n) => Ok(n),
+            None => Ok(decompress_bounded(codec, bytes, ceiling)?.len() as u64),
+        },
+        other => Err(FileError::UnknownCodec(other)),
+    }
+}
+
 /// Bytes this close are cheaper fetched as one read than as two round trips:
 /// tiles are laid back-to-back so this only ever bridges a tile already made
 /// resident by an earlier window — keep it tight to avoid re-fetching it.
@@ -7079,6 +7185,49 @@ mod tests {
         );
         assert!(frame.len() < data.len());
         assert_eq!(decompress(CODEC_ZSTD, &frame).unwrap(), data);
+    }
+
+    /// Bounded decompression: a frame whose header declares more than the
+    /// bound is refused before decoding; one that states no size is decoded at
+    /// most one byte past the bound; one that lies about its size fails; and
+    /// the size a header states is read without decoding.
+    #[cfg(feature = "compression")]
+    #[test]
+    fn decompression_is_bounded() {
+        let data: Vec<u8> = (0..100_000u32).map(|i| (i % 251) as u8).collect();
+        let sized = zstd::bulk::compress(&data, 3).unwrap();
+        assert_eq!(zstd_frame_content_size(&sized), Some(100_000));
+        assert_eq!(block_raw_len(CODEC_ZSTD, &sized, 1 << 20).unwrap(), 100_000);
+        assert_eq!(
+            decompress_bounded(CODEC_ZSTD, &sized, 100_000).unwrap(),
+            data
+        );
+        assert!(decompress_bounded(CODEC_ZSTD, &sized, 99_999).is_err());
+        // A streamed frame states no size: bounded by decoding.
+        let stream = zstd::encode_all(&data[..], 3).unwrap();
+        assert_eq!(zstd_frame_content_size(&stream), None);
+        assert_eq!(
+            block_raw_len(CODEC_ZSTD, &stream, 1 << 20).unwrap(),
+            100_000
+        );
+        assert_eq!(
+            decompress_bounded(CODEC_ZSTD, &stream, 100_000).unwrap(),
+            data
+        );
+        assert!(decompress_bounded(CODEC_ZSTD, &stream, 50_000).is_err());
+        // A header that under-states its content fails instead of growing.
+        let mut liar = sized.clone();
+        let fhd = liar[4];
+        let fcs_at = 5 + usize::from(fhd & 0x20 == 0);
+        liar[fcs_at] = liar[fcs_at].wrapping_sub(1);
+        assert!(decompress_bounded(CODEC_ZSTD, &liar, 200_000).is_err());
+        // Uncompressed blocks: the length is the size.
+        assert!(decompress_bounded(CODEC_NONE, &data, 99_999).is_err());
+        assert_eq!(
+            decompress_bounded(CODEC_NONE, &data, 100_000).unwrap(),
+            data
+        );
+        assert_eq!(zstd_frame_content_size(b"RETE"), None);
     }
 
     /// A three-permutation file must survive every opener — resident, ranged,

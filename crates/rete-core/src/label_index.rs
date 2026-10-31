@@ -559,6 +559,8 @@ pub struct LabelIndex {
     codec: u8,
     source: Source,
     nodes: Mutex<HashMap<u64, Arc<Vec<DirEntry>>>>,
+    /// Decompression bound on a node or block (`u64::MAX` = none: `0x05`).
+    max_block: u64,
 }
 
 impl std::fmt::Debug for LabelIndex {
@@ -577,6 +579,13 @@ enum Walk {
 }
 
 impl LabelIndex {
+    /// Bound every node and block decompression at `max` bytes (format
+    /// `0x06`, from its root).
+    pub(crate) fn with_max_block(mut self, max: u64) -> Self {
+        self.max_block = max;
+        self
+    }
+
     /// Parse a whole section held in memory, checking its digest.
     pub fn from_section(section: &[u8], codec: u8) -> Result<Self, FileError> {
         if !digest_ok(section) {
@@ -630,6 +639,7 @@ impl LabelIndex {
             codec,
             source,
             nodes: Mutex::new(HashMap::new()),
+            max_block: u64::MAX,
         })
     }
 
@@ -676,7 +686,9 @@ impl LabelIndex {
         if let Some(n) = self.nodes.lock().ok()?.get(&e.off) {
             return Some(n.clone());
         }
-        let raw = decompress(self.codec, &self.fetch(e.off, e.len)?).ok()?;
+        let raw =
+            crate::file::decompress_bounded(self.codec, &self.fetch(e.off, e.len)?, self.max_block)
+                .ok()?;
         let node = Arc::new(decode_node(&raw).ok()?);
         if let Ok(mut cache) = self.nodes.lock() {
             if cache.len() >= NODE_CACHE_CAP {
@@ -755,7 +767,7 @@ impl LabelIndex {
     ) -> Walk {
         let Some(raw) = self
             .fetch(e.off, e.len)
-            .and_then(|b| decompress(self.codec, &b).ok())
+            .and_then(|b| crate::file::decompress_bounded(self.codec, &b, self.max_block).ok())
         else {
             return Walk::Stop;
         };
