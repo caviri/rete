@@ -1,0 +1,1 @@
+[{"id": "meta.open", "file": "opencitations-meta/opencitations-meta.rete", "kind": "sparql", "args": ["SELECT * WHERE { ?s ?p ?o } LIMIT 0"]}]

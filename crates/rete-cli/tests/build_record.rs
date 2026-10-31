@@ -123,7 +123,7 @@ fn in_ram_build_records_flags_inputs_counts_and_run() {
     let p = &b["params"];
     assert_eq!(p["command"], "build");
     assert_eq!(p["permutations"], 3);
-    assert_eq!(p["named_graphs"], "per-graph");
+    assert_eq!(p["named_graphs"], "quad");
     assert_eq!(p["strict"], false);
     assert_eq!(p["collapse_graphs"], false);
     assert_eq!(p["quoted_triple_syntax"], "rdf-star");
@@ -321,7 +321,7 @@ fn card_shows_the_build_block_and_jsonld_maps_it_to_prov() {
         "  build:",
         "engine      : rete-cli",
         "host        : ",
-        "command     : rete build --permutations 6 --named-graphs per-graph",
+        "command     : rete build --permutations 6 --named-graphs quad",
         "--strict",
         "--card-file my card.json",
         "inputs      : data.nq.gz (nq, gzip)",

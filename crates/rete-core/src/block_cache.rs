@@ -187,6 +187,18 @@ impl<R: RangeReader> BlockCacheReader<R> {
         if blobs.len() != spans.len() {
             return Err(std::io::Error::other("block fetch returned wrong count"));
         }
+        // A blob of any other length than its span is not that span: caching
+        // a short one would hand the parsers a silently truncated block.
+        if let Some(((o, l), b)) = spans
+            .iter()
+            .zip(&blobs)
+            .find(|((_, l), b)| b.len() as u64 != *l)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("block fetch at {o} returned {} bytes, not {l}", b.len()),
+            ));
+        }
         let mut st = self.cache.lock().unwrap();
         st.tick += 1;
         let tick = st.tick;
@@ -274,6 +286,12 @@ impl<R: RangeReader> BlockCacheReader<R> {
             }
             out.extend_from_slice(&blk[within..within + take]);
             pos += take as u64;
+        }
+        if out.len() as u64 != len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("short read: {} of {len} bytes at {offset}", out.len()),
+            ));
         }
         Ok(out)
     }
@@ -375,6 +393,28 @@ mod tests {
             "physical: {}",
             counting.requests()
         );
+    }
+
+    /// A reader that answers every range one byte short (audit fix 9).
+    struct Short(Vec<u8>);
+    impl RangeReader for Short {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            let end = (offset + len).saturating_sub(1) as usize;
+            Ok(self.0[offset as usize..end].to_vec())
+        }
+    }
+
+    /// A short blob from the inner reader is an error, never a short block
+    /// cached and handed out as if it were the range.
+    #[test]
+    fn a_short_blob_is_refused_not_cached() {
+        let r = BlockCacheReader::new(Short(vec![9u8; 10_000]), 4096);
+        let err = r.read_at(100, 50).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof, "{err}");
+        assert!(r.read_many(&[(0, 10), (5000, 10)]).is_err());
     }
 
     #[test]

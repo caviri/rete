@@ -4,7 +4,7 @@
 //! (`predicates`), and the type-level schema (`schema`). Several of these answer
 //! from the summary alone, never touching the triple index.
 
-use crate::commands::range_source::{open_local, LocalRangeReader};
+use crate::commands::range_source::{open_local_query, LocalRangeReader};
 use rete_core::{SummaryView, CODEC_ZSTD};
 
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
@@ -15,7 +15,11 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     let reader = LocalRangeReader::open(file)?;
     let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
     let header = rete_core::Header::from_bytes(&head)?;
-    println!("{header:#?}");
+    if header.version == rete_core::v06::VERSION {
+        print_v06_layout(&reader)?;
+    } else {
+        println!("{header:#?}");
+    }
     // The section directory the header just printed is also where "can I
     // full-text search this?" is decided; fold that into the card the same way
     // `rete card` does, so both surfaces answer it identically.
@@ -100,7 +104,7 @@ pub(crate) fn graph_split(
 /// per-predicate totals + community count come from the summary alone (the
 /// triple index is never read).
 pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     let h = rete.header();
     let file_len = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
     // The card is two small range reads; it carries the build-time split.
@@ -269,7 +273,7 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
 /// literal scan. `--json` emits a versioned
 /// `{schemaVersion, matches:[{label, subject}]}` envelope.
 pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     let hits = rete.prefix_search(prefix, limit);
     if json {
         let items: Vec<String> = hits
@@ -313,7 +317,7 @@ pub(crate) fn search_contains(
     limit: usize,
     json: bool,
 ) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     if !rete.has_text_index() {
         if json {
             println!(
@@ -379,7 +383,7 @@ pub(crate) fn json_str(s: &str) -> String {
 
 /// List the named graphs in a dataset (or note that there are none).
 pub(crate) fn graphs(file: &str) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
     let names = rete.graph_names();
     if names.is_empty() {
         println!("(default graph only — no named graphs)");
@@ -396,8 +400,44 @@ pub(crate) fn graphs(file: &str) -> anyhow::Result<()> {
 ///
 /// Streams the hashed sections through a positional reader, so memory stays at
 /// one read slice whatever the file size (it used to read the whole file).
-pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
+pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()> {
     let reader = LocalRangeReader::open(file)?;
+    let head = rete_core::RangeReader::read_at(
+        &reader,
+        0,
+        (rete_core::HEADER_LEN as u64).min(rete_core::RangeReader::len(&reader)),
+    )?;
+    if rete_core::v06::open::is_v06(&head) {
+        let only = match section {
+            None => None,
+            Some(name) => Some(
+                rete_core::v06::kind::ORDER
+                    .iter()
+                    .copied()
+                    .find(|&k| rete_core::v06::kind::name(k) == name)
+                    .ok_or_else(|| anyhow::anyhow!("unknown section {name:?}"))?,
+            ),
+        };
+        let bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
+        if bad.is_empty() {
+            println!(
+                "OK — {} (format 0x06)",
+                match section {
+                    Some(s) => format!("section {s} matches its digest"),
+                    None => "content hash matches, and every section digest".to_string(),
+                }
+            );
+            return Ok(());
+        }
+        anyhow::bail!(
+            "FAILED — content hash mismatch: the digest of {} does not match (file corrupted \
+             or truncated)",
+            bad.join(", ")
+        );
+    }
+    if section.is_some() {
+        anyhow::bail!("--section needs a format 0x06 file");
+    }
     if rete_core::verify_ranged(&reader)? {
         println!("OK — content hash matches");
         Ok(())
@@ -543,7 +583,7 @@ fn render_schema_level(view: &SummaryView, k: usize) -> anyhow::Result<()> {
 /// Ontology-aware coarse graph: relations between `rdf:type` classes with
 /// instance counts (the dataset's effective schema).
 pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_query(file)?;
 
     let classes = rete_core::schema_classes(&rete);
     if classes.is_empty() {
@@ -578,6 +618,59 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
             }
         }
         None => eprintln!("file has no pyramid"),
+    }
+    Ok(())
+}
+
+/// `rete info` for a format 0x06 file: the fixed header, then the root's
+/// section table — where every part of the file is, and its digest.
+fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
+    use rete_core::v06::{kind, open};
+    use rete_core::v06::{F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
+    let (h, root) = open::read_front(reader)?;
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    // The header's fields by name, as for a 0x05 file (`quad_count: …`).
+    println!("format version: 0x06");
+    println!("{h:#?}");
+    // The 0x05 key scripts read the record's presence from (tests/gate/fixtures.sh).
+    println!("build_info_len: {}", h.build_len);
+    let flags: Vec<&str> = [
+        (F_NAMED, "named graphs"),
+        (F_QUOTED, "quoted triples"),
+        (F_TEXT_NAMED, "text covers named graphs"),
+        (F_QUAD_GRAPH_MAJOR, "quad tiles graph-major"),
+    ]
+    .into_iter()
+    .filter(|&(b, _)| h.flags & b != 0)
+    .map(|(_, n)| n)
+    .collect();
+    println!(
+        "format 0x06 — {} bytes, content hash {}",
+        h.file_len,
+        hex(&h.content_hash)
+    );
+    println!(
+        "  flags        : {}",
+        if flags.is_empty() {
+            "none".to_string()
+        } else {
+            flags.join(", ")
+        }
+    );
+    println!(
+        "  front        : root {} B at 128, card region {} B (card {} B, record {} B), data at {}",
+        h.root_len, h.card_region_len, h.card_len, h.build_len, h.data_offset
+    );
+    println!("  sections     :");
+    for s in &root.sections {
+        let a = s.abs(&h);
+        println!(
+            "    {:<13} {:>14} + {:<12} digest {}",
+            kind::name(s.kind),
+            a.offset,
+            a.len,
+            hex(&s.digest)
+        );
     }
     Ok(())
 }

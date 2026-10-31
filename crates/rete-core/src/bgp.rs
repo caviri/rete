@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::file::Rete;
-use crate::index::{GraphIndex, Pattern, Tile};
+use crate::index::{GraphIndex, Pattern};
 use crate::row::{Ctx, Row, Slots, Val};
 
 /// A term in a pattern: a named variable or a constant term token.
@@ -875,16 +875,11 @@ pub(crate) fn routed_scan_bytes(index: &GraphIndex, pattern: Pattern) -> u64 {
     // for the one permutation that cannot be scanned at all.
     for perm in index.perms().iter() {
         let tiles = sections[perm.section_index()];
+        // A leafed (0x06) directory answers from its root without faulting a
+        // leaf: a cost estimate must not cost a round trip.
         best = best.min(match perm.order_pattern(pattern)[0] {
-            Some(id) => tiles
-                .iter()
-                .filter(|tile| {
-                    let (lo, hi) = tile.leading_range();
-                    lo <= id && id <= hi
-                })
-                .map(Tile::encoded_len)
-                .sum(),
-            None => tiles.iter().map(Tile::encoded_len).sum(),
+            Some(id) => tiles.routed_bytes(id),
+            None => tiles.total_bytes(),
         });
     }
     best

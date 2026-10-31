@@ -95,6 +95,7 @@ mod text_index_spill;
 pub mod tiling;
 #[doc(hidden)]
 pub mod triples;
+pub mod v06;
 #[doc(hidden)]
 pub mod varint;
 pub mod write_opts;
@@ -107,8 +108,8 @@ pub mod format {
         PyramidLayout, Rete, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
-        Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
-        MIN_STABLE_READ_VERSION,
+        Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN,
+        LEGACY_FORMAT_VERSION, MAGIC, MIN_STABLE_READ_VERSION,
     };
     pub use crate::index::ScanPlan;
     pub use crate::ingest::{
@@ -193,8 +194,8 @@ pub mod range {
         LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{
-        detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader,
-        POLYGLOT_DIGITS, POLYGLOT_MARKER,
+        detect_polyglot_base, BytesReader, CountingReader, OffsetReader, PrefixReader, RangeReader,
+        SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
     };
 }
 
@@ -239,8 +240,8 @@ pub use file::{
 };
 #[doc(hidden)]
 pub use header::{
-    Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
-    MIN_STABLE_READ_VERSION,
+    Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN,
+    LEGACY_FORMAT_VERSION, MAGIC, MIN_STABLE_READ_VERSION,
 };
 #[doc(hidden)]
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet, ScanPlan};
@@ -264,8 +265,8 @@ pub use pyramid::{
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 #[doc(hidden)]
 pub use reader::{
-    detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader, POLYGLOT_DIGITS,
-    POLYGLOT_MARKER,
+    detect_polyglot_base, BytesReader, CountingReader, OffsetReader, PrefixReader, RangeReader,
+    SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
 };
 #[doc(hidden)]
 pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};

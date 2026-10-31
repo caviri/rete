@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Format specification · rete docs</title>
-  <meta name="description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
+  <meta name="description" content="Status: Format generation 2 (header byte 0x06), written by every writer; generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
   <link rel="canonical" href="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Format specification · rete docs" />
-  <meta property="og:description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
+  <meta property="og:description" content="Status: Format generation 2 (header byte 0x06), written by every writer; generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
   <meta property="og:url" content="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Format specification · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Format specification · rete docs" />
-  <meta name="twitter:description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
+  <meta name="twitter:description" content="Status: Format generation 2 (header byte 0x06), written by every writer; generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -609,7 +609,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1 id="rete--a-cloud-native-range-queryable-rdf-graph-file">Rete — a cloud-native, range-queryable RDF graph file</h1>
-<p><strong>Status:</strong> Stable format generation <strong>1</strong>, implemented (header byte <code>0x05</code>, frozen 2026-07-14; no compatibility promise before 1.0.0) · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
+<p><strong>Status:</strong> Format generation <strong>2</strong> (header byte <code>0x06</code>), written by every writer; generation <strong>1</strong> (<code>0x05</code>, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
 <blockquote>
 <p>One file. Put it on S3, GitHub, or any HTTP server that honors <code>Range</code>.
 Give a client the URL. Run SPARQL. No database server.</p>
@@ -621,9 +621,10 @@ with a <strong>pyramid</strong> of progressively-refined detail.</p>
 <h3 id="goals">Goals</h3>
 <ul>
 <li><strong>Single immutable file</strong>, queryable in place over HTTP <code>Range</code> requests.</li>
-<li><strong>Bounded request count</strong> to answer a query — the client reads a small header
-(which carries every section's byte range), then fetches only the sections a
-query actually touches (≤4 ranges for a full open; 3 for the overview path).</li>
+<li><strong>Bounded request count</strong> to answer a query — the client reads the first
+64 KiB (the header, the root block with every section's byte range, the card,
+the statistics and, on a small file, every leaf directory), then fetches only
+the leaves and payload a query touches (§4.6).</li>
 <li><strong>SPARQL</strong> evaluation against the file (BGPs, joins, filters, paths, aggregates,
 named graphs, and the supported query forms in §8).</li>
 <li><strong>Progressive / pyramidal</strong> access: a coarse <em>summary graph</em> loads first, and
@@ -669,8 +670,246 @@ aggregated edges). Each deeper level expands supernodes into their members.</li>
 </ol>
 <hr />
 <h2 id="4-file-layout">4. File layout</h2>
-<p>The stable generation-1 on-disk layout (what <code>write_file</code>/<code>write_dataset</code>
-actually emit). The
+<p>The current layout is <strong>format <code>0x06</code></strong>, stable generation <strong>2</strong>. Everything a
+reader needs to plan a query sits at the <strong>front</strong> of the file, inside the
+first read: a 128-byte header, the root block, the Dataset Card, the planner
+statistics and every leaf directory. The payload follows, clustered by
+section. The payload blocks themselves (dictionary chunks §5.1, permutation
+tiles §6.1–6.2, quad tiles §6.5, label blocks §6.4, text postings §6.3) are
+byte-identical to generation 1; only their framing and their directories
+moved. <code>rete convert</code> turns a <code>0x05</code> file into a <code>0x06</code> one by copying them
+(§4.9, <a href="cli.html">cli</a>).</p>
+<pre><code>0            HEADER, 128 B: counts, codecs, presence bits, card and root
+             digests, content hash (§4.1)
+128          ROOT BLOCK: the section table (kind, offset, length, digest)
+             and the directory roots (§4.2)
+             CARD REGION: card | build record | free space (§4.4)
+front_base   FRONT SECTIONS: stats + schema, then the leaf directories of
+             the dictionary, the index, the quad index, the label index and
+             the text index (§4.3)
+data_offset  DATA SECTIONS, clustered: dictionary chunks, index tiles, quad
+             tiles, label blocks, text postings, community pyramid (§4.5)
+file_len - 8 FOOTER: 06 00 00 00 "RETE"
+</code></pre>
+<p><code>front_base = 128 + root length + card region length</code>. A reader's first
+request is <code>bytes=0-65535</code> (§4.6); it holds the header, the root, the card and
+the statistics of every measured file (OpenCitations Meta's root is 37 KiB),
+and on a small file every leaf directory as well.</p>
+<h3 id="41-header-128-bytes-little-endian">4.1 Header (128 bytes, little-endian)</h3>
+<table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
+<tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
+<tr><td>4</td><td>1</td><td>format version <code>0x06</code></td></tr>
+<tr><td>5</td><td>1</td><td>flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5)</td></tr>
+<tr><td>6</td><td>2</td><td>header length (128)</td></tr>
+<tr><td>8</td><td>16</td><td>content hash (§4.7) — also an ETag-like id</td></tr>
+<tr><td>24</td><td>8</td><td>file length (a client needs no <code>Content-Range</code> and no <code>HEAD</code>)</td></tr>
+<tr><td>32</td><td>4</td><td>root block length (it starts at 128)</td></tr>
+<tr><td>36</td><td>4</td><td>card region length (it starts at <code>128 + root length</code>)</td></tr>
+<tr><td>40</td><td>8</td><td>data offset: where the data region starts</td></tr>
+<tr><td>48</td><td>8</td><td>statement count (quads, default graph included)</td></tr>
+<tr><td>56</td><td>8</td><td>term count</td></tr>
+<tr><td>64</td><td>8</td><td>named-graph count</td></tr>
+<tr><td>72</td><td>1</td><td><strong>permutation mask</strong>: bit <em>i</em> = permutation <em>i</em> of <code>SPO, POS, OSP, SOP, PSO, OPS</code> is stored. Explicit, never <code>0</code>; it must contain SPO+POS+OSP (<code>0b000111</code>)</td></tr>
+<tr><td>73</td><td>1</td><td>dictionary codec id</td></tr>
+<tr><td>74</td><td>1</td><td>block codec id (tiles, quad tiles, label blocks, postings)</td></tr>
+<tr><td>75</td><td>1</td><td>internal codec id (root units, leaves, card, stats + schema)</td></tr>
+<tr><td>76</td><td>2</td><td>community pyramid levels</td></tr>
+<tr><td>78</td><td>2</td><td>presence: bit0 text index; bit1 the text index leaves some predicates out (§6.3); bit2 label index; bit3 stats + schema; bit4 community pyramid; bit5 quad index</td></tr>
+<tr><td>80</td><td>4</td><td>card offset, within the card region</td></tr>
+<tr><td>84</td><td>4</td><td>card length (stored, compressed)</td></tr>
+<tr><td>88</td><td>16</td><td>card digest: BLAKE3 of the stored card, first 16 bytes</td></tr>
+<tr><td>104</td><td>4</td><td>build record offset, within the card region</td></tr>
+<tr><td>108</td><td>4</td><td>build record length</td></tr>
+<tr><td>112</td><td>16</td><td>root digest: BLAKE3 of the root block, first 16 bytes</td></tr>
+</tbody></table>
+<p>Every field is untrusted. A reader checks the magic, the version, the header
+length, <code>128 + root length + card region length ≤ data offset ≤ file length</code>,
+that the card and the record lie inside their region, that the mask is legal,
+and that the file length is the resource's length (a truncated download fails
+here, by name).</p>
+<p>The card's place and digest live in the header, not in the root, so a re-card
+rewrites the card region and these 128 bytes and nothing else (§4.4).</p>
+<h3 id="42-root-block">4.2 Root block</h3>
+<pre><code>u8        version (1)
+u8        n, the number of sections
+n × 38 B  kind u8 · flags u8 (0) · max block u32 · offset u64 · length u64
+          · digest [16]
+u32       length L of the unit roots
+L B       the unit roots, compressed with the internal codec:
+          repeated  tag u8 · varint length · payload
+</code></pre>
+<p>A section's <strong>offset</strong> is relative to its region: a front section's (kind
+&lt; 16) to <code>front_base</code>, a data section's to the data offset. No offset is
+absolute, so moving a region (a copying re-card that grows the card region)
+changes no digest. A section's <strong>digest</strong> is BLAKE3 of its stored bytes, first
+16 bytes. Its <strong>max block</strong> is the largest decompressed block in it — a
+dictionary chunk, a tile, a leaf, the stats + schema body — as the writer
+measured it (from the zstd frame header, or by decoding), <code>0</code> when not
+recorded (label blocks and nodes, postings, the pyramid). A reader checks each
+frame header against it before decoding and caps the output there, so a
+corrupt or hostile frame cannot make it allocate more than the writer did;
+where it is <code>0</code>, the cap is 4 MiB, and the root units and the card have fixed
+caps of 16 MiB and 64 MiB. The table lists the sections present, in file
+order:</p>
+<table><thead><tr><th>Kind</th><th>Name</th><th>Region</th><th>Contents</th></tr></thead><tbody>
+<tr><td>1</td><td><code>schema</code></td><td>front</td><td>the stats + schema section (§7.5 encoding: the planner's per-predicate statistics and characteristic sets, the class hierarchy, rollups and axioms), compressed</td></tr>
+<tr><td>2</td><td><code>dict-leaves</code></td><td>front</td><td>the dictionary's chunk directory, in leaves</td></tr>
+<tr><td>3</td><td><code>index-leaves</code></td><td>front</td><td>every permutation's tile directory, in leaves</td></tr>
+<tr><td>4</td><td><code>quad-leaves</code></td><td>front</td><td>the quad index's graph directory (§6.5), then its tile directories, in leaves</td></tr>
+<tr><td>5</td><td><code>label-leaves</code></td><td>front</td><td>the label index's directory nodes (§6.4)</td></tr>
+<tr><td>6</td><td><code>text-leaves</code></td><td>front</td><td>the text index's token table, in leaves</td></tr>
+<tr><td>16</td><td><code>dict</code></td><td>data</td><td>dictionary chunks: predicates, shared, subject-only, object-only</td></tr>
+<tr><td>17</td><td><code>index</code></td><td>data</td><td>permutation tiles: SPO, POS, OSP, SOP, PSO, OPS (those the mask stores)</td></tr>
+<tr><td>18</td><td><code>quad</code></td><td>data</td><td>quad tiles (§4.5)</td></tr>
+<tr><td>19</td><td><code>labels</code></td><td>data</td><td>label data blocks, in key order</td></tr>
+<tr><td>20</td><td><code>text</code></td><td>data</td><td>postings, in token order</td></tr>
+<tr><td>21</td><td><code>pyramid</code></td><td>data</td><td>the community pyramid-meta (§7.3); optional and cold, only the overview reads it</td></tr>
+</tbody></table>
+<p>A reader ignores a kind it does not know (<code>verify</code> still checks its digest).</p>
+<p>The <strong>unit roots</strong> are the first level of every two-level directory, plus the
+small fixed facts that would otherwise cost a read. Tags: <code>1</code> dictionary, <code>2</code>
+index, <code>3</code> quad index, <code>4</code> label index, <code>5</code> text index. All integers are
+unsigned LEB128 varints, byte strings are length-prefixed.</p>
+<ul>
+<li><strong>Dictionary</strong> (always four sections, in the order shared, subject-only,
+object-only, predicates): term count, restart interval, chunk count, the
+section's offset and length within <code>dict</code>, then per leaf: entry count, offset
+and stored length within <code>dict-leaves</code>, the first chunk's first run, its data
+offset within the section, and its separator key.</li>
+<li><strong>Index</strong> (one per stored permutation): permutation number, tile count, the
+permutation's offset and length within <code>index</code>, then per leaf: entry count,
+offset, stored length, the first tile's lowest and the last tile's highest
+leading id, and the first tile's offset within the permutation.</li>
+<li><strong>Quad index</strong>: graph count, quad count, graphs per directory block, the
+block index <code>P0</code> (§6.5), the graph directory's length, then per order:
+order number, tile count and per leaf: entry count, offset, stored length,
+the first tile's first <code>(g, a)</code>, the last tile's last <code>(g, a)</code>, and the first
+tile's offset within <code>quad</code>.</li>
+<li><strong>Label index</strong>: the length of the data blocks, then the section's 32-byte
+preamble (digest zeroed) and root node, as §6.4 encodes them.</li>
+<li><strong>Text index</strong>: the scope block (§6.3; empty for the default scope), token
+count, then per leaf: entry count, offset, stored length and its first token.</li>
+</ul>
+<h3 id="43-leaf-directories">4.3 Leaf directories</h3>
+<p>A <strong>leaf</strong> is one block of consecutive directory entries, compressed with the
+internal codec. Entries are rows of varints:</p>
+<ul>
+<li><strong>dictionary chunk</strong>: the first run (a delta against the previous entry,
+absolute for the leaf's first), the separator key (§5.1), the chunk's stored
+length. Chunks are contiguous, so their offsets are implicit.</li>
+<li><strong>index tile</strong>: the lowest leading id (a delta), highest minus lowest, the
+stored length; after every entry of the leaf, the synopsis columns (§6.2):
+lowest <em>b</em>, highest minus lowest <em>b</em>, lowest <em>c</em>, highest minus lowest <em>c</em>.</li>
+<li><strong>quad tile</strong>: first graph (a delta), first <em>a</em>, last graph minus first
+graph, last <em>a</em>, <code>stored length × 2 + raw</code>, the four synopsis varints, and an
+offset code: <code>0</code> when the tile follows the previous one, else its offset
+within <code>quad</code> plus one (graph-major clustering interleaves the orders).</li>
+<li><strong>text token</strong>: bytes shared with the previous token, the rest
+(length-prefixed), the posting list's offset and length within <code>text</code>.</li>
+<li><strong>label nodes</strong> are §6.4's level-1 nodes, unchanged. Their offsets are those
+of the generation-1 section body: data blocks first (<code>labels</code>), nodes after
+(<code>label-leaves</code>), so the reader maps one onto the other.</li>
+</ul>
+<p>The writer cuts each directory into leaves of 16 KiB of entries, then, while
+the stored root exceeds 40 KiB, doubles the leaf size of the directory with the
+most leaves. A leaf is faulted on first use and kept for the session.</p>
+<h3 id="44-card-region-and-re-card">4.4 Card region and re-card</h3>
+<p>The card region holds the Dataset Card (JSON compressed with the internal
+codec) and the build record (raw JSON, possibly followed by ASCII spaces up to
+its length, as in §4.9), each at the offset and length the header gives,
+relative to the region; the rest is free. The writer sizes the region
+<code>2 × (card + record) + 8 KiB</code>, or 0 when there is neither. The card is inside
+the content hash; the build record is not (it records when, how and how fast,
+which differ between two builds of the same data).</p>
+<p><code>rete recard --in-place</code> writes the new card and record into a free gap of the
+region <strong>beside</strong> the old pair, syncs, then rewrites the 128-byte header — one
+sector, the commit point — and syncs again. No data byte is read or moved, and
+a crash before the header write leaves the old file whole. When the pair does
+not fit, the file is copied once instead: a new front with a fresh region, then
+the data region byte for byte (its digests, and so the root, unchanged). A card
+equal to the current one stays where it is, so a record-only update
+(<code>card-audit --write-costs</code>) never changes the content hash.</p>
+<p>A file shorter than 1 KiB is padded to 1 KiB inside its card region.</p>
+<h3 id="45-data-region">4.5 Data region</h3>
+<p>The data sections follow the front in the order of the kind table, each one
+contiguous, with nothing interleaved: no container prefixes, no directories, no
+synopsis trailers, no restart tables. Dictionary chunks go predicates first, so
+the predicate routing every query needs is one short range. A scan of one
+permutation, or of one predicate's run in POS, is one contiguous range.</p>
+<p>Quad tiles are clustered one of two ways, and header flag bit3 says which:</p>
+<ul>
+<li><strong>graph-major</strong> — for each block of graphs of the graph directory, the tiles
+of every order whose first graph falls in it, side by side, so a <code>GRAPH &lt;g&gt;</code>
+query finds the graph's slice in every order in one neighbourhood;</li>
+<li><strong>order-major</strong> — each order's tiles contiguous, as in generation 1.</li>
+</ul>
+<p>The writer chooses graph-major when the mean named graph is smaller than
+64 KiB of quad tiles, else order-major (<code>rete convert --quad-clustering</code>
+overrides it). Readers route through the directories either way.</p>
+<h3 id="46-opening-a-file">4.6 Opening a file</h3>
+<ol>
+<li>Read <code>min(64 KiB, file length)</code> from offset 0. Over HTTP this is
+<code>GET bytes=0-65535</code>, which also gives the length (<code>Content-Range</code>, whose
+start, end and total must all match); no <code>HEAD</code> is sent. A remote file of
+at most 8 MiB is then fetched whole in one more read. Byte 4 picks the
+reader: <code>0x05</code> continues with the generation-1 open (§4.9), served from
+these bytes where it can.</li>
+<li><code>0x06</code>: parse the header; take the root (and in the rare case it does not
+fit, read the rest of it); check the root digest; decode the section table
+and the unit roots. The card, the record and the statistics are in hand, and
+so is every leaf inside the first 64 KiB.</li>
+<li>A query faults the leaves it needs, then the payload. The dictionary and the
+index route through the unit roots to a leaf, then to a chunk or a tile.
+Sequential dictionary misses read ahead (2, 4, 8, up to 16 chunks a batch);
+the result terms of a query decode in one batch across sections.</li>
+</ol>
+<p>A local file opens the same way through the file's range reader; a query
+command reads it whole only when it is at most 1 MiB.</p>
+<p>Directory leaves are not shared between permutations. Pairing them (SPO with
+SOP, POS with PSO, OSP with OPS, as an August 2026 experiment did) was measured
+against this layout: it changes no round trip of the 83 measured runs or of the
+Meta projection, the predicate pair grows by 39–44%, and <code>convert</code> would have
+to re-tile every permutation instead of copying its tiles.</p>
+<h3 id="47-content-hash-and-verify">4.7 Content hash and verify</h3>
+<pre><code>content hash = BLAKE3("rete/0x06" ‖ header[4..8] ‖ header[48..80]
+                      ‖ card length (u32) ‖ card digest
+                      ‖ root length (u32) ‖ root digest)[0..16]
+</code></pre>
+<p><code>header[4..8]</code> is the version, the flags and the header length;
+<code>header[48..80]</code> the counts, the mask, the codecs, the pyramid levels and the
+presence bits. Through the root digest the hash covers every section digest, so
+every byte of every section; through the card digest, the card. It hashes no
+offset and not the build record, so two builds of the same input and flags hash
+the same, and a re-card hashes nothing but the card.</p>
+<p><code>rete verify</code> checks the header's bounds, the root and card digests, streams
+every section once against its digest and recomputes the content hash. A
+failure names the section. <code>rete verify --section &lt;name&gt;</code> checks one section
+(names as in the kind table).</p>
+<p>The writers are reproducible: the in-RAM build, the memory-bounded build,
+<code>merge</code> and <code>convert</code> write the same bytes for the same input and flags, and
+<code>convert</code> of a generation-1 build equals the generation-2 build byte for byte.</p>
+<h3 id="48-what-generation-2-dropped">4.8 What generation 2 dropped</h3>
+<ul>
+<li>The 1024-byte header and its 40-entry directory: a 128-byte header and an
+unbounded section table in the root.</li>
+<li>Length-prefixed containers, dictionary restart tables, tile directories at the
+head of each permutation, synopsis trailers, and directory reads by probing.</li>
+<li>Sections outside the content hash with self-digests (kinds 8, 9, 11), and
+the quad index's seal in the index container: every section is inside the
+one hash.</li>
+<li>The card in two places, and dead bytes after an in-place re-card.</li>
+<li>Per-graph named graphs (kind 5): the quad index is the only named-graph
+layout. <code>convert</code> re-encodes a per-graph file as a quad index.</li>
+<li>The kind 6 / kind 11 split of the text index: one text section, its scope in
+the root, presence bit1 for a predicate-restricted index.</li>
+<li>The synopsis flag: synopses are always present.</li>
+</ul>
+<h3 id="49-generation-1-0x05-legacy-read-only">4.9 Generation 1 (<code>0x05</code>): legacy, read only</h3>
+<p>Every reader reads generation 1, and no writer writes it. The rest of this
+section is its layout, unchanged; the section encodings of §5–§7 are shared by
+both generations.</p>
+<p>The generation-1 layout (what <code>write_file</code>/<code>write_dataset</code> emit before
+<code>rete convert</code>). The
 header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.</p>
@@ -684,7 +923,7 @@ break an old reader.</em></p>
 <pre><code>┌──────────────────────────────────────────────────────────────┐
 │ HEADER            fixed-size, 1024 bytes, read first.          │
 │   A typed section directory: the offset+length of every       │
-│   section below, plus codec ids, counts, content hash (§4.1). │
+│   section below, plus codec ids, counts, content hash.        │
 ├──────────────────────────────────────────────────────────────┤
 │ DICTIONARY        front-coded container of four sections:      │
 │   ├ shared (terms used as both subject &amp; object)               │
@@ -715,7 +954,7 @@ range — so single-pattern routing fetches the selected permutation section (on
 of the six) and decompresses only the matching tile(s). Per-<em>community</em> leaf directories
 (mapping <code>(level, tile, perm)</code> to byte ranges across the pyramid) are part of
 the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</p>
-<h3 id="41-header-1024-bytes-little-endian">4.1 Header (1024 bytes, little-endian)</h3>
+<h4 id="header-1024-bytes-little-endian-generation-1">Header (1024 bytes, little-endian), generation 1</h4>
 <p>The header is a fixed <strong>64-byte core</strong> followed by a <strong>typed section directory</strong> —
 up to 40 entries of 24 bytes each <code>(kind, flags, offset, length)</code> — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
@@ -888,7 +1127,8 @@ own misses. No format change: the bytes of both kinds of file are valid.</p>
 quoted triple is interned by its canonical N-Triples-star surface, exactly like
 an IRI or literal, so the dictionary, the permutation indexes, and this layout
 need no change for RDF-star — hence no format-version bump. A file that contains
-any quoted triple sets header flag bit 2 (§4.1) so a plain-RDF reader can detect
+any quoted triple sets the header's quoted-triples flag (§4.1: bit1; bit2 in
+generation 1) so a plain-RDF reader can detect
 it without scanning. The <strong>stored</strong> surface is RDF-star, always; which surface a
 text dump carries is a writer choice (<code>rete export --quoted-triple-syntax</code>,
 default RDF 1.2 <code>&lt;&lt;( s p o )&gt;&gt;</code>) and does not touch the file. See
@@ -1127,8 +1367,9 @@ stay correct with it. A predicate-restricted index does not, so it is filed
 under a kind they do not know: they preserve it, never open it, and answer
 <code>CONTAINS</code> by scanning and <code>rete search --contains</code> with "no text index". The
 header maps either kind onto the same text-index offset and length.</p>
-<p>A kind-<code>11</code> section is <code>digest(16) | payload</code>, where <code>digest = blake3(payload)[..16]</code> and the payload is the kind-<code>6</code> layout above. It is outside
-the content hash (§4.1) and verified by that digest instead, so a reader that
+<p>A kind-<code>11</code> section is <code>digest(16) | payload</code>, where <code>digest = blake3(payload)[..16]</code> and the payload is the kind-<code>6</code> layout above. In generation 1
+it is outside the content hash (§4.9) and verified by that digest instead, so a
+reader that
 cannot see it still verifies the file; a reader skips the digest to reach the
 <code>token_table_len</code> varint. A kind-<code>6</code> section has no digest and is hashed.</p>
 <p>The <strong>token table</strong> is small (distinct words, front-coded) and read whole; the
@@ -1147,7 +1388,7 @@ covered (the default graph; any graph under <code>graphs = 1</code>) and the pat
 predicate is covered (a variable predicate only when every predicate is).
 Elsewhere — inside <code>GRAPH</code> over a default-scope index, under <code>FROM</code>, on a
 predicate left out — the filter scans. Whether the index covers the named graphs
-is header flag bit 4 (§4.1), written with <code>graphs = 1</code>, so a query off the
+is header flag bit2 (§4.1; bit4 in generation 1), written with <code>graphs = 1</code>, so a query off the
 default graph on a file without the bit decides from the header and fetches no
 byte of the section. A query that uses no such filter neither fetches nor pays
 for the section.</p>
@@ -1181,8 +1422,9 @@ label of <strong>every</strong> labelled subject of the default graph, sorted fo
 the pyramid-meta used to carry (§7.3), which was fetched whole and so capped at
 8,192 entries ranked by out-degree, and which a file without a pyramid lacked
 entirely. The section has no cap and no ranking, does not depend on the pyramid, and
-is written by the in-memory and the memory-bounded build alike. Outside the content
-hash, self-digested (§4.1).</p>
+is written by the in-memory and the memory-bounded build alike. In generation 1
+it is outside the content hash, self-digested (§4.9); in generation 2 it is
+inside it, like every section (§4.7).</p>
 <p><strong>Which labels</strong> (index-only — the triples are not changed):</p>
 <ul>
 <li><strong>L1</strong>, every literal of <code>rdfs:label</code>, <code>skos:prefLabel</code>, <code>skos:altLabel</code>,
@@ -1250,7 +1492,7 @@ every such reader checks the INDEX container's section count before it reads a
 payload, and <code>perms + 1</code> (4 or 7) is never what it expects, so it refuses the
 file on every open path. The quad index is written only with the 3- or the
 6-permutation set (a five-permutation set would make six). The content hash
-keeps its part list (§4.1) — the QUAD_INDEX section is not a part of its own;
+keeps its part list (generation 1, §4.9; generation 2 drops the seal, §4.8) — the QUAD_INDEX section is not a part of its own;
 the seal, inside the hashed INDEX container, carries its digest, and <code>verify</code>
 checks the section against it.</p>
 <pre><code>section:   "RQIX" | u8 version = 1 | u8 order mask (byte-50 bits, never 0) | u16 reserved = 0
@@ -1450,8 +1692,9 @@ per-level type rollups and lateral class links, the coherence axioms
 planner's per-predicate <code>query_stats</code> and the characteristic sets. None of these
 needs the dendrogram — only the per-community descriptors do, and they stay in the
 pyramid-meta — so every <code>rete build</code> writes this section (<code>--no-schema</code> omits it),
-<code>--no-pyramid</code> and <code>--memory-budget-mb</code> included. It is a few kilobytes. Outside the
-content hash, self-digested (§4.1).</p>
+<code>--no-pyramid</code> and <code>--memory-budget-mb</code> included. It is a few kilobytes. In
+generation 1 it is outside the content hash, self-digested (§4.9); in generation
+2 it is the <code>schema</code> front section, inside the hash (§4.2).</p>
 <pre><code class="language-text">0   16  digest = blake3(section[16..])[..16]
 16  1   version (1)
 17  …   varint len + bytes: the type predicate the rollups used (empty = no typing)
@@ -1525,12 +1768,29 @@ call to one empty solution per the spec.</li>
 dominated by range-request count and block sizes.</p>
 <hr />
 <h2 id="9-access-protocol-the-client">9. Access protocol (the client)</h2>
-<p>The header <em>is</em> the directory — every section offset/length is in it, so no
-separate directory/footer round-trip is needed:</p>
+<p>A generation-2 file is planned from its front (§4.6):</p>
+<pre><code>1. GET bytes=0-65535        → header, root block (section table + directory
+                              roots), card, statistics; on a small file every
+                              leaf directory too. Doubles as the length probe:
+                              no HEAD.
+2a. Overview path  → the dictionary leaves and chunks of the terms it names,
+    and the `pyramid` section; answer from the summary (community quotient
+    graph, per-predicate totals). No index byte is read.
+    (`SummaryView::open_ranged`; `summary_overview` in wasm.)
+2b. Query path → route each constant term through the dictionary root to a
+    leaf and a chunk; route each pattern through the index root to a leaf and
+    its tiles (synopsis-pruned); fault those, in batches; decode result ids in
+    one batch across dictionary sections.
+2c. Routed single-pattern path → the front and the dictionary data in one more
+    read, then only the routed tiles in one span. Unknown bound terms skip
+    the index entirely and return an empty result.
+</code></pre>
+<p>A generation-1 file opens from the same first read and continues as it always
+did (the header is the directory; containers, chunk and tile directories read
+at open):</p>
 <pre><code>1. GET bytes=0-1023         → header: all section offsets/lengths + content hash
 2a. Overview path  → GET dictionary + pyramid-meta ranges; answer from the
-    summary (community quotient graph, per-predicate totals). The index is
-    never fetched. (`SummaryView::open_ranged`; `summary_overview` in wasm.)
+    summary. The index is never fetched.
 2b. Full query path → GET dictionary + index (+ named-graphs) ranges, then:
      - resolve constant terms in the dictionary
      - match the pattern in the SPO/POS/OSP/SOP/PSO/OPS permutation blocks
@@ -1540,20 +1800,20 @@ separate directory/footer round-trip is needed:</p>
        permutation, and the dictionary/index/payload/pyramid byte ranges
 2c. Routed single-pattern path → GET dictionary, resolve constants, choose the
     best of the file's permutations, then follow the index container's length
-    prefixes and fetch only that one permutation payload. Unknown bound terms
-    skip the index entirely and return an empty result.
+    prefixes and fetch only that one permutation payload.
 </code></pre>
 <img class="img-sq" src="img/remote-open-cost.svg" alt="What a cold remote open costs, measured with rete cost on the published davidrumsey.rete — 74.8 MB, 5,001,983 triples. Each track is the whole file; the solid part is what crosses the wire. Reading the dataset card costs 2 requests and 61 KB, 0.08 percent. Opening lazily for a query costs 65 requests and 407 KB, 0.54 percent, because only tile directories are read. But routing one triple pattern costs 2 requests and 16.1 MB, 21.5 percent, and the overview costs 3 requests and 17.4 MB, 23.3 percent — both because resolving a term to an id pulls the whole dictionary. Reading the file whole costs 74.7 MB, 99.9 percent.">
-<p><em>The same file, five ways in. The lazy path is 0.54% of the file; the two paths
+<p><em>The same generation-1 file, five ways in. The lazy path is 0.54% of the file; the two paths
 that must resolve a constant term to an id pay for the whole dictionary. This
 file predates separator keys, so its chunk directory also stores every chunk's
 first term verbatim — 261,271 B, which a rebuild takes to 48,009 B (#198). On
 this graph that is a rounding error inside a 16 MB dictionary; on a graph of
 long literals it is most of the open.</em></p>
-<p>A full open touches ≤4 ranges (header, dict, index, pyramid-meta); the overview
-path touches 3 and skips the index entirely. The routed single-pattern path reads
+<p>On generation 1, a full open touches ≤4 ranges (header, dict, index,
+pyramid-meta); the overview path touches 3 and skips the index entirely. The routed single-pattern path reads
 the selected permutation payload instead of the whole index container. These
-access invariants are asserted by the <code>ranged</code> test suite. Per-tile leaf
+access invariants are asserted by the <code>ranged</code> test suite, and their
+generation-2 counterparts by <code>v06_ranged</code>. Per-tile leaf
 directories that would let the query path fetch only the relevant community
 tiles (rather than a whole permutation section) are future work. For the same
 reason, current provenance identifies the index container and selected

@@ -396,7 +396,8 @@ fn the_query_profile_is_stored_while_presence_stays_measured() {
     // must NOT be, or it would read `null` on every already-published file.
     let (_dir, file) = build(ANNOTATED, &["--card", "--title", "Annotated"]);
     let image = std::fs::read(&file).unwrap();
-    let text = String::from_utf8_lossy(&image);
+    let stored = common::stored_card(&image).expect("a carded file stores its card");
+    let text = String::from_utf8_lossy(&stored);
     assert!(
         text.contains("annotation_predicates"),
         "the query profile must be in the file's own bytes"

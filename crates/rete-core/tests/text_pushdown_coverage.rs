@@ -234,7 +234,11 @@ fn every_scope_and_layout_answers_like_a_file_without_an_index() {
         for (name, scope) in scopes() {
             let bytes = build(layout, Some(scope));
             let resident = Rete::open(&bytes).unwrap();
-            let lazy = Rete::open_ranged_lazy(Recorded::new(bytes.clone())).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(
+                Recorded::new(bytes.clone()),
+                rete_core::HEADER_LEN as u64,
+            )
+            .unwrap();
             for (q, want) in queries.iter().zip(&expected) {
                 assert_eq!(
                     &rows(&resident, q),
@@ -301,7 +305,7 @@ fn postings(bytes: &[u8]) -> (u64, u64) {
 /// Run `q` on a fresh lazy open; did it read a posting list?
 fn reads_postings(bytes: &[u8], q: &str) -> (Vec<String>, bool) {
     let rec = Recorded::new(bytes.to_vec());
-    let rete = Rete::open_ranged_lazy(rec.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(rec.clone(), rete_core::HEADER_LEN as u64).unwrap();
     rec.take();
     let got = rows(&rete, q);
     let (off, len) = postings(bytes);
@@ -399,7 +403,7 @@ fn graph_var_walk_visits_only_graphs_with_candidates() {
     // Dictionary bytes a fresh lazy open reads to answer `query`.
     let dict_bytes = |query: &str| {
         let rec = Recorded::new(bytes.clone());
-        let rete = Rete::open_ranged_lazy(rec.clone()).unwrap();
+        let rete = Rete::open_ranged_lazy_with(rec.clone(), rete_core::HEADER_LEN as u64).unwrap();
         rec.take();
         let got = rows(&rete, query);
         assert!(!rete.index_incomplete());

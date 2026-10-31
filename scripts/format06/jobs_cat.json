@@ -1,0 +1,461 @@
+[
+ {
+  "id": "dr.open",
+  "file": "dr/davidrumsey.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "dr.card",
+  "file": "dr/davidrumsey.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "dr.iri",
+  "file": "dr/davidrumsey.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?p ?o WHERE { <https://www.davidrumsey.com/luna/servlet/detail/RUMSEY~8~1~230176~5508425> ?p ?o }"
+  ]
+ },
+ {
+  "id": "dr.obj-join",
+  "file": "dr/davidrumsey.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?s ?p2 ?o WHERE { ?s ?p <https://www.davidrumsey.com/luna/servlet/detail/RUMSEY~8~1~230176~5508425> . ?s ?p2 ?o } LIMIT 50"
+  ]
+ },
+ {
+  "id": "dr.label",
+  "file": "dr/davidrumsey.rete",
+  "kind": "prefix",
+  "args": [
+   "madison"
+  ]
+ },
+ {
+  "id": "dr.text",
+  "file": "dr/davidrumsey.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "strafford"
+  ]
+ },
+ {
+  "id": "dr.classes",
+  "file": "dr/davidrumsey.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+  ]
+ },
+ {
+  "id": "tci.open",
+  "file": "tci/tree-city-inventory.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "tci.card",
+  "file": "tci/tree-city-inventory.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "tci.iri",
+  "file": "tci/tree-city-inventory.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?p ?o WHERE { <https://data.graphplaza.com/tree-city-inventory/taxon/Maackia-amurensis> ?p ?o }"
+  ]
+ },
+ {
+  "id": "tci.obj-join",
+  "file": "tci/tree-city-inventory.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?s ?p2 ?o WHERE { ?s ?p <https://data.graphplaza.com/tree-city-inventory/taxon/Maackia-amurensis> . ?s ?p2 ?o } LIMIT 50"
+  ]
+ },
+ {
+  "id": "tci.label",
+  "file": "tci/tree-city-inventory.rete",
+  "kind": "prefix",
+  "args": [
+   "maclura"
+  ]
+ },
+ {
+  "id": "tci.text",
+  "file": "tci/tree-city-inventory.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "amurensis"
+  ]
+ },
+ {
+  "id": "tci.classes",
+  "file": "tci/tree-city-inventory.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+  ]
+ },
+ {
+  "id": "sw.open",
+  "file": "sw/swissubase.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "sw.card",
+  "file": "sw/swissubase.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "sw.iri",
+  "file": "sw/swissubase.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?p ?o WHERE { <https://w3id.org/rete/swissubase/study/13584> ?p ?o }"
+  ]
+ },
+ {
+  "id": "sw.obj-join",
+  "file": "sw/swissubase.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?s ?p2 ?o WHERE { ?s ?p <https://w3id.org/rete/swissubase/study/13584> . ?s ?p2 ?o } LIMIT 50"
+  ]
+ },
+ {
+  "id": "sw.label",
+  "file": "sw/swissubase.rete",
+  "kind": "prefix",
+  "args": [
+   "macht"
+  ]
+ },
+ {
+  "id": "sw.text",
+  "file": "sw/swissubase.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "laos"
+  ]
+ },
+ {
+  "id": "sw.classes",
+  "file": "sw/swissubase.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+  ]
+ },
+ {
+  "id": "mtg.open",
+  "file": "cat/mtg.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "mtg.card",
+  "file": "cat/mtg.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "mtg.iri",
+  "file": "cat/mtg.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?p ?o WHERE { <https://w3id.org/rete/mtg/card/maalfeld-twins> ?p ?o }"
+  ]
+ },
+ {
+  "id": "mtg.obj-join",
+  "file": "cat/mtg.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?s ?p2 ?o WHERE { ?s ?p <https://w3id.org/rete/mtg/card/maalfeld-twins> . ?s ?p2 ?o } LIMIT 50"
+  ]
+ },
+ {
+  "id": "mtg.label",
+  "file": "cat/mtg.rete",
+  "kind": "prefix",
+  "args": [
+   "mabel"
+  ]
+ },
+ {
+  "id": "mtg.text",
+  "file": "cat/mtg.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "cragflame"
+  ]
+ },
+ {
+  "id": "mtg.classes",
+  "file": "cat/mtg.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+  ]
+ },
+ {
+  "id": "arxiu.open",
+  "file": "cat/arxiu.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "arxiu.card",
+  "file": "cat/arxiu.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "arxiu.iri",
+  "file": "cat/arxiu.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?p ?o WHERE { <https://w3id.org/rete/arxiu/unit/ACAN10-43-T2-2918> ?p ?o }"
+  ]
+ },
+ {
+  "id": "arxiu.obj-join",
+  "file": "cat/arxiu.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?s ?p2 ?o WHERE { ?s ?p <https://w3id.org/rete/arxiu/unit/ACAN10-43-T2-2918> . ?s ?p2 ?o } LIMIT 50"
+  ]
+ },
+ {
+  "id": "arxiu.label",
+  "file": "cat/arxiu.rete",
+  "kind": "prefix",
+  "args": [
+   "malagelada"
+  ]
+ },
+ {
+  "id": "arxiu.text",
+  "file": "cat/arxiu.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "malagelada"
+  ]
+ },
+ {
+  "id": "arxiu.classes",
+  "file": "cat/arxiu.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+  ]
+ },
+ {
+  "id": "mtgM.open",
+  "file": "modern/mtg-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "mtgM.card",
+  "file": "modern/mtg-modern.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "mtgM.iri",
+  "file": "modern/mtg-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?p ?o WHERE { <https://w3id.org/rete/mtg/card/maalfeld-twins> ?p ?o }"
+  ]
+ },
+ {
+  "id": "mtgM.obj-join",
+  "file": "modern/mtg-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?s ?p2 ?o WHERE { ?s ?p <https://w3id.org/rete/mtg/card/maalfeld-twins> . ?s ?p2 ?o } LIMIT 50"
+  ]
+ },
+ {
+  "id": "mtgM.label",
+  "file": "modern/mtg-modern.rete",
+  "kind": "prefix",
+  "args": [
+   "mabel"
+  ]
+ },
+ {
+  "id": "mtgM.text",
+  "file": "modern/mtg-modern.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "cragflame"
+  ]
+ },
+ {
+  "id": "mtgM.classes",
+  "file": "modern/mtg-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+  ]
+ },
+ {
+  "id": "tciM.open",
+  "file": "modern/tci-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "tciM.card",
+  "file": "modern/tci-modern.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "tciM.iri",
+  "file": "modern/tci-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?p ?o WHERE { <https://data.graphplaza.com/tree-city-inventory/taxon/Maackia-amurensis> ?p ?o }"
+  ]
+ },
+ {
+  "id": "tciM.obj-join",
+  "file": "modern/tci-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?s ?p2 ?o WHERE { ?s ?p <https://data.graphplaza.com/tree-city-inventory/taxon/Maackia-amurensis> . ?s ?p2 ?o } LIMIT 50"
+  ]
+ },
+ {
+  "id": "tciM.label",
+  "file": "modern/tci-modern.rete",
+  "kind": "prefix",
+  "args": [
+   "maclura"
+  ]
+ },
+ {
+  "id": "tciM.text",
+  "file": "modern/tci-modern.rete",
+  "kind": "contains",
+  "args": [
+   "--contains",
+   "amurensis"
+  ]
+ },
+ {
+  "id": "tciM.classes",
+  "file": "modern/tci-modern.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 20"
+  ]
+ },
+ {
+  "id": "gcard.open",
+  "file": "gate/card-full.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "gcard.card",
+  "file": "gate/card-full.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "gcard.all",
+  "file": "gate/card-full.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT * WHERE { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "gng.open",
+  "file": "gate/named-graphs-only.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "gng.card",
+  "file": "gate/named-graphs-only.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "gng.all",
+  "file": "gate/named-graphs-only.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT * WHERE { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "gwc.open",
+  "file": "gate/worldcup2026.rete",
+  "kind": "sparql",
+  "args": [
+   "ASK { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "gwc.card",
+  "file": "gate/worldcup2026.rete",
+  "kind": "card",
+  "args": []
+ },
+ {
+  "id": "gwc.all",
+  "file": "gate/worldcup2026.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT * WHERE { ?s ?p ?o }"
+  ]
+ },
+ {
+  "id": "gng.graph",
+  "file": "gate/named-graphs-only.rete",
+  "kind": "sparql",
+  "args": [
+   "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }"
+  ]
+ }
+]

@@ -43,8 +43,25 @@ fn carded() -> (common::Fixture, std::path::PathBuf) {
     (fixture, out)
 }
 
-/// `(kind, offset, length)` of every section, from the 1 KiB header.
+/// The 0x06 dictionary data section, as [`sections`] numbers it.
+const DICT_DATA: u16 = 100 + rete_core::v06::kind::DICT_DATA as u16;
+
+/// `(kind, offset, length)` of every section. A 0x05 file: from its 1 KiB
+/// header. A 0x06 file: the card (1) and the build record (7) in the card
+/// region, then every section of the root as `100 + its kind`.
 fn sections(bytes: &[u8]) -> Vec<(u16, u64, u64)> {
+    if rete_core::v06::open::is_v06(bytes) {
+        let h = rete_core::v06::Header06::from_bytes(bytes).unwrap();
+        let (_, root) =
+            rete_core::v06::open::read_front(&rete_core::SliceReader::new(bytes)).unwrap();
+        let (c, b) = (h.card_range(), h.build_range());
+        let mut all = vec![(1, c.offset, c.len), (7, b.offset, b.len)];
+        all.extend(root.sections.iter().map(|x| {
+            let r = x.abs(&h);
+            (100 + x.kind as u16, r.offset, r.len)
+        }));
+        return all;
+    }
     let n = u16::from_le_bytes([bytes[44], bytes[45]]) as usize;
     (0..n)
         .map(|i| {
@@ -226,7 +243,7 @@ fn section(path: &std::path::Path, kind: u16) -> Option<(u64, u64)> {
 }
 
 /// The memory-bounded build writes the **full** card — profile and starter
-/// queries — after the data, and it is the card `rete recard` derives from the
+/// queries — in the card region, and it is the card `rete recard` derives from the
 /// same file, byte for byte: both run one derivation. On input with no
 /// duplicates and no multi-typed subjects it is also the in-RAM build's card,
 /// so the two builds share their content hash.
@@ -246,8 +263,11 @@ fn a_memory_bounded_build_writes_the_card_recard_writes() {
     );
     common::rete().arg("verify").arg(&ext).assert().success();
     let (card_off, card_len) = section(&ext, 1).unwrap();
-    let (dict_off, _) = section(&ext, 2).unwrap();
-    assert!(card_off > dict_off, "the card sits after the data");
+    let (dict_off, _) = section(&ext, DICT_DATA).unwrap();
+    assert!(
+        card_off < dict_off,
+        "the card region sits in front of the data"
+    );
     let (info_off, _) = section(&ext, 7).unwrap();
     assert_eq!(info_off, card_off + card_len, "the build record follows it");
     let full = common::json(common::rete().arg("card").arg(&ext).arg("--json"));
@@ -335,11 +355,13 @@ fn a_memory_bounded_build_honours_no_card_costs() {
     common::rete().arg("verify").arg(&ext).assert().success();
 }
 
-/// `recard --in-place` leaves every byte of the old file where it was and
-/// appends the new card, build record and footer; the file verifies, answers
-/// the same, and its record says it was re-carded in place.
+/// `recard --in-place` writes the new card and build record into the free
+/// part of the card region, beside the old pair, then switches the 128-byte
+/// header: nothing is appended and no byte outside the card region moves. The
+/// file verifies, answers the same, and its record says it was re-carded in
+/// place.
 #[test]
-fn an_in_place_recard_appends_and_moves_nothing() {
+fn an_in_place_recard_writes_the_card_region_and_moves_nothing() {
     let (fixture, src) = carded();
     let before = std::fs::read(&src).unwrap();
     common::rete()
@@ -348,9 +370,18 @@ fn an_in_place_recard_appends_and_moves_nothing() {
         .args(["--in-place", "--keep-curated", "--verify"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("dead byte"));
+        .stdout(predicate::str::contains("no data byte moved"));
     let after = std::fs::read(&src).unwrap();
-    assert_eq!(&after[1024..before.len()], &before[1024..], "nothing moved");
+    assert_eq!(after.len(), before.len(), "nothing appended");
+    let h = rete_core::v06::Header06::from_bytes(&after).unwrap();
+    let region = h.card_region_offset() as usize;
+    let front = region + h.card_region_len as usize;
+    assert_eq!(&after[128..region], &before[128..region], "the root stays");
+    assert_eq!(
+        &after[front..],
+        &before[front..],
+        "nothing outside the card region moved"
+    );
     assert_eq!(&after[after.len() - 4..], b"RETE");
     assert_eq!(data_sections(&before), data_sections(&after));
     common::rete().arg("verify").arg(&src).assert().success();
@@ -358,7 +389,7 @@ fn an_in_place_recard_appends_and_moves_nothing() {
     assert_eq!(new["build"]["recarded"]["params"]["in_place"], true);
     assert_eq!(new["title"], "Recard fixture");
 
-    // The copy of an in-place re-card drops the dead bytes again.
+    // A copy re-lays the card region out around the new pair.
     let compact = fixture.path("compact.rete");
     common::rete()
         .arg("recard")
@@ -368,8 +399,8 @@ fn an_in_place_recard_appends_and_moves_nothing() {
         .arg("--keep-curated")
         .assert()
         .success();
-    assert!(std::fs::metadata(&compact).unwrap().len() < after.len() as u64);
     assert_eq!(card_bytes(&compact), card_bytes(&src));
+    assert_eq!(content_hash(&compact), content_hash(&src));
 
     // Exactly one of -o and --in-place.
     common::rete()
@@ -388,24 +419,24 @@ fn an_in_place_recard_appends_and_moves_nothing() {
         .failure();
 }
 
-/// Whether the card sits after every data section, with the build record
-/// right behind it.
-fn card_after_data(path: &std::path::Path) -> bool {
+/// Whether the card sits in front of every section (the 0x06 card region),
+/// with the build record right behind it.
+fn card_in_front(path: &std::path::Path) -> bool {
     let bytes = std::fs::read(path).unwrap();
     let all = sections(&bytes);
     let (_, card_off, card_len) = *all.iter().find(|(k, _, l)| *k == 1 && *l > 0).unwrap();
-    let (_, info_off, _) = *all.iter().find(|(k, _, l)| *k == 7 && *l > 0).unwrap();
-    let data_end = all
+    let (_, info_off, info_len) = *all.iter().find(|(k, _, l)| *k == 7 && *l > 0).unwrap();
+    let data_start = all
         .iter()
         .filter(|(k, _, l)| *k != 1 && *k != 7 && *l > 0)
-        .map(|(_, off, len)| off + len)
-        .max()
+        .map(|(_, off, _)| *off)
+        .min()
         .unwrap();
-    card_off >= data_end && info_off == card_off + card_len
+    info_off + info_len <= data_start && info_off == card_off + card_len
 }
 
 /// `rete merge` with a card writes the **full** card — the one `rete recard`
-/// derives from the merged file, byte for byte — after the data, with a build
+/// derives from the merged file, byte for byte — in the card region, with a build
 /// record that names the shards it folded; and the card changes nothing else:
 /// the data sections are the cardless merge's, which are the memory-bounded
 /// build's of the shards' union.
@@ -451,8 +482,8 @@ fn a_merge_writes_the_card_recard_writes() {
         .stderr(predicate::str::contains("shard0.rete carry curated fields"));
     common::rete().arg("verify").arg(&merged).assert().success();
     assert!(
-        card_after_data(&merged),
-        "the card and the record follow the data"
+        card_in_front(&merged),
+        "the card and the record sit in the card region, in front of the data"
     );
     let full = common::json(common::rete().arg("card").arg(&merged).arg("--json"));
     assert!(!full["queries"].as_array().unwrap().is_empty(), "{full}");

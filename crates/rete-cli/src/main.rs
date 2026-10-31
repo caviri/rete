@@ -292,25 +292,19 @@ enum Command {
         /// anything published.
         #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
         permutations: String,
-        /// How to store the **named graphs**: `per-graph` (default) or `quad`.
+        /// How to store the **named graphs**. Format `0x06` has one layout,
+        /// `quad` (the default): the **quad index** (SPEC.md), every
+        /// named-graph quad once, the graph as a fourth column of
+        /// graph-leading permutations behind a sorted graph directory, with
+        /// graph names as dictionary terms.
         ///
-        /// `per-graph` writes one permutation index per graph (the
-        /// NAMED_GRAPHS section): each graph's IRI as text, then its own
-        /// tiles, chained with no directory. `quad` writes the **quad index**
-        /// (SPEC.md §6.5): every named-graph quad once, the graph as a fourth
-        /// column of graph-leading permutations in tiles that many graphs
-        /// share, behind a sorted graph directory, with graph names as
-        /// dictionary terms. On many small graphs (per-entity provenance)
-        /// that is several times smaller and finds one graph by binary search
-        /// instead of walking the section; queries return the same rows.
-        ///
-        /// **A `quad` file is refused by every Rete before 0.4.0** (loudly:
-        /// the index container's section count), so keep `per-graph` for
-        /// files read by older engines. No effect without named graphs.
+        /// `per-graph` (the `0x05` NAMED_GRAPHS section) is no longer
+        /// written and is refused; `rete convert` turns a per-graph `0x05`
+        /// file into a quad-index `0x06` one. No effect without named graphs.
         #[arg(
             long = "named-graphs",
             value_parser = ["per-graph", "quad"],
-            default_value = "per-graph"
+            default_value = "quad"
         )]
         named_graphs: String,
         /// Refuse input containing an IRI the N-Triples/N-Quads `IRIREF` grammar
@@ -465,10 +459,38 @@ enum Command {
         /// Path to the `.rete` file.
         file: String,
     },
-    /// Verify a file's content hash (detects corruption/truncation).
+    /// Verify a file's content hash (detects corruption/truncation). On a
+    /// format 0x06 file every section digest is checked too, and a failure
+    /// names the section.
     Verify {
         /// Path to the `.rete` file.
         file: String,
+        /// Check only this section of a 0x06 file (`dict`, `index`, `quad`,
+        /// `labels`, `text`, `pyramid`, `schema`, or a `*-leaves` directory).
+        #[arg(long)]
+        section: Option<String>,
+    },
+    /// Convert a format 0x05 file to format 0x06: the sections are read through
+    /// ranges and their payload copied verbatim (no text round trip); the
+    /// directories move to the front of the file. A file whose named graphs are
+    /// stored one index per graph is re-encoded as a quad index. A file whose
+    /// only labels are the pyramid's legacy block (≤ 8,192 entries) gets the
+    /// LABEL_INDEX section `build --label-index` writes, unless
+    /// `--no-label-index`.
+    Convert {
+        /// The 0x05 input (a path or an http(s) URL).
+        input: String,
+        /// The 0x06 output path.
+        #[arg(short, long)]
+        output: String,
+        /// Quad-tile clustering: `auto` (graph-major when graphs are small),
+        /// `graph`, or `order`.
+        #[arg(long = "quad-clustering", value_name = "MODE")]
+        quad_clustering: Option<String>,
+        /// Do not build the label index for a file that has only the
+        /// pyramid's legacy label block.
+        #[arg(long = "no-label-index")]
+        no_label_index: bool,
     },
     /// Search a `.rete` for entities. Two modes:
     ///
@@ -1587,8 +1609,12 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 _ => rete_core::PermSet::ALL,
             };
             let graphs = match named_graphs.as_str() {
-                "quad" => rete_core::GraphLayout::Quad,
-                _ => rete_core::GraphLayout::PerGraph,
+                "per-graph" if !commands::v06::writes_legacy() => anyhow::bail!(
+                    "--named-graphs per-graph: format 0x06 stores named graphs in the quad \
+                     index only — drop the flag (quad is the default)"
+                ),
+                "per-graph" => rete_core::GraphLayout::PerGraph,
+                _ => rete_core::GraphLayout::Quad,
             };
             let surface = commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?;
             let text_index = text_index_scope(
@@ -1707,7 +1733,15 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         }
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),
-        Command::Verify { file } => commands::inspect::verify_cmd(&file),
+        Command::Verify { file, section } => {
+            commands::inspect::verify_cmd(&file, section.as_deref())
+        }
+        Command::Convert {
+            input,
+            output,
+            quad_clustering,
+            no_label_index,
+        } => commands::v06::convert(&input, &output, quad_clustering.as_deref(), !no_label_index),
         Command::Search {
             file,
             prefix,

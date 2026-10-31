@@ -5,6 +5,79 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+**Format change: every writer now writes format `0x06`.** A file opens from
+its first 64 KiB: a 128-byte header, the root block (every section's range and
+BLAKE3 digest, and the first level of every directory), the Dataset Card and
+the planner statistics, then the leaf directories; the data follows, one
+section after another. The payload blocks are the `0x05` ones, copied
+unchanged. Readers of this release read `0x05` and `0x06`; **readers up to
+0.4.2 refuse `0x06`** (`unsupported .rete format 0x06`). Convert a published
+file only once the readers that fetch it run this release. See
+[SPEC §4](https://caviri.github.io/rete/SPEC.html) and
+[compatibility](https://caviri.github.io/rete/compatibility.html).
+
+### Added
+
+- **`rete convert in.rete -o out.rete`** turns a `0x05` file into `0x06` from
+  its sections, without parsing RDF: one read and one write of the file (4.7 s
+  for the 205 MB OpenCitations sample). The output has the content hash a
+  fresh build of the same data gets. A file whose only labels are the
+  pyramid's legacy block gains the label index `build --label-index` writes
+  (`--no-label-index` skips it); a file with per-graph named graphs is
+  re-encoded as a quad index. `--quad-clustering auto|graph|order`.
+- **`rete verify --section <name>`** checks one section of a `0x06` file; a
+  failed `verify` names the section.
+- **`rete info`** on a `0x06` file prints the header, the front and every
+  section with its range and digest.
+- **Remote reads.** The open is one `bytes=0-65535` GET that also gives the
+  length: no `HEAD`. A remote file of at most 8 MiB (`RETE_HTTP_WHOLE_MB`) is
+  then fetched whole in one more request, in the CLI and in the browser.
+- **Sequential read-ahead.** A run of dictionary chunk misses reads 2, 4, 8,
+  then 16 chunks a batch.
+
+### Changed
+
+- **`--named-graphs` defaults to `quad`**, and `per-graph` is refused: `0x06`
+  stores named graphs in the quad index only.
+- **Query commands open local files lazily** above 1 MiB (`sparql`, `query`,
+  `bgp`, `why`, `cypher`, `search`, `stats`, `graphs`, `schema`, `shacl`).
+  On 83 local jobs (the OpenCitations sample and seven catalog files) a
+  query took 18.0 s in all, against 59.8 s for 0.4.2 on the `0x05` files;
+  an `ASK` on the OpenCitations sample 46 ms and 11 MiB instead of 1.3 s and
+  853 MiB. Commands that walk the whole graph (`communities`, `reach`,
+  `reason`, `serve`) keep the memory-aware rule.
+- **`rete recard --in-place`** on a `0x06` file writes the new card and record
+  into the card region's free space and then the 128-byte header: no data byte
+  is read or moved and nothing is appended. `card-audit --write-costs` does the
+  same with the record alone, so the content hash stays.
+- **Starter-query costs are measured on the file as written** (in `0x06` they
+  depend on the layout, card region included: the open reads the first 64 KiB).
+- The memory-bounded build and `rete merge` write their stream as `0x05` and
+  convert it (one copy pass; the next release streams `0x06`).
+
+### Fixed
+
+- A `206` whose `Content-Range` end or total is not the one asked for, or whose
+  body is longer than the range, is refused instead of being cut to fit (a
+  file replaced under the same URL could be read as two versions spliced
+  together). The block cache refuses a blob of the wrong length.
+- Every `0x06` decompression is bounded by its section's largest block,
+  recorded by the writer and checked against the zstd frame header first.
+
+### Measured
+
+Cold remote queries through a 50 ms proxy, the 83 runs measured for the
+design (the OpenCitations sample's 24 and the catalog's 59), default client:
+**501 round trips / 170 MiB**, against 947 / 167 MiB for 0.4.2 on the same
+data in `0x05` (median per query 4 against 10). Opening a file is one
+request, and so is reading its card; a text search no longer reads the token
+table. The
+OpenCitations sample is 1.0% smaller as `0x06` (202.5 MB), and its in-RAM
+build takes the same time (73.2–77.0 s against 73.7 s). Every one of the 83
+queries returns the rows it did on `0x05` (a label prefix search returns more
+where `convert` added a label index), and the W3C SPARQL 1.1 suite scores
+239 / 312 on both formats, test for test.
+
 ## [0.4.2] - 2026-10-31
 
 0.4.2 makes large builds cheaper and remote queries faster, and shows how far

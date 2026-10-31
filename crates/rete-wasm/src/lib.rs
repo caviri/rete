@@ -2034,6 +2034,10 @@ struct XhrRangeReader {
 /// risking the wasm32 heap on a body the reader never asked for.
 const WHOLE_BODY_CAP: u64 = 256 << 20;
 
+/// The largest remote file [`XhrRangeReader`] reads whole at open, the same
+/// 8 MiB as the native reader's `RETE_HTTP_WHOLE_MB` default.
+const WHOLE_FILE_MAX: u64 = 8 << 20;
+
 /// One read served from a whole-resource body (see [`XhrRangeReader::whole`]),
 /// bounds-checked: the body is whatever the host sent, so a read past its end
 /// is a clean error, never a panic.
@@ -2303,6 +2307,35 @@ impl XhrRangeReader {
     /// directory pins the exact length (issue #95) — and only falls back to
     /// the transport's numbers for a resource that isn't a `.rete`.
     fn open(url: &str) -> Result<Self, JsValue> {
+        let r = Self::open_probe(url)?;
+        r.fetch_small_whole();
+        Ok(r)
+    }
+
+    /// A remote file of at most [`WHOLE_FILE_MAX`] is read whole right after
+    /// the length probe: one more request, and no later read leaves memory
+    /// (2 round trips per query on a 7 MB catalog file, instead of 11–33). A
+    /// failure leaves the reader ranged. Local files are never read whole here.
+    fn fetch_small_whole(&self) {
+        if is_local_url(&self.url) || self.whole.get().is_some() || self.len == 0 {
+            return;
+        }
+        if self.len > WHOLE_FILE_MAX {
+            return;
+        }
+        // The probe's window already holds a file this small: no request.
+        if let Some(h) = self.head.get().filter(|h| h.len() as u64 >= self.len) {
+            let _ = self.whole.set(h[..self.len as usize].to_vec());
+            return;
+        }
+        if let Ok(body) = self.fetch_at(0, self.len) {
+            if body.len() as u64 == self.len {
+                let _ = self.whole.set(body);
+            }
+        }
+    }
+
+    fn open_probe(url: &str) -> Result<Self, JsValue> {
         // A LOCAL blob needs no probe at all: its length is a property, not a
         // network fact, and none of the reasons the HTTP probe exists (a
         // compressing host, a hidden Content-Range, a 405 on HEAD) can apply.
@@ -2389,7 +2422,9 @@ impl XhrRangeReader {
         if let Some(head) = self.head.get() {
             return Some(head);
         }
-        let head = self.fetch_at(0, rete_core::HEADER_LEN as u64).ok()?;
+        let head = self
+            .fetch_at(0, rete_core::v06::FIRST_READ.min(self.len))
+            .ok()?;
         let _ = self.head.set(head);
         self.head.get().map(Vec::as_slice)
     }
@@ -2514,10 +2549,13 @@ impl XhrRangeReader {
             total: cr_total,
             body,
             full_len,
-        } = Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1).map_err(ProbeFail::retry)?;
-        // Only a genuine header window is worth keeping (a Range-ignoring host
-        // may have sent the whole file here).
-        let head = |body: &[u8]| body[..body.len().min(rete_core::HEADER_LEN)].to_vec();
+        } = Self::ranged_get(url, 0, rete_core::v06::FIRST_READ - 1).map_err(ProbeFail::retry)?;
+        // The probe IS the first read: 64 KiB, the header plus — on a 0x06 file
+        // — the root, the card and, on a small file, every leaf directory. Kept
+        // whole, so every later read inside it costs nothing. (A Range-ignoring
+        // host may have sent the whole file here.)
+        let head =
+            |body: &[u8]| body[..body.len().min(rete_core::v06::FIRST_READ as usize)].to_vec();
         let derived_of = |body: &[u8]| {
             rete_core::Header::from_bytes(body)
                 .ok()

@@ -4,7 +4,7 @@
 //! predicates / graphs), sorted and assigned dense 1-based IDs. Terms are stored
 //! in runs of `R`; each run starts with a full term and front-codes the rest.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::chunk_cache::{CacheEntry, ChunkCache};
@@ -424,11 +424,286 @@ pub fn shortest_separator(prev_last: &[u8], first: &[u8]) -> Vec<u8> {
     first[..shared + 1].to_vec()
 }
 
+/// One leaf of a dictionary section's chunk directory, as the `0x06` root
+/// describes it.
+#[derive(Debug, Clone)]
+pub struct ChunkLeaf {
+    /// Index of the leaf's first chunk in the section.
+    pub first: usize,
+    /// Chunks in the leaf.
+    pub n: usize,
+    /// First run of the leaf's first chunk.
+    pub first_run: usize,
+    /// Routing key of the leaf's first chunk (a separator; empty for chunk 0).
+    pub key: Vec<u8>,
+    /// Absolute range of the stored leaf block.
+    pub leaf: (u64, u64),
+    /// Absolute offset of the leaf's first chunk.
+    pub chunk_base: u64,
+}
+
+/// A chunk directory whose entries live in leaf blocks faulted on demand and
+/// kept for the session (format `0x06`, SPEC.md §4.4). `term → id` narrows by
+/// the leaves' first keys, `id → term` by their first runs, so either faults
+/// one leaf.
+/// A faulted dictionary leaf: each chunk's entry, data offset and length.
+type ChunkCell = std::sync::OnceLock<Box<[(SectionChunk, u64, u64)]>>;
+
+pub struct LeafedChunks {
+    leaves: Vec<ChunkLeaf>,
+    cells: Vec<ChunkCell>,
+    total: usize,
+    fetch: crate::index::LeafFetch,
+    codec: u8,
+    /// Decompression bound on a leaf.
+    max_block: u64,
+    failed: AtomicBool,
+}
+
+impl LeafedChunks {
+    /// Bound every leaf decompression at `max` bytes (from the `0x06` root).
+    pub fn with_max_block(mut self, max: u64) -> Self {
+        self.max_block = max;
+        self
+    }
+
+    /// A leafed directory of `total` chunks.
+    pub fn new(
+        leaves: Vec<ChunkLeaf>,
+        total: usize,
+        fetch: crate::index::LeafFetch,
+        codec: u8,
+    ) -> Self {
+        let cells = leaves.iter().map(|_| std::sync::OnceLock::new()).collect();
+        LeafedChunks {
+            leaves,
+            cells,
+            total,
+            fetch,
+            codec,
+            max_block: u64::MAX,
+            failed: AtomicBool::new(false),
+        }
+    }
+
+    fn leaf_of(&self, ci: usize) -> usize {
+        self.leaves
+            .partition_point(|l| l.first <= ci)
+            .saturating_sub(1)
+    }
+
+    fn decode_leaf(&self, li: usize, stored: &[u8]) -> Option<Box<[(SectionChunk, u64, u64)]>> {
+        let l = &self.leaves[li];
+        let raw = crate::file::decompress_bounded(self.codec, stored, self.max_block).ok()?;
+        let ents = crate::v06::decode_chunk_leaf(&raw, l.n).ok()?;
+        let mut at = l.chunk_base;
+        let mut out = Vec::with_capacity(ents.len());
+        for e in ents {
+            out.push((SectionChunk::new(e.first_run, e.key, 0), at, e.clen));
+            at = at.checked_add(e.clen)?;
+        }
+        Some(out.into_boxed_slice())
+    }
+
+    /// Fault every not-yet-resident leaf of `lis` in one batched read.
+    pub fn ensure_leaves(&self, lis: &[usize]) {
+        let mut missing: Vec<usize> = lis
+            .iter()
+            .copied()
+            .filter(|&li| li < self.cells.len() && self.cells[li].get().is_none())
+            .collect();
+        missing.sort_unstable();
+        missing.dedup();
+        if missing.is_empty() {
+            return;
+        }
+        let ranges: Vec<(u64, u64)> = missing.iter().map(|&li| self.leaves[li].leaf).collect();
+        match (self.fetch)(&ranges) {
+            Some(blobs) if blobs.len() == missing.len() => {
+                for (&li, b) in missing.iter().zip(blobs) {
+                    match self.decode_leaf(li, &b) {
+                        Some(v) => {
+                            let _ = self.cells[li].set(v);
+                        }
+                        None => self.failed.store(true, Ordering::Relaxed),
+                    }
+                }
+            }
+            _ => self.failed.store(true, Ordering::Relaxed),
+        }
+    }
+
+    /// The leaves holding chunks `cis`.
+    pub fn leaves_of(&self, cis: &[usize]) -> Vec<usize> {
+        let mut v: Vec<usize> = cis
+            .iter()
+            .filter(|&&ci| ci < self.total)
+            .map(|&ci| self.leaf_of(ci))
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    fn entry(&self, ci: usize) -> Option<&(SectionChunk, u64, u64)> {
+        if ci >= self.total {
+            return None;
+        }
+        let li = self.leaf_of(ci);
+        if self.cells[li].get().is_none() {
+            self.ensure_leaves(&[li]);
+        }
+        self.cells[li].get()?.get(ci - self.leaves[li].first)
+    }
+
+    /// Chunk `ci`'s absolute stored range, faulting its leaf.
+    pub fn range(&self, ci: usize) -> Option<(u64, u64)> {
+        self.entry(ci).map(|(_, off, len)| (*off, *len))
+    }
+
+    /// The leaf whose runs hold `run`, by first run.
+    pub fn leaf_of_run(&self, run: usize) -> Option<usize> {
+        self.leaves
+            .partition_point(|l| l.first_run <= run)
+            .checked_sub(1)
+    }
+
+    /// The leaf whose keys route `term`, by first key.
+    pub fn leaf_of_term(&self, term: &[u8]) -> Option<usize> {
+        self.leaves
+            .partition_point(|l| l.key.as_slice() <= term)
+            .checked_sub(1)
+    }
+
+    /// Did a leaf fault fail?
+    pub fn load_failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.cells
+            .iter()
+            .filter_map(|c| c.get())
+            .flat_map(|v| v.iter())
+            .map(|(c, _, _)| (std::mem::size_of::<SectionChunk>() + 16 + c.key.capacity()) as u64)
+            .sum::<u64>()
+            + self
+                .leaves
+                .iter()
+                .map(|l| (std::mem::size_of::<ChunkLeaf>() + l.key.capacity()) as u64)
+                .sum::<u64>()
+    }
+}
+
+/// A dictionary section's chunk directory: resident in full (`0x05`), or two
+/// levels with leaves faulted on demand (`0x06`).
+pub enum ChunkDir {
+    /// Every chunk descriptor resident.
+    Full(Vec<SectionChunk>),
+    /// Root resident, leaves on demand.
+    Leafed(Arc<LeafedChunks>),
+}
+
+impl ChunkDir {
+    /// Number of chunks.
+    pub fn len(&self) -> usize {
+        match self {
+            ChunkDir::Full(v) => v.len(),
+            ChunkDir::Leafed(l) => l.total,
+        }
+    }
+
+    /// No chunks?
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Chunk `ci`'s descriptor (faulting its leaf).
+    pub fn get(&self, ci: usize) -> Option<&SectionChunk> {
+        match self {
+            ChunkDir::Full(v) => v.get(ci),
+            ChunkDir::Leafed(l) => l.entry(ci).map(|(c, _, _)| c),
+        }
+    }
+
+    /// First run of chunk `ci + 1`, from the next leaf's root entry when `ci`
+    /// is a leaf's last chunk (no fault).
+    fn next_first_run(&self, ci: usize) -> Option<usize> {
+        match self {
+            ChunkDir::Full(v) => v.get(ci + 1).map(|c| c.first_run),
+            ChunkDir::Leafed(l) => {
+                if ci + 1 >= l.total {
+                    return None;
+                }
+                let li = l.leaf_of(ci + 1);
+                if l.leaves[li].first == ci + 1 {
+                    Some(l.leaves[li].first_run)
+                } else {
+                    l.entry(ci + 1).map(|(c, _, _)| c.first_run)
+                }
+            }
+        }
+    }
+
+    /// The chunk holding `run`.
+    fn chunk_of_run(&self, run: usize) -> Option<usize> {
+        match self {
+            ChunkDir::Full(v) => v.partition_point(|c| c.first_run <= run).checked_sub(1),
+            ChunkDir::Leafed(l) => {
+                let li = l.leaf_of_run(run)?;
+                l.ensure_leaves(&[li]);
+                let cell = l.cells[li].get()?;
+                let j = cell.partition_point(|(c, _, _)| c.first_run <= run);
+                Some(l.leaves[li].first + j.checked_sub(1)?)
+            }
+        }
+    }
+
+    /// The chunk whose routing key range holds `term`.
+    fn chunk_for_term(&self, term: &[u8]) -> Option<usize> {
+        match self {
+            ChunkDir::Full(v) => match v.len() {
+                0 => None,
+                1 => Some(0),
+                _ => v
+                    .partition_point(|c| c.key.as_slice() <= term)
+                    .checked_sub(1),
+            },
+            ChunkDir::Leafed(l) => {
+                if l.total == 0 {
+                    return None;
+                }
+                let li = l.leaf_of_term(term)?;
+                l.ensure_leaves(&[li]);
+                let cell = l.cells[li].get()?;
+                let j = cell.partition_point(|(c, _, _)| c.key.as_slice() <= term);
+                // The leaf's first key routed here, so its first chunk is a
+                // candidate even when its own (equal) key compares <=.
+                Some(l.leaves[li].first + j.saturating_sub(1))
+            }
+        }
+    }
+
+    fn load_failed(&self) -> bool {
+        matches!(self, ChunkDir::Leafed(l) if l.load_failed())
+    }
+
+    fn directory_bytes(&self) -> u64 {
+        match self {
+            ChunkDir::Full(v) => {
+                v.len() as u64 * std::mem::size_of::<SectionChunk>() as u64
+                    + v.iter().map(|c| c.key.capacity() as u64).sum::<u64>()
+            }
+            ChunkDir::Leafed(l) => l.resident_bytes(),
+        }
+    }
+}
+
 /// A dictionary section whose body is served chunk-by-chunk: metadata + chunk
 /// directory always present, chunk bytes local or faulted in on first touch.
 pub struct ChunkedSection {
     meta: SectionMeta,
-    chunks: Vec<SectionChunk>,
+    chunks: ChunkDir,
     loader: Option<ChunkLoader>,
     bulk: Option<ChunkBulkLoader>,
     failed: AtomicBool,
@@ -441,7 +716,16 @@ pub struct ChunkedSection {
     /// This section's discriminant in the shared cache's key space (0 shared,
     /// 1 subject-only, 2 object-only, 3 predicates).
     section_index: u8,
+    /// Read-ahead on sequential faults: the chunk whose miss would continue
+    /// the current run of misses, plus one (0 = none) ...
+    ra_next: AtomicU64,
+    /// ... and the window the next sequential miss fetches (doubling up to
+    /// [`READAHEAD_MAX_CHUNKS`]; back to 1 on a non-sequential miss).
+    ra_window: AtomicU32,
 }
+
+/// The most chunks one sequential read-ahead fetches (16 × ~64 KiB ≈ 1 MiB).
+pub const READAHEAD_MAX_CHUNKS: u32 = 16;
 
 impl ChunkedSection {
     /// A local section: the whole serialized section (header + body) as one
@@ -459,10 +743,12 @@ impl ChunkedSection {
         cache.insert((section_index, 0), Arc::from(section_bytes));
         ChunkedSection {
             meta,
-            chunks: vec![SectionChunk::new(0, Vec::new(), 0)],
+            chunks: ChunkDir::Full(vec![SectionChunk::new(0, Vec::new(), 0)]),
             loader: None,
             bulk: None,
             failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -481,10 +767,12 @@ impl ChunkedSection {
     ) -> Self {
         ChunkedSection {
             meta,
-            chunks,
+            chunks: ChunkDir::Full(chunks),
             loader,
             bulk: None,
             failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -509,13 +797,42 @@ impl ChunkedSection {
             .collect();
         ChunkedSection {
             meta,
-            chunks: descriptors,
+            chunks: ChunkDir::Full(descriptors),
             loader: None,
             bulk: None,
             failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
+    }
+
+    /// A `0x06` section: its chunk directory two-level (leaves faulted on
+    /// demand), chunk bodies faulted through `loader`.
+    pub fn leafed(
+        meta: SectionMeta,
+        dir: Arc<LeafedChunks>,
+        loader: ChunkLoader,
+        cache: Arc<ChunkCache>,
+        section_index: u8,
+    ) -> Self {
+        ChunkedSection {
+            meta,
+            chunks: ChunkDir::Leafed(dir),
+            loader: Some(loader),
+            bulk: None,
+            failed: AtomicBool::new(false),
+            ra_next: AtomicU64::new(0),
+            ra_window: AtomicU32::new(1),
+            cache,
+            section_index,
+        }
+    }
+
+    /// The chunk directory.
+    pub fn chunk_dir(&self) -> &ChunkDir {
+        &self.chunks
     }
 
     /// Attach a batched chunk fetcher (see [`ChunkBulkLoader`]): full-section
@@ -606,18 +923,18 @@ impl ChunkedSection {
     /// never with what a dump touches.
     pub fn directory_bytes(&self) -> u64 {
         let n = self.chunks.len() as u64;
-        let keys: u64 = self.chunks.iter().map(|c| c.key.capacity() as u64).sum();
-        let ranges = if self.loader.is_some() { 16 * n } else { 0 };
-        n * std::mem::size_of::<SectionChunk>() as u64
-            + keys
-            + ranges
-            + self.meta.restart_offsets.capacity() as u64 * 8
+        let ranges = if self.loader.is_some() && matches!(self.chunks, ChunkDir::Full(_)) {
+            16 * n
+        } else {
+            0
+        };
+        self.chunks.directory_bytes() + ranges + self.meta.restart_offsets.capacity() as u64 * 8
     }
 
     /// Did any chunk fetch fail since this section was opened — or since the
     /// last [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {
-        self.failed.load(Ordering::Relaxed)
+        self.failed.load(Ordering::Relaxed) || self.chunks.load_failed()
     }
 
     /// Forget recorded fetch failures (see `GraphIndex::reset_load_failure` —
@@ -643,13 +960,36 @@ impl ChunkedSection {
             return Some(e);
         }
         match &self.loader {
-            Some(load) => match load(ci) {
-                Some(bytes) => Some(self.cache.insert(key, Arc::from(bytes))),
-                None => {
-                    self.failed.store(true, Ordering::Relaxed);
-                    None
+            Some(load) => {
+                // Sequential misses (a walk over ascending ids or terms) read
+                // ahead: the second miss in a row fetches 2 chunks in one
+                // batch, then 4, 8, … up to READAHEAD_MAX_CHUNKS; any other
+                // miss resets the window. Scattered lookups pay nothing extra.
+                if self.bulk.is_some() {
+                    let seq = self.ra_next.load(Ordering::Relaxed) == ci as u64 + 1;
+                    let w = if seq {
+                        (self.ra_window.load(Ordering::Relaxed) * 2).min(READAHEAD_MAX_CHUNKS)
+                    } else {
+                        1
+                    };
+                    self.ra_window.store(w, Ordering::Relaxed);
+                    let end = (ci + w as usize).min(self.chunks.len());
+                    self.ra_next.store(end as u64 + 1, Ordering::Relaxed);
+                    if end > ci + 1 {
+                        self.prefetch_chunks(&(ci..end).collect::<Vec<_>>());
+                        if let Some(e) = self.cache.get(key) {
+                            return Some(e);
+                        }
+                    }
                 }
-            },
+                match load(ci) {
+                    Some(bytes) => Some(self.cache.insert(key, Arc::from(bytes))),
+                    None => {
+                        self.failed.store(true, Ordering::Relaxed);
+                        None
+                    }
+                }
+            }
             None => Some(self.cache.insert(key, Arc::from(Vec::new()))),
         }
     }
@@ -657,8 +997,7 @@ impl ChunkedSection {
     /// The chunk holding `run` (chunks ascend by `first_run`; the first chunk
     /// always starts at run 0).
     fn chunk_of_run(&self, run: usize) -> Option<usize> {
-        let i = self.chunks.partition_point(|c| c.first_run <= run);
-        i.checked_sub(1)
+        self.chunks.chunk_of_run(run)
     }
 
     /// The chunk index holding term `id` (1-based, section-local), or `None` if
@@ -684,7 +1023,7 @@ impl ChunkedSection {
         entry: &CacheEntry,
         ri: usize,
     ) -> Option<usize> {
-        let chunk = &self.chunks[ci];
+        let chunk = self.chunks.get(ci)?;
         if self.meta.restart_offsets.is_empty() {
             entry
                 .runs(|b| chunk_run_offsets(b, ri))
@@ -702,12 +1041,12 @@ impl ChunkedSection {
     /// One past the last run index held by chunk `ci` (its run range is
     /// `[first_run, run_end)`).
     fn run_end_of_chunk(&self, ci: usize, entry: &CacheEntry, ri: usize) -> usize {
-        if let Some(next) = self.chunks.get(ci + 1) {
-            return next.first_run;
+        if let Some(next) = self.chunks.next_first_run(ci) {
+            return next;
         }
-        let chunk = &self.chunks[ci];
+        let first_run = self.chunks.get(ci).map_or(0, |c| c.first_run);
         if self.meta.restart_offsets.is_empty() {
-            chunk.first_run + entry.runs(|b| chunk_run_offsets(b, ri)).len()
+            first_run + entry.runs(|b| chunk_run_offsets(b, ri)).len()
         } else {
             self.meta.restart_offsets.len()
         }
@@ -985,14 +1324,7 @@ impl ChunkedSection {
     /// on the (resident) chunk directory, without touching a chunk body. `None`
     /// for an empty section, or a term that sorts before the first chunk.
     pub(crate) fn chunk_for_term(&self, term: &str) -> Option<usize> {
-        match self.chunks.len() {
-            0 => None,
-            1 => Some(0),
-            _ => self
-                .chunks
-                .partition_point(|c| c.key.as_slice() <= term.as_bytes())
-                .checked_sub(1),
-        }
+        self.chunks.chunk_for_term(term.as_bytes())
     }
 
     /// How many terms of this section sort (bytewise) before `bound`: the
@@ -1011,9 +1343,9 @@ impl ChunkedSection {
         };
         // Ids of chunk `ci`: its first run's first id up to the id before the
         // next chunk's first run (or the last id).
-        let first = (self.chunks[ci].first_run.checked_mul(ri)? as u64 + 1).min(tc as u64 + 1);
-        let last = match self.chunks.get(ci + 1) {
-            Some(next) => (next.first_run.checked_mul(ri)? as u64).min(tc as u64),
+        let first = (self.chunks.get(ci)?.first_run.checked_mul(ri)? as u64 + 1).min(tc as u64 + 1);
+        let last = match self.chunks.next_first_run(ci) {
+            Some(next) => (next.checked_mul(ri)? as u64).min(tc as u64),
             None => tc as u64,
         };
         // The first id in [first, last] whose term is >= bound (last + 1 if none).
@@ -1060,7 +1392,7 @@ impl ChunkedSection {
         // `lo == first_run` branch and answers `None`, which is correct — such
         // a term is strictly between two chunks, i.e. absent.
         let ci = self.chunk_for_term(term)?;
-        let first_run = self.chunks[ci].first_run;
+        let first_run = self.chunks.get(ci)?.first_run;
         let entry = self.chunk_entry(ci)?;
         let bytes: &[u8] = entry.body();
 
@@ -1114,7 +1446,7 @@ impl ChunkedSection {
     /// local single-chunk case returns the stored bytes; a chunked section
     /// re-assembles them (header re-encoded from the metadata).
     pub fn raw_section_bytes(&self) -> Vec<u8> {
-        if self.chunks.len() == 1 && self.chunks[0].body_start == 0 {
+        if self.chunks.len() == 1 && self.chunks.get(0).is_some_and(|c| c.body_start == 0) {
             if let Some(entry) = self.cache.get((self.section_index, 0)) {
                 return entry.body().to_vec();
             }

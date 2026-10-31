@@ -265,8 +265,8 @@ missing key. In the JSON-LD projection it is `rete:quotedTriples`, with
 when there is a choice to make.
 
 **Measured, never stored**, for the same reasons as the two signals above — and
-one that matters more here than anywhere else: header flag bit 2
-(`FLAG_HAS_QUOTED_TRIPLES`, [SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)) has been
+one that matters more here than anywhere else: the header's quoted-triples flag
+(bit 1 in format `0x06`, bit 2 in `0x05`, [SPEC §4.1](SPEC.md#41-header-128-bytes-little-endian)) has been
 written by every build since quoted triples were supported, so this is an honest
 answer for **every file that already exists**. The 44 published scholar datasets
 report it today, with no re-card and no rebuild. A stored field would have read
@@ -821,9 +821,10 @@ feeds), `parse+chunk`, `frequent_objects` (its `--frequent-objects` pass,
 0.4.2), `dictionary`, `encode` and `named_graphs` (the memory-bounded build
 and `merge`), `card_derive`, `pyramid`, `text_index`,
 `labels+schema`, `dictionary_section`, `index_permutations`, `serialize`,
-`starter_queries`, `write` and `content_hash` (the read of every hashed section
-that places a card after the data needs: the memory-bounded build, `merge` and
-`recard --in-place`). In the memory-bounded build the SCHEMA pass is
+`starter_queries`, `write` and `content_hash` (in `0x05`, the read of every
+hashed section that placing a card after the data needs: the memory-bounded
+build, `merge` and `recard --in-place`; in `0x06`, the write of the card
+region). In the memory-bounded build the SCHEMA pass is
 fed from the remap and permutation merges, so part of its cost sits in
 `encode` and `index_permutations`; `labels+schema` is only its finish.
 
@@ -872,11 +873,13 @@ trailing whitespace, and every reader of the section (serde, `JSON.parse`,
 Python's `json`) accepts it. Nothing else in the file moves; the wall time and
 peak RSS cover the final write. The padding is a few hundred bytes.
 
-The memory-bounded build reserves nothing, and neither does `rete merge`: the
-card and record are written
-together **after the data**, once everything they describe is on disk, and the
-record is sealed just before that write — its run covers every phase, the
-content hash included, but not the last few KB written.
+The memory-bounded build and `rete merge` write the card and the record once
+everything they describe is on disk: into the card region of the `0x06` file,
+with the record reserved at its widest form (every starter-query cost at
+`u64::MAX`), then the costs are measured again on the file as written and the
+sealed record patched into its reservation. In `0x06` a starter query's bytes
+depend on the layout, card region included, since the open reads the first
+64 KiB.
 
 ### Reproducible records
 
@@ -1386,7 +1389,8 @@ section copied byte for byte, the offsets fixed, the content hash recomputed.
 Nothing is rebuilt, so nothing about the data can change, and the proof of that
 is byte identity of every data section (`card_tools.py sections-equal`), not a
 comparison of N-Quads exports. **`--in-place`** does the same without the copy:
-the new card and build record are appended after the data and the header is
+on a `0x06` file the new card and build record go into the card region's free
+space beside the old ones (on `0x05`, after the data) and the header is
 rewritten last, so a crash leaves either the old file or the new one, and the
 only writes are a few KB ([cli.md](cli.md#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)).
 
@@ -1394,7 +1398,7 @@ only writes are a few KB ([cli.md](cli.md#rete-recard-file--o-outrete----in-plac
 |---|---|---|
 | only the build record is missing; the queries answer | `rete card-audit <file> --measure --write-costs` | none from the rewrite — but an old card's *queries* need the RAM (below) |
 | the card is stale or its queries are broken | `rete recard <in> -o <out> --keep-curated` (or `--card-file <curated>`) | **none from the statement count**: memory is ~1 B per subject + `--memory-budget-mb` (1 GiB) |
-| same, on a file too big to copy | `rete recard <file> --in-place --keep-curated` | the same memory; disk: a few KB, plus the old card left behind as dead bytes |
+| same, on a file too big to copy | `rete recard <file> --in-place --keep-curated` | the same memory; disk: a few KB (on `0x05`, plus the old card left behind as dead bytes) |
 | the card *and* the pyramid or text index must change | `rete repyramid <in> -o <out> --card --card-file <curated>` | **~80 M statements** (~70–100 M; ≈ 2 GB of a typically dense `.rete`) |
 | same, but past that | `rete export <in> --format nq` → `rete build … --card-file <curated>` | **~150 M statements**, at ~2.5× the wall clock and 9–15× the `.rete` in staged text on disk |
 

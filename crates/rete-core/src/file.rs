@@ -541,6 +541,112 @@ pub(crate) fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> 
     }
 }
 
+/// The `Frame_Content_Size` a zstd frame header declares (RFC 8878 §3.1.1.1),
+/// or `None` when the frame does not state it (or `bytes` is not a zstd
+/// frame). Reads the header only.
+pub(crate) fn zstd_frame_content_size(b: &[u8]) -> Option<u64> {
+    if b.len() < 5 || b[..4] != [0x28, 0xB5, 0x2F, 0xFD] {
+        return None;
+    }
+    let fhd = b[4];
+    let fcs_flag = fhd >> 6;
+    let single_segment = fhd & 0x20 != 0;
+    let did_size = [0usize, 1, 2, 4][(fhd & 0x03) as usize];
+    let mut pos = 5 + usize::from(!single_segment) + did_size;
+    let fcs_size = match (fcs_flag, single_segment) {
+        (0, false) => return None,
+        (0, true) => 1,
+        (1, _) => 2,
+        (2, _) => 4,
+        _ => 8,
+    };
+    let f = b.get(pos..pos + fcs_size)?;
+    pos += fcs_size;
+    let _ = pos;
+    let mut v = 0u64;
+    for (i, x) in f.iter().enumerate() {
+        v |= (*x as u64) << (8 * i);
+    }
+    Some(if fcs_size == 2 { v + 256 } else { v })
+}
+
+/// [`decompress`] with the output bounded by `max` bytes: a frame whose header
+/// declares more is refused before any decoding, and a frame that does not
+/// declare its size is decoded at most `max + 1` bytes far and refused past
+/// `max`. Format `0x06` records each section's largest block, so a corrupt or
+/// hostile frame cannot make a reader allocate more than the writer did.
+pub(crate) fn decompress_bounded(codec: u8, bytes: &[u8], max: u64) -> Result<Vec<u8>, FileError> {
+    let too_big = |n: u64| {
+        FileError::Decompress(std::io::Error::other(format!(
+            "a block of {n} bytes exceeds its section's {max}-byte maximum"
+        )))
+    };
+    match codec {
+        CODEC_NONE => {
+            if bytes.len() as u64 > max {
+                return Err(too_big(bytes.len() as u64));
+            }
+            Ok(bytes.to_vec())
+        }
+        CODEC_ZSTD => {
+            let declared = zstd_frame_content_size(bytes);
+            if let Some(n) = declared.filter(|&n| n > max) {
+                return Err(too_big(n));
+            }
+            #[cfg(feature = "compression")]
+            {
+                if let Some(n) = declared {
+                    // One-shot into exactly the declared size: a frame that
+                    // lies about it fails here instead of growing the buffer.
+                    return zstd::bulk::decompress(bytes, n as usize)
+                        .map_err(FileError::Decompress);
+                }
+                use std::io::Read;
+                let mut out = Vec::new();
+                let mut dec = zstd::stream::read::Decoder::with_buffer(bytes)
+                    .map_err(FileError::Decompress)?;
+                dec.window_log_max(27).map_err(FileError::Decompress)?;
+                dec.take(max.saturating_add(1))
+                    .read_to_end(&mut out)
+                    .map_err(FileError::Decompress)?;
+                if out.len() as u64 > max {
+                    return Err(too_big(out.len() as u64));
+                }
+                Ok(out)
+            }
+            #[cfg(not(feature = "compression"))]
+            {
+                use std::io::Read;
+                let dec = ruzstd::decoding::StreamingDecoder::new(bytes)
+                    .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
+                let mut out = Vec::new();
+                dec.take(max.saturating_add(1))
+                    .read_to_end(&mut out)
+                    .map_err(FileError::Decompress)?;
+                if out.len() as u64 > max {
+                    return Err(too_big(out.len() as u64));
+                }
+                Ok(out)
+            }
+        }
+        other => Err(FileError::UnknownCodec(other)),
+    }
+}
+
+/// The decompressed length of one stored block — from its frame header when
+/// it states it, else by decoding it (bounded by `ceiling`). What the `0x06`
+/// writer records as a section's largest block.
+pub(crate) fn block_raw_len(codec: u8, bytes: &[u8], ceiling: u64) -> Result<u64, FileError> {
+    match codec {
+        CODEC_NONE => Ok(bytes.len() as u64),
+        CODEC_ZSTD => match zstd_frame_content_size(bytes) {
+            Some(n) => Ok(n),
+            None => Ok(decompress_bounded(codec, bytes, ceiling)?.len() as u64),
+        },
+        other => Err(FileError::UnknownCodec(other)),
+    }
+}
+
 /// Bytes this close are cheaper fetched as one read than as two round trips:
 /// tiles are laid back-to-back so this only ever bridges a tile already made
 /// resident by an earlier window — keep it tight to avoid re-fetching it.
@@ -688,7 +794,7 @@ fn fmt_cap(cap: u64) -> String {
 /// [`RangeReader::read_many`] (which a parallelizable reader issues
 /// concurrently). Returns each requested range's bytes in order; `None` if any
 /// read fails.
-fn read_coalesced<R: RangeReader + ?Sized>(
+pub(crate) fn read_coalesced<R: RangeReader + ?Sized>(
     reader: &R,
     ranges: &[ByteRange],
     gap: u64,
@@ -778,7 +884,7 @@ pub struct LayoutSegment {
 }
 
 /// A byte range in the `.rete` file image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ByteRange {
     pub offset: u64,
     pub len: u64,
@@ -972,12 +1078,12 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
 /// A parsed chunked-dict-section directory entry: the chunk's run/key/body
 /// coordinates plus its compressed byte range *within the payload*. `key` is a
 /// routing separator, not a term — see [`crate::dict::SectionChunk::key`].
-struct DictChunkEntry {
-    first_run: usize,
-    key: Vec<u8>,
+pub(crate) struct DictChunkEntry {
+    pub(crate) first_run: usize,
+    pub(crate) key: Vec<u8>,
     body_start: u64,
-    start: u64,
-    end: u64,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
 }
 
 /// Parse a chunked dictionary section's header + directory (not the chunks).
@@ -1055,7 +1161,7 @@ fn parse_chunked_dict_dir(
 /// restart-table bytes entirely; per-run offsets are derived per chunk on fault
 /// (`SectionChunk::run_offsets`). The returned meta has an empty
 /// `restart_offsets`, which the chunked lookups read as "derive per chunk".
-fn read_dict_dir_ranged<R: RangeReader>(
+pub(crate) fn read_dict_dir_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     section: ByteRange,
 ) -> Result<(crate::dict::SectionMeta, Vec<DictChunkEntry>), FileError> {
@@ -1362,11 +1468,11 @@ fn encode_tiled_section(index: &GraphIndex, si: usize, codec: u8) -> Vec<u8> {
 
 /// A parsed v0.2 tile-directory entry: leading-id range plus the tile's byte
 /// range *within the section payload*.
-struct TileDirEntry {
-    min_a: u32,
-    max_a: u32,
-    start: u64,
-    end: u64,
+pub(crate) struct TileDirEntry {
+    pub(crate) min_a: u32,
+    pub(crate) max_a: u32,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
 }
 
 /// One tile's synopsis: inclusive min/max of the two non-leading columns.
@@ -1447,7 +1553,7 @@ fn parse_tile_directory(bytes: &[u8], total_len: u64) -> Result<Vec<TileDirEntry
 /// Fetch and parse a remote tiled section's directory: read a small prefix and
 /// grow it geometrically until the directory parses, never fetching past the
 /// section. A directory that still fails on the whole section is corrupt.
-fn read_tile_directory_ranged<R: RangeReader>(
+pub(crate) fn read_tile_directory_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     section: ByteRange,
 ) -> Result<Vec<TileDirEntry>, FileError> {
@@ -1469,7 +1575,7 @@ fn read_tile_directory_ranged<R: RangeReader>(
 /// missing/short/garbled trailer degrades to all-`None` — pruning simply doesn't
 /// fire, never a wrong result. The directory gives the trailer's start (the last
 /// tile's end).
-fn read_tile_synopsis_ranged<R: RangeReader>(
+pub(crate) fn read_tile_synopsis_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     section: ByteRange,
     dir: &[TileDirEntry],
@@ -1710,7 +1816,7 @@ fn read_uvarint_at<R: RangeReader + ?Sized>(
 
 /// Locate one section's payload byte range inside a remote container, walking
 /// only the (tiny) varint framing â€” no payload bytes are fetched.
-fn locate_container_section_ranged<R: RangeReader + ?Sized>(
+pub(crate) fn locate_container_section_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     container_offset: u64,
     container_len: u64,
@@ -2143,7 +2249,7 @@ pub(crate) fn write_dataset_from_parts(
     // index container carries its digest, so the content hash covers it — and a
     // reader that predates it computes the same hash over the same parts.
     let header = Header {
-        version: crate::header::CURRENT_FORMAT_VERSION,
+        version: crate::header::LEGACY_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
             | if has_quads { FLAG_HAS_QUADS } else { 0 }
             | if quad.is_some() {
@@ -2301,6 +2407,10 @@ pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
 /// keep the query path minimal); this is the explicit "I want the card" path.
 pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>>, FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
+    if crate::v06::open::is_v06(&head) {
+        let h = crate::v06::Header06::from_bytes(&head)?;
+        return Ok(crate::v06::open::read_card_build(reader, &h)?.0);
+    }
     let header = Header::from_bytes(&head)?;
     if header.metadata_len == 0 {
         return Ok(None);
@@ -2341,6 +2451,11 @@ pub fn read_card_and_build_info_with_header<R: RangeReader>(
 ) -> Result<(Header, Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
+    if header.version == crate::v06::VERSION {
+        let h = crate::v06::Header06::from_bytes(&head)?;
+        let (card, build) = crate::v06::open::read_card_build(reader, &h)?;
+        return Ok((header, card, build));
+    }
     let meta = (header.metadata_offset, header.metadata_len);
     let build = (header.build_info_offset, header.build_info_len);
     if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
@@ -2363,6 +2478,11 @@ pub fn read_card_and_build_info_with_header<R: RangeReader>(
 /// JSON there); it is **not** covered by the content hash — see
 /// [`attach_build_info`].
 pub fn read_build_info(bytes: &[u8]) -> Result<Option<Vec<u8>>, FileError> {
+    if crate::v06::open::is_v06(bytes) {
+        let h = crate::v06::Header06::from_bytes(bytes)?;
+        let r = crate::reader::SliceReader::new(bytes);
+        return Ok(crate::v06::open::read_card_build(&r, &h)?.1);
+    }
     let header = Header::from_bytes(bytes)?;
     if header.build_info_len == 0 {
         return Ok(None);
@@ -2489,6 +2609,17 @@ pub fn plan_build_info(
 /// Passing an empty `info` removes an existing section (or returns the image
 /// unchanged when there is none).
 pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError> {
+    if crate::v06::open::is_v06(image) {
+        // 0x06: the record lives in the card region; the card stays.
+        let h = crate::v06::Header06::from_bytes(image)?;
+        let (card, _) =
+            crate::v06::open::read_card_build(&crate::reader::SliceReader::new(image), &h)?;
+        return crate::v06::write::replace_card(
+            image,
+            card.as_deref(),
+            (!info.is_empty()).then_some(info),
+        );
+    }
     let plan = plan_build_info(image, image.len() as u64, info.len() as u64)?;
     let mut out = Vec::with_capacity(plan.new_len as usize);
     out.extend_from_slice(&plan.header);
@@ -2519,6 +2650,17 @@ pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError
 ///
 /// Passing an empty payload removes the section.
 pub fn replace_metadata(image: &[u8], metadata: &[u8]) -> Result<Vec<u8>, FileError> {
+    if crate::v06::open::is_v06(image) {
+        // 0x06: the card region is rewritten; every section is kept.
+        let h = crate::v06::Header06::from_bytes(image)?;
+        let (_, build) =
+            crate::v06::open::read_card_build(&crate::reader::SliceReader::new(image), &h)?;
+        return crate::v06::write::replace_card(
+            image,
+            (!metadata.is_empty()).then_some(metadata),
+            build.as_deref(),
+        );
+    }
     let mut header = Header::from_bytes(image)?;
     // The writers in this crate always place metadata (when present) at
     // HEADER_LEN; anything else is a file this function must not reshape.
@@ -2625,6 +2767,64 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
     parts
 }
 
+/// `verify` for a `0x06` file over any reader: what failed (empty = all good).
+/// `only` restricts the section checks to one kind (`verify --section`).
+pub fn verify_ranged_v06(
+    reader: &dyn crate::reader::RangeReader,
+    head: &[u8],
+    only: Option<u8>,
+) -> Result<Vec<String>, FileError> {
+    const SLICE: u64 = 8 << 20;
+    let h = crate::v06::Header06::from_bytes(head)?;
+    if h.file_len != reader.len() {
+        return Ok(vec!["file length".to_string()]);
+    }
+    let mut bad = Vec::new();
+    let root_bytes = reader.read_at(crate::v06::HEADER_LEN as u64, h.root_len as u64)?;
+    if crate::v06::digest16(&root_bytes) != h.root_digest {
+        bad.push("root".to_string());
+        return Ok(bad);
+    }
+    let root = crate::v06::Root06::decode(&root_bytes, h.internal_codec)?;
+    if crate::v06::content_hash(&h) != h.content_hash {
+        bad.push("content hash".to_string());
+    }
+    let card = h.card_range();
+    if only.is_none() && card.len > 0 {
+        let stored = reader.read_at(card.offset, card.len)?;
+        if crate::v06::digest16(&stored) != h.card_digest {
+            bad.push("card".to_string());
+        }
+    }
+    for s in &root.sections {
+        if only.is_some_and(|k| k != s.kind) {
+            continue;
+        }
+        let a = s.abs(&h);
+        if a.offset.checked_add(a.len).is_none_or(|e| e > h.file_len) {
+            bad.push(crate::v06::kind::name(s.kind).to_string());
+            continue;
+        }
+        let mut hs = blake3::Hasher::new();
+        let mut at = a.offset;
+        while at < a.offset + a.len {
+            let n = (a.offset + a.len - at).min(SLICE);
+            hs.update(&reader.read_at(at, n)?);
+            at += n;
+        }
+        if hs.finalize().as_bytes()[..16] != s.digest {
+            bad.push(crate::v06::kind::name(s.kind).to_string());
+        }
+    }
+    if only.is_none() {
+        let n = crate::v06::FOOTER.len() as u64;
+        if reader.read_at(h.file_len - n, n)? != crate::v06::FOOTER {
+            bad.push("footer".to_string());
+        }
+    }
+    Ok(bad)
+}
+
 /// Recompute the content hash from a file image and check it against the header
 /// — detects corruption or truncation of the payload sections. The
 /// LABEL_INDEX, SCHEMA and predicate-restricted TEXT_INDEX sections (kinds 8,
@@ -2633,6 +2833,11 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
 /// digest instead. The QUAD_INDEX section (kind 10) is hashed by reference: its
 /// digest is the seal inside the (hashed) index container, checked here.
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
+    if crate::v06::open::is_v06(bytes) {
+        let r: std::sync::Arc<dyn RangeReader + Send + Sync> =
+            std::sync::Arc::new(crate::reader::BytesReader(std::sync::Arc::from(bytes)));
+        return crate::v06::open::V06File::open(r, bytes)?.verify(None);
+    }
     let header = Header::from_bytes(bytes)?;
     if hash_of_sections(&header, bytes)? != header.content_hash {
         return Ok(false);
@@ -2838,7 +3043,11 @@ pub fn verify_ranged(reader: &dyn crate::reader::RangeReader) -> Result<bool, Fi
     if len < HEADER_LEN as u64 {
         return Err(FileError::Container("file shorter than its header"));
     }
-    let header = Header::from_bytes(&reader.read_at(0, HEADER_LEN as u64)?)?;
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    if crate::v06::open::is_v06(&head) {
+        return verify_ranged_v06(reader, &head, None).map(|bad| bad.is_empty());
+    }
+    let header = Header::from_bytes(&head)?;
     let mut h = blake3::Hasher::new();
     for (off, n) in content_hash_parts(&header) {
         // Offsets come straight from the header: reject an overrun (or an
@@ -3035,6 +3244,10 @@ fn read_schema_with_header<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<crate::schema_section::SchemaMeta> {
+    if header.version == crate::v06::VERSION {
+        let b = crate::v06::open::read_schema_bytes(reader).ok()??;
+        return crate::schema_section::SchemaMeta::decode(&b).ok();
+    }
     let s = header.schema_section()?;
     let bytes = reader.read_at(s.offset, s.length).ok()?;
     crate::schema_section::SchemaMeta::decode(&bytes).ok()
@@ -3132,6 +3345,9 @@ pub fn read_text_index_token_table_len_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<u64> {
+    if header.version == crate::v06::VERSION {
+        return crate::v06::open::read_token_table_bytes(reader);
+    }
     let (ti_off, ti_len) = header.text_index_payload();
     if ti_len == 0 {
         return None;
@@ -3791,12 +4007,31 @@ pub struct Rete {
     /// Bytes a query's `COUNT(DISTINCT …)` set may hold before it spills to
     /// disk — see [`Rete::spill_threshold`].
     spill_threshold: std::sync::atomic::AtomicU64,
+    /// The open `0x06` file (header, root, reader), for a `0x06` open.
+    v06: Option<std::sync::Arc<crate::v06::open::V06File>>,
 }
 
 impl Rete {
     /// Parse a full file image (v0 loads everything; a range-reading client
     /// will fetch only the sections it needs â€” same container format).
     pub fn open(bytes: &[u8]) -> Result<Self, FileError> {
+        #[cfg(feature = "v06-parity")]
+        if let Some(v6) = parity_image(bytes) {
+            return Self::open(&v6);
+        }
+        if crate::v06::open::is_v06(bytes) {
+            // A 0x06 image opens through the lazy machinery over the bytes in
+            // memory: the same structures, faulted from RAM.
+            let r: std::sync::Arc<dyn RangeReader + Send + Sync> =
+                std::sync::Arc::new(crate::reader::BytesReader(std::sync::Arc::from(bytes)));
+            let mut rete = Self::open_v06(r, bytes, false)?;
+            rete.metadata = rete
+                .v06
+                .as_ref()
+                .and_then(|f| f.card().ok().flatten())
+                .unwrap_or_default();
+            return Ok(rete);
+        }
         let header = Header::from_bytes(bytes)?;
 
         // Header offsets/lengths are untrusted (a `.rete` may be fetched truncated
@@ -3884,6 +4119,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: None,
         })
     }
 
@@ -3923,6 +4159,9 @@ impl Rete {
     /// covered by any segment are container framing (section directories and
     /// length fields).
     pub fn file_layout(&self) -> Vec<LayoutSegment> {
+        if let Some(f) = &self.v06 {
+            return v06_layout(f);
+        }
         let h = &self.header;
         let seg = |kind: &'static str, label: String, offset: u64, len: u64| LayoutSegment {
             kind,
@@ -4474,7 +4713,10 @@ impl Rete {
             .map(|(ix, pattern)| ix.scan_plan(pattern));
         DumpPlan {
             scan,
-            dictionary_bytes: self.header.dictionary_len,
+            dictionary_bytes: match &self.v06 {
+                Some(f) => f.section(crate::v06::kind::DICT_DATA).map_or(0, |r| r.len),
+                None => self.header.dictionary_len,
+            },
         }
     }
 
@@ -4636,9 +4878,9 @@ impl Rete {
         /// `None` when `sid` is past the last tile. Tiles ascend by leading
         /// range, so this is a binary search; it returns `sid` itself when a tile
         /// already covers it (an ordinary "this subject has no triples" step).
-        fn next_tile_start(tiles: &[crate::index::Tile], sid: u32) -> Option<u32> {
-            let i = tiles.partition_point(|t| t.leading_range().1 < sid);
-            tiles.get(i).map(|t| t.leading_range().0.max(sid))
+        fn next_tile_start(tiles: &crate::index::TileList, sid: u32) -> Option<u32> {
+            let i = tiles.first_max_ge(sid);
+            (i < tiles.len()).then(|| tiles[i].leading_range().0.max(sid))
         }
 
         let index = match graph {
@@ -4877,7 +5119,17 @@ impl Rete {
     /// section ranges â€” never a linear scan of the whole resource. A full query
     /// open touches at most 4 ranges (header, dictionary, index, pyramid-meta).
     pub fn open_ranged<R: RangeReader>(reader: &R) -> Result<Self, FileError> {
-        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
+        if crate::v06::open::is_v06(&head) {
+            // The eager path reads the whole image — the rest of it, in one
+            // more request — and a 0x06 one then opens from memory.
+            let mut all = head;
+            let at = all.len() as u64;
+            if reader.len() > at {
+                all.extend_from_slice(&reader.read_at(at, reader.len() - at)?);
+            }
+            return Self::open(&all);
+        }
         let header = Header::from_bytes(&head)?;
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
@@ -4949,7 +5201,62 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: None,
         })
+    }
+
+    /// Open a `0x06` file whose first bytes are `first`: the header and root
+    /// come from them; the dictionary and index are two-level directories whose
+    /// leaves fault on demand; text, labels, schema, pyramid and named graphs
+    /// are deferred. `budget` applies the default memory budget (the lazy
+    /// remote path) as [`open_ranged_lazy`](Self::open_ranged_lazy) does.
+    fn open_v06(
+        reader: std::sync::Arc<dyn RangeReader + Send + Sync>,
+        first: &[u8],
+        budget: bool,
+    ) -> Result<Self, FileError> {
+        let f = std::sync::Arc::new(crate::v06::open::V06File::open(reader.clone(), first)?);
+        let header = crate::v06::logical_header(&f.h);
+        let rc = reader.concurrency();
+        let dict = f.dictionary([true; 4])?;
+        let index = f.index(rc)?;
+        let (pyramid, text_index, labels, schema) = v06_slots(&f);
+        let named_graphs = match f.quad(rc) {
+            Some(q) => NamedGraphsSlot::Quad(q?),
+            None => NamedGraphsSlot::Resident(Vec::new()),
+        };
+        let rete = Self {
+            header,
+            dict,
+            index,
+            index_section_ranges: [ByteRange::default(); NUM_PERMS],
+            tile_ranges: Default::default(),
+            pyramid,
+            text_index,
+            labels,
+            schema,
+            named_graphs,
+            metadata: Vec::new(),
+            service_client: None,
+            service_error: std::sync::Mutex::new(None),
+            spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: Some(f),
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        if budget {
+            rete.set_memory_budget(match crate::sysmem::default_query_budget_mb() {
+                0 => None,
+                mb => Some(mb << 20),
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = budget;
+        Ok(rete)
+    }
+
+    /// The open `0x06` file (header, root, reader), `None` for a `0x05` open.
+    pub fn v06(&self) -> Option<&crate::v06::open::V06File> {
+        self.v06.as_deref()
     }
 
     /// Open via an **owned** [`RangeReader`] with lazy tile faulting (tiled
@@ -4966,6 +5273,36 @@ impl Rete {
     pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
+        Self::open_ranged_lazy_with(reader, crate::v06::FIRST_READ)
+    }
+
+    /// [`open_ranged_lazy`](Self::open_ranged_lazy) with an explicit first-read
+    /// size (at least the 1 KiB a `0x05` header needs). The default is
+    /// [`crate::v06::FIRST_READ`]; a smaller one keeps a byte-accounting test
+    /// of a tiny `0x05` file from reading the whole file up front.
+    pub fn open_ranged_lazy_with<R: RangeReader + Send + Sync + 'static>(
+        reader: R,
+        first_read: u64,
+    ) -> Result<Self, FileError> {
+        // One first read — 64 KiB, or the whole file when smaller — decides the
+        // format, and every later read inside it is served from memory.
+        let first_len = first_read.max(HEADER_LEN as u64).min(reader.len());
+        let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
+        #[cfg(feature = "v06-parity")]
+        if !crate::v06::open::is_v06(&first) {
+            let all = reader.read_at(0, reader.len())?;
+            if let Some(v6) = parity_image(&all) {
+                let r: std::sync::Arc<dyn RangeReader + Send + Sync> =
+                    std::sync::Arc::new(crate::reader::BytesReader(std::sync::Arc::from(v6)));
+                let head = r.read_at(0, crate::v06::FIRST_READ.min(r.len()))?;
+                return Self::open_v06(r, &head, true);
+            }
+        }
+        let reader = crate::reader::PrefixReader::new(reader, first.clone());
+        if crate::v06::open::is_v06(&first) {
+            let r: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
+            return Self::open_v06(r, &first, true);
+        }
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         check_named_layout(&header)?;
@@ -5076,6 +5413,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            v06: None,
         };
         // A lazy open is the path for files too big to read whole, and the
         // one a long-lived session (relay, Python/R/Java clients, `rete serve`)
@@ -5308,21 +5646,47 @@ impl Rete {
         };
 
         let index_permutation = GraphIndex::best_permutation_in(self.header.perms, pattern);
-        let dictionary_range = ByteRange {
-            offset: self.header.dictionary_offset,
-            len: self.header.dictionary_len,
+        let si = index_permutation.section_index();
+        let (dictionary_range, index_range, index_section_range, pyramid_range) = match &self.v06 {
+            Some(f) => {
+                use crate::v06::kind;
+                let sec = |k| f.section(k).unwrap_or_default();
+                let perm = f
+                    .root
+                    .unit(crate::v06::tag::INDEX)
+                    .and_then(|u| crate::v06::decode_index_root(u).ok())
+                    .and_then(|v| v.into_iter().find(|p| p.si == si))
+                    .map(|p| ByteRange {
+                        offset: sec(kind::INDEX_DATA).offset + p.data_off,
+                        len: p.data_len,
+                    })
+                    .unwrap_or_default();
+                (
+                    sec(kind::DICT_DATA),
+                    sec(kind::INDEX_DATA),
+                    perm,
+                    f.section(kind::PYRAMID),
+                )
+            }
+            None => (
+                ByteRange {
+                    offset: self.header.dictionary_offset,
+                    len: self.header.dictionary_len,
+                },
+                ByteRange {
+                    offset: self.header.root_dir_offset,
+                    len: self.header.root_dir_len,
+                },
+                self.index_section_ranges[si],
+                (self.header.pyramid_meta_len > 0).then_some(ByteRange {
+                    offset: self.header.pyramid_meta_offset,
+                    len: self.header.pyramid_meta_len,
+                }),
+            ),
         };
-        let index_range = ByteRange {
-            offset: self.header.root_dir_offset,
-            len: self.header.root_dir_len,
-        };
-        let index_section_range = self.index_section_ranges[index_permutation.section_index()];
-        let pyramid_range = (self.header.pyramid_meta_len > 0).then_some(ByteRange {
-            offset: self.header.pyramid_meta_offset,
-            len: self.header.pyramid_meta_len,
-        });
 
-        let tiles = &self.tile_ranges[index_permutation.section_index()];
+        let tiles = &self.tile_ranges[si];
+        let v06_tiles = self.v06.is_some().then(|| self.index.tile_sections()[si]);
         self.index
             .match_pattern(pattern)
             .into_iter()
@@ -5335,13 +5699,27 @@ impl Rete {
                 // The physical tile holding this match: the one whose
                 // leading-id range covers the match's permuted leading id.
                 let a = index_permutation.forward((s, p, o)).0;
-                let ti = tiles.partition_point(|&(_, max_a, _)| max_a < a);
-                let (tile, tile_range) = match tiles.get(ti) {
-                    Some(&(min_a, _, range)) if min_a <= a => (
-                        Some(format!("{}/{ti}", index_permutation.name())),
-                        Some(range),
-                    ),
-                    _ => (None, None),
+                let (tile, tile_range) = if let Some(tl) = v06_tiles {
+                    let ti = tl.first_max_ge(a);
+                    match (ti < tl.len() && tl[ti].leading_range().0 <= a)
+                        .then(|| tl.range(ti))
+                        .flatten()
+                    {
+                        Some((offset, len)) => (
+                            Some(format!("{}/{ti}", index_permutation.name())),
+                            Some(ByteRange { offset, len }),
+                        ),
+                        None => (None, None),
+                    }
+                } else {
+                    let ti = tiles.partition_point(|&(_, max_a, _)| max_a < a);
+                    match tiles.get(ti) {
+                        Some(&(min_a, _, range)) if min_a <= a => (
+                            Some(format!("{}/{ti}", index_permutation.name())),
+                            Some(range),
+                        ),
+                        _ => (None, None),
+                    }
                 };
                 Some(TripleProvenance {
                     terms,
@@ -5482,7 +5860,11 @@ impl Rete {
         p: Option<&str>,
         o: Option<&str>,
     ) -> Result<Vec<TermTriple>, FileError> {
-        let routed = match route_pattern(reader, s, p, o)? {
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
+        if crate::v06::open::is_v06(&head) {
+            return Ok(v06_query_ranged(reader, head, s, p, o, true)?.unwrap_or_default());
+        }
+        let routed = match route_pattern(reader, head, s, p, o)? {
             Some(routed) => routed,
             None => return Ok(Vec::new()),
         };
@@ -5508,8 +5890,103 @@ impl Rete {
         p: Option<&str>,
         o: Option<&str>,
     ) -> Result<bool, FileError> {
-        Ok(route_pattern(reader, s, p, o)?.is_some())
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
+        if crate::v06::open::is_v06(&head) {
+            return Ok(v06_query_ranged(reader, head, s, p, o, false)?.is_some());
+        }
+        Ok(route_pattern(reader, head, s, p, o)?.is_some())
     }
+}
+
+/// [`Rete::query_ranged`] / [`Rete::route_pattern_ranged`] on a `0x06` file
+/// through a borrowed reader: the front and the dictionary data — contiguous,
+/// what the `0x05` path reads as header + dictionary — in one more request
+/// after `head`, the pattern resolved there, then (with `fetch`) the routed
+/// tiles in one span. `None` when a bound term is not in the dictionary.
+fn v06_query_ranged<R: RangeReader>(
+    reader: &R,
+    head: Vec<u8>,
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+    fetch: bool,
+) -> Result<Option<Vec<TermTriple>>, FileError> {
+    use crate::v06::{kind, open::SparseReader, Header06, Root06, HEADER_LEN};
+    let len = reader.len();
+    let h = Header06::from_bytes(&head)?;
+    let root_end = (HEADER_LEN as u64 + h.root_len as u64).min(len);
+    let root_bytes = if root_end <= head.len() as u64 {
+        head[HEADER_LEN..root_end as usize].to_vec()
+    } else {
+        reader.read_at(HEADER_LEN as u64, root_end - HEADER_LEN as u64)?
+    };
+    let root = Root06::decode(&root_bytes, h.internal_codec)?;
+    let dict = root.section(kind::DICT_DATA).map(|d| d.abs(&h));
+    // The open below reads only the 1 KiB it must (not the 64 KiB first
+    // read): what it needs past that is the front and the dictionary, here.
+    let end = dict
+        .map_or(h.data_offset, |d| d.offset + d.len)
+        .max(crate::header::HEADER_LEN as u64)
+        .min(len);
+    let mut held = head;
+    if end > held.len() as u64 {
+        let at = held.len() as u64;
+        held.extend_from_slice(&reader.read_at(at, end - at)?);
+    }
+    let sparse = SparseReader::fetch(reader, held, &[])?;
+    let rete = Rete::open_ranged_lazy_with(sparse, 0)?;
+    let Some(pattern) = resolve_query_pattern(rete.dictionary(), s, p, o) else {
+        return Ok(None);
+    };
+    if !fetch {
+        return Ok(Some(Vec::new()));
+    }
+    let perm = GraphIndex::best_permutation_in(h.perms(), pattern);
+    let si = perm.section_index();
+    let index = rete.default_index();
+    let list = index.tile_sections()[si];
+    let n = list.len();
+    let [pa, _, _] = perm.order_pattern(pattern);
+    let (start, stop) = match pa {
+        Some(a) => {
+            let start = list.first_max_ge(a);
+            let mut stop = start;
+            while stop < n {
+                list.ensure_span(stop, stop + 1);
+                if list[stop].leading_range().0 > a {
+                    break;
+                }
+                stop += 1;
+            }
+            (start, stop)
+        }
+        None => {
+            list.ensure_span(0, n);
+            (0, n)
+        }
+    };
+    let ranges: Vec<(u64, u64)> = (start..stop)
+        .filter_map(|i| index.tile_range(si, i))
+        .collect();
+    let mut out = Vec::new();
+    if let (Some(&(lo, _)), Some(&(last, last_len))) = (ranges.first(), ranges.last()) {
+        // The routed tiles are one contiguous run of the section: one request.
+        let body = reader.read_at(lo, last + last_len - lo)?;
+        for &(off, l) in &ranges {
+            let at = (off - lo) as usize;
+            let tile = decompress(h.block_codec, &body[at..at + l as usize])?;
+            out.extend(GraphIndex::match_serialized_block(&tile, perm, pattern));
+        }
+    }
+    out.sort_unstable();
+    let d = rete.dictionary();
+    Ok(Some(
+        out.into_iter()
+            .filter_map(|(s, p, o)| {
+                Some((d.subject_term(s)?, d.predicate_term(p)?, d.object_term(o)?))
+            })
+            .collect(),
+    ))
 }
 
 /// A pattern routed to its permutation section: everything needed to fetch
@@ -5527,11 +6004,11 @@ struct RoutedPattern {
 /// section (header + dictionary + container framing only).
 fn route_pattern<R: RangeReader>(
     reader: &R,
+    head: Vec<u8>,
     s: Option<&str>,
     p: Option<&str>,
     o: Option<&str>,
 ) -> Result<Option<RoutedPattern>, FileError> {
-    let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
 
     let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
@@ -5774,6 +6251,132 @@ fn open_side_by_side<A, B>(
     (a(), b())
 }
 
+/// The `v06-parity` test hook: a 0x05 image converted to 0x06 (`None` for a
+/// 0x06 image, or one the converter refuses, such as per-graph named graphs).
+#[cfg(feature = "v06-parity")]
+fn parity_image(bytes: &[u8]) -> Option<Vec<u8>> {
+    if crate::v06::open::is_v06(bytes) || bytes.len() < HEADER_LEN {
+        return None;
+    }
+    crate::v06::write::convert_image(bytes, crate::v06::write::WriteOpts::default()).ok()
+}
+
+/// [`Rete::file_layout`] for a `0x06` file: the header, the root, the card
+/// region, then every front and data section, in file order.
+fn v06_layout(f: &crate::v06::open::V06File) -> Vec<LayoutSegment> {
+    let h = &f.h;
+    let seg = |kind: &'static str, label: String, offset: u64, len: u64| LayoutSegment {
+        kind,
+        label,
+        offset,
+        len,
+    };
+    let mut out = vec![
+        seg(
+            "header",
+            format!("header (fixed {} bytes)", crate::v06::HEADER_LEN),
+            0,
+            crate::v06::HEADER_LEN as u64,
+        ),
+        seg(
+            "directory",
+            "root block (section table, directory roots)".into(),
+            h.root_offset(),
+            h.root_len as u64,
+        ),
+    ];
+    let c = h.card_range();
+    if c.len > 0 {
+        out.push(seg(
+            "metadata",
+            "metadata (dataset card, zstd)".into(),
+            c.offset,
+            c.len,
+        ));
+    }
+    let b = h.build_range();
+    if b.len > 0 {
+        out.push(seg("build-info", "build record".into(), b.offset, b.len));
+    }
+    for s in &f.root.sections {
+        let a = s.abs(h);
+        let kind: &'static str = match s.kind {
+            crate::v06::kind::SCHEMA => "schema",
+            crate::v06::kind::DICT_DATA => "dictionary",
+            crate::v06::kind::INDEX_DATA => "tile",
+            crate::v06::kind::QUAD_DATA => "named-graphs",
+            crate::v06::kind::LABEL_DATA => "label-index",
+            crate::v06::kind::TEXT_DATA => "text-index",
+            crate::v06::kind::PYRAMID => "pyramid",
+            _ => "directory",
+        };
+        out.push(seg(
+            kind,
+            crate::v06::kind::name(s.kind).to_string(),
+            a.offset,
+            a.len,
+        ));
+    }
+    out.sort_by_key(|s| s.offset);
+    out
+}
+
+/// The deferred slots of a `0x06` open: pyramid, text index, label index and
+/// schema, each faulted on first use.
+#[allow(clippy::type_complexity)]
+fn v06_slots(
+    f: &std::sync::Arc<crate::v06::open::V06File>,
+) -> (
+    PyramidSlot,
+    TextIndexSlot,
+    SectionSlot<crate::label_index::LabelIndex>,
+    SectionSlot<crate::schema_section::SchemaMeta>,
+) {
+    use crate::v06::{P_LABELS, P_PYRAMID, P_SCHEMA, P_TEXT};
+    let pyramid = if f.h.has(P_PYRAMID) {
+        let a = f.clone();
+        PyramidSlot::Lazy {
+            loader: Box::new(move || PyramidMeta::decode(&a.pyramid_bytes()?).ok()),
+            cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        PyramidSlot::Resident(None)
+    };
+    let text_index = if f.h.has(P_TEXT) {
+        let (a, b) = (f.clone(), f.clone());
+        TextIndexSlot::Lazy {
+            loader: Box::new(move || a.text_index()?.ok()),
+            cell: std::sync::OnceLock::new(),
+            token_table: Box::new(move || b.token_table_bytes()),
+            token_table_cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        TextIndexSlot::Resident {
+            index: None,
+            token_table_len: None,
+        }
+    };
+    let labels = if f.h.has(P_LABELS) {
+        let a = f.clone();
+        SectionSlot::Lazy {
+            loader: Box::new(move || a.label_index()?.ok()),
+            cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        SectionSlot::Resident(None)
+    };
+    let schema = if f.h.has(P_SCHEMA) {
+        let a = f.clone();
+        SectionSlot::Lazy {
+            loader: Box::new(move || a.schema()),
+            cell: std::sync::OnceLock::new(),
+        }
+    } else {
+        SectionSlot::Resident(None)
+    };
+    (pyramid, text_index, labels, schema)
+}
+
 /// The pyramid meta is large on real graphs (tens of MB) and SPARQL never reads
 /// it, so a ranged open defers its fetch: it faults in only if `pyramid()` is
 /// called (community / pyramid_tree / label-prefix queries).
@@ -5949,6 +6552,41 @@ impl SearchView {
     pub fn open_ranged<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
+        Self::open_ranged_with(reader, crate::v06::FIRST_READ)
+    }
+
+    /// [`open_ranged`](Self::open_ranged) with an explicit first-read size
+    /// (see [`Rete::open_ranged_lazy_with`]).
+    pub fn open_ranged_with<R: RangeReader + Send + Sync + 'static>(
+        reader: R,
+        first_read: u64,
+    ) -> Result<Self, FileError> {
+        let first_len = first_read.max(HEADER_LEN as u64).min(reader.len());
+        let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
+        let reader = crate::reader::PrefixReader::new(reader, first.clone());
+        if crate::v06::open::is_v06(&first) {
+            let r: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
+            let f = std::sync::Arc::new(crate::v06::open::V06File::open(r, &first)?);
+            let header = crate::v06::logical_header(&f.h);
+            let (pyramid, text_index, labels, _) = v06_slots(&f);
+            let want = [true, true, false, false];
+            let dict = if f.h.has(crate::v06::P_LABELS) {
+                let a = f.clone();
+                SectionSlot::Lazy {
+                    loader: Box::new(move || a.dictionary(want).ok()),
+                    cell: std::sync::OnceLock::new(),
+                }
+            } else {
+                SectionSlot::Resident(Some(f.dictionary(want)?))
+            };
+            return Ok(Self {
+                header,
+                dict,
+                pyramid,
+                text_index,
+                labels,
+            });
+        }
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         let reader = std::sync::Arc::new(reader);
@@ -6072,10 +6710,13 @@ pub struct SummaryView {
 impl SummaryView {
     /// Read header â†’ dictionary â†’ pyramid-meta only (skips the index container).
     pub fn open_ranged<R: RangeReader>(reader: &R) -> Result<Option<Self>, FileError> {
-        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
         let header = Header::from_bytes(&head)?;
         if header.pyramid_meta_len == 0 {
             return Ok(None);
+        }
+        if header.version == crate::v06::VERSION {
+            return Self::open_ranged_v06(reader, &header, head).map(Some);
         }
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
@@ -6107,6 +6748,67 @@ impl SummaryView {
             equivalent_pairs: meta.equivalent_pairs,
             dict,
         }))
+    }
+
+    /// [`open_ranged`](Self::open_ranged) for a `0x06` file: the pyramid
+    /// section, the schema, and the dictionary (its leaves and chunks read
+    /// whole, as the `0x05` path reads the whole dictionary container).
+    fn open_ranged_v06<R: RangeReader>(
+        reader: &R,
+        header: &Header,
+        head: Vec<u8>,
+    ) -> Result<Self, FileError> {
+        use crate::v06::{kind, open};
+        // One first read, then every range the view needs past it — the
+        // pyramid, the schema, the dictionary's leaves and chunks — in one
+        // batch.
+        let mut first = head;
+        let want_first = crate::v06::FIRST_READ.min(reader.len());
+        if want_first > first.len() as u64 {
+            let at = first.len() as u64;
+            first.extend_from_slice(&reader.read_at(at, want_first - at)?);
+        }
+        let pre = open::Prefixed {
+            first: &first,
+            r: reader,
+        };
+        let (h, root) = open::read_front(&pre)?;
+        let want: Vec<ByteRange> = [
+            kind::PYRAMID,
+            kind::SCHEMA,
+            kind::DICT_LEAVES,
+            kind::DICT_DATA,
+        ]
+        .iter()
+        .filter_map(|&k| root.section(k).map(|s| s.abs(&h)))
+        .collect();
+        let sparse = open::SparseReader::fetch(&pre, first.clone(), &want)?;
+        let mb = open::read_section(&sparse, &h, &root, kind::PYRAMID)?
+            .ok_or(FileError::Container("0x06 file has no pyramid"))?;
+        let mut meta =
+            PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
+        if let Some(s) = read_schema_with_header(&sparse, header) {
+            meta.class_hierarchy = s.class_hierarchy;
+            meta.level_rollups = s.level_rollups;
+            meta.level_links = s.level_links;
+            meta.subclass_cycles = s.subclass_cycles;
+            meta.disjoint_pairs = s.disjoint_pairs;
+            meta.equivalent_pairs = s.equivalent_pairs;
+        }
+        let f = open::V06File::open(std::sync::Arc::new(sparse), &first)?;
+        let dict = f.dictionary([true; 4])?;
+        Ok(SummaryView {
+            round: meta.round,
+            summary: meta.summary,
+            class_hierarchy: meta.class_hierarchy,
+            level_rollups: meta.level_rollups,
+            level_links: meta.level_links,
+            descriptors: meta.descriptors,
+            subclass_cycles: meta.subclass_cycles,
+            disjoint_pairs: meta.disjoint_pairs,
+            equivalent_pairs: meta.equivalent_pairs,
+            dict,
+        })
     }
 
     /// A schema-only view of a file **without a pyramid**, from its SCHEMA
@@ -6354,7 +7056,11 @@ pub fn read_schema_coherence_ranged<R: RangeReader>(
         )));
     }
     // Fallback (pre-v0.2.1 files with no header field): decode the whole pyramid-meta.
-    let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+    let mb = if header.version == crate::v06::VERSION {
+        crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
+    } else {
+        reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?
+    };
     let meta =
         PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
     Ok(Some(schema_coherence(
@@ -6403,7 +7109,11 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
             return Ok(Some(summary));
         }
         // Fallback (pre-v0.2.1 files): decode the whole pyramid-meta, pull finest levels.
-        let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+        let mb = if header.version == crate::v06::VERSION {
+            crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
+        } else {
+            reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?
+        };
         PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?
     };
     if meta.level_rollups.is_empty() && meta.level_links.is_empty() {
@@ -6477,6 +7187,49 @@ mod tests {
         assert_eq!(decompress(CODEC_ZSTD, &frame).unwrap(), data);
     }
 
+    /// Bounded decompression: a frame whose header declares more than the
+    /// bound is refused before decoding; one that states no size is decoded at
+    /// most one byte past the bound; one that lies about its size fails; and
+    /// the size a header states is read without decoding.
+    #[cfg(feature = "compression")]
+    #[test]
+    fn decompression_is_bounded() {
+        let data: Vec<u8> = (0..100_000u32).map(|i| (i % 251) as u8).collect();
+        let sized = zstd::bulk::compress(&data, 3).unwrap();
+        assert_eq!(zstd_frame_content_size(&sized), Some(100_000));
+        assert_eq!(block_raw_len(CODEC_ZSTD, &sized, 1 << 20).unwrap(), 100_000);
+        assert_eq!(
+            decompress_bounded(CODEC_ZSTD, &sized, 100_000).unwrap(),
+            data
+        );
+        assert!(decompress_bounded(CODEC_ZSTD, &sized, 99_999).is_err());
+        // A streamed frame states no size: bounded by decoding.
+        let stream = zstd::encode_all(&data[..], 3).unwrap();
+        assert_eq!(zstd_frame_content_size(&stream), None);
+        assert_eq!(
+            block_raw_len(CODEC_ZSTD, &stream, 1 << 20).unwrap(),
+            100_000
+        );
+        assert_eq!(
+            decompress_bounded(CODEC_ZSTD, &stream, 100_000).unwrap(),
+            data
+        );
+        assert!(decompress_bounded(CODEC_ZSTD, &stream, 50_000).is_err());
+        // A header that under-states its content fails instead of growing.
+        let mut liar = sized.clone();
+        let fhd = liar[4];
+        let fcs_at = 5 + usize::from(fhd & 0x20 == 0);
+        liar[fcs_at] = liar[fcs_at].wrapping_sub(1);
+        assert!(decompress_bounded(CODEC_ZSTD, &liar, 200_000).is_err());
+        // Uncompressed blocks: the length is the size.
+        assert!(decompress_bounded(CODEC_NONE, &data, 99_999).is_err());
+        assert_eq!(
+            decompress_bounded(CODEC_NONE, &data, 100_000).unwrap(),
+            data
+        );
+        assert_eq!(zstd_frame_content_size(b"RETE"), None);
+    }
+
     /// A three-permutation file must survive every opener — resident, ranged,
     /// ranged-lazy — and answer every pattern shape with the rows the
     /// six-permutation twin gives, including through a named graph's own
@@ -6547,7 +7300,8 @@ mod tests {
             let resident = Rete::open(image).unwrap();
             let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
             let ranged = Rete::open_ranged(&SliceReader::new(leaked)).unwrap();
-            let lazy = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+            let lazy =
+                Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
             for (s, p, o) in &shapes {
                 let want: Vec<_> = {
                     let mut v = Rete::open(&six).unwrap().query(*s, *p, *o);
@@ -6693,7 +7447,7 @@ mod tests {
         let bytes = write_file(&dict, &index, false, &[], 0);
 
         let rete = Rete::open(&bytes).unwrap();
-        assert_eq!(rete.header().version, crate::header::CURRENT_FORMAT_VERSION);
+        assert_eq!(rete.header().version, crate::header::LEGACY_FORMAT_VERSION);
         assert_eq!(rete.query(None, None, None).len(), 200);
         assert_eq!(rete.query(Some("<http://ex/s/7>"), None, None).len(), 1);
         assert_eq!(
@@ -6820,7 +7574,7 @@ mod tests {
         // process exits straight after).
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
         let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(reader).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(reader, HEADER_LEN as u64).unwrap();
 
         let brute = |s: Option<&str>, p: Option<&str>, o: Option<&str>| {
             let mut v: Vec<(String, String, String)> = triples
@@ -6909,7 +7663,11 @@ mod tests {
         // Open it LAZILY through the offset shim and query it.
         let leaked: &'static [u8] = Box::leak(poly.into_boxed_slice());
         let counting = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(OffsetReader::new(counting.clone(), detected)).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(
+            OffsetReader::new(counting.clone(), detected),
+            HEADER_LEN as u64,
+        )
+        .unwrap();
 
         // The polyglot must answer exactly like the plain .rete it embeds.
         let plain = Rete::open(&image).unwrap();
@@ -7080,7 +7838,7 @@ mod tests {
 
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
         let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
         // Bytes pulled by the open itself (dict dirs, index dirs, named graphs) —
         // the text index is deferred and not touched yet.
         let before = reader.bytes_read();
@@ -7128,13 +7886,13 @@ mod tests {
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
 
         let full_reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let full = Rete::open_ranged_lazy(full_reader.clone()).unwrap();
+        let full = Rete::open_ranged_lazy_with(full_reader.clone(), HEADER_LEN as u64).unwrap();
         let mut want = full.text_search(&["raretoken"], None, 0);
         want.sort();
         assert_eq!(want.len(), 3);
 
         let search_reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let view = SearchView::open_ranged(search_reader.clone()).unwrap();
+        let view = SearchView::open_ranged_with(search_reader.clone(), HEADER_LEN as u64).unwrap();
         assert!(view.has_text_index());
         let mut got = view.text_search(&["raretoken"], None, 0);
         got.sort();
@@ -7703,7 +8461,7 @@ mod tests {
         let query_bytes = |image: &[u8]| -> (u64, usize) {
             let leaked: &'static [u8] = Box::leak(image.to_vec().into_boxed_slice());
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let rete = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read(); // after open (incl. trailer reads)
             let n = rete.query(q.0, q.1, q.2).len();
             assert!(!rete.index_incomplete());
@@ -7776,7 +8534,11 @@ mod tests {
 
         let eager_rows = run(&Rete::open(&bytes).unwrap());
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
-        let lazy = Rete::open_ranged_lazy(std::sync::Arc::new(SliceReader::new(leaked))).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(
+            std::sync::Arc::new(SliceReader::new(leaked)),
+            HEADER_LEN as u64,
+        )
+        .unwrap();
         let lazy_rows = run(&lazy);
         assert!(!lazy.index_incomplete());
 
@@ -8689,7 +9451,7 @@ mod tests {
         let read_bytes = |take: usize| -> u64 {
             let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let rete = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let n = rete.dump_iter(None).take(take).count();
             assert_eq!(n, take.min(triples.len()));
@@ -8853,7 +9615,7 @@ mod tests {
         let read_bytes = |take: usize| -> u64 {
             let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let rete = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let (mut n, mut cursor) = (0usize, 0u64);
             loop {
@@ -9054,7 +9816,7 @@ mod tests {
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
         let probe = |f: &dyn Fn(&Rete) -> Vec<TermTriple>| -> (Vec<TermTriple>, u64) {
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let out = f(&lazy);
             assert!(!lazy.index_incomplete(), "a chunk fetch failed");
@@ -9179,7 +9941,8 @@ mod tests {
             Vec<(String, String, String)>,
             crate::chunk_cache::CacheStats,
         ) {
-            let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+            let rete =
+                Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
             rete.dict.set_cache_cap(cap);
             let mut out = Vec::new();
             rete.dump_filtered_each(None, None, None, None, |s, p, o| {
@@ -9226,7 +9989,8 @@ mod tests {
     fn memory_budget_charges_the_fixed_directories() {
         use crate::reader::SliceReader;
         let leaked: &'static [u8] = Box::leak(build_multichunk_image().into_boxed_slice());
-        let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+        let rete =
+            Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
 
         let fixed = rete.fixed_overhead();
         // Every chunk and every tile has a descriptor; a multi-chunk dictionary
@@ -9266,7 +10030,8 @@ mod tests {
 
         // Under a cap smaller than the decompressed dictionary, a full dump
         // keeps the cache within it.
-        let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+        let rete =
+            Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
         rete.dict.set_cache_cap(128 * 1024);
         let mut rows = 0usize;
         rete.dump_filtered_each(None, None, None, None, |_, _, _| rows += 1);
@@ -9329,7 +10094,8 @@ mod tests {
             0,
         );
         let leaked: &'static [u8] = Box::leak(image.into_boxed_slice());
-        let mut rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+        let mut rete =
+            Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
 
         let opened = |r: &Rete| -> usize {
             match &r.named_graphs {
@@ -9461,7 +10227,8 @@ mod tests {
                 ),
                 (
                     "lazy",
-                    Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap(),
+                    Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64)
+                        .unwrap(),
                 ),
             ];
             for graph in [None, Some("<http://ex/g1>"), Some("<http://ex/absent>")] {
@@ -9575,7 +10342,7 @@ mod tests {
         // Bytes faulted past the open, for one dump.
         let probe = |s: Option<&str>, p: Option<&str>, o: Option<&str>| -> (usize, u64) {
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let mut n = 0usize;
             lazy.dump_filtered_each(None, s, p, o, |_, _, _| n += 1);
@@ -9614,7 +10381,7 @@ mod tests {
 
         // And the plan predicted the index side of it without fetching a tile.
         let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
         let before = reader.bytes_read();
         let plan = lazy
             .dump_plan(None, None, Some("<http://ex/p/07>"), None)
@@ -9935,11 +10702,11 @@ mod tests {
         for search_view in [false, true] {
             let calls = Calls(Arc::new(bytes.clone()), Arc::new(Mutex::new(Vec::new())));
             let got = if search_view {
-                let view = SearchView::open_ranged(calls.clone()).unwrap();
+                let view = SearchView::open_ranged_with(calls.clone(), HEADER_LEN as u64).unwrap();
                 calls.1.lock().unwrap().clear();
                 view.prefix_search("glucose", 1000)
             } else {
-                let rete = Rete::open_ranged_lazy(calls.clone()).unwrap();
+                let rete = Rete::open_ranged_lazy_with(calls.clone(), HEADER_LEN as u64).unwrap();
                 calls.1.lock().unwrap().clear();
                 rete.prefix_search("glucose", 1000)
             };
@@ -10073,9 +10840,11 @@ mod tests {
         let path = std::env::var("RETE_DEBUG_FILE").expect("RETE_DEBUG_FILE");
         let p_iri = std::env::var("RETE_DEBUG_P").expect("RETE_DEBUG_P");
         let o_iri = std::env::var("RETE_DEBUG_O").expect("RETE_DEBUG_O");
-        let rete =
-            Rete::open_ranged_lazy(std::sync::Arc::new(FR(std::fs::File::open(&path).unwrap())))
-                .unwrap();
+        let rete = Rete::open_ranged_lazy_with(
+            std::sync::Arc::new(FR(std::fs::File::open(&path).unwrap())),
+            HEADER_LEN as u64,
+        )
+        .unwrap();
         let pid = rete.dict.predicate_id(&p_iri).expect("p resolves");
         let oid = rete.dict.object_id(&o_iri).expect("o resolves");
         eprintln!("pid={pid} oid={oid}");

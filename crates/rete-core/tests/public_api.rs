@@ -6,7 +6,7 @@ use rete_core::validation::{validate_shacl, ReteGraph, ShaclShapes};
 
 #[test]
 fn documented_facade_is_available_to_external_crates() {
-    assert_eq!(CURRENT_FORMAT_VERSION, 0x05);
+    assert_eq!(CURRENT_FORMAT_VERSION, 0x06);
     let bytes = include_bytes!("fixtures/v1/minimal.rete");
     let header = Header::from_bytes(&bytes[..rete_core::format::HEADER_LEN]).unwrap();
     assert_eq!(header.version, 0x05);
