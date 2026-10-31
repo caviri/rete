@@ -108,8 +108,8 @@ pub mod format {
         PyramidLayout, Rete, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
-        Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
-        MIN_STABLE_READ_VERSION,
+        Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN,
+        LEGACY_FORMAT_VERSION, MAGIC, MIN_STABLE_READ_VERSION,
     };
     pub use crate::index::ScanPlan;
     pub use crate::ingest::{

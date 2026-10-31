@@ -535,6 +535,11 @@ impl Header {
     /// header must yield "unknown", never a panic or a wrapped length — the
     /// weekly fuzz caught `verify()` on exactly this class of input).
     pub fn expected_file_len(&self) -> Option<u64> {
+        if self.version == crate::v06::VERSION {
+            // A 0x06 header states its length; its logical view parks every
+            // offset at that length (see `v06::logical_header`).
+            return Some(self.metadata_offset);
+        }
         let mut end = HEADER_LEN as u64;
         let named = [
             (self.metadata_offset, self.metadata_len),
@@ -709,7 +714,7 @@ mod tests {
 
     fn sample() -> Header {
         Header {
-            version: CURRENT_FORMAT_VERSION,
+            version: LEGACY_FORMAT_VERSION,
             flags: FLAG_HAS_QUADS,
             metadata_offset: 1024,
             metadata_len: 42,
@@ -772,7 +777,7 @@ mod tests {
 
         // core
         assert_eq!(&b[0..4], b"RETE");
-        assert_eq!(b[4], CURRENT_FORMAT_VERSION);
+        assert_eq!(b[4], LEGACY_FORMAT_VERSION);
         assert_eq!(b[5], FLAG_HAS_QUADS);
         assert_eq!(u16_at(6), HEADER_LEN as u16);
         assert_eq!(&b[8..24], &[0xCC; 16]); // content hash
@@ -852,7 +857,7 @@ mod tests {
                 HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x05
+                    max: 0x06
                 } if *found == old
             ));
             assert!(error
@@ -860,7 +865,7 @@ mod tests {
                 .contains("Pre-1.0 files must be rebuilt from RDF source with `rete build`"));
         }
 
-        for unsupported in [0x00, 0x06, 0xff] {
+        for unsupported in [0x00, 0x07, 0xff] {
             let mut bytes = current;
             bytes[4] = unsupported;
             assert!(matches!(
@@ -868,7 +873,7 @@ mod tests {
                 Err(HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x05
+                    max: 0x06
                 }) if found == unsupported
             ));
         }

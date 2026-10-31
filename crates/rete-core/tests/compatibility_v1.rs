@@ -1,11 +1,11 @@
-use rete_core::format::{Header, Rete, CURRENT_FORMAT_VERSION, HEADER_LEN};
+use rete_core::format::{Header, Rete, HEADER_LEN, LEGACY_FORMAT_VERSION};
 
 const V1: &[u8] = include_bytes!("fixtures/v1/minimal.rete");
 
 #[test]
 fn every_future_reader_opens_the_v1_baseline() {
     let header = Header::from_bytes(&V1[..HEADER_LEN]).unwrap();
-    assert_eq!(header.version, CURRENT_FORMAT_VERSION);
+    assert_eq!(header.version, LEGACY_FORMAT_VERSION);
     assert_eq!(header.version, 0x05);
 
     let graph = Rete::open(V1).unwrap();

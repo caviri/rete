@@ -77,6 +77,9 @@ pub struct FetchPolicy {
     /// The largest whole body a host that ignores `Range` may send and still
     /// have it kept ([`WHOLE_BODY_CAP`]); a larger one is refused by name.
     pub whole_body_cap: u64,
+    /// Bytes the open reads first, as its length probe ([`OPEN_READ`]); `0`
+    /// probes with `HEAD` instead and keeps nothing.
+    pub open_read: u64,
 }
 
 impl FetchPolicy {
@@ -91,6 +94,7 @@ impl FetchPolicy {
         backoff_ms: 100,
         trace: false,
         whole_body_cap: WHOLE_BODY_CAP,
+        open_read: OPEN_READ,
     };
 
     /// [`FetchPolicy::DEFAULT`] with the `RETE_HTTP_*` overrides applied.
@@ -111,6 +115,7 @@ impl FetchPolicy {
             backoff_ms: d.backoff_ms,
             trace: std::env::var_os("RETE_HTTP_TRACE").is_some(),
             whole_body_cap: d.whole_body_cap,
+            open_read: d.open_read,
         }
     }
 
@@ -294,7 +299,14 @@ fn read_capped(resp: ureq::Response, cap: u64, what: &str) -> Result<Option<Vec<
 struct Probe {
     len: u64,
     whole: Option<Vec<u8>>,
+    /// The file's first bytes, when the length came from the opening ranged
+    /// GET: later reads inside them cost nothing.
+    prefix: Option<Vec<u8>>,
 }
+
+/// What the open reads first: the same 64 KiB a `0x06` reader plans from, so
+/// the length probe *is* the first read and no `HEAD` is sent.
+pub const OPEN_READ: u64 = 64 * 1024;
 
 /// An HTTP(S) [`RangeReader`]: kept-alive connections, parallel and coalesced
 /// batches, retries, and the bounded whole-body fallback for hosts that ignore
@@ -312,6 +324,9 @@ pub struct HttpRangeReader {
     /// Held while a whole body is read, so concurrent `200`s in one batch keep
     /// one body, not one per worker.
     adopting: Mutex<()>,
+    /// The first [`OPEN_READ`] bytes, fetched by the open (empty when the
+    /// length came from a `HEAD`).
+    prefix: Vec<u8>,
 }
 
 impl HttpRangeReader {
@@ -350,11 +365,15 @@ impl HttpRangeReader {
             headers,
             whole: OnceLock::new(),
             adopting: Mutex::new(()),
+            prefix: Vec::new(),
         };
         let probe = reader.probe_len()?;
         reader.len = probe.len;
         if let Some(body) = probe.whole {
             let _ = reader.whole.set(body);
+        }
+        if let Some(p) = probe.prefix {
+            reader.prefix = p;
         }
         Ok(reader)
     }
@@ -404,6 +423,70 @@ impl HttpRangeReader {
     /// GET's `Content-Range` total, else — when that GET is a `200` — the
     /// whole body's length, with the body kept.
     fn probe_len(&self) -> std::io::Result<Probe> {
+        // The first read doubles as the length probe: `bytes=0-65535` answers
+        // with the total in `Content-Range` and the bytes every open reads
+        // first anyway. Only when that gives no length is `HEAD` asked.
+        let open_read = self.policy.open_read;
+        let first_what = format!("bytes 0-{} of {}", open_read.saturating_sub(1), self.url);
+        let first_cap = self.policy.whole_body_cap;
+        let first = self.with_retries(|| {
+            if open_read == 0 {
+                return Ok(None);
+            }
+            let resp = match self
+                .request("GET")
+                .set("Range", &format!("bytes=0-{}", open_read - 1))
+                .call()
+            {
+                Ok(r) => r,
+                // A range the server cannot satisfy (an empty file) or refuses
+                // outright: let the HEAD path decide.
+                Err(ureq::Error::Status(code, _)) if !retryable_status(code) => {
+                    return Ok(None);
+                }
+                Err(e) => return Err(classify(e, &first_what)),
+            };
+            match resp.status() {
+                206 => {
+                    let cr = resp.header("content-range").map(str::to_string);
+                    let total = cr.as_deref().and_then(content_range_total);
+                    let start = cr.as_deref().and_then(content_range_start);
+                    let Some(len) = total.filter(|_| start == Some(0)) else {
+                        return Ok(None);
+                    };
+                    let mut body = Vec::new();
+                    resp.into_reader()
+                        .take(open_read)
+                        .read_to_end(&mut body)
+                        .map_err(Failure::Transient)?;
+                    if body.len() as u64 != open_read.min(len) {
+                        return Err(Failure::Transient(std::io::Error::other(format!(
+                            "short body for {first_what}"
+                        ))));
+                    }
+                    Ok(Some(Probe {
+                        len,
+                        whole: None,
+                        prefix: Some(body),
+                    }))
+                }
+                200 => match read_capped(resp, first_cap, &first_what)? {
+                    Some(body) if body.is_empty() => Ok(None),
+                    Some(body) => Ok(Some(Probe {
+                        len: body.len() as u64,
+                        whole: Some(body),
+                        prefix: None,
+                    })),
+                    None => Err(Failure::Permanent(whole_body_refusal(
+                        &self.url, None, first_cap,
+                    ))),
+                },
+                _ => Ok(None),
+            }
+        })?;
+        if let Some(p) = first {
+            return Ok(p);
+        }
         let head_what = format!("HEAD {}", self.url);
         let head = self.with_retries(|| {
             self.request("HEAD")
@@ -415,7 +498,13 @@ impl HttpRangeReader {
                 .header("content-length")
                 .and_then(|v| v.trim().parse::<u64>().ok())
             {
-                Some(len) => return Ok(Probe { len, whole: None }),
+                Some(len) => {
+                    return Ok(Probe {
+                        len,
+                        whole: None,
+                        prefix: None,
+                    })
+                }
                 None => "no Content-Length".to_string(),
             },
             Err(e) => e.to_string(),
@@ -432,7 +521,11 @@ impl HttpRangeReader {
                 206 => Ok(resp
                     .header("content-range")
                     .and_then(content_range_total)
-                    .map(|len| Probe { len, whole: None })),
+                    .map(|len| Probe {
+                        len,
+                        whole: None,
+                        prefix: None,
+                    })),
                 200 => match read_capped(resp, cap, &what)? {
                     Some(body) if body.is_empty() => {
                         Err(Failure::Permanent(std::io::Error::other(format!(
@@ -443,6 +536,7 @@ impl HttpRangeReader {
                     Some(body) => Ok(Some(Probe {
                         len: body.len() as u64,
                         whole: Some(body),
+                        prefix: None,
                     })),
                     None => Err(Failure::Permanent(whole_body_refusal(&self.url, None, cap))),
                 },
@@ -458,6 +552,12 @@ impl HttpRangeReader {
                 self.url
             ))
         })
+    }
+
+    /// The bytes of `offset..offset+len` when the opening read holds them.
+    fn from_prefix(&self, offset: u64, len: u64) -> Option<Vec<u8>> {
+        let end = offset.checked_add(len)?;
+        (end <= self.prefix.len() as u64).then(|| self.prefix[offset as usize..end as usize].to_vec())
     }
 
     /// A range past the length the open measured is an error before any
@@ -658,6 +758,9 @@ impl RangeReader for HttpRangeReader {
             return Ok(Vec::new());
         }
         self.bounds(offset, len)?;
+        if let Some(b) = self.from_prefix(offset, len) {
+            return Ok(b);
+        }
         if self.policy.trace && self.whole.get().is_none() {
             eprintln!("[http] read {offset}+{len}");
         }
@@ -682,6 +785,37 @@ impl RangeReader for HttpRangeReader {
             return ranges
                 .iter()
                 .map(|&(o, l)| slice_whole(whole, o, l, &self.url))
+                .collect();
+        }
+        if ranges
+            .iter()
+            .any(|&(o, l)| l > 0 && self.from_prefix(o, l).is_some())
+        {
+            // Serve what the opening read already holds; fetch the rest.
+            let rest: Vec<(u64, u64)> = ranges
+                .iter()
+                .copied()
+                .filter(|&(o, l)| l > 0 && self.from_prefix(o, l).is_none())
+                .collect();
+            let mut fetched = if rest.is_empty() {
+                Vec::new()
+            } else {
+                self.read_many(&rest)?
+            }
+            .into_iter();
+            return ranges
+                .iter()
+                .map(|&(o, l)| {
+                    if l == 0 {
+                        Ok(Vec::new())
+                    } else if let Some(b) = self.from_prefix(o, l) {
+                        Ok(b)
+                    } else {
+                        fetched.next().ok_or_else(|| {
+                            std::io::Error::other("read_many left a range unfetched")
+                        })
+                    }
+                })
                 .collect();
         }
         let (spans, place) = coalesce(ranges, self.policy.coalesce_gap, self.policy.max_span)?;
@@ -905,11 +1039,44 @@ mod tests {
     }
 
     /// The default policy with quick retries, so failure tests stay fast.
+    /// The read-path tests probe with `HEAD` (no opening read), so every
+    /// range they ask for reaches the test server.
     fn quick() -> FetchPolicy {
         FetchPolicy {
             backoff_ms: 1,
+            open_read: 0,
             ..FetchPolicy::DEFAULT
         }
+    }
+
+    /// The default open: one `bytes=0-65535` GET is both the length probe and
+    /// the first read; no `HEAD`, and later reads inside it never leave memory.
+    #[test]
+    fn the_open_reads_first_and_sends_no_head() {
+        let data: Vec<u8> = (0..=255u8).cycle().take(100_000).collect();
+        let (url, stats) = serve_with(data.clone(), ServerMode::HeadWithoutLength, Duration::ZERO);
+        let policy = FetchPolicy {
+            backoff_ms: 1,
+            ..FetchPolicy::DEFAULT
+        };
+        let r = HttpRangeReader::open_with(&url, policy).unwrap();
+        assert_eq!(r.len(), 100_000);
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 1, "the open is one GET");
+        assert_eq!(r.read_at(1000, 24).unwrap(), &data[1000..1024]);
+        assert_eq!(
+            r.read_many(&[(0, 16), (60_000, 8)]).unwrap()[1],
+            &data[60_000..60_008]
+        );
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 1, "served from the first read");
+        assert_eq!(r.read_at(70_000, 4).unwrap(), &data[70_000..70_004]);
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 2, "past it: one more GET");
+        // A file shorter than the first read is read whole by the open.
+        let small: Vec<u8> = (0..100u8).collect();
+        let (url, stats) = serve_with(small.clone(), ServerMode::HonorRange, Duration::ZERO);
+        let r = HttpRangeReader::open_with(&url, policy).unwrap();
+        assert_eq!(r.len(), 100);
+        assert_eq!(r.read_at(90, 10).unwrap(), &small[90..]);
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 1);
     }
 
     #[test]

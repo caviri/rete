@@ -589,3 +589,30 @@ impl RangeReader for SparseReader {
         Err(std::io::Error::other("0x06: range not held by this reader"))
     }
 }
+
+/// What the card's measured signals need from a `0x06` file's root: the text
+/// index's `(bytes, token-table bytes)` and the label index's `(bytes, entries)`.
+#[allow(clippy::type_complexity)]
+pub fn read_signals<R: RangeReader + ?Sized>(
+    r: &R,
+) -> Result<(Option<(u64, u64)>, Option<(u64, Option<u64>)>), FileError> {
+    let (_, root) = read_front(r)?;
+    let len = |k: u8| root.section(k).map_or(0, |s| s.len);
+    let text = root
+        .unit(tag::TEXT)
+        .map(|_| (len(kind::TEXT_LEAVES) + len(kind::TEXT_DATA), len(kind::TEXT_LEAVES)));
+    let labels = match root.unit(tag::LABELS) {
+        None => None,
+        Some(u) => {
+            let l = decode_label_root(u)?;
+            let entries = crate::label_index::LabelIndexPreamble::parse(&l.head)
+                .ok()
+                .map(|p| p.entry_count);
+            Some((
+                l.head.len() as u64 + len(kind::LABEL_DATA) + len(kind::LABEL_LEAVES),
+                entries,
+            ))
+        }
+    };
+    Ok((text, labels))
+}

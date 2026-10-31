@@ -863,6 +863,9 @@ pub fn read_label_index_entries_ranged<R: crate::RangeReader + ?Sized>(
     header: &crate::Header,
 ) -> Option<u64> {
     let s = header.label_index_section()?;
+    if header.version == crate::v06::VERSION {
+        return crate::v06::open::read_signals(reader).ok()?.1?.1;
+    }
     let head = reader
         .read_at(s.offset, (PREAMBLE_LEN as u64).min(s.length))
         .ok()?;

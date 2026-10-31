@@ -574,6 +574,12 @@ pub(crate) fn build(
     sections: BuildSections,
 ) -> anyhow::Result<()> {
     let text_index = text_index.into_text_index();
+    // Format 0x06 stores named graphs in the quad index only.
+    let graphs = if super::v06::writes_legacy() {
+        graphs
+    } else {
+        rete_core::GraphLayout::Quad
+    };
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
         .iter()
         .map(|i| (i.as_str(), input_format(i, format)))
@@ -718,6 +724,7 @@ pub(crate) fn build(
                 }
             })
             .map_err(|e| ingest_error(None, e))?;
+        let bytes = super::v06::finish(bytes)?;
         let audit = audit.into_inner();
         let len = if card_requested {
             write_carded(
@@ -845,6 +852,7 @@ pub(crate) fn build(
             }
             None => rete_core::ingest::DeferredMetadata::none(),
         });
+    let bytes = super::v06::finish(bytes)?;
     let len = if card_requested {
         write_carded(
             output,
@@ -1319,7 +1327,7 @@ pub(crate) fn repyramid(
     let perms = rete.header().perms;
     // The named-graph layout is the same kind of fact: a quad-index input
     // stays a quad-index file.
-    let graphs = if rete.header().has_quad_index() {
+    let graphs = if rete.header().has_quad_index() || !super::v06::writes_legacy() {
         rete_core::GraphLayout::Quad
     } else {
         rete_core::GraphLayout::PerGraph
@@ -1389,6 +1397,7 @@ pub(crate) fn repyramid(
             }
             None => rete_core::ingest::DeferredMetadata::none(),
         });
+    let out_bytes = super::v06::finish(out_bytes)?;
     let len = if card_requested {
         let flags = RecordFlags {
             command: "repyramid",

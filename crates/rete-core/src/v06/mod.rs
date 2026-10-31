@@ -35,8 +35,9 @@ pub const HEADER_LEN: usize = 128;
 /// What a reader fetches first: header, root, card, statistics and, on a small
 /// file, every leaf directory (SPEC.md §9).
 pub const FIRST_READ: u64 = 64 * 1024;
-/// The 8-byte footer.
-pub const FOOTER: [u8; 8] = *b"RETE\x06\x00\x00\x00";
+/// The 8-byte footer: the generation, then `RETE` — so every reader that
+/// confirms a length by the file's last four bytes finds the magic there.
+pub const FOOTER: [u8; 8] = *b"\x06\x00\x00\x00RETE";
 /// The writer's root budget: leaves grow until the stored root fits.
 pub const ROOT_BUDGET: usize = 40 * 1024;
 /// Starting (uncompressed) size of a leaf block.

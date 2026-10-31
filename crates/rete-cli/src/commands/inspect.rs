@@ -15,7 +15,11 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     let reader = LocalRangeReader::open(file)?;
     let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
     let header = rete_core::Header::from_bytes(&head)?;
-    println!("{header:#?}");
+    if header.version == rete_core::v06::VERSION {
+        print_v06_layout(&reader)?;
+    } else {
+        println!("{header:#?}");
+    }
     // The section directory the header just printed is also where "can I
     // full-text search this?" is decided; fold that into the card the same way
     // `rete card` does, so both surfaces answer it identically.
@@ -396,8 +400,40 @@ pub(crate) fn graphs(file: &str) -> anyhow::Result<()> {
 ///
 /// Streams the hashed sections through a positional reader, so memory stays at
 /// one read slice whatever the file size (it used to read the whole file).
-pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
+pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()> {
     let reader = LocalRangeReader::open(file)?;
+    let head = rete_core::RangeReader::read_at(
+        &reader,
+        0,
+        (rete_core::HEADER_LEN as u64).min(rete_core::RangeReader::len(&reader)),
+    )?;
+    if rete_core::v06::open::is_v06(&head) {
+        let only = match section {
+            None => None,
+            Some(name) => Some(
+                rete_core::v06::kind::ORDER
+                    .iter()
+                    .copied()
+                    .find(|&k| rete_core::v06::kind::name(k) == name)
+                    .ok_or_else(|| anyhow::anyhow!("unknown section {name:?}"))?,
+            ),
+        };
+        let bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
+        if bad.is_empty() {
+            println!(
+                "OK — format 0x06, {}",
+                match section {
+                    Some(s) => format!("section {s} matches its digest"),
+                    None => "content hash and every section digest match".to_string(),
+                }
+            );
+            return Ok(());
+        }
+        anyhow::bail!("FAILED — digest mismatch in: {}", bad.join(", "));
+    }
+    if section.is_some() {
+        anyhow::bail!("--section needs a format 0x06 file");
+    }
     if rete_core::verify_ranged(&reader)? {
         println!("OK — content hash matches");
         Ok(())
@@ -578,6 +614,39 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
             }
         }
         None => eprintln!("file has no pyramid"),
+    }
+    Ok(())
+}
+
+/// `rete info` for a format 0x06 file: the fixed header, then the root's
+/// section table — where every part of the file is, and its digest.
+fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
+    use rete_core::v06::{kind, open};
+    let (h, root) = open::read_front(reader)?;
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    println!("format 0x06 — {} bytes", h.file_len);
+    println!("  content hash : {}", hex(&h.content_hash));
+    println!("  statements   : {}", h.quad_count);
+    println!("  terms        : {}", h.term_count);
+    println!("  named graphs : {}", h.graph_count);
+    println!("  permutations : {}", h.perms().names().join(", "));
+    println!(
+        "  flags        : {:#06b} (named graphs, quoted triples, text covers graphs, quad graph-major)",
+        h.flags
+    );
+    println!("  codecs       : dict {}, tiles {}, front {}", h.dict_codec, h.block_codec, h.internal_codec);
+    println!("  front        : root {} B at 128, card region {} B (card {} B, record {} B), data at {}",
+        h.root_len, h.card_region_len, h.card_len, h.build_len, h.data_offset);
+    println!("  sections     :");
+    for s in &root.sections {
+        let a = s.abs(&h);
+        println!(
+            "    {:<13} {:>14} + {:<12} digest {}",
+            kind::name(s.kind),
+            a.offset,
+            a.len,
+            hex(&s.digest)
+        );
     }
     Ok(())
 }

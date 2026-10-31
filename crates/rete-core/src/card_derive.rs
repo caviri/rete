@@ -585,6 +585,19 @@ impl TextIndexSignal {
         if header.text_index_len == 0 {
             return TextIndexSignal::default();
         }
+        if header.version == crate::v06::VERSION {
+            return match crate::v06::open::read_signals(reader) {
+                Ok((Some((bytes, tt)), _)) => TextIndexSignal {
+                    present: true,
+                    bytes,
+                    token_table_bytes: Some(tt),
+                },
+                _ => TextIndexSignal {
+                    present: true,
+                    ..TextIndexSignal::default()
+                },
+            };
+        }
         TextIndexSignal {
             present: true,
             bytes: header.text_index_len,
@@ -639,6 +652,19 @@ impl LabelIndexSignal {
         let Some(s) = header.label_index_section() else {
             return LabelIndexSignal::default();
         };
+        if header.version == crate::v06::VERSION {
+            return match crate::v06::open::read_signals(reader) {
+                Ok((_, Some((bytes, entries)))) => LabelIndexSignal {
+                    present: true,
+                    bytes,
+                    entries,
+                },
+                _ => LabelIndexSignal {
+                    present: true,
+                    ..LabelIndexSignal::default()
+                },
+            };
+        }
         LabelIndexSignal {
             present: true,
             bytes: s.length,
@@ -2523,6 +2549,14 @@ fn split_namespace(term: &str) -> Option<String> {
 ///
 /// The ranged (remote) companion lives in `rete-cli`, which has the HTTP reader.
 pub fn load_card(bytes: &[u8]) -> Result<Option<DatasetCard>, String> {
+    if crate::v06::open::is_v06(bytes) {
+        return match crate::file::read_metadata_ranged(&crate::reader::SliceReader::new(bytes))
+            .map_err(|e| e.to_string())?
+        {
+            Some(b) => Ok(Some(DatasetCard::from_json_bytes(&b)?)),
+            None => Ok(None),
+        };
+    }
     let header = Header::from_bytes(bytes).map_err(|e| e.to_string())?;
     if header.metadata_len == 0 {
         return Ok(None);

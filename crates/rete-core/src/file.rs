@@ -2503,6 +2503,17 @@ pub fn plan_build_info(
 /// Passing an empty `info` removes an existing section (or returns the image
 /// unchanged when there is none).
 pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError> {
+    if crate::v06::open::is_v06(image) {
+        // 0x06: the record lives in the card region; the card stays.
+        let h = crate::v06::Header06::from_bytes(image)?;
+        let (card, _) =
+            crate::v06::open::read_card_build(&crate::reader::SliceReader::new(image), &h)?;
+        return crate::v06::write::replace_card(
+            image,
+            card.as_deref(),
+            (!info.is_empty()).then_some(info),
+        );
+    }
     let plan = plan_build_info(image, image.len() as u64, info.len() as u64)?;
     let mut out = Vec::with_capacity(plan.new_len as usize);
     out.extend_from_slice(&plan.header);
@@ -2533,6 +2544,17 @@ pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError
 ///
 /// Passing an empty payload removes the section.
 pub fn replace_metadata(image: &[u8], metadata: &[u8]) -> Result<Vec<u8>, FileError> {
+    if crate::v06::open::is_v06(image) {
+        // 0x06: the card region is rewritten; every section is kept.
+        let h = crate::v06::Header06::from_bytes(image)?;
+        let (_, build) =
+            crate::v06::open::read_card_build(&crate::reader::SliceReader::new(image), &h)?;
+        return crate::v06::write::replace_card(
+            image,
+            (!metadata.is_empty()).then_some(metadata),
+            build.as_deref(),
+        );
+    }
     let mut header = Header::from_bytes(image)?;
     // The writers in this crate always place metadata (when present) at
     // HEADER_LEN; anything else is a file this function must not reshape.
@@ -4027,6 +4049,9 @@ impl Rete {
     /// covered by any segment are container framing (section directories and
     /// length fields).
     pub fn file_layout(&self) -> Vec<LayoutSegment> {
+        if let Some(f) = &self.v06 {
+            return v06_layout(f);
+        }
         let h = &self.header;
         let seg = |kind: &'static str, label: String, offset: u64, len: u64| LayoutSegment {
             kind,
@@ -4578,7 +4603,12 @@ impl Rete {
             .map(|(ix, pattern)| ix.scan_plan(pattern));
         DumpPlan {
             scan,
-            dictionary_bytes: self.header.dictionary_len,
+            dictionary_bytes: match &self.v06 {
+                Some(f) => f
+                    .section(crate::v06::kind::DICT_DATA)
+                    .map_or(0, |r| r.len),
+                None => self.header.dictionary_len,
+            },
         }
     }
 
@@ -5131,9 +5161,20 @@ impl Rete {
     pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
+        Self::open_ranged_lazy_with(reader, crate::v06::FIRST_READ)
+    }
+
+    /// [`open_ranged_lazy`](Self::open_ranged_lazy) with an explicit first-read
+    /// size (at least the 1 KiB a `0x05` header needs). The default is
+    /// [`crate::v06::FIRST_READ`]; a smaller one keeps a byte-accounting test
+    /// of a tiny `0x05` file from reading the whole file up front.
+    pub fn open_ranged_lazy_with<R: RangeReader + Send + Sync + 'static>(
+        reader: R,
+        first_read: u64,
+    ) -> Result<Self, FileError> {
         // One first read — 64 KiB, or the whole file when smaller — decides the
         // format, and every later read inside it is served from memory.
-        let first_len = crate::v06::FIRST_READ.min(reader.len());
+        let first_len = first_read.max(HEADER_LEN as u64).min(reader.len());
         let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
         let reader = crate::reader::PrefixReader::new(reader, first.clone());
         if crate::v06::open::is_v06(&first) {
@@ -5483,21 +5524,47 @@ impl Rete {
         };
 
         let index_permutation = GraphIndex::best_permutation_in(self.header.perms, pattern);
-        let dictionary_range = ByteRange {
-            offset: self.header.dictionary_offset,
-            len: self.header.dictionary_len,
+        let si = index_permutation.section_index();
+        let (dictionary_range, index_range, index_section_range, pyramid_range) = match &self.v06 {
+            Some(f) => {
+                use crate::v06::kind;
+                let sec = |k| f.section(k).unwrap_or_default();
+                let perm = f
+                    .root
+                    .unit(crate::v06::tag::INDEX)
+                    .and_then(|u| crate::v06::decode_index_root(u).ok())
+                    .and_then(|v| v.into_iter().find(|p| p.si == si))
+                    .map(|p| ByteRange {
+                        offset: sec(kind::INDEX_DATA).offset + p.data_off,
+                        len: p.data_len,
+                    })
+                    .unwrap_or_default();
+                (
+                    sec(kind::DICT_DATA),
+                    sec(kind::INDEX_DATA),
+                    perm,
+                    f.section(kind::PYRAMID),
+                )
+            }
+            None => (
+                ByteRange {
+                    offset: self.header.dictionary_offset,
+                    len: self.header.dictionary_len,
+                },
+                ByteRange {
+                    offset: self.header.root_dir_offset,
+                    len: self.header.root_dir_len,
+                },
+                self.index_section_ranges[si],
+                (self.header.pyramid_meta_len > 0).then_some(ByteRange {
+                    offset: self.header.pyramid_meta_offset,
+                    len: self.header.pyramid_meta_len,
+                }),
+            ),
         };
-        let index_range = ByteRange {
-            offset: self.header.root_dir_offset,
-            len: self.header.root_dir_len,
-        };
-        let index_section_range = self.index_section_ranges[index_permutation.section_index()];
-        let pyramid_range = (self.header.pyramid_meta_len > 0).then_some(ByteRange {
-            offset: self.header.pyramid_meta_offset,
-            len: self.header.pyramid_meta_len,
-        });
 
-        let tiles = &self.tile_ranges[index_permutation.section_index()];
+        let tiles = &self.tile_ranges[si];
+        let v06_tiles = self.v06.is_some().then(|| self.index.tile_sections()[si]);
         self.index
             .match_pattern(pattern)
             .into_iter()
@@ -5510,13 +5577,27 @@ impl Rete {
                 // The physical tile holding this match: the one whose
                 // leading-id range covers the match's permuted leading id.
                 let a = index_permutation.forward((s, p, o)).0;
-                let ti = tiles.partition_point(|&(_, max_a, _)| max_a < a);
-                let (tile, tile_range) = match tiles.get(ti) {
-                    Some(&(min_a, _, range)) if min_a <= a => (
-                        Some(format!("{}/{ti}", index_permutation.name())),
-                        Some(range),
-                    ),
-                    _ => (None, None),
+                let (tile, tile_range) = if let Some(tl) = v06_tiles {
+                    let ti = tl.first_max_ge(a);
+                    match (ti < tl.len() && tl[ti].leading_range().0 <= a)
+                        .then(|| tl.range(ti))
+                        .flatten()
+                    {
+                        Some((offset, len)) => (
+                            Some(format!("{}/{ti}", index_permutation.name())),
+                            Some(ByteRange { offset, len }),
+                        ),
+                        None => (None, None),
+                    }
+                } else {
+                    let ti = tiles.partition_point(|&(_, max_a, _)| max_a < a);
+                    match tiles.get(ti) {
+                        Some(&(min_a, _, range)) if min_a <= a => (
+                            Some(format!("{}/{ti}", index_permutation.name())),
+                            Some(range),
+                        ),
+                        _ => (None, None),
+                    }
                 };
                 Some(TripleProvenance {
                     terms,
@@ -5949,6 +6030,56 @@ fn open_side_by_side<A, B>(
     (a(), b())
 }
 
+/// [`Rete::file_layout`] for a `0x06` file: the header, the root, the card
+/// region, then every front and data section, in file order.
+fn v06_layout(f: &crate::v06::open::V06File) -> Vec<LayoutSegment> {
+    let h = &f.h;
+    let seg = |kind: &'static str, label: String, offset: u64, len: u64| LayoutSegment {
+        kind,
+        label,
+        offset,
+        len,
+    };
+    let mut out = vec![
+        seg(
+            "header",
+            format!("header (fixed {} bytes)", crate::v06::HEADER_LEN),
+            0,
+            crate::v06::HEADER_LEN as u64,
+        ),
+        seg(
+            "directory",
+            "root block (section table, directory roots)".into(),
+            h.root_offset(),
+            h.root_len as u64,
+        ),
+    ];
+    let c = h.card_range();
+    if c.len > 0 {
+        out.push(seg("metadata", "metadata (dataset card, zstd)".into(), c.offset, c.len));
+    }
+    let b = h.build_range();
+    if b.len > 0 {
+        out.push(seg("build-info", "build record".into(), b.offset, b.len));
+    }
+    for s in &f.root.sections {
+        let a = s.abs(h);
+        let kind: &'static str = match s.kind {
+            crate::v06::kind::SCHEMA => "schema",
+            crate::v06::kind::DICT_DATA => "dictionary",
+            crate::v06::kind::INDEX_DATA => "tile",
+            crate::v06::kind::QUAD_DATA => "named-graphs",
+            crate::v06::kind::LABEL_DATA => "label-index",
+            crate::v06::kind::TEXT_DATA => "text-index",
+            crate::v06::kind::PYRAMID => "pyramid",
+            _ => "directory",
+        };
+        out.push(seg(kind, crate::v06::kind::name(s.kind).to_string(), a.offset, a.len));
+    }
+    out.sort_by_key(|s| s.offset);
+    out
+}
+
 /// The deferred slots of a `0x06` open: pyramid, text index, label index and
 /// schema, each faulted on first use.
 #[allow(clippy::type_complexity)]
@@ -6180,7 +6311,16 @@ impl SearchView {
     pub fn open_ranged<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
-        let first_len = crate::v06::FIRST_READ.min(reader.len());
+        Self::open_ranged_with(reader, crate::v06::FIRST_READ)
+    }
+
+    /// [`open_ranged`](Self::open_ranged) with an explicit first-read size
+    /// (see [`Rete::open_ranged_lazy_with`]).
+    pub fn open_ranged_with<R: RangeReader + Send + Sync + 'static>(
+        reader: R,
+        first_read: u64,
+    ) -> Result<Self, FileError> {
+        let first_len = first_read.max(HEADER_LEN as u64).min(reader.len());
         let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
         let reader = crate::reader::PrefixReader::new(reader, first.clone());
         if crate::v06::open::is_v06(&first) {
@@ -6855,7 +6995,7 @@ mod tests {
             let resident = Rete::open(image).unwrap();
             let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
             let ranged = Rete::open_ranged(&SliceReader::new(leaked)).unwrap();
-            let lazy = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
             for (s, p, o) in &shapes {
                 let want: Vec<_> = {
                     let mut v = Rete::open(&six).unwrap().query(*s, *p, *o);
@@ -7001,7 +7141,7 @@ mod tests {
         let bytes = write_file(&dict, &index, false, &[], 0);
 
         let rete = Rete::open(&bytes).unwrap();
-        assert_eq!(rete.header().version, crate::header::CURRENT_FORMAT_VERSION);
+        assert_eq!(rete.header().version, crate::header::LEGACY_FORMAT_VERSION);
         assert_eq!(rete.query(None, None, None).len(), 200);
         assert_eq!(rete.query(Some("<http://ex/s/7>"), None, None).len(), 1);
         assert_eq!(
@@ -7128,7 +7268,7 @@ mod tests {
         // process exits straight after).
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
         let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(reader).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(reader, HEADER_LEN as u64).unwrap();
 
         let brute = |s: Option<&str>, p: Option<&str>, o: Option<&str>| {
             let mut v: Vec<(String, String, String)> = triples
@@ -7217,7 +7357,7 @@ mod tests {
         // Open it LAZILY through the offset shim and query it.
         let leaked: &'static [u8] = Box::leak(poly.into_boxed_slice());
         let counting = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(OffsetReader::new(counting.clone(), detected)).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(OffsetReader::new(counting.clone(), detected), HEADER_LEN as u64).unwrap();
 
         // The polyglot must answer exactly like the plain .rete it embeds.
         let plain = Rete::open(&image).unwrap();
@@ -7388,7 +7528,7 @@ mod tests {
 
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
         let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
         // Bytes pulled by the open itself (dict dirs, index dirs, named graphs) —
         // the text index is deferred and not touched yet.
         let before = reader.bytes_read();
@@ -7436,13 +7576,13 @@ mod tests {
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
 
         let full_reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let full = Rete::open_ranged_lazy(full_reader.clone()).unwrap();
+        let full = Rete::open_ranged_lazy_with(full_reader.clone(), HEADER_LEN as u64).unwrap();
         let mut want = full.text_search(&["raretoken"], None, 0);
         want.sort();
         assert_eq!(want.len(), 3);
 
         let search_reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let view = SearchView::open_ranged(search_reader.clone()).unwrap();
+        let view = SearchView::open_ranged_with(search_reader.clone(), HEADER_LEN as u64).unwrap();
         assert!(view.has_text_index());
         let mut got = view.text_search(&["raretoken"], None, 0);
         got.sort();
@@ -8011,7 +8151,7 @@ mod tests {
         let query_bytes = |image: &[u8]| -> (u64, usize) {
             let leaked: &'static [u8] = Box::leak(image.to_vec().into_boxed_slice());
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let rete = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read(); // after open (incl. trailer reads)
             let n = rete.query(q.0, q.1, q.2).len();
             assert!(!rete.index_incomplete());
@@ -8084,7 +8224,7 @@ mod tests {
 
         let eager_rows = run(&Rete::open(&bytes).unwrap());
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
-        let lazy = Rete::open_ranged_lazy(std::sync::Arc::new(SliceReader::new(leaked))).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(std::sync::Arc::new(SliceReader::new(leaked)), HEADER_LEN as u64).unwrap();
         let lazy_rows = run(&lazy);
         assert!(!lazy.index_incomplete());
 
@@ -8997,7 +9137,7 @@ mod tests {
         let read_bytes = |take: usize| -> u64 {
             let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let rete = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let n = rete.dump_iter(None).take(take).count();
             assert_eq!(n, take.min(triples.len()));
@@ -9161,7 +9301,7 @@ mod tests {
         let read_bytes = |take: usize| -> u64 {
             let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let rete = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let (mut n, mut cursor) = (0usize, 0u64);
             loop {
@@ -9362,7 +9502,7 @@ mod tests {
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
         let probe = |f: &dyn Fn(&Rete) -> Vec<TermTriple>| -> (Vec<TermTriple>, u64) {
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let out = f(&lazy);
             assert!(!lazy.index_incomplete(), "a chunk fetch failed");
@@ -9487,7 +9627,7 @@ mod tests {
             Vec<(String, String, String)>,
             crate::chunk_cache::CacheStats,
         ) {
-            let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+            let rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
             rete.dict.set_cache_cap(cap);
             let mut out = Vec::new();
             rete.dump_filtered_each(None, None, None, None, |s, p, o| {
@@ -9534,7 +9674,7 @@ mod tests {
     fn memory_budget_charges_the_fixed_directories() {
         use crate::reader::SliceReader;
         let leaked: &'static [u8] = Box::leak(build_multichunk_image().into_boxed_slice());
-        let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+        let rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
 
         let fixed = rete.fixed_overhead();
         // Every chunk and every tile has a descriptor; a multi-chunk dictionary
@@ -9574,7 +9714,7 @@ mod tests {
 
         // Under a cap smaller than the decompressed dictionary, a full dump
         // keeps the cache within it.
-        let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+        let rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
         rete.dict.set_cache_cap(128 * 1024);
         let mut rows = 0usize;
         rete.dump_filtered_each(None, None, None, None, |_, _, _| rows += 1);
@@ -9637,7 +9777,7 @@ mod tests {
             0,
         );
         let leaked: &'static [u8] = Box::leak(image.into_boxed_slice());
-        let mut rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+        let mut rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
 
         let opened = |r: &Rete| -> usize {
             match &r.named_graphs {
@@ -9769,7 +9909,7 @@ mod tests {
                 ),
                 (
                     "lazy",
-                    Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap(),
+                    Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap(),
                 ),
             ];
             for graph in [None, Some("<http://ex/g1>"), Some("<http://ex/absent>")] {
@@ -9883,7 +10023,7 @@ mod tests {
         // Bytes faulted past the open, for one dump.
         let probe = |s: Option<&str>, p: Option<&str>, o: Option<&str>| -> (usize, u64) {
             let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-            let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
             let before = reader.bytes_read();
             let mut n = 0usize;
             lazy.dump_filtered_each(None, s, p, o, |_, _, _| n += 1);
@@ -9922,7 +10062,7 @@ mod tests {
 
         // And the plan predicted the index side of it without fetching a tile.
         let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(reader.clone(), HEADER_LEN as u64).unwrap();
         let before = reader.bytes_read();
         let plan = lazy
             .dump_plan(None, None, Some("<http://ex/p/07>"), None)
@@ -10243,11 +10383,11 @@ mod tests {
         for search_view in [false, true] {
             let calls = Calls(Arc::new(bytes.clone()), Arc::new(Mutex::new(Vec::new())));
             let got = if search_view {
-                let view = SearchView::open_ranged(calls.clone()).unwrap();
+                let view = SearchView::open_ranged_with(calls.clone(), HEADER_LEN as u64).unwrap();
                 calls.1.lock().unwrap().clear();
                 view.prefix_search("glucose", 1000)
             } else {
-                let rete = Rete::open_ranged_lazy(calls.clone()).unwrap();
+                let rete = Rete::open_ranged_lazy_with(calls.clone(), HEADER_LEN as u64).unwrap();
                 calls.1.lock().unwrap().clear();
                 rete.prefix_search("glucose", 1000)
             };
@@ -10382,7 +10522,7 @@ mod tests {
         let p_iri = std::env::var("RETE_DEBUG_P").expect("RETE_DEBUG_P");
         let o_iri = std::env::var("RETE_DEBUG_O").expect("RETE_DEBUG_O");
         let rete =
-            Rete::open_ranged_lazy(std::sync::Arc::new(FR(std::fs::File::open(&path).unwrap())))
+            Rete::open_ranged_lazy_with(std::sync::Arc::new(FR(std::fs::File::open(&path).unwrap())), HEADER_LEN as u64)
                 .unwrap();
         let pid = rete.dict.predicate_id(&p_iri).expect("p resolves");
         let oid = rete.dict.object_id(&o_iri).expect("o resolves");

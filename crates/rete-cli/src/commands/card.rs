@@ -227,7 +227,11 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
     let header = Header::from_bytes(&head)?;
     let meta = (header.metadata_offset, header.metadata_len);
     let build = (header.build_info_offset, header.build_info_len);
-    let (m, b) = if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
+    let (m, b) = if header.version == rete_core::v06::VERSION {
+        // 0x06: card and record share the card region, right after the root.
+        let (_, m, b) = rete_core::read_card_and_build_info_with_header(reader)?;
+        (m, b)
+    } else if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
         // Adjacent (the layout the writers produce): one read spans both.
         let both = reader.read_at(meta.0, meta.1 + build.1)?;
         let (m, b) = both.split_at(meta.1 as usize);

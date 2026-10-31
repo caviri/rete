@@ -1012,6 +1012,13 @@ pub(crate) fn write_image_with_build_info(
     info: &[u8],
 ) -> anyhow::Result<u64> {
     use std::io::Write;
+    if rete_core::v06::open::is_v06(image) {
+        // 0x06: the record goes into the card region (the image is a small,
+        // in-RAM build's; the front is re-laid out, every section copied).
+        let out = rete_core::attach_build_info(image, info)?;
+        std::fs::write(path, &out)?;
+        return Ok(out.len() as u64);
+    }
     let plan = rete_core::plan_build_info(image, image.len() as u64, info.len() as u64)?;
     let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(path)?);
     out.write_all(&plan.header)?;
@@ -1058,6 +1065,17 @@ pub(crate) fn counts(
 /// there to make impossible.
 pub(crate) fn patch_build_info(path: &std::path::Path, info: &[u8]) -> anyhow::Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
+    if super::v06::file_is_v06(path)? {
+        if !super::v06::patch_record_in_place(path, info)? {
+            eprintln!(
+                "warning: the build record ({} bytes) outgrew its reservation; rewriting the file to fit it",
+                info.len()
+            );
+            let image = std::fs::read(path)?;
+            std::fs::write(path, rete_core::attach_build_info(&image, info)?)?;
+        }
+        return Ok(());
+    }
     let mut f = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

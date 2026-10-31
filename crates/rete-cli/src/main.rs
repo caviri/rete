@@ -465,10 +465,31 @@ enum Command {
         /// Path to the `.rete` file.
         file: String,
     },
-    /// Verify a file's content hash (detects corruption/truncation).
+    /// Verify a file's content hash (detects corruption/truncation). On a
+    /// format 0x06 file every section digest is checked too, and a failure
+    /// names the section.
     Verify {
         /// Path to the `.rete` file.
         file: String,
+        /// Check only this section of a 0x06 file (`dict`, `index`, `quad`,
+        /// `labels`, `text`, `pyramid`, `schema`, or a `*-leaves` directory).
+        #[arg(long)]
+        section: Option<String>,
+    },
+    /// Convert a format 0x05 file to format 0x06: the sections are read through
+    /// ranges and their payload copied verbatim (no text round trip); the
+    /// directories move to the front of the file. A file whose named graphs are
+    /// stored one index per graph is re-encoded as a quad index.
+    Convert {
+        /// The 0x05 input (a path or an http(s) URL).
+        input: String,
+        /// The 0x06 output path.
+        #[arg(short, long)]
+        output: String,
+        /// Quad-tile clustering: `auto` (graph-major when graphs are small),
+        /// `graph`, or `order`.
+        #[arg(long = "quad-clustering", value_name = "MODE")]
+        quad_clustering: Option<String>,
     },
     /// Search a `.rete` for entities. Two modes:
     ///
@@ -1707,7 +1728,12 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         }
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),
-        Command::Verify { file } => commands::inspect::verify_cmd(&file),
+        Command::Verify { file, section } => commands::inspect::verify_cmd(&file, section.as_deref()),
+        Command::Convert {
+            input,
+            output,
+            quad_clustering,
+        } => commands::v06::convert(&input, &output, quad_clustering.as_deref()),
         Command::Search {
             file,
             prefix,

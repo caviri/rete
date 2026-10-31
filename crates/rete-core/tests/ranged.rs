@@ -325,7 +325,7 @@ fn lazy_sparql_open_fetches_only_touched_tiles() {
     assert_eq!(expected.len(), 2);
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     let got = match eval_query(&rete, &q).unwrap() {
         QueryOutput::Select(_, rows) => rows,
         other => panic!("unexpected output {other:?}"),
@@ -380,7 +380,7 @@ fn lazy_open_defers_the_pyramid_until_needed() {
     assert!(pyr.1 > pyr.0, "fixture should carry a pyramid");
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
 
     // Open + a bound SPARQL query: the pyramid region must stay untouched.
     let q = "SELECT ?o WHERE { <http://ex/n0> <http://ex/knows> ?o }";
@@ -425,7 +425,7 @@ fn full_scan_coalesces_tile_fetches() {
     assert!(expected > 40_000);
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     let got = match eval_query(&rete, q).unwrap() {
         QueryOutput::Select(_, rows) => rows.len(),
         other => panic!("unexpected output {other:?}"),
@@ -468,7 +468,7 @@ fn small_limit_does_not_fetch_the_whole_index() {
     );
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     let q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1";
     let rows = match eval_query(&rete, q).unwrap() {
         QueryOutput::Select(_, rows) => rows,
@@ -511,7 +511,7 @@ fn multi_term_output_coalesces_dictionary_faults() {
     assert_eq!(expected.len(), 400);
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     let got = match eval_query(&rete, q).unwrap() {
         QueryOutput::Select(_, rows) => rows,
         other => panic!("unexpected output {other:?}"),
@@ -543,7 +543,7 @@ fn dump_over_lazy_open_coalesces_fetches() {
     let expected = plain.dump(None);
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     let got = rete.dump(None);
     assert_eq!(got, expected);
     assert!(!rete.index_incomplete());
@@ -563,7 +563,7 @@ fn dump_over_lazy_open_coalesces_fetches() {
 fn lazy_sparql_open_surfaces_failed_tile_fetches() {
     let image = multi_tile_image();
     let reader = std::sync::Arc::new(RecordingReader::new(image));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     assert!(!rete.index_incomplete());
 
     // The network dies after the open; the next query's chunk/tile faults fail.
@@ -587,7 +587,7 @@ fn reset_load_failures_makes_failed_fetches_retryable() {
     let expected = {
         // The complete answer, computed over a healthy session.
         let healthy =
-            Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(image.clone())))
+            Rete::open_ranged_lazy_with(std::sync::Arc::new(RecordingReader::new(image.clone())), rete_core::HEADER_LEN as u64)
                 .unwrap();
         let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
         match eval_query(&healthy, &q).unwrap() {
@@ -598,7 +598,7 @@ fn reset_load_failures_makes_failed_fetches_retryable() {
     assert!(expected > 0, "fixture must produce rows");
 
     let reader = std::sync::Arc::new(RecordingReader::new(image));
-    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     reader.fail_from_now();
     let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
     let _ = eval_query(&rete, &q).unwrap();
@@ -708,7 +708,7 @@ fn shacl_over_lazy_open_matches_eager_and_fetches_only_targets() {
     // Lazy: validate over a range reader, measuring the bytes the validation pulls.
     let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
     let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-    let lazy_rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let lazy_rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     let before = reader.bytes_read();
     let lazy = validate_shacl(&ReteGraph::new(&lazy_rete), &shapes);
     let pulled = reader.bytes_read() - before;
@@ -749,7 +749,7 @@ fn lazy_bound_object_lookup_reaches_late_slices_of_a_split_group() {
 
     let plain = Rete::open(&image).unwrap();
     let lazy =
-        Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(image.clone()))).unwrap();
+        Rete::open_ranged_lazy_with(std::sync::Arc::new(RecordingReader::new(image.clone())), rete_core::HEADER_LEN as u64).unwrap();
     for i in [0u32, 4_000, 7_999] {
         let q = format!(
             "SELECT ?s WHERE {{ ?s <http://ex/cites> {} }}",
@@ -841,7 +841,7 @@ fn big_containers_keep_the_walk_on_headers() {
     // doubling would grow the read size while hopping — fetching the multi-MB
     // payloads a name listing has no use for.
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     assert_eq!(lazy.graph_names().len(), 4);
     let walked: u64 = reader
         .reads()
@@ -868,7 +868,7 @@ fn big_containers_keep_the_walk_on_headers() {
         }
     };
     let reader2 = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let lazy2 = Rete::open_ranged_lazy(reader2.clone()).unwrap();
+    let lazy2 = Rete::open_ranged_lazy_with(reader2.clone(), rete_core::HEADER_LEN as u64).unwrap();
     assert_eq!(count_of(&lazy2), count_of(&plain));
     assert!(!lazy2.index_incomplete());
     let fetched: u64 = reader2
@@ -929,7 +929,7 @@ fn named_graphs_are_lazy_and_graph_queries_stay_correct() {
 
     // 1. The OPEN reads nothing of the named-graphs section.
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     assert_eq!(
         named_bytes(&reader),
         0,
@@ -1036,7 +1036,7 @@ fn exhaustive_graph_walk_bulk_fetches_the_section() {
     assert!(want.starts_with("\"180000\""), "resident count: {want}");
 
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     assert_eq!(count_of(&lazy), want);
     assert!(!lazy.index_incomplete());
 
@@ -1103,7 +1103,7 @@ fn non_exhaustive_graph_shapes_stay_incremental() {
     ];
     for (q, byte_cap) in cases {
         let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
         assert_eq!(run(&lazy, q), run(&plain, q), "lazy != resident for {q}");
         assert!(!lazy.index_incomplete());
 
@@ -1137,7 +1137,7 @@ fn non_exhaustive_graph_shapes_stay_incremental() {
 fn named_graph_walk_failure_is_sticky_and_retryable() {
     let image = dataset_with_named_graphs(&[3, 3, 3, 3]);
     let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
 
     reader.fail_from_now();
     let q = "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }";
@@ -1173,7 +1173,7 @@ fn hostile_named_graph_count_is_refused() {
         *b = 0xff;
     }
     bad[off + 8] = 0x01;
-    let lazy = Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(bad))).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(std::sync::Arc::new(RecordingReader::new(bad)), rete_core::HEADER_LEN as u64).unwrap();
     assert_eq!(lazy.named_graph_count(), 0);
     assert!(lazy.index_incomplete());
 }
@@ -1270,7 +1270,7 @@ fn result_decoding_batches_chunks_across_sections() {
         };
         assert_eq!(expected.len(), 20000);
         let reader = std::sync::Arc::new(BatchRecordingReader::new(image.clone(), 4));
-        let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
         let opened = reader.batches.lock().unwrap().len();
         let got = match eval_query(&rete, q).unwrap() {
             QueryOutput::Select(_, rows) => rows,
@@ -1310,7 +1310,7 @@ fn concurrent_open_reads_and_answers_like_the_sequential_one() {
     let q = "SELECT ?s ?o WHERE { ?s <http://ex/knows> ?o } ORDER BY ?s ?o LIMIT 50";
     let run = |fan_out: usize| {
         let reader = std::sync::Arc::new(BatchRecordingReader::new(image.clone(), fan_out));
-        let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
         let mut open_reads = reader.reads.lock().unwrap().clone();
         open_reads.sort_unstable();
         let rows = match eval_query(&rete, q).unwrap() {

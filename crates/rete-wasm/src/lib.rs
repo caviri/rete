@@ -2389,7 +2389,9 @@ impl XhrRangeReader {
         if let Some(head) = self.head.get() {
             return Some(head);
         }
-        let head = self.fetch_at(0, rete_core::HEADER_LEN as u64).ok()?;
+        let head = self
+            .fetch_at(0, rete_core::v06::FIRST_READ.min(self.len))
+            .ok()?;
         let _ = self.head.set(head);
         self.head.get().map(Vec::as_slice)
     }
@@ -2514,10 +2516,12 @@ impl XhrRangeReader {
             total: cr_total,
             body,
             full_len,
-        } = Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1).map_err(ProbeFail::retry)?;
-        // Only a genuine header window is worth keeping (a Range-ignoring host
-        // may have sent the whole file here).
-        let head = |body: &[u8]| body[..body.len().min(rete_core::HEADER_LEN)].to_vec();
+        } = Self::ranged_get(url, 0, rete_core::v06::FIRST_READ - 1).map_err(ProbeFail::retry)?;
+        // The probe IS the first read: 64 KiB, the header plus — on a 0x06 file
+        // — the root, the card and, on a small file, every leaf directory. Kept
+        // whole, so every later read inside it costs nothing. (A Range-ignoring
+        // host may have sent the whole file here.)
+        let head = |body: &[u8]| body[..body.len().min(rete_core::v06::FIRST_READ as usize)].to_vec();
         let derived_of = |body: &[u8]| {
             rete_core::Header::from_bytes(body)
                 .ok()
