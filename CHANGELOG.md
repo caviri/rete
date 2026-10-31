@@ -27,6 +27,41 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   finished permutation's tiles instead of `global.tri`, which no longer exists:
   a build killed in the first permutation or in the final write is not
   resumable.
+- **The native Python and R packages use every core** (G19). Their wheels and
+  builds now enable rete-core's `parallel` feature (rayon), which the CLI
+  already had: a build's sorts, permutations and tile/chunk compression, and a
+  query's dictionary decodes, spread across the machine. The bytes are those of
+  a single-threaded build (the 0.4.1 wheel, this wheel, and this wheel at
+  `RAYON_NUM_THREADS=1` write the same file and answer the same rows). On half
+  of the OpenCitations M=1200 sample (3 M statements, 6 CPUs) those phases
+  take 0.69 s instead of 2.66 s (the CLI's build record, which times the same
+  code at both thread counts); a whole Python build is parse-bound, so it went
+  from 8.64 s to 6.72 s without a pyramid, 11.56 s to 10.17 s with
+  `pyramid(algo="types")`, and 107 s to 99 s with the default Louvain pyramid,
+  whose community detection is single-threaded. The Pyodide wheels and a webR
+  build stay single-threaded. Python already released the GIL around every
+  engine call; `graph_names()` now does too, and `rete_graph.__engine_features__`
+  says what a wheel was built with.
+- **The Python and R clients read remote files through the CLI's HTTP reader.**
+  It moved into rete-core, behind a new `http` feature, so `rete_graph.open(url)`
+  and `rete_open(url)` gain what 0.4.0 gave the CLI: kept-alive connections,
+  coalesced ranges and retries (their own readers had 16 threads but neither),
+  and the `RETE_HTTP_*` knobs. Python's reader also reported a concurrency of 1
+  to the planner, which therefore planned for a serial reader; it now reports
+  its fan-out. The CLI's length probe takes the Python reader's fallback: a
+  host that omits `Content-Length` on `HEAD`, or refuses `HEAD`, is measured
+  with a `bytes=0-0` GET.
+
+### Fixed
+
+- **A host that ignores `Range` is no longer refused outright by the CLI, the
+  Python wheel or the R package** (G6). Such a host (a plain static server, a
+  proxy that strips the header) answers `200` with the whole file. The body is
+  now kept when it is the file and at most 256 MiB, the cap the browser readers
+  have had since 0.4.0, and every later read is a slice of it, with no further
+  request; a larger body is refused by name (`… not kept in memory`) without
+  being read. Tested against a real nginx with `max_ranges 0`
+  (`tests/interop/range_ignoring_host.sh`).
 
 ## [0.4.1] - 2026-10-30
 

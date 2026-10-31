@@ -123,12 +123,35 @@ fn remote_http_failures_exit_one_without_panicking() {
         .assert()
         .code(1)
         .stderr(predicate::str::contains("404"));
+}
 
-    let ignores_range = common::serve(bytes, common::RangeMode::Ignore);
-    common::rete()
-        .arg("query-url")
-        .arg(&ignores_range)
-        .assert()
-        .code(1)
-        .stderr(predicate::str::contains("ignored Range"));
+/// A host that ignores `Range` answers `200` with the whole file. Under the
+/// 256 MiB cap the reader keeps that body and serves every read from it (G6):
+/// the same answer as from a range host, never a mis-sliced one. (The refusal
+/// above the cap is pinned in rete-core's `http` tests and against a real nginx
+/// in `tests/interop/range_ignoring_host.sh`.)
+#[test]
+fn a_host_that_ignores_range_is_served_from_its_whole_body() {
+    let fixture = common::fixture();
+    let bytes = std::fs::read(&fixture.rete).unwrap();
+    let answer = |url: &str| {
+        let out = common::rete()
+            .arg("sparql-url")
+            .arg(url)
+            .arg(SELECT)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        json["results"]["bindings"].clone()
+    };
+    let ranged = answer(&common::serve(bytes.clone(), common::RangeMode::Honor));
+    let whole = answer(&common::serve(bytes, common::RangeMode::Ignore));
+    assert_eq!(whole, ranged);
+    assert!(!whole.as_array().unwrap().is_empty());
 }

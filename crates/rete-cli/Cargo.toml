@@ -20,8 +20,9 @@ path = "src/main.rs"
 
 [dependencies]
 # The CLI is always native, so it enables rete-core's `parallel` (rayon) feature
-# to back `rete reach --parallel`. (wasm builds rete-core without this feature.)
-rete-core = { version = "=0.4.1", path = "../rete-core", features = ["parallel"] }
+# to back `rete reach --parallel`, and `http` for the shared HTTP(S) range
+# reader. (wasm builds rete-core without either.)
+rete-core = { version = "=0.4.1", path = "../rete-core", features = ["parallel", "http"] }
 anyhow.workspace = true
 clap.workspace = true
 clap_complete = "4"

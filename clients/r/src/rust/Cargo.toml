@@ -22,11 +22,19 @@ path = 'document.rs'
 # Pinned to the 0.8 line: rextendr 0.5's generated plumbing (entrypoint.c,
 # wrapper conventions) targets it; 0.9 changed the #[extendr] macro contract.
 extendr-api = '0.8'
-rete-core = { path = '../../../../crates/rete-core' }
-# Blocking HTTP(S) range reads, mirroring the Python client's vendored reader
-# (rustls via the `tls` feature — no system OpenSSL on any platform).
-ureq = { version = '2', default-features = false, features = ['tls'] }
+# `http` is rete-core's HTTP(S) range reader, shared with the CLI and the
+# Python client (rustls via ureq's `tls` feature — no system OpenSSL on any
+# platform).
+rete-core = { path = '../../../../crates/rete-core', features = ['http'] }
 serde_json = '1'
+
+# `parallel` (rayon) spreads `rete_build()`'s sorts and compression, and a
+# query's dictionary decodes, over every core; the bytes are the serial build's.
+# Native only: a webR (emscripten) build has no threads. R calls into the engine
+# on its main thread and has no lock to release around them, so the threads
+# are the engine's own and R stays blocked for the call, as before.
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+rete-core = { path = '../../../../crates/rete-core', features = ['http', 'parallel'] }
 
 [profile.release]
 lto = true

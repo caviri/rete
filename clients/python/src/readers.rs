@@ -1,13 +1,11 @@
 //! The [`RangeReader`] implementations behind `rete_graph.open()`: a local
-//! file (positional reads), an HTTP(S) client (`Range` requests, mirroring
-//! `crates/rete-cli/src/http.rs`), and an adapter over a user-supplied Python
+//! file (positional reads), an HTTP(S) client (`Range` requests: rete-core's
+//! shared reader, the one the CLI uses), and an adapter over a user-supplied Python
 //! object — the escape hatch that lets fsspec/s3fs-style storage back a graph
 //! without any auth code on this side.
 
 use std::fs::File;
 use std::io;
-#[cfg(not(target_os = "emscripten"))]
-use std::io::Read;
 
 use pyo3::prelude::*;
 use rete_core::RangeReader;
@@ -48,6 +46,18 @@ impl RangeReader for AnyReader {
             #[cfg(not(target_os = "emscripten"))]
             Self::Http(r) => r.read_many(ranges),
             Self::Py(r) => r.read_many(ranges),
+        }
+    }
+
+    // Forwarded, or the trait default (1) tells the planner every reader is
+    // serial: it would then size its probe-vs-scan decisions for one request
+    // at a time while the HTTP reader really keeps 16 in flight.
+    fn concurrency(&self) -> usize {
+        match self {
+            Self::Local(r) => r.concurrency(),
+            #[cfg(not(target_os = "emscripten"))]
+            Self::Http(r) => r.concurrency(),
+            Self::Py(r) => r.concurrency(),
         }
     }
 }
@@ -114,140 +124,14 @@ fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result
     Ok(())
 }
 
-/// HTTP(S) `Range` reader — the same contract as the CLI's: the server MUST
-/// answer 206, and short bodies are hard errors, never silent truncation.
+/// HTTP(S) `Range` reader: rete-core's, the one the CLI uses — kept-alive
+/// connections, the engine's batches 16 in flight and coalesced, transient
+/// failures retried, a short body a hard error, and a host that ignores `Range`
+/// served from its whole body up to 256 MiB (refused by name above that).
 /// Extra request headers (auth tokens, custom UA) ride on every request.
 /// Native-only: browsers have no sockets (see [`AnyReader`]).
 #[cfg(not(target_os = "emscripten"))]
-pub struct HttpRangeReader {
-    agent: ureq::Agent,
-    url: String,
-    len: u64,
-    headers: Vec<(String, String)>,
-}
-
-#[cfg(not(target_os = "emscripten"))]
-impl HttpRangeReader {
-    pub fn open(url: &str, headers: Vec<(String, String)>) -> io::Result<Self> {
-        let agent = ureq::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build();
-        // HEAD-first length probe; hosts that omit Content-Length on HEAD
-        // (some object stores) fall back to a 1-byte ranged GET whose
-        // `Content-Range: bytes 0-0/TOTAL` carries the length.
-        let mut req = agent.head(url);
-        for (k, v) in &headers {
-            req = req.set(k, v);
-        }
-        let head_len = req
-            .call()
-            .ok()
-            .and_then(|resp| resp.header("content-length")?.parse::<u64>().ok());
-        let len = match head_len {
-            Some(len) => len,
-            None => {
-                let mut req = agent.get(url).set("Range", "bytes=0-0");
-                for (k, v) in &headers {
-                    req = req.set(k, v);
-                }
-                let resp = req.call().map_err(io::Error::other)?;
-                resp.header("content-range")
-                    .and_then(|v| v.rsplit('/').next()?.parse::<u64>().ok())
-                    .ok_or_else(|| {
-                        io::Error::other(format!(
-                            "could not determine the file length of {url}: no Content-Length \
-                             on HEAD and no Content-Range on a ranged GET"
-                        ))
-                    })?
-            }
-        };
-        Ok(Self {
-            agent,
-            url: url.to_string(),
-            len,
-            headers,
-        })
-    }
-}
-
-#[cfg(not(target_os = "emscripten"))]
-impl RangeReader for HttpRangeReader {
-    fn len(&self) -> u64 {
-        self.len
-    }
-
-    fn read_at(&self, offset: u64, len: u64) -> io::Result<Vec<u8>> {
-        if len == 0 {
-            return Ok(Vec::new());
-        }
-        let end = offset + len - 1; // HTTP ranges are inclusive
-        let mut req = self
-            .agent
-            .get(&self.url)
-            .set("Range", &format!("bytes={offset}-{end}"));
-        for (k, v) in &self.headers {
-            req = req.set(k, v);
-        }
-        let resp = req.call().map_err(io::Error::other)?;
-        // A `200 OK` means the server ignored `Range` and is streaming the
-        // whole body from offset 0 — taking `len` bytes of that would silently
-        // yield the wrong slice, so reject it loudly instead.
-        if resp.status() != 206 {
-            return Err(io::Error::other(format!(
-                "server ignored Range (status {}, expected 206 Partial Content) for {}; \
-                 the host must support HTTP range requests",
-                resp.status(),
-                self.url
-            )));
-        }
-        let mut buf = Vec::with_capacity(len as usize);
-        resp.into_reader().take(len).read_to_end(&mut buf)?;
-        if (buf.len() as u64) < len {
-            return Err(io::Error::other(format!(
-                "short range response: got {} of {len} bytes at offset {offset} from {}",
-                buf.len(),
-                self.url
-            )));
-        }
-        Ok(buf)
-    }
-
-    /// Issue the (independent) ranges concurrently across a small thread pool:
-    /// on a latency-bound link the coalesced faults of a query dominate wall
-    /// time, and 16 matches both the CLI and the wasm fetch-worker pool.
-    fn read_many(&self, ranges: &[(u64, u64)]) -> io::Result<Vec<Vec<u8>>> {
-        const MAX_CONCURRENCY: usize = 16;
-        if ranges.len() <= 1 {
-            return ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect();
-        }
-        let workers = MAX_CONCURRENCY.min(ranges.len());
-        let chunk = ranges.len().div_ceil(workers);
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = ranges
-                .chunks(chunk)
-                .map(|group| {
-                    scope.spawn(move || {
-                        group
-                            .iter()
-                            .map(|&(o, l)| self.read_at(o, l))
-                            .collect::<io::Result<Vec<Vec<u8>>>>()
-                    })
-                })
-                .collect();
-            // Chunks are contiguous, so concatenating per-chunk results in
-            // spawn order restores request order.
-            let mut out = Vec::with_capacity(ranges.len());
-            for handle in handles {
-                out.extend(
-                    handle
-                        .join()
-                        .map_err(|_| io::Error::other("a range-fetch worker thread panicked"))??,
-                );
-            }
-            Ok(out)
-        })
-    }
-}
+pub use rete_core::http::HttpRangeReader;
 
 /// A reader backed by a Python object exposing `read_at(offset, length) ->
 /// bytes` and a length (a `len()` method, or `__len__`). Each call re-acquires

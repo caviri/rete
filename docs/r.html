@@ -664,9 +664,18 @@ terms in full N-Triples token fidelity (<code>&lt;iri&gt;</code>, <code>"lit"^^&
 <p>Both opens are <strong>lazy</strong>: the header, dictionary directory, and index tile
 directories load up front; tile payloads fault in per query and stay cached
 on the handle, so repeated queries get faster. The host serving a remote file
-must answer <code>Range</code> requests with <code>206 Partial Content</code> (any S3/R2/CDN/GitHub
-URL does — see <a href="hosting.html">Hosting your .rete</a>); anything else is a loud
-error, never a silently wrong slice.</p>
+should answer <code>Range</code> requests with <code>206 Partial Content</code> (any
+S3/R2/CDN/GitHub URL does — see <a href="hosting.html">Hosting your .rete</a>). A host that
+ignores <code>Range</code> and sends the whole file (<code>200</code>) is served from that body when
+it is at most 256 MiB, and refused by name above that; any other answer is a
+loud error, never a silently wrong slice. Remote reads go through the CLI's
+own HTTP reader (kept-alive, up to 16 ranges in flight, nearby ranges merged,
+retries; the <code>RETE_HTTP_*</code> variables of <a href="cli.html#over-http">CLI: Over HTTP</a>).</p>
+<p>Since 0.4.2 the native package also uses every core inside a call:
+<code>rete_build()</code>'s sorts and compression and a query's dictionary decodes run on
+the engine's thread pool (<code>RAYON_NUM_THREADS</code> caps it), with the same bytes and
+rows as before. R itself stays single-threaded — the call blocks the session
+until it returns, as before.</p>
 <pre><code class="language-r">rete_stats(g)
 #&gt; $fileLength  … $bytes  … $requests
 </code></pre>
