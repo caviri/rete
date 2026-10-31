@@ -2390,6 +2390,13 @@ impl XhrRangeReader {
             for _ in 0..4 {
                 match Self::probe_len(url) {
                     Ok(probe) => {
+                        // The probe is the open's first read (64 KiB, or the
+                        // whole of a small file): report it like any other, so a
+                        // query over a file that small still shows its read.
+                        let got = probe.whole.as_ref().map_or(probe.head.len(), Vec::len);
+                        if got > 0 {
+                            report_progress(got, &[(0, got as u64)]);
+                        }
                         let cached = std::sync::OnceLock::new();
                         if !probe.head.is_empty() {
                             let _ = cached.set(probe.head);
