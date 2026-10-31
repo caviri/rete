@@ -103,8 +103,9 @@ A monolithic build holds the dictionary + index in RAM. If it OOMs:
    .rete of any size (proven: ORCID 1.3B triples → one 17.5 GB file @ 16 GiB).
    For billion-scale runs follow the **external-build playbook** in
    [reference/build.md](reference/build.md): emit NT to disk then build in a
-   DETACHED container, spill is resumable after a crash, and verify/query the
-   output with `sparql-url` (lazy), never plain `sparql`.
+   DETACHED container, size the spill at about the output plus 2–4 B per
+   statement (it is compressed), resume a build killed in the permutations, and
+   verify/query the output with `sparql-url` (lazy), never plain `sparql`.
 3. **Shard** when the remaining external-build limits bite (pyramid, text index
    — named graphs build fine) or you need parallel per-part builds: split by
    subject into ~1–2 GB

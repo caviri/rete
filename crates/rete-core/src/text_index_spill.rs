@@ -40,6 +40,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dictionary::Dictionary;
 use crate::extbuild::ExtBuildError;
+use crate::extbuild_spill::{read_stream_varint, ZReader, ZWriter};
 use crate::terms::{is_literal, literal_lexical};
 use crate::text_index::{
     push_delta, tokenize, warn_unmatched, SectionWriter, TextIndexPredicates, TextIndexScope,
@@ -96,7 +97,7 @@ pub(crate) struct TextSpill {
     seen: Vec<bool>,
     /// Records written by the chunks (before any dedup), for the log line.
     records: u64,
-    global: Option<(PathBuf, BufWriter<File>)>,
+    global: Option<(PathBuf, ZWriter)>,
 }
 
 impl TextSpill {
@@ -138,7 +139,7 @@ impl TextSpill {
         default: &[(String, String, String)],
         named: &[(u32, String, String, String)],
     ) -> Result<(), ExtBuildError> {
-        let mut w = BufWriter::with_capacity(1 << 20, File::create(path)?);
+        let mut w = ZWriter::create(path)?;
         let named_in_scope = if self.scope.covers_named_graphs() {
             named
         } else {
@@ -178,13 +179,13 @@ impl TextSpill {
                 self.records += 1;
             }
         }
-        w.flush()?;
+        w.finish()?;
         Ok(())
     }
 
     /// Phase 3: open the global spill the chunks are remapped into.
     pub(crate) fn begin_remap(&mut self, path: PathBuf) -> Result<(), ExtBuildError> {
-        let w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
+        let w = ZWriter::create(&path)?;
         self.global = Some((path, w));
         Ok(())
     }
@@ -200,7 +201,7 @@ impl TextSpill {
         if !path.exists() {
             return Ok(());
         }
-        let mut rd = BufReader::with_capacity(READ_BUF, File::open(path)?);
+        let mut rd = ZReader::open(path)?;
         let mut token = Vec::new();
         let mut rec = Vec::with_capacity(64);
         while let Some(local) = read_record(&mut rd, &mut token)? {
@@ -231,11 +232,10 @@ impl TextSpill {
         run_bytes: usize,
         codec: u8,
     ) -> Result<Option<TextSection>, ExtBuildError> {
-        let (global, mut w) = self.global.take().ok_or(ExtBuildError::Internal(
+        let (global, w) = self.global.take().ok_or(ExtBuildError::Internal(
             "text-index finish before begin_remap",
         ))?;
-        w.flush()?;
-        drop(w);
+        w.finish()?;
         warn_unmatched(&self.scope, &self.seen);
 
         let runs = sort_runs(&global, run_bytes.clamp(1 << 10, MAX_RUN_ARENA), path_of)?;
@@ -367,7 +367,8 @@ impl RunBuf {
         &self.arena[r.0 as usize..(r.0 + r.1) as usize]
     }
 
-    /// Sort by (token bytes, subject), drop duplicates, write to `path`.
+    /// Sort by (token bytes, subject), drop duplicates, write to `path`
+    /// ([`RunRecWriter`]).
     fn seal(&mut self, path: &Path) -> Result<(), ExtBuildError> {
         let arena = &self.arena;
         let tok = |r: &(u32, u32, u32)| &arena[r.0 as usize..(r.0 + r.1) as usize];
@@ -375,20 +376,109 @@ impl RunBuf {
         sort_records(&mut self.recs, &cmp);
         self.recs
             .dedup_by(|a, b| a.2 == b.2 && tok(&*a) == tok(&*b));
-        let mut w = BufWriter::with_capacity(1 << 20, File::create(path)?);
-        let mut rec = Vec::with_capacity(64);
+        let mut w = RunRecWriter::create(path)?;
         for r in &self.recs {
-            rec.clear();
-            let t = self.token(r);
-            write_uvarint(&mut rec, t.len() as u64);
-            rec.extend_from_slice(t);
-            rec.extend_from_slice(&r.2.to_le_bytes());
-            w.write_all(&rec)?;
+            w.push(self.token(r), r.2)?;
         }
-        w.flush()?;
+        w.finish()?;
         self.arena.clear();
         self.recs.clear();
         Ok(())
+    }
+}
+
+/// A sort run's records, `(token, subject)` ascending, front-coded: the
+/// token as `[shared prefix len][suffix len][suffix]` against the previous
+/// one, the subject as a delta when the token repeats (a posting's subjects
+/// come in order) and plain otherwise — compressed ([`ZWriter`]).
+struct RunRecWriter {
+    z: ZWriter,
+    prev: Vec<u8>,
+    prev_subject: u32,
+    rec: Vec<u8>,
+}
+
+impl RunRecWriter {
+    fn create(path: &Path) -> std::io::Result<Self> {
+        Ok(RunRecWriter {
+            z: ZWriter::create(path)?,
+            prev: Vec::new(),
+            prev_subject: 0,
+            rec: Vec::with_capacity(64),
+        })
+    }
+
+    fn push(&mut self, token: &[u8], subject: u32) -> std::io::Result<()> {
+        let shared = self
+            .prev
+            .iter()
+            .zip(token)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let same = shared == self.prev.len() && shared == token.len();
+        self.rec.clear();
+        write_uvarint(&mut self.rec, shared as u64);
+        write_uvarint(&mut self.rec, (token.len() - shared) as u64);
+        self.rec.extend_from_slice(&token[shared..]);
+        let s = if same {
+            subject.wrapping_sub(self.prev_subject)
+        } else {
+            subject
+        };
+        write_uvarint(&mut self.rec, s as u64);
+        self.z.write_all(&self.rec)?;
+        self.prev.truncate(shared);
+        self.prev.extend_from_slice(&token[shared..]);
+        self.prev_subject = subject;
+        Ok(())
+    }
+
+    fn finish(self) -> std::io::Result<u64> {
+        self.z.finish()
+    }
+}
+
+/// Reads a [`RunRecWriter`] run back: `token` and `subject` are the current
+/// record.
+struct RunRecReader {
+    z: ZReader,
+    token: Vec<u8>,
+    subject: u32,
+}
+
+impl RunRecReader {
+    fn open(path: &Path) -> std::io::Result<Self> {
+        Ok(RunRecReader {
+            z: ZReader::open(path)?,
+            token: Vec::new(),
+            subject: 0,
+        })
+    }
+
+    /// Advance to the next record; `false` at the end of the run.
+    fn advance(&mut self) -> std::io::Result<bool> {
+        let Some(shared) = read_stream_varint(&mut self.z)? else {
+            return Ok(false);
+        };
+        let eof = || std::io::Error::from(std::io::ErrorKind::UnexpectedEof);
+        let len = read_stream_varint(&mut self.z)?.ok_or_else(eof)? as usize;
+        let shared = shared as usize;
+        if shared > self.token.len() {
+            return Err(std::io::Error::other("text-index run: bad shared prefix"));
+        }
+        let same = shared == self.token.len() && len == 0;
+        self.token.truncate(shared);
+        let at = self.token.len();
+        self.token.resize(at + len, 0);
+        self.z.read_exact(&mut self.token[at..])?;
+        let s = read_stream_varint(&mut self.z)?.ok_or_else(eof)?;
+        let s = u32::try_from(s).map_err(|_| std::io::Error::other("text-index run: subject"))?;
+        self.subject = if same {
+            self.subject.wrapping_add(s)
+        } else {
+            s
+        };
+        Ok(true)
     }
 }
 
@@ -415,7 +505,7 @@ fn sort_runs(
     run_bytes: usize,
     path_of: &dyn Fn(&str) -> PathBuf,
 ) -> Result<Vec<PathBuf>, ExtBuildError> {
-    let mut rd = BufReader::with_capacity(READ_BUF, File::open(global)?);
+    let mut rd = ZReader::open_consuming(global)?;
     let mut run = RunBuf {
         arena: Vec::new(),
         recs: Vec::new(),
@@ -517,16 +607,15 @@ fn merge_runs<E: Write, P: Write>(
     overflow_path: &Path,
 ) -> Result<(), ExtBuildError> {
     crate::build_trace::note_merge(runs.len());
-    let mut readers: Vec<BufReader<File>> = runs
+    let mut readers: Vec<RunRecReader> = runs
         .iter()
-        .map(|p| File::open(p).map(|f| BufReader::with_capacity(READ_BUF, f)))
+        .map(|p| RunRecReader::open(p))
         .collect::<Result<_, _>>()?;
     // (token, subject, run) — the min-heap order is exactly the output order.
     let mut heap: BinaryHeap<std::cmp::Reverse<(Vec<u8>, u32, usize)>> = BinaryHeap::new();
     for (i, rd) in readers.iter_mut().enumerate() {
-        let mut token = Vec::new();
-        if let Some(s) = read_record(rd, &mut token)? {
-            heap.push(std::cmp::Reverse((token, s, i)));
+        if rd.advance()? {
+            heap.push(std::cmp::Reverse((rd.token.clone(), rd.subject, i)));
         }
     }
     let mut current: Vec<u8> = Vec::new();
@@ -546,8 +635,11 @@ fn merge_runs<E: Write, P: Write>(
             std::mem::swap(&mut current, &mut token);
         }
         acc.push(s)?;
-        if let Some(n) = read_record(&mut readers[i], &mut token)? {
-            heap.push(std::cmp::Reverse((token, n, i)));
+        let rd = &mut readers[i];
+        if rd.advance()? {
+            token.clear();
+            token.extend_from_slice(&rd.token);
+            heap.push(std::cmp::Reverse((token, rd.subject, i)));
         }
     }
     acc.emit(&current, writer)?;
@@ -821,7 +913,7 @@ mod tests {
             let mut spill = TextSpill::new(scope);
             let path = dir.join("c0.tok");
             spill.spill_chunk(&path, &dict, &default, &named).unwrap();
-            let mut rd = BufReader::new(File::open(&path).unwrap());
+            let mut rd = ZReader::open(&path).unwrap();
             let mut tok = Vec::new();
             let mut out = Vec::new();
             while let Some(s) = read_record(&mut rd, &mut tok).unwrap() {

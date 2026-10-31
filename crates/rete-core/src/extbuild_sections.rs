@@ -36,6 +36,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
+use crate::extbuild_spill::{ZReader, ZWriter};
 use crate::extsort::{ExtSorter, Sorted};
 use crate::label_index::{candidate_value, LabelIndexWriter, Slot, SubjectCandidates};
 use crate::schema_section::{
@@ -265,7 +266,7 @@ pub(crate) struct MergeFacts {
 
 /// A sorted `(subject, class)` file read back as a [`ClassCursor`] source.
 struct RepReader {
-    rd: BufReader<File>,
+    rd: ZReader,
 }
 
 impl Iterator for RepReader {
@@ -283,7 +284,7 @@ impl Iterator for RepReader {
 /// A cursor over the representative-class file.
 fn rep_cursor(path: &Path) -> std::io::Result<ClassCursor<RepReader>> {
     Ok(ClassCursor::new(RepReader {
-        rd: BufReader::with_capacity(1 << 20, File::open(path)?),
+        rd: ZReader::open(path)?,
     }))
 }
 
@@ -343,7 +344,8 @@ impl ExtSchema {
             return Ok(());
         };
         let mut sorted = types.finish()?;
-        let mut w = BufWriter::with_capacity(1 << 20, File::create(&self.reps)?);
+        // compressed like the rest of the spill (`extbuild_spill`)
+        let mut w = ZWriter::create(&self.reps)?;
         let mut last: Option<u32> = None;
         while let Some((s, c)) = sorted.next_record()? {
             if last != Some(s) {
@@ -352,7 +354,7 @@ impl ExtSchema {
                 last = Some(s);
             }
         }
-        w.flush()?;
+        w.finish()?;
         self.cursor = Some(rep_cursor(&self.reps)?);
         Ok(())
     }

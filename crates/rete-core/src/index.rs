@@ -324,7 +324,7 @@ impl IndexPermutation {
     }
 
     /// Map a stored `(a, b, c)` back to canonical `(s, p, o)`.
-    fn back(self, abc: Triple) -> Triple {
+    pub(crate) fn back(self, abc: Triple) -> Triple {
         let a = [abc.0, abc.1, abc.2];
         let r = self.roles();
         let mut out = [0u32; 3];

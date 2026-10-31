@@ -111,12 +111,33 @@ OpenCitations sample (18.9 M statements, `--named-graphs quad --text-index
 --label-index`) the peak RSS is 850 MiB at a budget of 1,000 MiB and 2.4 GB at
 3,000 MiB, both while the chunks are sealed; eight renamed copies of it (151 M
 statements, 186 chunks at 400 MiB) peak at 391 MiB, where 0.4.0 needed
-1,084 MiB. The spill peaks at the end of the dictionary merge, while every
-chunk's statements are still on disk; `--label-index` adds nothing to it,
-because the label pass works on ids and reads its strings back from the
-finished file. Up to 0.4.0 the merge also kept every chunk's id remap table
-until the last chunk was rewritten, 4 B per chunk-local term: 15.0 GB for half
-of OpenCitations Meta, which is why that graph had to be split.
+1,084 MiB. `--label-index` adds nothing to the spill peak, because the label
+pass works on ids and reads its strings back from the finished file. Up to
+0.4.0 the merge also kept every chunk's id remap table until the last chunk was
+rewritten, 4 B per chunk-local term: 15.0 GB for half of OpenCitations Meta,
+which is why that graph had to be split.
+
+**Its spill is compressed, and holds the statements once.** Every spill file
+goes through zstd at a fast level, in independent blocks: the statements as
+sorted runs of delta-varint ids (1.6 B per statement in a chunk, about 2 B in a
+sort run, instead of 12), the chunk term files front-coded (16% of their raw
+size), the remap tables, text words and label/schema sorts as compressed byte
+blocks. The six permutations are chained: the remap writes the first one's
+sorted runs, and each permutation's merge writes the next one's while it
+deletes its own, segment by segment, as it reads them. Up to 0.4.1 the
+permutation phase held a raw `global.tri` beside one permutation's raw runs,
+24 B per statement before any index byte, and that is what made a one-file
+OpenCitations Index (≈ 15.9 B statements) need some 550 GB of scratch. The
+finished sections are deleted as they are copied into the output, so the write
+does not hold the index twice. The spill now peaks in the last permutations,
+where the finished sections — the index itself — are most of it: plan for about
+the output's size plus 2–4 B per statement. On the OpenCitations Meta sample
+(5.97 M statements, `--text-index --label-index`, 256 MiB) the peak fell from
+265 MB to 86 MB; on eight renamed copies of it (47.8 M statements, 512 MiB),
+from 1.98 GB to 0.59 GB, for about 6–10% more wall time. The files are
+byte-identical. `RETE_SPILL_ZSTD_LEVEL` sets the level (default 1; `0` writes
+the delta-varint runs and front-coded terms without zstd; negative levels are
+zstd's faster modes).
 
 Its sections are byte-identical to the in-RAM `--no-pyramid` build's of the same
 input. With a card (`--card`, `--card-file`, a curated flag) it writes the

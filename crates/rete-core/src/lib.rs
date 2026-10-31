@@ -38,6 +38,7 @@ pub mod dictionary;
 pub mod extbuild;
 mod extbuild_remap;
 mod extbuild_sections;
+mod extbuild_spill;
 mod extsort;
 #[doc(hidden)]
 pub mod file;
