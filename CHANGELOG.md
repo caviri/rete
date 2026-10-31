@@ -5,6 +5,43 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **`--frequent-objects N` works with `--memory-budget-mb`** (G3), where it was
+  refused. The chunks count their objects' statements, one more pass over the
+  chunks' terms before the merge picks the same `N` object-only terms as the
+  in-RAM build (most statements, ties by term order, a subject anywhere never),
+  and the merge files them in the shared section: the file is the in-RAM
+  build's, byte for byte. On the OpenCitations sample `--frequent-objects 64`
+  makes the memory-bounded file 5.75% smaller (data only, 10 chunks at
+  256 MiB) and 3.80% (18.9 M statements with provenance, quad index), for
+  about 1% more build time.
+
+### Fixed
+
+- **A term-dense stretch no longer takes the memory-bounded build past its
+  budget** (G24). Chunks were sealed by the bytes of their statements alone;
+  where every statement brings two new terms (the OpenCitations Meta
+  `oc:doiLink` tail) the chunk's dictionary outgrew the half of the budget left
+  for it, and the chunk phase reached 14.99 GB under a 16 GB cap at a budget of
+  12,000 MiB. A chunk is now also sealed when its statements and its
+  dictionary together would pass 85% of the budget. On a synthetic of 8 M
+  ordinary and 20 M such statements the peak at 1,000 MiB falls from 1,348 MiB
+  to 857 MiB, and at 3,000 MiB the build fits a 4 GiB container (2,544 MiB),
+  which killed it before. The file does not depend on where chunks are cut,
+  and an ordinary graph is cut as before.
+- **`rete merge` stays inside `--memory-budget-mb`** (G22). Its reads of the
+  input shards were not in the budget — a small shard was read whole, a large
+  one opened with uncapped caches, every named graph's index kept once walked —
+  so it ran about 1 GiB over it. Each shard is now opened by range with its
+  caches capped to a quarter of the budget, its graphs released as they are
+  walked, and the builder's chunk phase takes the rest. Two halves of the
+  OpenCitations sample merge at 1,551 MiB with a budget of 2,000 (3,026 MiB
+  before) and at 2,174 MiB with 3,000, inside a 4 GiB container that killed
+  the merge before; the merged file is the same bytes. The Rust API's
+  `ExternalBuildOptions` gains `input_memory`, the share the input stream
+  holds while it is read.
+
 ### Changed
 
 - **The memory-bounded build's spill is compressed, and its statements are on

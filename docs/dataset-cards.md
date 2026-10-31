@@ -1487,9 +1487,12 @@ In the one pass, `read` (hashing both shards for the record) took 0.4 s,
 (198 MiB, none dropped) and `content_hash` 37 ms. The four cards are the same
 59,740 bytes and the four files have the same content hash; the data sections of
 the two merges are the same bytes. The peak is the merge's own, not the card's:
-its walk of the shards is not counted in `--memory-budget-mb`, so here it runs
-about 1 GiB over the budget, and at 3,000 MiB the merge does not fit a 4 GiB
-container — with a card or without, and in 0.4.0 too.
+up to 0.4.1 its walk of the shards was not counted in `--memory-budget-mb`, so
+here it ran about 1 GiB over the budget, and at 3,000 MiB the merge did not fit
+a 4 GiB container — with a card or without, and in 0.4.0 too. Since 0.4.2 the
+shards are read inside the budget (a quarter of it for their caches, the rest
+for the builder's chunks): the one pass peaks at 1,568 MiB at 2,000 (77 s) and
+at 2,126 MiB at 3,000 (86 s), in the same 4 GiB container.
 
 **Measurement RAM is in the queries, not in the file.** Attaching costs to an
 existing file rewrites it through a bounded buffer, but running the starter
