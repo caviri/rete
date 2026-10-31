@@ -19,6 +19,12 @@ stay in browser memory.
 Prereqs (via Docker, same as the playground / explorer):
   wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
 
+`scripts/build_wasm.sh` runs this after the playground, so the tracked page
+always carries the engine of the same build. CI reruns that script and
+byte-diffs `docs/yasgui.html`, which is why the stamp is `RETE_BUILD_STAMP`
+(the workspace version, as the playground's) and never a date or a local git
+lookup.
+
 Usage:
   python scripts/build_yasgui.py [--out docs/yasgui.html]
 """
@@ -26,6 +32,7 @@ import argparse
 import base64
 import datetime
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -134,6 +141,21 @@ def b64(path: pathlib.Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def build_stamp() -> str:
+    """`Built <RETE_BUILD_STAMP>.` — what build_wasm.sh exports, so CI's rebuild
+    writes the same bytes. A manual run without it gets the old ad-hoc stamp."""
+    if stamp := os.environ.get("RETE_BUILD_STAMP"):
+        return f"Built {stamp}."
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=ROOT, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:
+        sha = "unknown"
+    return f"Built {datetime.date.today().isoformat()} from {sha}."
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(DEFAULT_OUT))
@@ -153,14 +175,7 @@ def main() -> None:
         if "</script" in text:
             die(f"{name} contains a literal </script> — cannot inline")
 
-    try:
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"],
-            cwd=ROOT, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-    except Exception:
-        sha = "unknown"
-    stamp = f"Built {datetime.date.today().isoformat()} from {sha}."
+    stamp = build_stamp()
 
     html = TEMPLATE.read_text(encoding="utf-8")
     for ph, text in chunks.items():
