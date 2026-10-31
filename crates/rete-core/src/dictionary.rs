@@ -633,15 +633,16 @@ impl Dictionary {
     /// routing in [`node_term`](Self::node_term).
     fn node_chunk(&self, node: u32) -> Option<(usize, usize)> {
         let su = self.subject_only_count();
-        let (si, local) = if node < self.shared_len + su {
-            let id = node + 1; // subject_term(id)
+        let id = node.checked_add(1)?; // `node` may come from a corrupt tile
+        let (si, local) = if node < self.shared_len.saturating_add(su) {
+            // subject_term(id)
             if id <= self.shared_len {
                 (0, id)
             } else {
                 (1, id - self.shared_len)
             }
         } else {
-            let id = node + 1 - su; // object_term(id)
+            let id = id - su; // object_term(id)
             if id <= self.shared_len {
                 (0, id)
             } else {
@@ -717,7 +718,11 @@ impl Dictionary {
 
     /// Total distinct graph nodes `N = S + Su + Oo`.
     pub fn node_count(&self) -> u32 {
-        self.shared_len + self.subject_only_count() + self.object_only_count()
+        // Saturating: the counts come from the file, and three hostile ones can
+        // sum past u32 (a panic in debug builds, a wrong count in release).
+        self.shared_len
+            .saturating_add(self.subject_only_count())
+            .saturating_add(self.object_only_count())
     }
 
     /// Unified node ID for a subject-role ID. Shared and subject-only IDs are
@@ -734,17 +739,22 @@ impl Dictionary {
         if oid <= self.shared_len {
             oid.saturating_sub(1)
         } else {
-            oid.saturating_sub(1) + self.subject_only_count()
+            // Saturating: a corrupt tile may carry an object id near u32::MAX;
+            // the result is then past every node and resolves to nothing.
+            oid.saturating_sub(1)
+                .saturating_add(self.subject_only_count())
         }
     }
 
     /// Resolve a unified node ID back to its term.
     pub fn node_term(&self, node: NodeId) -> Option<String> {
         let su = self.subject_only_count();
-        if node < self.shared_len + su {
-            self.subject_term(node + 1)
+        // Checked: `node` may come from a corrupt tile.
+        let id = node.checked_add(1)?;
+        if node < self.shared_len.saturating_add(su) {
+            self.subject_term(id)
         } else {
-            self.object_term(node + 1 - su)
+            self.object_term(id - su)
         }
     }
 
@@ -786,15 +796,19 @@ impl Dictionary {
         let su = self.subject_only_count();
         let mut per_section: [Vec<usize>; 3] = Default::default();
         for &node in nodes {
-            let (si, local) = if node < self.shared_len + su {
-                let sid = node + 1;
+            // Checked: row ids come from tiles, which may be corrupt.
+            let Some(id) = node.checked_add(1) else {
+                continue;
+            };
+            let (si, local) = if node < self.shared_len.saturating_add(su) {
+                let sid = id;
                 if sid <= self.shared_len {
                     (0usize, sid)
                 } else {
                     (1, sid - self.shared_len)
                 }
             } else {
-                let oid = node + 1 - su;
+                let oid = id - su;
                 if oid <= self.shared_len {
                     (0, oid)
                 } else {
@@ -824,8 +838,8 @@ impl Dictionary {
     /// Subject-role ID of a node, or `None` if the node never appears as a
     /// subject (an object-only term).
     pub fn node_as_subject_id(&self, node: NodeId) -> Option<SubjectId> {
-        if node < self.shared_len + self.subject_only_count() {
-            Some(node + 1)
+        if node < self.shared_len.saturating_add(self.subject_only_count()) {
+            node.checked_add(1)
         } else {
             None
         }
@@ -837,8 +851,8 @@ impl Dictionary {
         let (s, su) = (self.shared_len, self.subject_only_count());
         if node < s {
             Some(node + 1) // shared
-        } else if node >= s + su {
-            Some(node + 1 - su) // object-only
+        } else if node >= s.saturating_add(su) {
+            Some(node.checked_add(1)? - su) // object-only
         } else {
             None // subject-only
         }
@@ -869,7 +883,9 @@ impl Dictionary {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
-        self.sections[1].id(term).map(|id| self.shared_len + id)
+        self.sections[1]
+            .id(term)
+            .and_then(|id| self.shared_len.checked_add(id))
     }
 
     /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
@@ -877,7 +893,9 @@ impl Dictionary {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
-        self.sections[2].id(term).map(|id| self.shared_len + id)
+        self.sections[2]
+            .id(term)
+            .and_then(|id| self.shared_len.checked_add(id))
     }
 
     /// Predicate ID for `term` (independent space).

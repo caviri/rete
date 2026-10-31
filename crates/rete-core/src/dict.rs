@@ -167,9 +167,15 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
         *pos += n;
         Ok(v)
     };
-    let term_count = take(&mut pos)? as u32;
-    let restart_interval = take(&mut pos)? as u32;
-    let num_restarts = take(&mut pos)? as usize;
+    // Checked, not `as`: a term count or interval past u32, or a restart count
+    // past this target's usize (wasm32), is corrupt — truncating it made a
+    // damaged header read as a smaller, plausible one.
+    let term_count = u32::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("term count out of range"))?;
+    let restart_interval = u32::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("restart interval out of range"))?;
+    let num_restarts = usize::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("restart count out of range"))?;
     if restart_interval == 0 {
         return Err(DictError::Malformed("zero restart interval"));
     }
@@ -180,10 +186,15 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
         rel.push(take(&mut pos)?);
     }
     let body_start = pos as u64;
+    let restart_offsets = rel
+        .into_iter()
+        .map(|o| body_start.checked_add(o))
+        .collect::<Option<Vec<u64>>>()
+        .ok_or(DictError::Malformed("restart offset out of range"))?;
     Ok(SectionMeta {
         term_count,
         restart_interval,
-        restart_offsets: rel.into_iter().map(|o| body_start + o).collect(),
+        restart_offsets,
     })
 }
 
