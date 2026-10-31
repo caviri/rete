@@ -106,31 +106,6 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   by what, from which content hash, at what cost). Older records show what
   they carry and nothing else.
 
-### Tooling
-
-- **CI lints the browser engine for wasm32** (G15). `cargo clippy --workspace`
-  compiles rete-wasm for the host, where its `wasm32` code is compiled out, so
-  dead code there reached main unseen (#347). The `quality` stage now runs
-  `cargo clippy -p rete-wasm --target wasm32-unknown-unknown -- -D warnings` for
-  the playground's build, the npm/MCPB one (`unicode-regex`) and the Asyncify
-  one.
-- **The memory-bounded build's card and `rete recard`'s are pinned
-  byte-identical** (G17) on a graph built to split them: duplicate statements,
-  multi-typed subjects, a text index, named graphs and more than 100 tied class
-  links. The in-RAM build's card differs there, as documented: it counts its
-  input and classifies a multi-typed subject by its last type, which is why
-  re-carding an OpenCitations file picks a different top 100 `class_links`. Its
-  data sections, the text index included, are the same bytes, so
-  `token_table_bytes` agrees on every path (G16), and re-carding it gives the
-  same card.
-- **A host that ignores `Range` is no longer refused outright by the CLI, the
-  Python wheel or the R package** (G6). Such a host (a plain static server, a
-  proxy that strips the header) answers `200` with the whole file. The body is
-  now kept when it is the file and at most 256 MiB, the cap the browser readers
-  have had since 0.4.0, and every later read is a slice of it, with no further
-  request; a larger body is refused by name (`… not kept in memory`) without
-  being read. Tested against a real nginx with `max_ranges 0`
-  (`tests/interop/range_ignoring_host.sh`).
 - **The `FILTER(CONTAINS(…))` text-index pushdown reaches the shapes that used
   to scan** (G18), with the same rows. A variable predicate is covered when the
   filter itself confines it to predicates the index covers: `?p NOT IN (…)`
@@ -170,6 +145,24 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   source's rows. It read each URL's whole dictionary and index directory first,
   unbounded: three 55–63 GB published files ran a 4 GiB container out of
   memory. Supersedes #324.
+
+### Tooling
+
+- **CI lints the browser engine for wasm32** (G15). `cargo clippy --workspace`
+  compiles rete-wasm for the host, where its `wasm32` code is compiled out, so
+  dead code there reached main unseen (#347). The `quality` stage now runs
+  `cargo clippy -p rete-wasm --target wasm32-unknown-unknown -- -D warnings` for
+  the playground's build, the npm/MCPB one (`unicode-regex`) and the Asyncify
+  one.
+- **The memory-bounded build's card and `rete recard`'s are pinned
+  byte-identical** (G17) on a graph built to split them: duplicate statements,
+  multi-typed subjects, a text index, named graphs and more than 100 tied class
+  links. The in-RAM build's card differs there, as documented: it counts its
+  input and classifies a multi-typed subject by its last type, which is why
+  re-carding an OpenCitations file picks a different top 100 `class_links`. Its
+  data sections, the text index included, are the same bytes, so
+  `token_table_bytes` agrees on every path (G16), and re-carding it gives the
+  same card.
 
 ## [0.4.1] - 2026-10-30
 
