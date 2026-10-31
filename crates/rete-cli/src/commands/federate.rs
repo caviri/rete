@@ -2,10 +2,11 @@
 //! `.rete` sources (local paths and/or http(s) URLs), with summary-based routing
 //! and a term-level merge of the per-source results.
 
-use rete_core::{eval_query, query_predicates, QueryOutput, Rete, SummaryView};
+use rete_core::{eval_query, query_predicates, QueryOutput, SummaryView};
 
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::{open_local_budget, query_budget};
 use crate::commands::render::print_query_output;
+use crate::commands::url::open_url_lazy;
 use crate::http::HttpRangeReader;
 
 /// Is this source an `http(s)://` URL (vs. a local file path)?
@@ -35,19 +36,38 @@ pub(crate) fn source_predicates(
     }))
 }
 
-/// Evaluate `query` against one source (path or URL), returning its result.
-/// Each source gets the HTTP `ServiceClient`, so a federated query may itself
-/// carry `SERVICE` blocks — N `.rete` files and a live SPARQL endpoint in one
-/// query.
-fn eval_source(source: &str, query: &str) -> anyhow::Result<QueryOutput> {
-    let mut rete = if is_url(source) {
-        let reader = HttpRangeReader::open(source)?;
-        Rete::open_ranged(&reader)?
+/// Evaluate `query` against one source (path or URL), returning its result and,
+/// for a URL, what its evaluation fetched (`(bytes, range requests)`).
+///
+/// A URL opens **lazily**, through the same open as `sparql-url`
+/// ([`open_url_lazy`]): the dictionary chunks and index tiles the query touches
+/// are faulted in, under the default memory budget. It used to open with the
+/// eager `Rete::open_ranged`, which reads the whole dictionary and the whole
+/// index directory up front with no cache bound: over three 55–63 GB published
+/// files a 4 GiB container was killed after 403 s with no output, while
+/// `sparql-url` answered each file in 35–50 s. A local path opens like
+/// `rete sparql` does (read whole only when small next to the free memory and
+/// the budget). Each source gets the HTTP `ServiceClient`, so a federated query
+/// may itself carry `SERVICE` blocks — N `.rete` files and a live SPARQL
+/// endpoint in one query.
+fn eval_source(source: &str, query: &str) -> anyhow::Result<(QueryOutput, Option<(u64, u64)>)> {
+    let budget = query_budget(None);
+    let (mut rete, counted) = if is_url(source) {
+        let (rete, reader) = open_url_lazy(source, budget)?;
+        (rete, Some(reader))
     } else {
-        open_local(source)?
+        (open_local_budget(source, budget)?, None)
     };
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
-    eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))
+    let out = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))?;
+    // A lazy fetch that failed is reported out of band: a partial answer from
+    // one source must fail the federation, not quietly contribute fewer rows.
+    if rete.index_incomplete() {
+        anyhow::bail!(
+            "{source}: a range request failed while reading the file;              results would be incomplete — retry"
+        );
+    }
+    Ok((out, counted.map(|r| (r.bytes_read(), r.requests()))))
 }
 
 /// `rete federate`: run one SPARQL query across several `.rete` sources (local
@@ -101,12 +121,18 @@ pub(crate) fn federate(
     let mut acc = MergeAcc::default();
     for source in &queried {
         let start = Instant::now();
-        let out = eval_source(source, query)?;
+        let (out, fetched) = eval_source(source, query)?;
         let contributed = acc.absorb(out);
-        eprintln!(
-            "  {source}: {contributed} row(s) in {:.1?}",
-            start.elapsed()
-        );
+        match fetched {
+            Some((bytes, requests)) => eprintln!(
+                "  {source}: {contributed} row(s) in {:.1?} (fetched {bytes} bytes in                  {requests} range request(s))",
+                start.elapsed()
+            ),
+            None => eprintln!(
+                "  {source}: {contributed} row(s) in {:.1?}",
+                start.elapsed()
+            ),
+        }
     }
     let result = acc.into_output();
 

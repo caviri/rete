@@ -981,6 +981,26 @@ impl ChunkedSection {
         }
     }
 
+    /// The chunk [`id`](Self::id) would fault to look `term` up — its routing
+    /// on the (resident) chunk directory, without touching a chunk body. `None`
+    /// for an empty section, or a term that sorts before the first chunk.
+    pub(crate) fn chunk_for_term(&self, term: &str) -> Option<usize> {
+        match self.chunks.len() {
+            0 => None,
+            1 => Some(0),
+            _ => self
+                .chunks
+                .partition_point(|c| c.key.as_slice() <= term.as_bytes())
+                .checked_sub(1),
+        }
+    }
+
+    /// Does this section fault chunk bodies in on demand (a lazy or ranged
+    /// open), rather than hold them all resident?
+    pub(crate) fn faults_chunks(&self) -> bool {
+        self.loader.is_some()
+    }
+
     /// Resolve `term` to its ID. Chunk-level binary search runs on the (local)
     /// chunk directory, so this also costs at most one chunk fault.
     pub fn id(&self, term: &str) -> Option<u32> {
@@ -991,7 +1011,9 @@ impl ChunkedSection {
         // Pick the chunk: the last one whose ROUTING KEY is <= `term` (the
         // single local chunk skips the search — its key is unset).
         //
-        // This is the ONLY read of [`SectionChunk::key`] in the codebase, and
+        // [`chunk_for_term`](Self::chunk_for_term) is the ONLY read of
+        // [`SectionChunk::key`] in the codebase (the batched lookup prefetch
+        // routes through it too, so it faults exactly the chunk this reads), and
         // all it needs is the separator invariant `last(i-1) < key(i) <=
         // first(i)`: `term` lands in chunk `i` exactly when `key(i) <= term <
         // key(i+1)`, which covers every term of chunk `i` and nothing in any
@@ -1002,14 +1024,7 @@ impl ChunkedSection {
         // gap `key(i) <= term < first(i)`; the run search below then hits its
         // `lo == first_run` branch and answers `None`, which is correct — such
         // a term is strictly between two chunks, i.e. absent.
-        let ci = if self.chunks.len() == 1 {
-            0
-        } else {
-            let i = self
-                .chunks
-                .partition_point(|c| c.key.as_slice() <= term.as_bytes());
-            i.checked_sub(1)?
-        };
+        let ci = self.chunk_for_term(term)?;
         let first_run = self.chunks[ci].first_run;
         let entry = self.chunk_entry(ci)?;
         let bytes: &[u8] = entry.body();

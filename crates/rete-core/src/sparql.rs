@@ -23,6 +23,7 @@ mod expr;
 mod lower;
 mod partition;
 mod path;
+mod prefetch;
 mod ql;
 mod sparql12;
 mod value;

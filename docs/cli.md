@@ -302,9 +302,16 @@ the file covers rather than on how it was built:
 - The SPARQL `CONTAINS` pushdown runs only where the index covers the query: the
   active graph must be the default graph (or, under `all`, any graph), and the
   pattern's predicate must be indexed — a variable predicate only when every
-  predicate is. Anywhere else the filter scans and returns the same rows, just
-  without the shortcut. (Before 0.4.0 the pushdown also ran inside `GRAPH`
-  against a default-graph index, where it returned no rows at all.)
+  predicate is, or when the filter itself confines it to indexed predicates:
+  `FILTER(?p NOT IN (…))` naming every predicate `--text-index-exclude` left
+  out (or `?p != <…>` for each), `?p IN (…)` / `?p = <…>` naming only indexed
+  ones. The filter is pushed through a `UNION` branch by branch, into
+  `GRAPH <g>` (when it has no `EXISTS`), and, under `all` on a quad-index file
+  (`--named-graphs quad`), into `GRAPH ?g`, which then visits only the graphs
+  holding a candidate subject. Anywhere else the filter scans and returns the
+  same rows, just without the shortcut. (Before 0.4.0 the pushdown also ran
+  inside `GRAPH` against a default-graph index, where it returned no rows at
+  all.)
 - **An include/exclude index is stored as section kind 11**, not 6. Readers
   older than 0.4.0 do not know kind 11 and see no text index: `rete search
   --contains` says the file has none, and `CONTAINS` scans. That is on purpose.
@@ -1280,8 +1287,13 @@ sibling is still a small enough fraction to read whole (3.1 s, 1.6 GB). Aggregat
 streams through per-group accumulators. Preview a query's byte cost with
 `rete cost`, and see the exact ranges a query read with `rete why`.
 
-**`--memory-budget-mb N`** (default 4096; `0` = unlimited) bounds what the
-lazy reader keeps resident: the decoded dictionary chunks, the decoded index
+**`--memory-budget-mb N`** (`0` = unlimited) bounds what the
+lazy reader keeps resident. Omitted, it is sized from the memory the process
+can still use — half of it, at least 256 MiB and at most 4096 MiB, read the
+same way as the open threshold above (`MemAvailable` and the cgroup limit) —
+so a 4 GiB container gets about 1.9 GiB rather than a default it cannot hold;
+4096 where the memory cannot be read. `RETE_QUERY_BUDGET_MB` overrides that
+default (`0` = unlimited), and the flag overrides both. It bounds the decoded dictionary chunks, the decoded index
 tiles with their group directories, and the raw file blocks, split as for
 `rete export` (see "What `--memory-budget-mb N` bounds" below). Least recently
 used entries are evicted and re-read on demand, so the budget changes memory
@@ -1835,6 +1847,15 @@ triples are unioned + deduped. **Routing** (default on) reads each source's
 predicate set from its summary (index never touched) and **prunes** sources whose
 predicates are disjoint from the query's; `--no-route` queries every source.
 Per-source diagnostics and the queried/pruned tally go to stderr.
+
+Each source opens the way a single-source query opens it: a URL **lazily**, as
+`sparql-url` does (dictionary chunks and index tiles fetched as the query
+touches them, under the default memory budget, with the bytes and range
+requests reported per source), and a local path as `rete sparql` does. A range
+request that fails while a source is read fails the federation instead of
+silently dropping that source's rows. URL sources used to be read eagerly
+(the whole dictionary and index directory first, unbounded): three 55–63 GB
+published files in one federated query ran a 4 GiB container out of memory.
 
 This is **union** federation — correct for sharded data where each file
 independently yields complete rows. It does **not** do cross-file joins, and

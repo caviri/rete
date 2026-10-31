@@ -155,3 +155,49 @@ fn a_host_that_ignores_range_is_served_from_its_whole_body() {
     assert_eq!(whole, ranged);
     assert!(!whole.as_array().unwrap().is_empty());
 }
+
+/// `federate` opens a URL source the way `sparql-url` does — lazily, reporting
+/// what it fetched — and answers what the local file answers.
+#[test]
+fn federate_opens_url_sources_lazily() {
+    let fixture = common::fixture();
+    let url = common::serve(
+        std::fs::read(&fixture.rete).unwrap(),
+        common::RangeMode::Honor,
+    );
+    let local = common::json(
+        common::rete()
+            .arg("federate")
+            .arg(&fixture.rete)
+            .args(["--query", SELECT, "--json"]),
+    );
+    let remote = common::rete()
+        .arg("federate")
+        .arg(&url)
+        .args(["--query", SELECT, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        remote.status.success(),
+        "{}",
+        String::from_utf8_lossy(&remote.stderr)
+    );
+    let remote_json: serde_json::Value = serde_json::from_slice(&remote.stdout).unwrap();
+    assert_eq!(remote_json["results"], local["results"]);
+    assert!(!local["results"]["bindings"].as_array().unwrap().is_empty());
+    let stderr = String::from_utf8_lossy(&remote.stderr);
+    assert!(
+        stderr.contains("range request(s)"),
+        "the URL source reports its fetches: {stderr}"
+    );
+
+    // A source that cannot be read fails the federation instead of dropping out.
+    let missing = common::serve(Vec::new(), common::RangeMode::NotFound);
+    common::rete()
+        .arg("federate")
+        .arg(&fixture.rete)
+        .arg(&missing)
+        .args(["--query", SELECT])
+        .assert()
+        .code(1);
+}

@@ -521,6 +521,55 @@ impl Dictionary {
         self.prefetch_sections(&want, batch);
     }
 
+    /// Does any section fault chunk bodies in on demand (a lazy or ranged
+    /// open)? `false` for a resident dictionary, where every prefetch is a no-op.
+    pub fn faults_chunks(&self) -> bool {
+        self.sections.iter().any(|s| s.faults_chunks())
+    }
+
+    /// Batch-fault every chunk that looking these terms up will read, so the
+    /// lookups that follow are cache hits: **one** batched read (one round trip
+    /// remotely) instead of one dependent fetch per term and section.
+    ///
+    /// `node_terms` are looked up as nodes ([`node_of_term`](Self::node_of_term),
+    /// [`subject_id`](Self::subject_id), [`object_id`](Self::object_id)), which
+    /// probe the shared section and then the subject-only or object-only one —
+    /// so all three routed chunks are fetched, plus those of the other spelling
+    /// of a string literal (`"x"` ↔ `"x"^^xsd:string`). `pred_terms` are looked
+    /// up in the predicate section. The routing is the lookup's own
+    /// ([`ChunkedSection::chunk_for_term`]), read off the resident chunk
+    /// directories. Purely a cache warmer: no-op on a resident dictionary, and
+    /// a failed batch leaves every chunk to the per-lookup loader.
+    ///
+    /// [`ChunkedSection::chunk_for_term`]: crate::dict::ChunkedSection::chunk_for_term
+    pub fn prefetch_lookups<'a>(
+        &self,
+        node_terms: impl IntoIterator<Item = &'a str>,
+        pred_terms: impl IntoIterator<Item = &'a str>,
+    ) {
+        if !self.faults_chunks() {
+            return;
+        }
+        let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
+        for term in node_terms {
+            let alias = crate::terms::string_literal_alias(term);
+            for t in std::iter::once(term).chain(alias.as_deref()) {
+                for (si, set) in want.iter_mut().enumerate().take(3) {
+                    if let Some(ci) = self.sections[si].chunk_for_term(t) {
+                        set.insert(ci);
+                    }
+                }
+            }
+        }
+        for term in pred_terms {
+            if let Some(ci) = self.sections[3].chunk_for_term(term) {
+                want[3].insert(ci);
+            }
+        }
+        let want: [Vec<usize>; 4] = want.map(|set| set.into_iter().collect());
+        self.prefetch_sections(&want, PREFETCH_BATCH_CHUNKS);
+    }
+
     /// The `(section, chunk)` holding a unified node id — mirrors the section
     /// routing in [`node_term`](Self::node_term).
     fn node_chunk(&self, node: u32) -> Option<(usize, usize)> {

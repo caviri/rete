@@ -873,9 +873,16 @@ the file covers rather than on how it was built:</p>
 <li>The SPARQL <code>CONTAINS</code> pushdown runs only where the index covers the query: the
 active graph must be the default graph (or, under <code>all</code>, any graph), and the
 pattern's predicate must be indexed — a variable predicate only when every
-predicate is. Anywhere else the filter scans and returns the same rows, just
-without the shortcut. (Before 0.4.0 the pushdown also ran inside <code>GRAPH</code>
-against a default-graph index, where it returned no rows at all.)</li>
+predicate is, or when the filter itself confines it to indexed predicates:
+<code>FILTER(?p NOT IN (…))</code> naming every predicate <code>--text-index-exclude</code> left
+out (or <code>?p != &lt;…&gt;</code> for each), <code>?p IN (…)</code> / <code>?p = &lt;…&gt;</code> naming only indexed
+ones. The filter is pushed through a <code>UNION</code> branch by branch, into
+<code>GRAPH &lt;g&gt;</code> (when it has no <code>EXISTS</code>), and, under <code>all</code> on a quad-index file
+(<code>--named-graphs quad</code>), into <code>GRAPH ?g</code>, which then visits only the graphs
+holding a candidate subject. Anywhere else the filter scans and returns the
+same rows, just without the shortcut. (Before 0.4.0 the pushdown also ran
+inside <code>GRAPH</code> against a default-graph index, where it returned no rows at
+all.)</li>
 <li><strong>An include/exclude index is stored as section kind 11</strong>, not 6. Readers
 older than 0.4.0 do not know kind 11 and see no text index: <code>rete search --contains</code> says the file has none, and <code>CONTAINS</code> scans. That is on purpose.
 Those readers prune <code>CONTAINS</code> with whatever text index they find, as if it
@@ -1693,8 +1700,13 @@ on the 1.07 GB file each read it whole, passed 4 GiB and were killed after
 sibling is still a small enough fraction to read whole (3.1 s, 1.6 GB). Aggregation
 streams through per-group accumulators. Preview a query's byte cost with
 <code>rete cost</code>, and see the exact ranges a query read with <code>rete why</code>.</p>
-<p><strong><code>--memory-budget-mb N</code></strong> (default 4096; <code>0</code> = unlimited) bounds what the
-lazy reader keeps resident: the decoded dictionary chunks, the decoded index
+<p><strong><code>--memory-budget-mb N</code></strong> (<code>0</code> = unlimited) bounds what the
+lazy reader keeps resident. Omitted, it is sized from the memory the process
+can still use — half of it, at least 256 MiB and at most 4096 MiB, read the
+same way as the open threshold above (<code>MemAvailable</code> and the cgroup limit) —
+so a 4 GiB container gets about 1.9 GiB rather than a default it cannot hold;
+4096 where the memory cannot be read. <code>RETE_QUERY_BUDGET_MB</code> overrides that
+default (<code>0</code> = unlimited), and the flag overrides both. It bounds the decoded dictionary chunks, the decoded index
 tiles with their group directories, and the raw file blocks, split as for
 <code>rete export</code> (see "What <code>--memory-budget-mb N</code> bounds" below). Least recently
 used entries are evicted and re-read on demand, so the budget changes memory
@@ -2158,6 +2170,14 @@ triples are unioned + deduped. <strong>Routing</strong> (default on) reads each 
 predicate set from its summary (index never touched) and <strong>prunes</strong> sources whose
 predicates are disjoint from the query's; <code>--no-route</code> queries every source.
 Per-source diagnostics and the queried/pruned tally go to stderr.</p>
+<p>Each source opens the way a single-source query opens it: a URL <strong>lazily</strong>, as
+<code>sparql-url</code> does (dictionary chunks and index tiles fetched as the query
+touches them, under the default memory budget, with the bytes and range
+requests reported per source), and a local path as <code>rete sparql</code> does. A range
+request that fails while a source is read fails the federation instead of
+silently dropping that source's rows. URL sources used to be read eagerly
+(the whole dictionary and index directory first, unbounded): three 55–63 GB
+published files in one federated query ran a 4 GiB container out of memory.</p>
 <p>This is <strong>union</strong> federation — correct for sharded data where each file
 independently yields complete rows. It does <strong>not</strong> do cross-file joins, and
 aggregates (<code>COUNT</code>/<code>GROUP BY</code>) and <code>LIMIT</code> are evaluated <strong>per source</strong> then

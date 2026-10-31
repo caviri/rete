@@ -561,14 +561,17 @@ const DICT_COALESCE_GAP: u64 = 64 * 1024;
 /// rather than OOM. See [`split_memory_budget`].
 pub const DEFAULT_EXPORT_BUDGET_MB: u64 = 4096;
 
-/// The default memory budget, in MiB, of a lazily-opened file — the bound on
-/// its dictionary chunk cache, index tile cache and raw block cache, split as
-/// [`split_memory_budget`] describes. `rete sparql --memory-budget-mb` (and
-/// the other query commands) default to it too, and so does every client that
-/// opens through [`Rete::open_ranged_lazy`] (Python, R, Java, the relay), so a
-/// long-lived session no longer grows with every tile a query ever touched.
-/// The same figure as [`DEFAULT_EXPORT_BUDGET_MB`]: one number governs reading
-/// a big file whatever the command.
+/// The largest default memory budget, in MiB, of a lazily-opened file — the
+/// bound on its dictionary chunk cache, index tile cache and raw block cache,
+/// split as [`split_memory_budget`] describes. The default actually applied is
+/// sized from the memory the process can still use, half of it, between
+/// [`crate::sysmem::MIN_DEFAULT_QUERY_BUDGET_MB`] and this figure (see
+/// [`crate::sysmem::default_query_budget_mb`]; this figure whenever the memory
+/// cannot be read). `rete sparql --memory-budget-mb` (and the other query
+/// commands) default to it too, and so does every client that opens through
+/// [`Rete::open_ranged_lazy`] (Python, R, Java, the relay), so a long-lived
+/// session no longer grows with every tile a query ever touched. The same
+/// figure as [`DEFAULT_EXPORT_BUDGET_MB`].
 pub const DEFAULT_QUERY_BUDGET_MB: u64 = DEFAULT_EXPORT_BUDGET_MB;
 
 /// The [`Rete::spill_threshold`] a memory budget implies: an eighth of it. A
@@ -4155,14 +4158,7 @@ impl Rete {
         let Some(pyr) = self.pyramid() else {
             return Vec::new();
         };
-        pyr.prefix_search(prefix, limit)
-            .into_iter()
-            .filter_map(|e| {
-                self.dict
-                    .subject_term(e.subject)
-                    .map(|iri| (e.label.clone(), iri))
-            })
-            .collect()
+        resolve_label_hits(&self.dict, pyr.prefix_search(prefix, limit))
     }
 
     /// The full-text index (TEXT_INDEX section), faulting it in on first access
@@ -4780,6 +4776,22 @@ impl Rete {
         }
     }
 
+    /// The ordinals (ascending, as [`named_graph_at`](Self::named_graph_at)
+    /// counts them) of the named graphs holding at least one quad whose
+    /// subject is one of `subjects` (subject ids), for a quad-index file: one
+    /// sequential pass over its graph-leading SPO tiles, never a view per
+    /// graph. `None` for a per-graph file, which has no such pass, or on a
+    /// failed read (recorded, see [`index_incomplete`](Self::index_incomplete)).
+    pub(crate) fn named_graphs_with_subjects(
+        &self,
+        subjects: &std::collections::BTreeSet<u32>,
+    ) -> Option<Vec<usize>> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.graphs_with_subjects(subjects),
+            _ => None,
+        }
+    }
+
     /// Deduplicated quads across every named graph, when the file records it
     /// (a quad-index file, from its preamble: one small read). `None` for a
     /// per-graph file — there it is the header's `quad_count` minus the
@@ -5071,11 +5083,16 @@ impl Rete {
         // caches grow with everything any query ever touched: a GROUP BY over
         // a 9.5-billion-triple file ran a 16 GB container out of memory. Cap
         // them by default; a caller that wants another figure (or unlimited)
-        // calls `set_memory_budget` again. Not on wasm32, whose 4 GiB address
-        // space makes the default meaningless and whose callers bound their own
-        // range budgets.
+        // calls `set_memory_budget` again. The default is sized from the
+        // memory this process can still use (`RETE_QUERY_BUDGET_MB` overrides
+        // it; see `crate::sysmem`): a fixed 4096 MiB did not fit a 4 GiB
+        // container. Not on wasm32, whose 4 GiB address space makes the default
+        // meaningless and whose callers bound their own range budgets.
         #[cfg(not(target_arch = "wasm32"))]
-        rete.set_memory_budget(Some(DEFAULT_QUERY_BUDGET_MB << 20));
+        rete.set_memory_budget(match crate::sysmem::default_query_budget_mb() {
+            0 => None,
+            mb => Some(mb << 20),
+        });
         Ok(rete)
     }
 
@@ -5819,6 +5836,24 @@ fn ranged_text_index_slot<R: RangeReader + Send + Sync + 'static>(
     }
 }
 
+/// The `(label, subject term)` pairs of a legacy (pyramid-block) label search.
+/// The hits' subjects are scattered over the dictionary, so their chunks are
+/// faulted in one batch first (one round trip on a remote file, as
+/// [`text_search_in`] does for full-text hits), then decoded in one
+/// chunk-ordered pass. A subject that does not resolve drops its hit, as
+/// before; the order is the search's.
+fn resolve_label_hits(
+    dict: &Dictionary,
+    hits: Vec<&crate::meta::LabelEntry>,
+) -> Vec<(String, String)> {
+    let ids: Vec<u32> = hits.iter().map(|e| e.subject).collect();
+    dict.prefetch_subject_terms(&ids);
+    hits.iter()
+        .zip(dict.subject_terms(&ids))
+        .filter_map(|(e, iri)| Some((e.label.clone(), iri?)))
+        .collect()
+}
+
 /// Full-text search over `ti`, resolving the matched subject ids through `dict`.
 /// The engine behind [`Rete::text_search`] and [`SearchView::text_search`].
 fn text_search_in(
@@ -6005,13 +6040,7 @@ impl SearchView {
         let (Some(pyr), Some(dict)) = (pyr, self.dict.get()) else {
             return Vec::new();
         };
-        pyr.prefix_search(prefix, limit)
-            .into_iter()
-            .filter_map(|e| {
-                dict.subject_term(e.subject)
-                    .map(|iri| (e.label.clone(), iri))
-            })
-            .collect()
+        resolve_label_hits(dict, pyr.prefix_search(prefix, limit))
     }
 }
 
@@ -9873,6 +9902,57 @@ mod tests {
             100,
             "800/8 words = 100 glucose-* labels"
         );
+    }
+
+    /// A legacy (pyramid-block) label search resolves its hits' subjects in one
+    /// batched dictionary read on a lazy open — the label-search twin of the
+    /// full-text hits' batch — instead of one dependent read per chunk.
+    #[test]
+    fn legacy_label_hits_resolve_in_one_batched_read() {
+        use std::sync::{Arc, Mutex};
+        type CallLog = Arc<Mutex<Vec<Vec<(u64, u64)>>>>;
+        #[derive(Clone)]
+        struct Calls(Arc<Vec<u8>>, CallLog);
+        impl crate::RangeReader for Calls {
+            fn len(&self) -> u64 {
+                self.0.len() as u64
+            }
+            fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+                self.1.lock().unwrap().push(vec![(offset, len)]);
+                crate::SliceReader::new(&self.0).read_at(offset, len)
+            }
+            fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+                self.1.lock().unwrap().push(ranges.to_vec());
+                let r = crate::SliceReader::new(&self.0);
+                ranges.iter().map(|&(o, l)| r.read_at(o, l)).collect()
+            }
+        }
+        let bytes = build_labeled(20_000);
+        let h = Header::from_bytes(&bytes).unwrap();
+        let (d0, dl) = (h.dictionary_offset, h.dictionary_len);
+        let want = Rete::open(&bytes).unwrap().prefix_search("glucose", 1000);
+        assert_eq!(want.len(), 1000);
+        for search_view in [false, true] {
+            let calls = Calls(Arc::new(bytes.clone()), Arc::new(Mutex::new(Vec::new())));
+            let got = if search_view {
+                let view = SearchView::open_ranged(calls.clone()).unwrap();
+                calls.1.lock().unwrap().clear();
+                view.prefix_search("glucose", 1000)
+            } else {
+                let rete = Rete::open_ranged_lazy(calls.clone()).unwrap();
+                calls.1.lock().unwrap().clear();
+                rete.prefix_search("glucose", 1000)
+            };
+            assert_eq!(got, want, "search view = {search_view}");
+            let dict_reads = calls
+                .1
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| c.iter().any(|&(o, l)| o < d0 + dl && d0 < o + l))
+                .count();
+            assert_eq!(dict_reads, 1, "search view = {search_view}");
+        }
     }
 
     /// Latency: the binary-search label index vs the FILTER scan it replaces.

@@ -247,6 +247,56 @@ pub(crate) fn query_url(
     Ok(())
 }
 
+/// The transport of a lazily opened URL: the physical range reads, counted.
+pub(crate) type CountedSource = std::sync::Arc<CountingReader<RangedSourceReader>>;
+
+/// Open `url` (or a local path) the way every query over HTTP does: the lazy
+/// ranged open (header, dictionary and tile directories up front; dictionary
+/// chunks and index tiles faulted in on demand), behind a read-through block
+/// cache, with the dictionary, tile and block caches capped by `budget` (`None`
+/// = unlimited). The returned reader counts the physical fetches.
+///
+/// `sparql-url` and `federate` both open through here, so they cannot drift
+/// apart again: `federate` used to open URL sources with the eager
+/// `Rete::open_ranged`, which reads the whole dictionary and index directory up
+/// front with no cache bound, and a 4 GiB container running it over three
+/// 55–63 GB files was killed after 403 s where `sparql-url` answered each.
+///
+/// The block size is `RETE_BLOCK_KB` when set (`0` disables the cache, one
+/// fetch per logical read), else auto-tuned from the file length exactly like
+/// the wasm client: bigger files get bigger blocks, so a remote query makes far
+/// fewer round trips. The cache sits above the counting reader, so a query's
+/// scattered range reads coalesce into a few aligned block fetches over any
+/// single-range backend, S3 included.
+pub(crate) fn open_url_lazy(
+    url: &str,
+    budget: Option<u64>,
+) -> anyhow::Result<(Rete, CountedSource)> {
+    let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(url)?));
+    let total = reader.len();
+    let block: u64 = match std::env::var("RETE_BLOCK_KB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(kb) => kb * 1024,
+        None => auto_block(total),
+    };
+    let rete = if block == 0 {
+        Rete::open_ranged_lazy(reader.clone())?
+    } else {
+        let mut bc = BlockCacheReader::new(reader.clone(), block);
+        let block_cap = rete_core::split_memory_budget(budget.unwrap_or(u64::MAX)).block_cache;
+        if block_cap != u64::MAX {
+            bc = bc.with_cache_cap(block_cap);
+        }
+        Rete::open_ranged_lazy(std::sync::Arc::new(bc))?
+    };
+    // The dictionary and tile caches follow the budget (the lazy open applied
+    // the default; this re-applies an explicit figure or unlimited).
+    rete.set_memory_budget(budget);
+    Ok((rete, reader))
+}
+
 /// Run SPARQL against a `.rete` over HTTP(S) with **lazy tile faulting**: the
 /// open fetches the header, dictionary, pyramid, and the index's small tile
 /// directories; index tiles are then fetched one range request at a time, only
@@ -261,35 +311,8 @@ pub(crate) fn sparql_url(
     memory_budget_mb: Option<u64>,
 ) -> anyhow::Result<()> {
     let budget = super::range_source::query_budget(memory_budget_mb);
-    // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
-    // cache (client-side; works over any single-range backend incl. S3) sits
-    // above it, so a query's scattered range reads coalesce into a few aligned
-    // block fetches. `RETE_BLOCK_KB=0` disables it (one fetch per logical read).
-    let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(url)?));
+    let (mut rete, reader) = open_url_lazy(url, budget)?;
     let total = reader.len();
-    // Block size: an explicit `RETE_BLOCK_KB` wins (0 disables the cache); else
-    // auto-tune from the file length, exactly like the wasm client — bigger files
-    // get bigger blocks, so a remote query makes far fewer round trips.
-    let block: u64 = match std::env::var("RETE_BLOCK_KB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-    {
-        Some(kb) => kb * 1024,
-        None => auto_block(total),
-    };
-    let mut rete = if block == 0 {
-        Rete::open_ranged_lazy(reader.clone())?
-    } else {
-        let mut bc = BlockCacheReader::new(reader.clone(), block);
-        let block_cap = rete_core::split_memory_budget(budget.unwrap_or(u64::MAX)).block_cache;
-        if block_cap != u64::MAX {
-            bc = bc.with_cache_cap(block_cap);
-        }
-        Rete::open_ranged_lazy(std::sync::Arc::new(bc))?
-    };
-    // The dictionary and tile caches follow `--memory-budget-mb` (the lazy open
-    // applied the default; this re-applies an explicit figure or unlimited).
-    rete.set_memory_budget(budget);
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let opts = rete_core::QueryOpts {

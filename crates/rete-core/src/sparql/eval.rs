@@ -55,6 +55,9 @@ fn shares_certain_var(ctx: &Ctx, patterns: &[TriplePattern], lcert: &[bool]) -> 
 /// EXISTS sub-plans, BIND targets, aggregates, projection) once and assign
 /// every variable a slot.
 pub(super) fn query_ctx<'a>(rete: &'a Rete, sel: &Select) -> Ctx<'a> {
+    // Before anything resolves a constant: fault every dictionary chunk the
+    // query's constants route to in one batch (lazy and ranged opens only).
+    super::prefetch::prefetch_constants(rete, sel);
     let mut slots = Slots::new();
     collect_plan_slots(&sel.plan, &mut slots);
     for (var, e) in &sel.extends {
@@ -1258,13 +1261,9 @@ pub(crate) fn eval_plan_iter<'q>(
             // through the TEXT_INDEX instead of streaming every literal (the
             // difference between seconds and never on a remote label scan).
             if let Some(rows) = text_contains_pushdown(ctx, index, named_filter, expr, inner) {
-                return Box::new(rows.into_iter());
+                return rows;
             }
-            let mut cache = ExistsCache::new();
-            Box::new(
-                eval_plan_iter(ctx, index, named_filter, inner)
-                    .filter(move |b| expr.boolean(ctx, index, b, &mut cache)),
-            )
+            scan_filter(ctx, index, named_filter, expr, inner)
         }
         // A nested SELECT: evaluate it independently, then surface each of its
         // projected solutions as an outer row (only the projected vars are set).
@@ -1373,62 +1372,102 @@ pub(crate) fn eval_plan_iter<'q>(
             Some(gi) if visible(iri) => eval_plan_iter(ctx, gi, named_filter, inner),
             _ => Box::new(std::iter::empty()),
         },
-        Plan::Graph(GraphTarget::Var(var), inner) => {
-            let Some(slot) = ctx.slots.slot(var) else {
-                return Box::new(std::iter::empty());
-            };
-            // Iterate by index, not over a materialized slice: on a lazy
-            // ranged open the named-graph directory is walked — and each
-            // graph's index decoded — only as this iterator reaches it, so a
-            // LIMITed query stops fetching after its first few graphs. The
-            // IRI is checked against FROM NAMED before the (possibly remote)
-            // index is opened.
-            //
-            // Demand: with `?g` unrestricted (no FROM NAMED) under a consumer
-            // that provably drains the pipeline, this walk WILL visit and
-            // open every graph — declare that, and a lazy open fetches the
-            // section in bulk chunks instead of hundreds of incremental
-            // reads. Read per pull (a Cell): EXISTS sub-evaluations flip the
-            // guarantee mid-iterator.
-            //
-            // A small graph of a quad-index file is evaluated through an
-            // owned view and dropped once its rows are out, so a walk over
-            // millions of graphs holds one view at a time rather than one per
-            // graph (`Rete::named_graph_transient`).
-            let graphs = (0..ctx.rete.named_graph_count()).filter_map(move |i| {
-                let exhaustive = named_filter.is_none() && ctx.exhaustive.get();
-                let name = ctx.rete.named_graph_name_at_demand(i, exhaustive)?;
-                if !visible(name) {
-                    return None;
-                }
-                Some((i, name, exhaustive))
-            });
-            Box::new(graphs.flat_map(
-                move |(i, name, exhaustive)| -> Box<dyn Iterator<Item = Row> + 'q> {
-                    let gval = ctx.resolver.canon_term(name);
-                    let bind = move |mut sol: Row| match &sol[slot] {
-                        Some(existing) if *existing != gval => None,
-                        _ => {
-                            sol[slot] = Some(gval.clone());
-                            Some(sol)
-                        }
-                    };
-                    if let Some(view) = ctx.rete.named_graph_transient(i) {
-                        let rows: Vec<Row> = eval_plan_iter(ctx, &view, named_filter, inner)
-                            .filter_map(bind)
-                            .collect();
-                        return Box::new(rows.into_iter());
-                    }
-                    match ctx.rete.named_graph_at_demand(i, exhaustive) {
-                        Some((_, gi)) => {
-                            Box::new(eval_plan_iter(ctx, gi, named_filter, inner).filter_map(bind))
-                        }
-                        None => Box::new(std::iter::empty()),
-                    }
-                },
-            ))
-        }
+        Plan::Graph(GraphTarget::Var(var), inner) => graph_var_walk(
+            ctx,
+            named_filter,
+            var,
+            inner,
+            0..ctx.rete.named_graph_count(),
+            true,
+        ),
     }
+}
+
+/// `FILTER(expr)` over `inner`, the plain way: stream `inner` and keep the rows
+/// the expression accepts. `index` is the active graph, which only `EXISTS`
+/// reads.
+fn scan_filter<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    named_filter: Option<&'q [String]>,
+    expr: &'q FExpr,
+    inner: &'q Plan,
+) -> RowIter<'q> {
+    let mut cache = ExistsCache::new();
+    Box::new(
+        eval_plan_iter(ctx, index, named_filter, inner)
+            .filter(move |b| expr.boolean(ctx, index, b, &mut cache)),
+    )
+}
+
+/// `GRAPH ?var { inner }` over the named graphs at `ordinals` (ascending): the
+/// whole walk is `0..named_graph_count()`; the CONTAINS pushdown passes only
+/// the graphs that can hold a matching subject. Each visited graph yields
+/// exactly the rows the whole walk yields for it, in the same order.
+fn graph_var_walk<'q>(
+    ctx: &'q Ctx<'q>,
+    named_filter: Option<&'q [String]>,
+    var: &'q str,
+    inner: &'q Plan,
+    ordinals: impl Iterator<Item = usize> + 'q,
+    may_be_exhaustive: bool,
+) -> RowIter<'q> {
+    // A named graph is visible unless FROM NAMED excludes it.
+    let visible = move |name: &str| named_filter.is_none_or(|f| f.iter().any(|g| g == name));
+    let Some(slot) = ctx.slots.slot(var) else {
+        return Box::new(std::iter::empty());
+    };
+    // Iterate by index, not over a materialized slice: on a lazy
+    // ranged open the named-graph directory is walked — and each
+    // graph's index decoded — only as this iterator reaches it, so a
+    // LIMITed query stops fetching after its first few graphs. The
+    // IRI is checked against FROM NAMED before the (possibly remote)
+    // index is opened.
+    //
+    // Demand: with `?g` unrestricted (no FROM NAMED) under a consumer
+    // that provably drains the pipeline, this walk WILL visit and
+    // open every graph — declare that, and a lazy open fetches the
+    // section in bulk chunks instead of hundreds of incremental
+    // reads. Read per pull (a Cell): EXISTS sub-evaluations flip the
+    // guarantee mid-iterator. A restricted walk (`may_be_exhaustive`
+    // false) visits a few graphs and never declares it.
+    //
+    // A small graph of a quad-index file is evaluated through an
+    // owned view and dropped once its rows are out, so a walk over
+    // millions of graphs holds one view at a time rather than one per
+    // graph (`Rete::named_graph_transient`).
+    let graphs = ordinals.filter_map(move |i| {
+        let exhaustive = may_be_exhaustive && named_filter.is_none() && ctx.exhaustive.get();
+        let name = ctx.rete.named_graph_name_at_demand(i, exhaustive)?;
+        if !visible(name) {
+            return None;
+        }
+        Some((i, name, exhaustive))
+    });
+    Box::new(graphs.flat_map(
+        move |(i, name, exhaustive)| -> Box<dyn Iterator<Item = Row> + 'q> {
+            let gval = ctx.resolver.canon_term(name);
+            let bind = move |mut sol: Row| match &sol[slot] {
+                Some(existing) if *existing != gval => None,
+                _ => {
+                    sol[slot] = Some(gval.clone());
+                    Some(sol)
+                }
+            };
+            if let Some(view) = ctx.rete.named_graph_transient(i) {
+                let rows: Vec<Row> = eval_plan_iter(ctx, &view, named_filter, inner)
+                    .filter_map(bind)
+                    .collect();
+                return Box::new(rows.into_iter());
+            }
+            match ctx.rete.named_graph_at_demand(i, exhaustive) {
+                Some((_, gi)) => {
+                    Box::new(eval_plan_iter(ctx, gi, named_filter, inner).filter_map(bind))
+                }
+                None => Box::new(std::iter::empty()),
+            }
+        },
+    ))
 }
 
 /// Land externally-produced bindings (a subquery's projection, a SERVICE
@@ -1533,40 +1572,107 @@ fn required_contains(e: &FExpr, out: &mut Vec<(String, String)>) {
 /// exact (case-sensitivity, cross-word needles, wrappers — all decided by the
 /// real expression, never the index).
 ///
-/// `None` = not applicable — no index, no usable conjunct, an unselective
-/// needle (`substring` declined), or more candidates than probing is worth —
-/// and the caller keeps the plain streaming scan.
-fn text_contains_pushdown(
-    ctx: &Ctx,
-    index: &GraphIndex,
-    nf: Option<&[String]>,
-    expr: &FExpr,
-    inner: &Plan,
-) -> Option<Vec<Row>> {
-    use std::collections::BTreeSet;
-    // Decided from the header, before anything faults the token table.
-    if !text_index_covers(ctx, index) {
+/// Three shapes reach the same pushdown through the graphs the index covers:
+///
+/// - `FILTER(e) { A UNION B }` is `FILTER(e) A UNION FILTER(e) B`, row for row
+///   and in the same order, so each branch takes the pushdown on its own and a
+///   branch that cannot keeps the plain scan. Taken only when one branch can.
+/// - `FILTER(e) GRAPH <g> { P }` is `GRAPH <g> { FILTER(e) P }` when `e` has no
+///   `EXISTS` (the only part of an expression that reads the active graph):
+///   the pushdown then runs over `<g>`, which an index built with
+///   `--text-index-graphs all` covers.
+/// - `FILTER(e) GRAPH ?g { P }` on a quad-index file whose index covers the
+///   named graphs: a matching row's subject is a candidate, so only the graphs
+///   holding a candidate subject can contribute ([`graph_walk_pushdown`]).
+///
+/// `None` = not applicable — no index, no usable conjunct, an index that does
+/// not cover the graph or the predicate, an unselective needle (`substring`
+/// declined), or more candidates than probing is worth — and the caller keeps
+/// the plain streaming scan.
+fn text_contains_pushdown<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    expr: &'q FExpr,
+    inner: &'q Plan,
+) -> Option<RowIter<'q>> {
+    // A header read: a file without a text index never gets further.
+    if !ctx.rete.has_text_index() {
         return None;
     }
+    let mut needles: Vec<(String, String)> = Vec::new();
+    required_contains(expr, &mut needles);
+    if needles.is_empty() {
+        return None;
+    }
+    match inner {
+        Plan::Union(l, r) => {
+            let left = text_contains_pushdown(ctx, index, nf, expr, l);
+            let right = text_contains_pushdown(ctx, index, nf, expr, r);
+            if left.is_none() && right.is_none() {
+                return None;
+            }
+            let left = left.unwrap_or_else(|| scan_filter(ctx, index, nf, expr, l));
+            let right = right.unwrap_or_else(|| scan_filter(ctx, index, nf, expr, r));
+            Some(Box::new(left.chain(right)))
+        }
+        Plan::Graph(GraphTarget::Named(iri), p) => {
+            if expr_has_exists(expr) || nf.is_some_and(|f| !f.iter().any(|g| g == iri)) {
+                return None;
+            }
+            let gi = ctx.rete.graph_index(iri)?;
+            text_contains_pushdown(ctx, gi, nf, expr, p)
+        }
+        Plan::Graph(GraphTarget::Var(var), p) => {
+            graph_walk_pushdown(ctx, index, nf, expr, var, p, &needles)
+        }
+        _ => {
+            let rows = seeded_pushdown(ctx, index, nf, expr, inner, &needles)?;
+            Some(Box::new(rows.into_iter()))
+        }
+    }
+}
+
+/// The candidate subjects of a filter's required CONTAINS conjuncts over
+/// `inner`, from the TEXT_INDEX: `(subject variable, subject ids)`, a superset
+/// of the subjects of every row the filter accepts — provided the caller has
+/// checked that the index covers the graph `inner` is evaluated over.
+///
+/// A needle counts only on a pattern whose predicate the index covers: a
+/// constant the scope includes, or a variable predicate when the index covers
+/// every predicate, or when the filter itself confines the variable to covered
+/// predicates ([`predicate_var_covered`]: `?p NOT IN (…)` naming every
+/// predicate an `--text-index-exclude` index left out, `?p IN (…)` or
+/// `?p = <…>` naming only included ones). An index never saw the literals of
+/// the predicates it left out, and an unconfined variable predicate can bind
+/// exactly those.
+fn contains_candidates(
+    ctx: &Ctx,
+    expr: &FExpr,
+    inner: &Plan,
+    needles: &[(String, String)],
+) -> Option<(String, std::collections::BTreeSet<u32>)> {
+    use std::collections::BTreeSet;
     let ti = ctx.rete.text_index()?;
     // The predicates it covers come from its scope block, in the token table
     // the pushdown reads anyway.
     let scope = ti.scope();
-    let mut needles: Vec<(String, String)> = Vec::new();
-    required_contains(expr, &mut needles);
 
     // Intersect candidate subjects across every usable needle on one subject
     // variable (the first that qualifies keeps this simple and sound: further
     // constraints only ever come back through the re-verifying filter).
     let mut seed: Option<(String, BTreeSet<u32>)> = None;
-    for (cv, needle) in &needles {
+    for (cv, needle) in needles {
         let Some((sv, pred)) = contains_subject_var(inner, cv) else {
             continue;
         };
-        // ...and over the predicates it covers: an include/exclude index never
-        // saw the literals of the predicates it left out, and a variable
-        // predicate can bind exactly those.
-        if !scope.covers_pattern_predicate(pred.as_deref()) {
+        let covered = match pred {
+            PatternTerm::Const(p) => scope.covers_predicate(p),
+            PatternTerm::Var(pv) => {
+                scope.covers_pattern_predicate(None) || predicate_var_covered(expr, pv, scope)
+            }
+        };
+        if !covered {
             continue;
         }
         let pieces: Vec<String> = crate::text_index::tokenize(needle).collect();
@@ -1596,7 +1702,26 @@ fn text_contains_pushdown(
             Some(_) => {}
         }
     }
-    let (sv, cands) = seed?;
+    seed
+}
+
+/// The pushdown proper over one graph (see [`text_contains_pushdown`]): the
+/// candidates seeded into `inner` as a VALUES probe, the rows re-verified by
+/// the original filter.
+fn seeded_pushdown(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    nf: Option<&[String]>,
+    expr: &FExpr,
+    inner: &Plan,
+    needles: &[(String, String)],
+) -> Option<Vec<Row>> {
+    use std::collections::BTreeSet;
+    // Decided from the header, before anything faults the token table.
+    if !text_index_covers(ctx, index) {
+        return None;
+    }
+    let (sv, cands) = contains_candidates(ctx, expr, inner, needles)?;
     if cands.len() > TEXT_PUSHDOWN_MAX_CANDIDATES {
         return None;
     }
@@ -1640,6 +1765,166 @@ fn text_contains_pushdown(
     Some(out)
 }
 
+/// `FILTER(e) GRAPH ?var { inner }` through an index that covers the named
+/// graphs, on a quad-index file: every row the filter accepts has a candidate
+/// subject (the index saw every named graph's literals), and that subject has
+/// a quad in the row's graph — so a graph with no quad on a candidate subject
+/// yields no accepted row. The walk visits only the graphs that do
+/// ([`Rete::named_graphs_with_subjects`]: one pass over the graph-leading SPO
+/// tiles instead of a view per graph), in the same order and with the same
+/// rows per graph as the whole walk, and the original filter runs on them
+/// unchanged (`EXISTS` and `?var` included). A per-graph file has no such pass
+/// and keeps the whole walk.
+fn graph_walk_pushdown<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    expr: &'q FExpr,
+    var: &'q str,
+    inner: &'q Plan,
+    needles: &[(String, String)],
+) -> Option<RowIter<'q>> {
+    let header = ctx.rete.header();
+    if !header.text_index_covers_named_graphs() || !header.has_quad_index() {
+        return None;
+    }
+    let (_, cands) = contains_candidates(ctx, expr, inner, needles)?;
+    if cands.is_empty() {
+        // No covered literal holds the needle: no row can pass.
+        return Some(Box::new(std::iter::empty()));
+    }
+    let ordinals = ctx.rete.named_graphs_with_subjects(&cands)?;
+    let rows = graph_var_walk(ctx, nf, var, inner, ordinals.into_iter(), false);
+    let mut cache = ExistsCache::new();
+    Some(Box::new(
+        rows.filter(move |b| expr.boolean(ctx, index, b, &mut cache)),
+    ))
+}
+
+/// Does the filter confine the predicate variable `pv` to predicates the text
+/// index covers? Read off the filter's REQUIRED conjuncts (its `&&` spine, as
+/// for the needles): `?pv IN (…)`, `?pv = <c>` and `sameTerm(?pv, <c>)` bound
+/// it to a set of constants — covered when the index covers each; `?pv NOT IN
+/// (…)`, `?pv != <c>` and `!sameTerm(?pv, <c>)` rule constants out — enough
+/// for an index that excludes predicates when every excluded one is ruled out.
+/// A row the filter accepts satisfies every required conjunct, so its `?pv`
+/// is then a covered predicate. Anything else (an `||`, a variable in an `IN`
+/// list) proves nothing and leaves the pattern uncovered.
+fn predicate_var_covered(
+    expr: &FExpr,
+    pv: &str,
+    scope: &crate::text_index::TextIndexScope,
+) -> bool {
+    use crate::text_index::TextIndexPredicates;
+    use std::collections::BTreeSet;
+
+    fn is_pv(e: &FExpr, pv: &str) -> bool {
+        matches!(e, FExpr::Var(v) if v == pv)
+    }
+
+    /// The constant of `?pv <op> c` or `c <op> ?pv`.
+    fn pv_const<'e>(l: &'e FExpr, r: &'e FExpr, pv: &str) -> Option<&'e str> {
+        match (l, r) {
+            (FExpr::Var(v), FExpr::Const(c)) | (FExpr::Const(c), FExpr::Var(v)) if v == pv => {
+                Some(c)
+            }
+            _ => None,
+        }
+    }
+
+    fn allow<'e>(set: BTreeSet<&'e str>, allowed: &mut Option<BTreeSet<&'e str>>) {
+        *allowed = Some(match allowed.take() {
+            None => set,
+            Some(acc) => acc.intersection(&set).copied().collect(),
+        });
+    }
+
+    fn walk<'e>(
+        e: &'e FExpr,
+        pv: &str,
+        allowed: &mut Option<BTreeSet<&'e str>>,
+        excluded: &mut BTreeSet<&'e str>,
+    ) {
+        match e {
+            FExpr::And(a, b) => {
+                walk(a, pv, allowed, excluded);
+                walk(b, pv, allowed, excluded);
+            }
+            FExpr::In(x, list) if is_pv(x, pv) => {
+                let consts: Option<BTreeSet<&str>> = list
+                    .iter()
+                    .map(|m| match m {
+                        FExpr::Const(c) => Some(c.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                if let Some(set) = consts {
+                    allow(set, allowed);
+                }
+            }
+            FExpr::Compare(Op::Eq, l, r) | FExpr::SameTerm(l, r) => {
+                if let Some(c) = pv_const(l, r, pv) {
+                    allow(BTreeSet::from([c]), allowed);
+                }
+            }
+            FExpr::Compare(Op::Ne, l, r) => {
+                if let Some(c) = pv_const(l, r, pv) {
+                    excluded.insert(c);
+                }
+            }
+            FExpr::Not(inner) => match inner.as_ref() {
+                // NOT IN is false as soon as one member equals `?pv`, so each
+                // constant member is ruled out whatever the others are.
+                FExpr::In(x, list) if is_pv(x, pv) => {
+                    excluded.extend(list.iter().filter_map(|m| match m {
+                        FExpr::Const(c) => Some(c.as_str()),
+                        _ => None,
+                    }));
+                }
+                FExpr::Compare(Op::Eq, l, r) | FExpr::SameTerm(l, r) => {
+                    if let Some(c) = pv_const(l, r, pv) {
+                        excluded.insert(c);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    let mut allowed: Option<BTreeSet<&str>> = None;
+    let mut excluded: BTreeSet<&str> = BTreeSet::new();
+    walk(expr, pv, &mut allowed, &mut excluded);
+    if let Some(set) = allowed {
+        return set.iter().all(|p| scope.covers_predicate(p));
+    }
+    match &scope.predicates {
+        TextIndexPredicates::All => true,
+        TextIndexPredicates::Except(left_out) => {
+            left_out.iter().all(|p| excluded.contains(p.as_str()))
+        }
+        TextIndexPredicates::Only(_) => false,
+    }
+}
+
+/// Does `e` contain an `EXISTS` anywhere — the one part of an expression that
+/// reads the active graph?
+fn expr_has_exists(e: &FExpr) -> bool {
+    match e {
+        FExpr::Exists(_) => true,
+        FExpr::Var(_) | FExpr::Const(_) | FExpr::Bound(_) => false,
+        FExpr::Arith(_, a, b)
+        | FExpr::SameTerm(a, b)
+        | FExpr::Compare(_, a, b)
+        | FExpr::And(a, b)
+        | FExpr::Or(a, b) => expr_has_exists(a) || expr_has_exists(b),
+        FExpr::Not(a) => expr_has_exists(a),
+        FExpr::If(c, t, f) => expr_has_exists(c) || expr_has_exists(t) || expr_has_exists(f),
+        FExpr::In(x, list) => expr_has_exists(x) || list.iter().any(expr_has_exists),
+        FExpr::Func(_, args) | FExpr::Coalesce(args) => args.iter().any(expr_has_exists),
+    }
+}
+
 /// May the TEXT_INDEX bound a scan of `index`? Its candidate subjects are a
 /// sound over-approximation only over the literals it indexed. Every index
 /// covers the file's **default graph**; the named graphs only when it was built
@@ -1674,21 +1959,15 @@ fn find_seed_bgp<'p>(plan: &'p Plan, sv: &str) -> Option<&'p [TriplePattern]> {
     }
 }
 
-/// The subject variable of a pattern binding `cv` as its object — with the
-/// pattern's predicate when it is a constant — searched over the plan's
-/// REQUIRED spine only: both `Join` sides, a `LeftJoin`'s left, a nested
-/// `Filter`'s inner, and `Bgp` leaves. (A pattern inside an OPTIONAL's right
-/// side never *requires* the binding, so seeding there is left alone.)
-fn contains_subject_var(plan: &Plan, cv: &str) -> Option<(String, Option<String>)> {
+/// The subject variable of a pattern binding `cv` as its object, with the
+/// pattern's predicate term — searched over the plan's REQUIRED spine only:
+/// both `Join` sides, a `LeftJoin`'s left, a nested `Filter`'s inner, and
+/// `Bgp` leaves. (A pattern inside an OPTIONAL's right side never *requires*
+/// the binding, so seeding there is left alone.)
+fn contains_subject_var<'p>(plan: &'p Plan, cv: &str) -> Option<(String, &'p PatternTerm)> {
     match plan {
         Plan::Bgp(patterns) => patterns.iter().find_map(|p| match (&p.s, &p.o) {
-            (PatternTerm::Var(s), PatternTerm::Var(o)) if o == cv => Some((
-                s.clone(),
-                match &p.p {
-                    PatternTerm::Const(c) => Some(c.clone()),
-                    PatternTerm::Var(_) => None,
-                },
-            )),
+            (PatternTerm::Var(s), PatternTerm::Var(o)) if o == cv => Some((s.clone(), &p.p)),
             _ => None,
         }),
         Plan::Join(l, r) => contains_subject_var(l, cv).or_else(|| contains_subject_var(r, cv)),

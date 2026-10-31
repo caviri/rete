@@ -56,6 +56,7 @@ front.
 |---|---|---|
 | `RETE_LOCAL_LAZY_ABOVE_MB` | memory-aware (see above) | file-size threshold to switch to the lazy path, overriding the memory-aware rule. `0` forces lazy for everything; raise it to force read-whole (faster for a full scan you'll consume entirely, if the RAM is there). |
 | `RETE_BLOCK_KB` | `64` (auto **128** for files >100 MB) | the range-read **block size** — the KB fetched per cache miss. The reader **coalesces byte-adjacent blocks into one request**, so a selective query only pays for the handful of *scattered* blocks it touches. Keep it near the 64 KiB dictionary-chunk size: bigger blocks over-fetch on scattered faults, smaller blocks add round-trips. |
+| `RETE_QUERY_BUDGET_MB` | half the available memory, 256–4096 | the query **memory budget** when `--memory-budget-mb` is not given: caps the dictionary-chunk, tile and block caches of a lazy open, in the CLI and every client (`0` = unlimited). Since 0.4.2 the default follows the memory (a 4 GiB container gets ~2 GiB, not a fixed 4096). `RETE_OPEN_DEBUG=1` prints the figure chosen and why. |
 | `RETE_DICT_RESTART_INTERVAL` | build-time | dictionary front-coding restart interval — sets how big the in-memory restart-offset table is (a 50 M-term section's table is ~24 MiB). Larger interval → smaller table, slower term seeks. Set at **build**, not at query time. |
 
 **Not env-configurable:** the block **cache** is capped at **256 MiB resident**

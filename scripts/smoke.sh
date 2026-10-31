@@ -346,6 +346,17 @@ check "federate routing" "1 pruned" -- bash -c "$B federate '$T/sa.rete' '$T/sc.
 check "federate no-route" "0 pruned" -- bash -c "$B federate '$T/sa.rete' '$T/sc.rete' --query '$FEDQ' --no-route 2>&1"
 # ASK federation is a logical OR across shards.
 check "federate ask" "true|boolean" -- "$B" federate "$T/sa.rete" "$T/sb.rete" --query "ASK { ?x <http://ex/cites> <http://ex/T> }"
+# A URL source opens lazily (as sparql-url does) and reports what it fetched.
+( cd "$T" && python3 "$ROOT/scripts/range_server.py" 8097 . >/dev/null 2>&1 & echo $! > "$T/srv2.pid" )
+sleep 1
+check "federate url lazy" "3 merged result" -- bash -c "$B federate 'http://127.0.0.1:8097/sa.rete' '$T/sb.rete' --query '$FEDQ' 2>&1"
+check "federate url fetched" "range request" -- bash -c "$B federate 'http://127.0.0.1:8097/sa.rete' '$T/sb.rete' --query '$FEDQ' 2>&1"
+kill "$(cat "$T/srv2.pid")" 2>/dev/null
+
+echo "== default query memory budget =="
+# Sized from the memory available unless RETE_QUERY_BUDGET_MB (or the flag) says otherwise.
+check "budget default" "query_budget\] default [0-9]+ MiB" -- bash -c "RETE_OPEN_DEBUG=1 $B sparql '$T/sa.rete' '$FEDQ' 2>&1"
+check "budget env" "default 300 MiB \(RETE_QUERY_BUDGET_MB=300\)" -- bash -c "RETE_OPEN_DEBUG=1 RETE_QUERY_BUDGET_MB=300 $B sparql '$T/sa.rete' '$FEDQ' 2>&1"
 
 echo "== reach (multi-source transitive reachability) =="
 # Reverse reach = impact analysis: who (transitively) depends on log4x?
