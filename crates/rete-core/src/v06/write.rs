@@ -514,10 +514,9 @@ pub fn assemble<W: Write + Seek>(
         _ => Vec::new(),
     };
     let label_nodes = match &parts.labels {
-        Some(l) if l.body.len > l.data_len => input.read_at(
-            l.body.offset + l.data_len,
-            l.body.len - l.data_len,
-        )?,
+        Some(l) if l.body.len > l.data_len => {
+            input.read_at(l.body.offset + l.data_len, l.body.len - l.data_len)?
+        }
         _ => Vec::new(),
     };
 
@@ -635,8 +634,7 @@ pub fn assemble<W: Write + Seek>(
     if total < MIN_FILE_LEN {
         region_len += (MIN_FILE_LEN - total) as u32;
     }
-    let data_offset =
-        HEADER_LEN as u64 + root_len as u64 + region_len as u64 + front_sections_len;
+    let data_offset = HEADER_LEN as u64 + root_len as u64 + region_len as u64 + front_sections_len;
 
     // Data first, at its final offset, hashed per section.
     out.seek(SeekFrom::Start(data_offset))?;
@@ -770,12 +768,47 @@ pub fn replace_card(
     build: Option<&[u8]>,
 ) -> Result<Vec<u8>, FileError> {
     let h = Header06::from_bytes(image)?;
-    let codec = h.internal_codec;
-    let root_bytes = image
+    let front = image
+        .get(..h.data_offset as usize)
+        .ok_or(FileError::Container("0x06 front overruns"))?;
+    let data = image
+        .get(h.data_offset as usize..)
+        .ok_or(FileError::Container("0x06 data overruns"))?;
+    let stored = card
+        .filter(|c| !c.is_empty())
+        .map(|c| compress(h.internal_codec, c));
+    let (_, mut out) = recard_front(&h, front, stored.as_deref(), build)?;
+    out.extend_from_slice(data);
+    Ok(out)
+}
+
+/// The card a re-card writes.
+#[derive(Debug, Clone, Copy)]
+pub enum NewCard<'a> {
+    /// The file's own card, byte for byte (only the build record changes, so
+    /// the content hash does not).
+    Keep,
+    /// This card (JSON), or none.
+    Set(Option<&'a [u8]>),
+}
+
+/// The header and front (everything before the data region) of `h`'s file
+/// with a new card and build record: the card region re-laid out (no slack
+/// reuse — a fresh region sized for the new pair), the root and the front
+/// sections copied, the data region shifted by the region's change.
+fn recard_front(
+    h: &Header06,
+    front: &[u8],
+    card_stored: Option<&[u8]>,
+    build: Option<&[u8]>,
+) -> Result<(Header06, Vec<u8>), FileError> {
+    let root_bytes = front
         .get(HEADER_LEN..HEADER_LEN + h.root_len as usize)
         .ok_or(FileError::Container("0x06 root overruns"))?;
-    let card_stored = card.filter(|c| !c.is_empty()).map(|c| compress(codec, c));
-    let card_len = card_stored.as_ref().map_or(0, |c| c.len()) as u32;
+    let sections = front
+        .get(h.front_base() as usize..h.data_offset as usize)
+        .ok_or(FileError::Container("0x06 front overruns"))?;
+    let card_len = card_stored.map_or(0, |c| c.len()) as u32;
     let build_len = build.map_or(0, |b| b.len()) as u32;
     let mut region_len = card_region_len(card_len, build_len);
     let rest_len = h.file_len - h.front_base();
@@ -783,26 +816,22 @@ pub fn replace_card(
     if total < MIN_FILE_LEN {
         region_len += (MIN_FILE_LEN - total) as u32;
     }
-    let old_front = h.front_base() as usize;
-    let rest = image
-        .get(old_front..)
-        .ok_or(FileError::Container("0x06 front overruns"))?;
     let mut nh = h.clone();
     nh.card_region_len = region_len;
     nh.card_off = 0;
     nh.card_len = card_len;
-    nh.card_digest = card_stored.as_ref().map_or([0; 16], |c| digest16(c));
+    nh.card_digest = card_stored.map_or([0; 16], digest16);
     nh.build_off = card_len;
     nh.build_len = build_len;
     let shift = region_len as i64 - h.card_region_len as i64;
     nh.data_offset = (h.data_offset as i64 + shift) as u64;
     nh.file_len = (h.file_len as i64 + shift) as u64;
     nh.content_hash = content_hash(&nh);
-    let mut out = Vec::with_capacity(nh.file_len as usize);
+    let mut out = Vec::with_capacity(nh.data_offset as usize);
     out.extend_from_slice(&nh.to_bytes());
     out.extend_from_slice(root_bytes);
     let mut region = Vec::with_capacity(region_len as usize);
-    if let Some(c) = &card_stored {
+    if let Some(c) = card_stored {
         region.extend_from_slice(c);
     }
     if let Some(b) = build {
@@ -810,6 +839,149 @@ pub fn replace_card(
     }
     region.resize(region_len as usize, 0);
     out.extend_from_slice(&region);
-    out.extend_from_slice(rest);
-    Ok(out)
+    out.extend_from_slice(sections);
+    Ok((nh, out))
+}
+
+/// Rewrite a `0x06` file read through `src` into `out` with a new card and
+/// build record — [`replace_card`] without holding the file: the front is
+/// re-laid out around the new card region, the data region copied byte for
+/// byte (its digests, and so the root, unchanged). `progress` receives the
+/// data bytes copied so far.
+pub fn rewrite_card_stream<W: Write>(
+    src: &dyn RangeReader,
+    out: &mut W,
+    card: NewCard<'_>,
+    build: Option<&[u8]>,
+    progress: &mut dyn FnMut(u64),
+) -> Result<Header06, FileError> {
+    const SPAN: u64 = 8 << 20;
+    let head = src.read_at(0, HEADER_LEN as u64)?;
+    let h = Header06::from_bytes(&head)?;
+    if h.file_len != src.len() {
+        return Err(FileError::Container(
+            "0x06 file length does not match its header",
+        ));
+    }
+    // Everything before the data region is small: the header, the root, the
+    // card region and the front sections.
+    let front = src.read_at(0, h.data_offset)?;
+    let stored = match card {
+        NewCard::Keep => {
+            let r = h.card_range();
+            (r.len > 0).then(|| front[r.offset as usize..(r.offset + r.len) as usize].to_vec())
+        }
+        NewCard::Set(c) => c
+            .filter(|c| !c.is_empty())
+            .map(|c| compress(h.internal_codec, c)),
+    };
+    let (nh, new_front) = recard_front(&h, &front, stored.as_deref(), build)?;
+    out.write_all(&new_front)?;
+    let mut at = h.data_offset;
+    while at < h.file_len {
+        let n = (h.file_len - at).min(SPAN);
+        out.write_all(&src.read_at(at, n)?)?;
+        at += n;
+        progress(at - h.data_offset);
+    }
+    out.flush()?;
+    Ok(nh)
+}
+
+/// Re-card a `0x06` file **in place**, when the new card and record fit in a
+/// free gap of its card region (beside the old pair, which stays readable until
+/// the switch): they are written there and the new header is returned, *not*
+/// written. The caller syncs the file, then [`commit_header`] — the 128-byte
+/// header is the one commit point, so a crash before it leaves the old file
+/// whole. A card equal to the current one stays where it is (only the record
+/// moves; the content hash does not change). `Ok(None)` when the pair does not
+/// fit: the caller copies instead ([`rewrite_card_stream`]).
+pub fn recard_in_place<F: std::io::Read + Write + Seek>(
+    file: &mut F,
+    card: NewCard<'_>,
+    build: Option<&[u8]>,
+) -> Result<Option<Header06>, FileError> {
+    let mut head = vec![0u8; HEADER_LEN];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut head)?;
+    let h = Header06::from_bytes(&head)?;
+    let card_stored = match card {
+        NewCard::Keep => None,
+        NewCard::Set(c) => c
+            .filter(|c| !c.is_empty())
+            .map(|c| compress(h.internal_codec, c)),
+    };
+    let keep_card = match (card, &card_stored) {
+        (NewCard::Keep, _) => true,
+        (_, Some(c)) => c.len() as u32 == h.card_len && digest16(c) == h.card_digest,
+        (_, None) => h.card_len == 0,
+    };
+    let card_need = if keep_card {
+        0
+    } else {
+        card_stored.as_ref().map_or(0, |c| c.len()) as u64
+    };
+    let build_need = build.map_or(0, |b| b.len()) as u64;
+    let need = card_need + build_need;
+    // The free gaps of the region around the pair in use.
+    let mut used: Vec<(u64, u64)> = [
+        (h.card_off as u64, h.card_len as u64),
+        (h.build_off as u64, h.build_len as u64),
+    ]
+    .into_iter()
+    .filter(|&(_, l)| l > 0)
+    .collect();
+    used.sort_unstable();
+    let region = h.card_region_len as u64;
+    let mut gaps = Vec::new();
+    let mut at = 0u64;
+    for (o, l) in used {
+        if o > at {
+            gaps.push((at, o - at));
+        }
+        at = at.max(o + l);
+    }
+    if region > at {
+        gaps.push((at, region - at));
+    }
+    let start = if need == 0 {
+        0
+    } else {
+        match gaps.iter().find(|&&(_, l)| l >= need) {
+            Some(&(o, _)) => o,
+            None => return Ok(None),
+        }
+    };
+    file.seek(SeekFrom::Start(h.card_region_offset() + start))?;
+    if !keep_card {
+        if let Some(c) = &card_stored {
+            file.write_all(c)?;
+        }
+    }
+    if let Some(b) = build {
+        file.write_all(b)?;
+    }
+    file.flush()?;
+    let mut nh = h.clone();
+    if !keep_card {
+        nh.card_off = if card_need > 0 { start as u32 } else { 0 };
+        nh.card_len = card_need as u32;
+        nh.card_digest = card_stored.as_ref().map_or([0; 16], |c| digest16(c));
+    }
+    nh.build_off = if build_need > 0 {
+        (start + card_need) as u32
+    } else {
+        0
+    };
+    nh.build_len = build_need as u32;
+    nh.content_hash = content_hash(&nh);
+    Ok(Some(nh))
+}
+
+/// Write `h` over the first 128 bytes (the commit of [`recard_in_place`]).
+pub fn commit_header<F: Write + Seek>(file: &mut F, h: &Header06) -> Result<(), FileError> {
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&h.to_bytes())?;
+    file.flush()?;
+    Ok(())
 }

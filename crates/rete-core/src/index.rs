@@ -1939,7 +1939,9 @@ impl GraphIndex {
                 }
                 _ => {
                     let (start, end) = self.tile_span(si, pa);
-                    (start..end).filter(|&ti| tiles[ti].syn_admits(pb, pc)).count()
+                    (start..end)
+                        .filter(|&ti| tiles[ti].syn_admits(pb, pc))
+                        .count()
                 }
             };
             let est = if admitted == 0 {

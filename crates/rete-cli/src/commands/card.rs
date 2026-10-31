@@ -1518,6 +1518,51 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         run: None,
     });
     let meta = card.to_json_bytes();
+    let v06 = rete_core::v06::open::is_v06(&reader.read_at(0, 8.min(file_len))?);
+
+    if let (None, true) = (output, v06) {
+        // 4, in place, 0x06: the new pair into the card region's free gap
+        // beside the old one, a sync, then the 128-byte header — or, when it
+        // does not fit, one copy of the file renamed over it.
+        drop(reader);
+        if let Some(r) = info.recarded.as_mut() {
+            r.run = rec.run();
+        }
+        let reserve = crate::commands::buildinfo::with_widest_costs(&info).to_json_bytes();
+        let (header, copied) = super::v06::recard_file(
+            input,
+            rete_core::v06::write::NewCard::Set(Some(&meta)),
+            Some(&reserve),
+        )?;
+        rec.lap(Phase::ContentHash);
+        crate::commands::buildinfo::remeasure_on_file(input, &mut info, &rec)?;
+        if opts.verify {
+            let check = LocalRangeReader::open(input)?;
+            if !rete_core::verify_ranged(&check)? {
+                anyhow::bail!("{input}: the re-carded file does not verify");
+            }
+            eprintln!("recard: verified the new content hash");
+        }
+        crate::commands::progress::finish(header.quad_count, input);
+        println!(
+            "{} (in place): {} starter quer{} ({} dropped), content hash {} → {}, {} B card {}; \
+             {:.0} s",
+            input,
+            card.queries.len(),
+            if card.queries.len() == 1 { "y" } else { "ies" },
+            info.dropped_queries.len(),
+            hex16(&old.header.content_hash),
+            hex16(&header.content_hash),
+            meta.len(),
+            if copied {
+                "— the card region had no room, so the file was rewritten once"
+            } else {
+                "in the card region's free space, no data byte moved"
+            },
+            started.elapsed().as_secs_f64()
+        );
+        return Ok(());
+    }
 
     let Some(output) = output else {
         // 4, in place: the card and the record after the data, the header last.
@@ -1557,7 +1602,11 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     // record is written at its widest and sealed in place once the copy is
     // done, so the re-card's own wall time covers the copy.
     let out_path = std::path::Path::new(output);
-    let blob = info.reserve_bytes(Pending::Write, &rec);
+    let blob = if v06 {
+        crate::commands::buildinfo::with_widest_costs(&info).reserve_bytes(Pending::Write, &rec)
+    } else {
+        info.reserve_bytes(Pending::Write, &rec)
+    };
     let tmp = std::path::PathBuf::from(format!("{output}.recard-tmp"));
     let copy_started = std::time::Instant::now();
     rete_core::build_progress::begin(
@@ -1565,12 +1614,12 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         Some(file_len),
         rete_core::build_progress::Unit::Bytes,
     );
-    let header = {
+    let (quad_count, content_hash) = {
         let file = std::fs::File::create(&tmp)
             .map_err(|e| anyhow::anyhow!("creating {}: {e}", tmp.display()))?;
         let mut out = std::io::BufWriter::with_capacity(8 << 20, file);
         let mut last = 0u64;
-        let written = rete_core::format::rewrite_card(&reader, &mut out, &meta, &blob, &mut |n| {
+        let mut progress = |n: u64| {
             rete_core::build_progress::set_done(n);
             if n - last >= 4 << 30 {
                 last = n;
@@ -1580,7 +1629,20 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
                     file_len as f64 / 1e9
                 );
             }
-        });
+        };
+        let written = if v06 {
+            rete_core::v06::write::rewrite_card_stream(
+                &reader,
+                &mut out,
+                rete_core::v06::write::NewCard::Set(Some(&meta)),
+                Some(&blob),
+                &mut progress,
+            )
+            .map(|h| (h.quad_count, h.content_hash))
+        } else {
+            rete_core::format::rewrite_card(&reader, &mut out, &meta, &blob, &mut progress)
+                .map(|h| (h.quad_count, h.content_hash))
+        };
         let written = match written {
             Ok(h) => h,
             Err(e) => {
@@ -1596,6 +1658,20 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         written
     };
     rec.lap(Phase::Write);
+    if v06 {
+        // 0x06: the costs measured again on the file as written.
+        if let (Some(costs), Some(card)) = (
+            info.query_costs.as_mut(),
+            load_card_ranged(&LocalRangeReader::open(&tmp.to_string_lossy())?)?,
+        ) {
+            let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
+                std::sync::Arc::new(LocalRangeReader::open(&tmp.to_string_lossy())?);
+            crate::commands::buildinfo::remeasure_costs(source, &card.queries, costs);
+            if rec.is_reproducible() {
+                zero_debug_ms(&mut info);
+            }
+        }
+    }
     if let Some(r) = info.recarded.as_mut() {
         r.run = rec.run();
     }
@@ -1620,7 +1696,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         eprintln!("recard: verified the new content hash");
     }
     std::fs::rename(&tmp, out_path)?;
-    crate::commands::progress::finish(header.quad_count, output);
+    crate::commands::progress::finish(quad_count, output);
     println!(
         "{} → {}: {} starter quer{} ({} dropped), content hash {} → {}, {:.0} s",
         input,
@@ -1629,7 +1705,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         if card.queries.len() == 1 { "y" } else { "ies" },
         info.dropped_queries.len(),
         hex16(&old.header.content_hash),
-        hex16(&header.content_hash),
+        hex16(&content_hash),
         started.elapsed().as_secs_f64()
     );
     Ok(())

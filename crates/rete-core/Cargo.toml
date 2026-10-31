@@ -98,6 +98,10 @@ default = ["compression", "rdf12-turtle", "unicode-regex"]
 unicode-regex = ["dep:regex"]
 # zstd needs a C toolchain; disable for targets that lack one (e.g. wasm).
 compression = ["dep:zstd"]
+# Test-only: every `Rete::open*` of a 0x05 image converts it to 0x06 first, so
+# the whole test suite runs against 0x06 files (`cargo test --features
+# v06-parity`). Never enabled in a shipped build.
+v06-parity = []
 # Read the **RDF 1.2** Turtle/TriG surface (`<<( s p o )>>` triple terms,
 # `<< s p o >>` reifiers, `{| … |}` annotations, `"…"@lang--dir` literals) as
 # well as the RDF-star one, under `--quoted-triple-syntax rdf12`. It is a whole

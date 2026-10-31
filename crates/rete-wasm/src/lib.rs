@@ -2521,7 +2521,8 @@ impl XhrRangeReader {
         // — the root, the card and, on a small file, every leaf directory. Kept
         // whole, so every later read inside it costs nothing. (A Range-ignoring
         // host may have sent the whole file here.)
-        let head = |body: &[u8]| body[..body.len().min(rete_core::v06::FIRST_READ as usize)].to_vec();
+        let head =
+            |body: &[u8]| body[..body.len().min(rete_core::v06::FIRST_READ as usize)].to_vec();
         let derived_of = |body: &[u8]| {
             rete_core::Header::from_bytes(body)
                 .ok()

@@ -12,7 +12,9 @@ const RDFS_LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
 const RDF_TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 
 fn quads(n: usize, graphs: bool) -> Vec<RawQuad> {
-    let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+    let words = [
+        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+    ];
     let mut q = Vec::new();
     for i in 0..n {
         let s = format!("<http://ex.org/s/{i:05}>");
@@ -90,7 +92,12 @@ const QUERIES: &[&str] = &[
 fn answers(r: &Rete) -> Vec<String> {
     QUERIES
         .iter()
-        .map(|q| format!("{:?}", crate::sparql::eval_query(r, q).map_err(|e| e.to_string())))
+        .map(|q| {
+            format!(
+                "{:?}",
+                crate::sparql::eval_query(r, q).map_err(|e| e.to_string())
+            )
+        })
         .collect()
 }
 
@@ -157,7 +164,10 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
 fn small_file_opens_in_one_read() {
     let v5 = image(300, false, false, false, false);
     let v6 = convert_image(&v5, WriteOpts::default()).unwrap();
-    assert!(v6.len() as u64 <= FIRST_READ, "fixture must fit the first read");
+    assert!(
+        v6.len() as u64 <= FIRST_READ,
+        "fixture must fit the first read"
+    );
     let counting = std::sync::Arc::new(CountingReader::new(BytesReader(std::sync::Arc::from(
         &v6[..],
     ))));
@@ -176,8 +186,8 @@ fn tampering_is_caught_and_named() {
     let mid = (h.data_offset + (h.file_len - h.data_offset) / 2) as usize;
     bad[mid] ^= 0x55;
     assert!(!crate::file::verify(&bad).unwrap());
-    let report = crate::file::verify_ranged_v06(&crate::reader::SliceReader::new(&bad), &bad, None)
-        .unwrap();
+    let report =
+        crate::file::verify_ranged_v06(&crate::reader::SliceReader::new(&bad), &bad, None).unwrap();
     assert!(!report.is_empty());
     // A flipped header count changes the content hash.
     let mut bad = v6.clone();
@@ -196,7 +206,10 @@ fn recard_rewrites_only_the_card() {
     assert!(crate::file::verify(&c1).unwrap());
     let h0 = Header06::from_bytes(&v6).unwrap();
     let h1 = Header06::from_bytes(&c1).unwrap();
-    assert_eq!(h0.root_digest, h1.root_digest, "no section moved in content");
+    assert_eq!(
+        h0.root_digest, h1.root_digest,
+        "no section moved in content"
+    );
     assert_ne!(h0.content_hash, h1.content_hash, "the card is in the hash");
     let r = Rete::open(&c1).unwrap();
     assert_eq!(r.metadata(), Some(&card[..]));
@@ -209,5 +222,91 @@ fn recard_rewrites_only_the_card() {
     );
     // Removing the card again restores the cardless identity.
     let c3 = replace_card(&c1, None, None).unwrap();
-    assert_eq!(Header06::from_bytes(&c3).unwrap().content_hash, h0.content_hash);
+    assert_eq!(
+        Header06::from_bytes(&c3).unwrap().content_hash,
+        h0.content_hash
+    );
+}
+
+/// The streaming re-card writes what the in-memory one does, and an in-place
+/// re-card into the region's slack lands on the same content hash with no
+/// data byte moved; a pair too big for the slack is refused, not squeezed.
+#[test]
+fn recard_streams_and_fits_in_place() {
+    use super::write::{commit_header, recard_in_place, rewrite_card_stream, NewCard};
+    let v5 = image(400, false, true, true, false);
+    let v6 = convert_image(&v5, WriteOpts::default()).unwrap();
+    let card = br#"{"title":"first"}"#;
+    let c1 = replace_card(&v6, Some(card), Some(b"{\"r\":1}")).unwrap();
+
+    // Streamed copy == in-memory replace.
+    let card2 = br#"{"title":"second, a little longer"}"#;
+    let want = replace_card(&c1, Some(card2), Some(b"{\"r\":2}")).unwrap();
+    let mut out = Vec::new();
+    let mut seen = 0u64;
+    let src = crate::reader::SliceReader::new(&c1);
+    rewrite_card_stream(
+        &src,
+        &mut out,
+        NewCard::Set(Some(card2)),
+        Some(b"{\"r\":2}"),
+        &mut |n| seen = n,
+    )
+    .unwrap();
+    assert_eq!(out, want);
+    let h1 = Header06::from_bytes(&c1).unwrap();
+    assert_eq!(seen, h1.file_len - h1.data_offset);
+
+    // In place: the new pair beside the old one, then the header.
+    let mut f = std::io::Cursor::new(c1.clone());
+    let nh = recard_in_place(&mut f, NewCard::Set(Some(card2)), Some(b"{\"r\":2}"))
+        .unwrap()
+        .expect("fits the slack");
+    assert_eq!(
+        &f.get_ref()[..HEADER_LEN],
+        &c1[..HEADER_LEN],
+        "header untouched before commit"
+    );
+    commit_header(&mut f, &nh).unwrap();
+    let c2 = f.into_inner();
+    assert_eq!(c2.len(), c1.len(), "nothing appended");
+    assert_eq!(
+        &c2[nh.data_offset as usize..],
+        &c1[h1.data_offset as usize..]
+    );
+    assert_eq!(
+        nh.content_hash,
+        Header06::from_bytes(&want).unwrap().content_hash
+    );
+    assert!(crate::file::verify(&c2).unwrap());
+    let r = Rete::open(&c2).unwrap();
+    assert_eq!(r.metadata(), Some(&card2[..]));
+
+    // A second in-place re-card reuses the gap the first one freed.
+    let mut f = std::io::Cursor::new(c2);
+    let nh3 = recard_in_place(&mut f, NewCard::Set(Some(card)), Some(b"{\"r\":3}"))
+        .unwrap()
+        .expect("fits the freed gap");
+    commit_header(&mut f, &nh3).unwrap();
+    let c3 = f.into_inner();
+    assert!(crate::file::verify(&c3).unwrap());
+    assert_eq!(nh3.content_hash, h1.content_hash, "same card, same hash");
+
+    // Only the record changes: the card stays put, the hash too.
+    let mut f = std::io::Cursor::new(c3);
+    let nh4 = recard_in_place(&mut f, NewCard::Keep, Some(b"{\"r\":4, \"costs\":[1,2,3]}"))
+        .unwrap()
+        .expect("a record fits");
+    assert_eq!(nh4.card_off, nh3.card_off);
+    assert_eq!(nh4.content_hash, h1.content_hash);
+
+    // Too big for the slack: refused, the file untouched.
+    let huge = vec![b' '; 64 << 10];
+    let mut f = std::io::Cursor::new(c1.clone());
+    assert!(
+        recard_in_place(&mut f, NewCard::Set(Some(card)), Some(&huge))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(f.into_inner(), c1);
 }

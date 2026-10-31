@@ -1068,11 +1068,10 @@ pub(crate) fn patch_build_info(path: &std::path::Path, info: &[u8]) -> anyhow::R
     if super::v06::file_is_v06(path)? {
         if !super::v06::patch_record_in_place(path, info)? {
             eprintln!(
-                "warning: the build record ({} bytes) outgrew its reservation; rewriting the file to fit it",
+                "warning: the build record ({} bytes) outgrew its reservation; moving it",
                 info.len()
             );
-            let image = std::fs::read(path)?;
-            std::fs::write(path, rete_core::attach_build_info(&image, info)?)?;
+            write_build_info_streaming(path, info)?;
         }
         return Ok(());
     }
@@ -1569,6 +1568,69 @@ pub(crate) fn query_costs(queries: Vec<QueryCost>) -> QueryCosts {
     }
 }
 
+/// `info` with every measured cost at its widest (`u64::MAX`) — the record to
+/// reserve when the costs are measured again on the final `0x06` layout.
+///
+/// In `0x06` a starter query's bytes are a property of the layout *including
+/// the card region*: the open reads the first 64 KiB, so what else that read
+/// covers moves with the card and the record (a small file is read whole). The
+/// costs are therefore measured on the file as written, record reserved, and
+/// the sealed record — never wider than this — patched into the reservation.
+pub(crate) fn with_widest_costs(info: &BuildInfo) -> BuildInfo {
+    let mut w = info.clone();
+    if let Some(c) = w.query_costs.as_mut() {
+        for q in &mut c.queries {
+            q.bytes = u64::MAX;
+            q.requests = u64::MAX;
+            q.rows = u64::MAX;
+            q.debug_ms = u64::MAX;
+        }
+    }
+    w
+}
+
+/// Measure the kept starter queries again, cold, against `source` — the file
+/// as it is read — and replace the figures in `costs` (same order, same
+/// context). The drop decisions stand: rows do not depend on the layout.
+pub(crate) fn remeasure_costs(
+    source: std::sync::Arc<dyn RangeReader + Send + Sync>,
+    queries: &[ExampleQuery],
+    costs: &mut QueryCosts,
+) {
+    for c in &mut costs.queries {
+        if let Some(q) = queries.iter().find(|q| q.id == c.id) {
+            *c = measure_starter(source.clone(), q).cost;
+        }
+    }
+}
+
+/// [`remeasure_costs`] on the `0x06` file at `path` (its own card's queries),
+/// then the record patched in place — the last step of every writer that
+/// measured before the file had its final layout. A `0x05` file is left as
+/// it is: its costs do not depend on where the card sits.
+pub(crate) fn remeasure_on_file(
+    path: &str,
+    info: &mut BuildInfo,
+    rec: &Recorder,
+) -> anyhow::Result<()> {
+    if !super::v06::file_is_v06(std::path::Path::new(path))? {
+        return Ok(());
+    }
+    let Some(costs) = info.query_costs.as_mut() else {
+        return Ok(());
+    };
+    let reader = super::range_source::LocalRangeReader::open(path)?;
+    let Some(card) = super::card::load_card_ranged(&reader)? else {
+        return Ok(());
+    };
+    let source: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
+    remeasure_costs(source, &card.queries, costs);
+    if rec.is_reproducible() {
+        zero_debug_ms(info);
+    }
+    patch_build_info(std::path::Path::new(path), &info.to_json_bytes())
+}
+
 /// How `rete build` reads the file it has just written.
 pub(crate) const IN_MEMORY_TRANSPORT: &str =
     "local in-memory image; cold lazy open per query; logical range reads, no block cache";
@@ -1618,6 +1680,23 @@ pub(crate) fn write_build_info_streaming(
 ) -> anyhow::Result<u64> {
     use std::io::{Read, Seek, SeekFrom, Write};
 
+    if super::v06::file_is_v06(path)? {
+        // 0x06: the record lives in the card region — into its free gap in
+        // place, or by one copy when it does not fit. The card stays byte for
+        // byte, so the content hash cannot move.
+        let p = path.to_string_lossy();
+        let before = {
+            let mut head = vec![0u8; rete_core::format::HEADER_LEN];
+            std::fs::File::open(path)?.read_exact(&mut head)?;
+            rete_core::v06::Header06::from_bytes(&head)?
+        };
+        let (after, _) =
+            super::v06::recard_file(&p, rete_core::v06::write::NewCard::Keep, Some(info))?;
+        if after.content_hash != before.content_hash {
+            anyhow::bail!("the record rewrite changed the content hash of {p}");
+        }
+        return Ok(after.file_len);
+    }
     let mut src = std::fs::File::open(path)?;
     let file_len = src.metadata()?.len();
     let mut head = vec![0u8; rete_core::format::HEADER_LEN];

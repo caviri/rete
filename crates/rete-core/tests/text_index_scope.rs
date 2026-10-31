@@ -212,7 +212,9 @@ fn a_restricted_text_index_is_self_digested_not_hashed() {
         ),
         ["<http://ex/e1>"]
     );
-    let lazy = Rete::open_ranged_lazy_with(Recorded::new(bytes.clone()), rete_core::HEADER_LEN as u64).unwrap();
+    let lazy =
+        Rete::open_ranged_lazy_with(Recorded::new(bytes.clone()), rete_core::HEADER_LEN as u64)
+            .unwrap();
     assert!(lazy.text_index_scope().unwrap().restricts_predicates());
     assert_eq!(
         rows(

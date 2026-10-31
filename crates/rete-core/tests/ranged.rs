@@ -586,9 +586,11 @@ fn reset_load_failures_makes_failed_fetches_retryable() {
     let image = multi_tile_image();
     let expected = {
         // The complete answer, computed over a healthy session.
-        let healthy =
-            Rete::open_ranged_lazy_with(std::sync::Arc::new(RecordingReader::new(image.clone())), rete_core::HEADER_LEN as u64)
-                .unwrap();
+        let healthy = Rete::open_ranged_lazy_with(
+            std::sync::Arc::new(RecordingReader::new(image.clone())),
+            rete_core::HEADER_LEN as u64,
+        )
+        .unwrap();
         let q = format!("SELECT ?o WHERE {{ {} <http://ex/knows> ?o }}", mt_node(7));
         match eval_query(&healthy, &q).unwrap() {
             QueryOutput::Select(_, rows) => rows.len(),
@@ -708,7 +710,8 @@ fn shacl_over_lazy_open_matches_eager_and_fetches_only_targets() {
     // Lazy: validate over a range reader, measuring the bytes the validation pulls.
     let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
     let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-    let lazy_rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
+    let lazy_rete =
+        Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     let before = reader.bytes_read();
     let lazy = validate_shacl(&ReteGraph::new(&lazy_rete), &shapes);
     let pulled = reader.bytes_read() - before;
@@ -748,8 +751,11 @@ fn lazy_bound_object_lookup_reaches_late_slices_of_a_split_group() {
     let image = write_file(&dict, &ib.build(), false, &[], 0);
 
     let plain = Rete::open(&image).unwrap();
-    let lazy =
-        Rete::open_ranged_lazy_with(std::sync::Arc::new(RecordingReader::new(image.clone())), rete_core::HEADER_LEN as u64).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(
+        std::sync::Arc::new(RecordingReader::new(image.clone())),
+        rete_core::HEADER_LEN as u64,
+    )
+    .unwrap();
     for i in [0u32, 4_000, 7_999] {
         let q = format!(
             "SELECT ?s WHERE {{ ?s <http://ex/cites> {} }}",
@@ -1103,7 +1109,8 @@ fn non_exhaustive_graph_shapes_stay_incremental() {
     ];
     for (q, byte_cap) in cases {
         let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
-        let lazy = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
+        let lazy =
+            Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
         assert_eq!(run(&lazy, q), run(&plain, q), "lazy != resident for {q}");
         assert!(!lazy.index_incomplete());
 
@@ -1173,7 +1180,11 @@ fn hostile_named_graph_count_is_refused() {
         *b = 0xff;
     }
     bad[off + 8] = 0x01;
-    let lazy = Rete::open_ranged_lazy_with(std::sync::Arc::new(RecordingReader::new(bad)), rete_core::HEADER_LEN as u64).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(
+        std::sync::Arc::new(RecordingReader::new(bad)),
+        rete_core::HEADER_LEN as u64,
+    )
+    .unwrap();
     assert_eq!(lazy.named_graph_count(), 0);
     assert!(lazy.index_incomplete());
 }
@@ -1270,7 +1281,8 @@ fn result_decoding_batches_chunks_across_sections() {
         };
         assert_eq!(expected.len(), 20000);
         let reader = std::sync::Arc::new(BatchRecordingReader::new(image.clone(), 4));
-        let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
+        let rete =
+            Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
         let opened = reader.batches.lock().unwrap().len();
         let got = match eval_query(&rete, q).unwrap() {
             QueryOutput::Select(_, rows) => rows,
@@ -1310,7 +1322,8 @@ fn concurrent_open_reads_and_answers_like_the_sequential_one() {
     let q = "SELECT ?s ?o WHERE { ?s <http://ex/knows> ?o } ORDER BY ?s ?o LIMIT 50";
     let run = |fan_out: usize| {
         let reader = std::sync::Arc::new(BatchRecordingReader::new(image.clone(), fan_out));
-        let rete = Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
+        let rete =
+            Rete::open_ranged_lazy_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
         let mut open_reads = reader.reads.lock().unwrap().clone();
         open_reads.sort_unstable();
         let rows = match eval_query(&rete, q).unwrap() {

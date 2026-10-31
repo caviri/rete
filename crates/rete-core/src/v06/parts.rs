@@ -144,11 +144,7 @@ fn first_last(body: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// Read and decompress the chunks of a dictionary section in batches, and
 /// re-derive every routing key as the shortest separator (SPEC.md §6.2).
-fn rekey(
-    r: &dyn RangeReader,
-    codec: u8,
-    chunks: &mut [(ChunkEnt, u64)],
-) -> Result<(), FileError> {
+fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Result<(), FileError> {
     if chunks.len() < 2 {
         if let Some(c) = chunks.first_mut() {
             c.0.key.clear();

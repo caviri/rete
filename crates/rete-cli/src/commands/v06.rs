@@ -69,17 +69,15 @@ pub(crate) fn convert(input: &str, output: &str, quad: Option<&str>) -> anyhow::
         Some(x) => anyhow::bail!("--quad-clustering must be auto, graph or order (got {x})"),
     }
     let reader = super::range_source::RangedSourceReader::open(input)?;
-    let head = rete_core::RangeReader::read_at(&reader, 0, 8.min(rete_core::RangeReader::len(&reader)))?;
+    let head =
+        rete_core::RangeReader::read_at(&reader, 0, 8.min(rete_core::RangeReader::len(&reader)))?;
     if rete_core::v06::open::is_v06(&head) {
         anyhow::bail!("{input} is already format 0x06");
     }
     let started = std::time::Instant::now();
     let tmp = std::path::PathBuf::from(format!("{output}.convert-tmp"));
     let written = {
-        let mut out = std::io::BufWriter::with_capacity(
-            8 << 20,
-            std::fs::File::create(&tmp)?,
-        );
+        let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
         let w = match rete_core::v06::write::convert(&reader, &mut out, opts) {
             Ok(w) => w,
             Err(rete_core::format::FileError::Container(m)) if m.contains("kind 5") => {
@@ -140,10 +138,94 @@ fn convert_per_graph(input: &str, output: &str) -> anyhow::Result<()> {
     });
     let image = finish(image)?;
     std::fs::write(output, &image)?;
-    eprintln!("convert: wrote {output} — format 0x06, {} bytes", image.len());
+    eprintln!(
+        "convert: wrote {output} — format 0x06, {} bytes",
+        image.len()
+    );
     Ok(())
 }
 
 fn hex16(b: &[u8; 16]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Give the `0x06` file at `path` a new card (or keep its own) and build
+/// record. In place when the pair fits a free gap of the card region: the pair
+/// is written beside the old one, the file synced, then the 128-byte header —
+/// the one commit point — written and synced; nothing else moves. Otherwise
+/// the file is copied beside itself with a fresh card region (the data region
+/// byte for byte) and renamed over it. Returns the new header and whether the
+/// file was copied.
+pub(crate) fn recard_file(
+    path: &str,
+    card: rete_core::v06::write::NewCard<'_>,
+    record: Option<&[u8]>,
+) -> anyhow::Result<(rete_core::v06::Header06, bool)> {
+    use rete_core::v06::write::{commit_header, recard_in_place};
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("opening {path} for writing: {e}"))?;
+    if let Some(h) =
+        recard_in_place(&mut f, card, record).map_err(|e| anyhow::anyhow!("{path}: {e}"))?
+    {
+        f.sync_data()?;
+        commit_header(&mut f, &h).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+        f.sync_all()?;
+        return Ok((h, false));
+    }
+    drop(f);
+    let tmp = std::path::PathBuf::from(format!("{path}.recard-tmp"));
+    let h = {
+        let reader = super::range_source::LocalRangeReader::open(path)?;
+        let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
+        let written =
+            rete_core::v06::write::rewrite_card_stream(&reader, &mut out, card, record, &mut |n| {
+                rete_core::build_progress::set_done(n)
+            });
+        let h = match written {
+            Ok(h) => h,
+            Err(e) => {
+                drop(out);
+                let _ = std::fs::remove_file(&tmp);
+                anyhow::bail!("rewriting {path}: {e}");
+            }
+        };
+        out.flush()?;
+        out.into_inner()
+            .map_err(|e| anyhow::anyhow!("flushing {}: {e}", tmp.display()))?
+            .sync_all()?;
+        h
+    };
+    std::fs::rename(&tmp, path)?;
+    Ok((h, true))
+}
+
+/// Phase 1 of `0x06`: the memory-bounded writers (`build --memory-budget-mb`,
+/// `merge`) still stream a `0x05` file; this rewrites it as `0x06` — one copy
+/// pass, sections lifted through ranges as `rete convert` does — so every
+/// writer emits `0x06` and a bounded build equals the in-RAM one byte for byte.
+/// (Phase 2 streams `0x06` directly.)
+pub(crate) fn finish_file(path: &str) -> anyhow::Result<()> {
+    if writes_legacy() || file_is_v06(std::path::Path::new(path))? {
+        return Ok(());
+    }
+    let tmp = std::path::PathBuf::from(format!("{path}.v06-tmp"));
+    {
+        let reader = super::range_source::LocalRangeReader::open(path)?;
+        let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
+        if let Err(e) = rete_core::v06::write::convert(&reader, &mut out, WriteOpts::default()) {
+            drop(out);
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::bail!("writing {path} as 0x06: {e}");
+        }
+        std::io::Write::flush(&mut out)?;
+        out.into_inner()
+            .map_err(|e| anyhow::anyhow!("flushing {}: {e}", tmp.display()))?
+            .sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }

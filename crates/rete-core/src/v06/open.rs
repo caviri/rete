@@ -274,7 +274,9 @@ impl V06File {
         }
         for perm in perms.iter() {
             if lists[perm.section_index()].is_none() {
-                return Err(FileError::Container("0x06 index lacks a stored permutation"));
+                return Err(FileError::Container(
+                    "0x06 index lacks a stored permutation",
+                ));
             }
         }
         let codec = self.h.block_codec;
@@ -305,7 +307,9 @@ impl V06File {
         Some((|| {
             let t = decode_text_root(unit)?;
             let leaves_base = self.section(kind::TEXT_LEAVES).map_or(0, |r| r.offset);
-            let data = self.section(kind::TEXT_DATA).unwrap_or(ByteRange { offset: 0, len: 0 });
+            let data = self
+                .section(kind::TEXT_DATA)
+                .unwrap_or(ByteRange { offset: 0, len: 0 });
             let leaves = t
                 .leaves
                 .iter()
@@ -372,7 +376,12 @@ impl V06File {
                     None
                 }
             });
-            crate::label_index::LabelIndex::from_head(&l.head, section_len, self.h.block_codec, loader)
+            crate::label_index::LabelIndex::from_head(
+                &l.head,
+                section_len,
+                self.h.block_codec,
+                loader,
+            )
         })())
     }
 
@@ -508,7 +517,13 @@ pub fn read_card_build<R: RangeReader + ?Sized>(
     if c.len == 0 && b.len == 0 {
         return Ok((None, None));
     }
-    let lo = if c.len == 0 { b.offset } else if b.len == 0 { c.offset } else { c.offset.min(b.offset) };
+    let lo = if c.len == 0 {
+        b.offset
+    } else if b.len == 0 {
+        c.offset
+    } else {
+        c.offset.min(b.offset)
+    };
     let hi = (c.offset + c.len).max(b.offset + b.len);
     let span = r.read_at(lo, hi - lo)?;
     let card = if c.len > 0 {
@@ -558,19 +573,53 @@ pub struct SparseReader {
 }
 
 impl SparseReader {
-    /// Fetch `ranges` from `r` (plus the first bytes `first`) into memory.
+    /// Fetch `ranges` from `r` (plus the first bytes `first`) into memory —
+    /// the ones `first` does not already hold, in one batch.
     pub fn fetch<R: RangeReader + ?Sized>(
         r: &R,
         first: Vec<u8>,
         ranges: &[ByteRange],
     ) -> Result<Self, FileError> {
+        let held = first.len() as u64;
+        let want: Vec<(u64, u64)> = ranges
+            .iter()
+            .filter(|g| g.len > 0 && g.offset + g.len > held)
+            .map(|g| (g.offset, g.len))
+            .collect();
         let mut parts = vec![(0u64, first)];
-        for g in ranges {
-            if g.len > 0 {
-                parts.push((g.offset, r.read_at(g.offset, g.len)?));
+        if !want.is_empty() {
+            for ((o, _), b) in want.iter().zip(r.read_many(&want)?) {
+                parts.push((*o, b));
             }
         }
-        Ok(SparseReader { len: r.len(), parts })
+        Ok(SparseReader {
+            len: r.len(),
+            parts,
+        })
+    }
+}
+
+/// A borrowed reader whose first bytes are already in memory: reads inside
+/// them cost nothing, the rest go to `r`.
+pub struct Prefixed<'a, R: RangeReader + ?Sized> {
+    /// The file's first bytes.
+    pub first: &'a [u8],
+    /// The reader behind them.
+    pub r: &'a R,
+}
+
+impl<R: RangeReader + ?Sized> RangeReader for Prefixed<'_, R> {
+    fn len(&self) -> u64 {
+        self.r.len()
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        match offset.checked_add(len) {
+            Some(end) if end <= self.first.len() as u64 => {
+                Ok(self.first[offset as usize..end as usize].to_vec())
+            }
+            _ => self.r.read_at(offset, len),
+        }
     }
 }
 
@@ -598,9 +647,12 @@ pub fn read_signals<R: RangeReader + ?Sized>(
 ) -> Result<(Option<(u64, u64)>, Option<(u64, Option<u64>)>), FileError> {
     let (_, root) = read_front(r)?;
     let len = |k: u8| root.section(k).map_or(0, |s| s.len);
-    let text = root
-        .unit(tag::TEXT)
-        .map(|_| (len(kind::TEXT_LEAVES) + len(kind::TEXT_DATA), len(kind::TEXT_LEAVES)));
+    let text = root.unit(tag::TEXT).map(|_| {
+        (
+            len(kind::TEXT_LEAVES) + len(kind::TEXT_DATA),
+            len(kind::TEXT_LEAVES),
+        )
+    });
     let labels = match root.unit(tag::LABELS) {
         None => None,
         Some(u) => {

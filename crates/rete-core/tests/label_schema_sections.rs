@@ -186,9 +186,12 @@ fn every_open_path_answers_the_same_prefix_search() {
     assert!(want.iter().all(|(l, _)| l.ends_with(", Jana")));
     let ranged = Rete::open_ranged(&SliceReader::new(&bytes)).unwrap();
     assert_eq!(ranged.prefix_search("svobodová2", 500), want);
-    let lazy = Rete::open_ranged_lazy_with(Counted::new(bytes.clone()), rete_core::HEADER_LEN as u64).unwrap();
+    let lazy =
+        Rete::open_ranged_lazy_with(Counted::new(bytes.clone()), rete_core::HEADER_LEN as u64)
+            .unwrap();
     assert_eq!(lazy.prefix_search("SVOBODOVÁ2", 500), want);
-    let view = SearchView::open_ranged_with(Counted::new(bytes), rete_core::HEADER_LEN as u64).unwrap();
+    let view =
+        SearchView::open_ranged_with(Counted::new(bytes), rete_core::HEADER_LEN as u64).unwrap();
     assert!(view.has_label_index() && view.has_labels());
     assert_eq!(view.prefix_search("svobodová2", 500), want);
 }

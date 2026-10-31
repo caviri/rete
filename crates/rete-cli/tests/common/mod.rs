@@ -12,6 +12,21 @@ pub const FIXTURE_NQ: &str = concat!(
     "<http://example.test/alice> <http://example.test/name> \"Alice\"@en <http://example.test/people> .\n",
 );
 
+/// The card a `.rete` image stores, as JSON — read from the file's own bytes
+/// (format 0x06 keeps it zstd-compressed in the card region, 0x05 raw in its
+/// METADATA section).
+pub fn stored_card(image: &[u8]) -> Option<Vec<u8>> {
+    if rete_core::v06::open::is_v06(image) {
+        let h = rete_core::v06::Header06::from_bytes(image).unwrap();
+        let r = rete_core::SliceReader::new(image);
+        return rete_core::v06::open::read_card_build(&r, &h).unwrap().0;
+    }
+    rete_core::Rete::open(image)
+        .ok()?
+        .metadata()
+        .map(<[u8]>::to_vec)
+}
+
 pub struct Fixture {
     _dir: TempDir,
     pub source: PathBuf,

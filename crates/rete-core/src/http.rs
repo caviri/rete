@@ -557,7 +557,8 @@ impl HttpRangeReader {
     /// The bytes of `offset..offset+len` when the opening read holds them.
     fn from_prefix(&self, offset: u64, len: u64) -> Option<Vec<u8>> {
         let end = offset.checked_add(len)?;
-        (end <= self.prefix.len() as u64).then(|| self.prefix[offset as usize..end as usize].to_vec())
+        (end <= self.prefix.len() as u64)
+            .then(|| self.prefix[offset as usize..end as usize].to_vec())
     }
 
     /// A range past the length the open measured is an error before any
@@ -1067,9 +1068,17 @@ mod tests {
             r.read_many(&[(0, 16), (60_000, 8)]).unwrap()[1],
             &data[60_000..60_008]
         );
-        assert_eq!(stats.gets.load(Ordering::SeqCst), 1, "served from the first read");
+        assert_eq!(
+            stats.gets.load(Ordering::SeqCst),
+            1,
+            "served from the first read"
+        );
         assert_eq!(r.read_at(70_000, 4).unwrap(), &data[70_000..70_004]);
-        assert_eq!(stats.gets.load(Ordering::SeqCst), 2, "past it: one more GET");
+        assert_eq!(
+            stats.gets.load(Ordering::SeqCst),
+            2,
+            "past it: one more GET"
+        );
         // A file shorter than the first read is read whole by the open.
         let small: Vec<u8> = (0..100u8).collect();
         let (url, stats) = serve_with(small.clone(), ServerMode::HonorRange, Duration::ZERO);

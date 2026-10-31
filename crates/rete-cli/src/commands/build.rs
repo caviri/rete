@@ -254,11 +254,35 @@ fn write_carded(
     if rec.is_reproducible() {
         buildinfo::zero_debug_ms(&mut info);
     }
-    let reserve = info.reserve_bytes(buildinfo::Pending::Write, rec);
     let path = std::path::Path::new(output);
+    let v06 = rete_core::v06::open::is_v06(&bytes);
+    let reserve = if v06 && info.query_costs.is_some() {
+        // 0x06: the costs are a property of the final layout, card region
+        // included — reserve the record with every cost at its widest, measure
+        // again on the image as it will be written, and seal into that.
+        buildinfo::with_widest_costs(&info).reserve_bytes(buildinfo::Pending::Write, rec)
+    } else {
+        info.reserve_bytes(buildinfo::Pending::Write, rec)
+    };
     live::begin(Phase::Write, None, Unit::None);
-    let len = buildinfo::write_image_with_build_info(path, &bytes, &reserve)?;
-    drop(bytes);
+    let len = if v06 {
+        let image = std::sync::Arc::new(rete_core::attach_build_info(&bytes, &reserve)?);
+        drop(bytes);
+        if let (Some(costs), Some(card)) = (info.query_costs.as_mut(), card::load_card(&image)?) {
+            let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
+                std::sync::Arc::new(rete_core::BytesReader(std::sync::Arc::from(&image[..])));
+            buildinfo::remeasure_costs(source, &card.queries, costs);
+            if rec.is_reproducible() {
+                buildinfo::zero_debug_ms(&mut info);
+            }
+        }
+        std::fs::write(path, &*image)?;
+        image.len() as u64
+    } else {
+        let len = buildinfo::write_image_with_build_info(path, &bytes, &reserve)?;
+        drop(bytes);
+        len
+    };
     rec.lap(rete_core::build_trace::Phase::Write);
     rec.seal(&mut info);
     let blob = info.to_json_bytes();
@@ -1034,6 +1058,12 @@ pub(crate) fn build_external_cmd(
              (they need the whole graph resident); run them via the standard build"
         );
     }
+    // Format 0x06 stores named graphs in the quad index only.
+    let graphs = if super::v06::writes_legacy() {
+        graphs
+    } else {
+        rete_core::GraphLayout::Quad
+    };
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
         .iter()
         .map(|i| (i.as_str(), input_format(i, format)))
@@ -1180,6 +1210,7 @@ pub(crate) fn build_external_cmd(
         rete_core::extbuild::ExtBuildError::Ingest(inner) => ingest_error(None, inner),
         other => anyhow::anyhow!("{other}"),
     })?;
+    super::v06::finish_file(output)?;
     let audit = audit.into_inner();
     if let (Some(info), Some(curated)) = (info.as_mut(), curated) {
         append_full_card(
@@ -1262,6 +1293,34 @@ pub(crate) fn append_full_card(
     info.query_costs = full.query_costs;
     info.dropped_queries = full.dropped;
     let meta = full.card.to_json_bytes();
+    if super::v06::file_is_v06(std::path::Path::new(output))? {
+        // 0x06: the card region sits in front of the data, and a cardless
+        // file has none — the pair goes in by one copy (phase 2 streams the
+        // data once, after the card).
+        rete_core::build_progress::begin(
+            rete_core::build_trace::Phase::ContentHash,
+            None,
+            rete_core::build_progress::Unit::Bytes,
+        );
+        rec.lap(rete_core::build_trace::Phase::ContentHash);
+        rec.seal(info);
+        let reserve = buildinfo::with_widest_costs(info).to_json_bytes();
+        super::v06::recard_file(
+            output,
+            rete_core::v06::write::NewCard::Set(Some(&meta)),
+            Some(&reserve),
+        )
+        .map_err(unfinished)?;
+        buildinfo::remeasure_on_file(output, info, rec).map_err(unfinished)?;
+        let record = info.to_json_bytes();
+        eprintln!(
+            "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside the \
+             content hash) in the card region",
+            meta.len(),
+            record.len()
+        );
+        return Ok(());
+    }
     let (_, _) = card::append_card(output, &meta, false, rec, who, || {
         rec.seal(info);
         info.to_json_bytes()
@@ -1872,6 +1931,18 @@ mod tests {
                 .unwrap(),
         ];
         let section = |b: &[u8]| -> (Vec<u8>, bool) {
+            if rete_core::v06::open::is_v06(b) {
+                // 0x06: the text unit root, its leaves and its postings.
+                use rete_core::v06::{kind, tag, P_TEXT_PARTIAL};
+                let (h, root) =
+                    rete_core::v06::open::read_front(&rete_core::SliceReader::new(b)).unwrap();
+                let mut out = root.unit(tag::TEXT).unwrap().to_vec();
+                for k in [kind::TEXT_LEAVES, kind::TEXT_DATA] {
+                    let r = root.section(k).unwrap().abs(&h);
+                    out.extend_from_slice(&b[r.offset as usize..(r.offset + r.len) as usize]);
+                }
+                return (out, h.presence & P_TEXT_PARTIAL != 0);
+            }
             let h = rete_core::Header::from_bytes(b).unwrap();
             let off = h.text_index_offset as usize;
             (

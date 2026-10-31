@@ -377,7 +377,8 @@ impl Root06 {
             units.extend_from_slice(p);
         }
         let stored = crate::file::compress(codec, &units);
-        let mut out = Vec::with_capacity(2 + SEC_ENTRY_LEN * self.sections.len() + 4 + stored.len());
+        let mut out =
+            Vec::with_capacity(2 + SEC_ENTRY_LEN * self.sections.len() + 4 + stored.len());
         out.push(1u8);
         out.push(self.sections.len() as u8);
         for s in &self.sections {
@@ -488,7 +489,13 @@ impl<'a> Cur<'a> {
     pub fn bytes(&mut self, n: usize) -> Result<&'a [u8], FileError> {
         let s = self
             .b
-            .get(self.pos..self.pos.checked_add(n).ok_or(FileError::Container("0x06: overflow"))?)
+            .get(
+                self.pos
+                    ..self
+                        .pos
+                        .checked_add(n)
+                        .ok_or(FileError::Container("0x06: overflow"))?,
+            )
             .ok_or(FileError::Container("0x06: truncated bytes"))?;
         self.pos += n;
         Ok(s)
@@ -581,13 +588,16 @@ pub fn decode_dict_root(p: &[u8]) -> Result<[DictSecRoot; 4], FileError> {
             let run = c.count(u64::MAX)?;
             let coff = c.uv()?;
             let key = c.lp()?.to_vec();
-            s.leaves.push((LeafRef { first, n, off, len }, run, coff, key));
+            s.leaves
+                .push((LeafRef { first, n, off, len }, run, coff, key));
             first = first
                 .checked_add(n)
                 .ok_or(FileError::Container("0x06 dict leaves overflow"))?;
         }
         if first != s.n_chunks {
-            return Err(FileError::Container("0x06 dict leaves do not cover the chunks"));
+            return Err(FileError::Container(
+                "0x06 dict leaves do not cover the chunks",
+            ));
         }
         if s.restart_interval == 0 && s.term_count > 0 {
             return Err(FileError::Container("0x06 dict zero restart interval"));
@@ -653,13 +663,25 @@ pub fn decode_index_root(p: &[u8]) -> Result<Vec<PermRoot>, FileError> {
             let mn = c.u32v()?;
             let mx = c.u32v()?;
             let toff = c.uv()?;
-            leaves.push((LeafRef { first, n: ln, off, len }, mn, mx, toff));
+            leaves.push((
+                LeafRef {
+                    first,
+                    n: ln,
+                    off,
+                    len,
+                },
+                mn,
+                mx,
+                toff,
+            ));
             first = first
                 .checked_add(ln)
                 .ok_or(FileError::Container("0x06 index leaves overflow"))?;
         }
         if first != n_tiles {
-            return Err(FileError::Container("0x06 index leaves do not cover the tiles"));
+            return Err(FileError::Container(
+                "0x06 index leaves do not cover the tiles",
+            ));
         }
         out.push(PermRoot {
             si,
@@ -717,7 +739,9 @@ pub fn decode_text_root(p: &[u8]) -> Result<TextRoot, FileError> {
             .ok_or(FileError::Container("0x06 text leaves overflow"))?;
     }
     if first != n_tokens {
-        return Err(FileError::Container("0x06 text leaves do not cover the tokens"));
+        return Err(FileError::Container(
+            "0x06 text leaves do not cover the tokens",
+        ));
     }
     Ok(TextRoot {
         scope,
@@ -842,7 +866,9 @@ pub fn decode_quad_root(p: &[u8]) -> Result<QuadRoot, FileError> {
                 .ok_or(FileError::Container("0x06 quad leaves overflow"))?;
         }
         if first != n_tiles {
-            return Err(FileError::Container("0x06 quad leaves do not cover the tiles"));
+            return Err(FileError::Container(
+                "0x06 quad leaves do not cover the tiles",
+            ));
         }
         orders.push(QuadOrderRoot {
             si,
@@ -883,7 +909,14 @@ pub fn encode_chunk_leaf(ents: &[ChunkEnt]) -> Vec<u8> {
     let mut o = Vec::new();
     let mut prev = 0usize;
     for (i, e) in ents.iter().enumerate() {
-        write_uvarint(&mut o, (if i == 0 { e.first_run } else { e.first_run - prev }) as u64);
+        write_uvarint(
+            &mut o,
+            (if i == 0 {
+                e.first_run
+            } else {
+                e.first_run - prev
+            }) as u64,
+        );
         put_lp(&mut o, &e.key);
         write_uvarint(&mut o, e.clen);
         prev = e.first_run;
@@ -936,7 +969,11 @@ pub fn encode_tile_leaf(ents: &[TileEnt]) -> Vec<u8> {
     for (i, e) in ents.iter().enumerate() {
         write_uvarint(
             &mut o,
-            (if i == 0 { e.min_a } else { e.min_a.wrapping_sub(prev) }) as u64,
+            (if i == 0 {
+                e.min_a
+            } else {
+                e.min_a.wrapping_sub(prev)
+            }) as u64,
         );
         write_uvarint(&mut o, e.max_a.wrapping_sub(e.min_a) as u64);
         write_uvarint(&mut o, e.clen);
@@ -1056,7 +1093,11 @@ pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64) -> Vec<u8> {
     for (i, e) in ents.iter().enumerate() {
         write_uvarint(
             &mut o,
-            (if i == 0 { e.first.0 } else { e.first.0 - prev_g }) as u64,
+            (if i == 0 {
+                e.first.0
+            } else {
+                e.first.0 - prev_g
+            }) as u64,
         );
         write_uvarint(&mut o, e.first.1 as u64);
         write_uvarint(&mut o, (e.last.0 - e.first.0) as u64);
@@ -1318,7 +1359,10 @@ mod tests {
                 off: 500,
             },
         ];
-        assert_eq!(decode_qtile_leaf(&encode_qtile_leaf(&q, 100), 2, 100).unwrap(), q);
+        assert_eq!(
+            decode_qtile_leaf(&encode_qtile_leaf(&q, 100), 2, 100).unwrap(),
+            q
+        );
     }
 
     #[test]

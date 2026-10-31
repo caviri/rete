@@ -245,10 +245,10 @@ fn a_byte_budget_stops_a_query_and_still_reports_the_spend() {
 }
 
 /// Writing costs back into a file keeps its **identity** (the content hash is
-/// not over the build-info section) and its **data** (byte-identical N-Quads),
-/// while changing its bytes (the section is near the front, so everything
-/// behind it shifts). All four of those have to be true at once or the feature
-/// is not safe to point at a published file.
+/// not over the build record) and its **data** (byte-identical N-Quads). In
+/// format 0x06 the record goes into the card region's free gap, so no other
+/// byte moves and the file keeps its length. All of those have to be true at
+/// once or the feature is not safe to point at a published file.
 #[test]
 fn writing_costs_preserves_the_hash_and_the_data() {
     // Built WITHOUT costs: the state 109 of the 110 published cards are in.
@@ -285,10 +285,11 @@ fn writing_costs_preserves_the_hash_and_the_data() {
         .stdout;
     assert_eq!(before_nq, after_nq, "the data must not move");
 
-    // Bytes: the file really was rewritten — that is the cost being paid.
-    assert!(
-        std::fs::metadata(&out).unwrap().len() > before_len,
-        "the build-info section has to come from somewhere"
+    // Bytes: the record fit the card region's slack — nothing moved.
+    assert_eq!(
+        std::fs::metadata(&out).unwrap().len(),
+        before_len,
+        "a record that fits the card region is written in place"
     );
 
     // And the costs are now readable from the CARD tier, which is the point:

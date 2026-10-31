@@ -38,6 +38,21 @@ fn signals(card: &serde_json::Value) -> &serde_json::Value {
 /// of 24 bytes from offset 64 — `kind`/`flags`/reserved, then `offset`/
 /// `length`). Deliberately hand-rolled rather than going through `rete-core`:
 /// these tests are about the BYTES the writer produced.
+/// The text index's `(offset, bytes)`: the TEXT_INDEX section of a 0x05 file;
+/// in 0x06, its leaf directory and postings together (what the card's
+/// measured signal reports).
+fn text_index_section(image: &[u8]) -> Option<(usize, usize)> {
+    use rete_core::v06::kind;
+    if !rete_core::v06::open::is_v06(image) {
+        return section(image, 6);
+    }
+    let r = rete_core::SliceReader::new(image);
+    let (h, root) = rete_core::v06::open::read_front(&r).unwrap();
+    let leaves = root.section(kind::TEXT_LEAVES)?.abs(&h);
+    let data = root.section(kind::TEXT_DATA)?.abs(&h);
+    Some((leaves.offset as usize, (leaves.len + data.len) as usize))
+}
+
 fn section(image: &[u8], kind: u16) -> Option<(usize, usize)> {
     let u64_at = |o: usize| u64::from_le_bytes(image[o..o + 8].try_into().unwrap()) as usize;
     let count = u16::from_le_bytes(image[44..46].try_into().unwrap()) as usize;
@@ -125,8 +140,8 @@ fn the_signal_is_measured_at_read_time_and_never_stored() {
     // could outlive the sections it describes. Read the raw bytes rather than
     // the CLI's rendering, which is where the projection is applied.
     let image = std::fs::read(&indexed).unwrap();
-    let (start, len) = section(&image, 1).expect("the file has a metadata section");
-    let stored = std::str::from_utf8(&image[start..start + len]).unwrap();
+    let card = common::stored_card(&image).expect("the file has a card");
+    let stored = std::str::from_utf8(&card).unwrap();
     assert!(
         stored.contains("\"signals\""),
         "sanity: the stored card has a signals block"
@@ -214,12 +229,33 @@ fn a_ranged_read_answers_without_fetching_the_index() {
     let card: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(card["title"], "Remote indexed");
     assert_eq!(signals(&card)["present"], serde_json::json!(true));
-    let (_, index_bytes) = section(&image, 6).expect("the file has a TEXT_INDEX section");
+    let (_, index_bytes) = text_index_section(&image).expect("the file has a text index");
     assert_eq!(
         signals(&card)["bytes"].as_u64().unwrap(),
         index_bytes as u64
     );
     let table_bytes = signals(&card)["token_table_bytes"].as_u64().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let fetched: u64 = stderr
+        .split("fetched ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("no byte report in: {stderr}"));
+
+    if rete_core::v06::open::is_v06(&image) {
+        // 0x06: the CARD tier is the first read — 64 KiB, or the whole file
+        // when smaller — and the card region (with the measured signal's
+        // sizes in the root) sits inside it. Nothing past it is fetched.
+        let h = rete_core::v06::Header06::from_bytes(&image).unwrap();
+        let first = rete_core::v06::FIRST_READ.min(image.len() as u64);
+        assert!(h.card_region_offset() + h.card_region_len as u64 <= first);
+        assert!(
+            fetched <= first,
+            "the card tier fetched {fetched} B, more than the {first} B first read"
+        );
+        return;
+    }
 
     // The CARD tier's budget, stated exactly: the 1 KiB header, the metadata +
     // build-info sections it points at, and the ≤10-byte varint that measures
@@ -229,13 +265,6 @@ fn a_ranged_read_answers_without_fetching_the_index() {
     let meta = section(&image, 1).map(|(_, l)| l).unwrap_or(0);
     let build = section(&image, 7).map(|(_, l)| l).unwrap_or(0);
     let budget = (1024 + meta + build + 10) as u64;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let fetched: u64 = stderr
-        .split("fetched ")
-        .nth(1)
-        .and_then(|rest| rest.split(' ').next())
-        .and_then(|n| n.parse().ok())
-        .unwrap_or_else(|| panic!("no byte report in: {stderr}"));
     assert!(
         fetched <= budget,
         "the card tier fetched {fetched} B against a {budget} B budget \

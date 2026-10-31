@@ -234,7 +234,11 @@ fn every_scope_and_layout_answers_like_a_file_without_an_index() {
         for (name, scope) in scopes() {
             let bytes = build(layout, Some(scope));
             let resident = Rete::open(&bytes).unwrap();
-            let lazy = Rete::open_ranged_lazy_with(Recorded::new(bytes.clone()), rete_core::HEADER_LEN as u64).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(
+                Recorded::new(bytes.clone()),
+                rete_core::HEADER_LEN as u64,
+            )
+            .unwrap();
             for (q, want) in queries.iter().zip(&expected) {
                 assert_eq!(
                     &rows(&resident, q),

@@ -249,7 +249,9 @@ impl RangeReader for BytesReader {
         let end = offset
             .checked_add(len)
             .filter(|&e| e <= self.0.len() as u64)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "range out of bounds"))?;
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "range out of bounds")
+            })?;
         Ok(self.0[offset as usize..end as usize].to_vec())
     }
 }
@@ -271,7 +273,8 @@ impl<R: RangeReader> PrefixReader<R> {
 
     fn cut(&self, offset: u64, len: u64) -> Option<Vec<u8>> {
         let end = offset.checked_add(len)?;
-        (end <= self.prefix.len() as u64).then(|| self.prefix[offset as usize..end as usize].to_vec())
+        (end <= self.prefix.len() as u64)
+            .then(|| self.prefix[offset as usize..end as usize].to_vec())
     }
 }
 

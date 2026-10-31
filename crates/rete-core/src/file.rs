@@ -3909,6 +3909,10 @@ impl Rete {
     /// Parse a full file image (v0 loads everything; a range-reading client
     /// will fetch only the sections it needs â€” same container format).
     pub fn open(bytes: &[u8]) -> Result<Self, FileError> {
+        #[cfg(feature = "v06-parity")]
+        if let Some(v6) = parity_image(bytes) {
+            return Self::open(&v6);
+        }
         if crate::v06::open::is_v06(bytes) {
             // A 0x06 image opens through the lazy machinery over the bytes in
             // memory: the same structures, faulted from RAM.
@@ -4604,9 +4608,7 @@ impl Rete {
         DumpPlan {
             scan,
             dictionary_bytes: match &self.v06 {
-                Some(f) => f
-                    .section(crate::v06::kind::DICT_DATA)
-                    .map_or(0, |r| r.len),
+                Some(f) => f.section(crate::v06::kind::DICT_DATA).map_or(0, |r| r.len),
                 None => self.header.dictionary_len,
             },
         }
@@ -5011,11 +5013,15 @@ impl Rete {
     /// section ranges â€” never a linear scan of the whole resource. A full query
     /// open touches at most 4 ranges (header, dictionary, index, pyramid-meta).
     pub fn open_ranged<R: RangeReader>(reader: &R) -> Result<Self, FileError> {
-        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
         if crate::v06::open::is_v06(&head) {
-            // The eager path reads the whole image; a 0x06 one then opens from
-            // memory.
-            let all = reader.read_at(0, reader.len())?;
+            // The eager path reads the whole image — the rest of it, in one
+            // more request — and a 0x06 one then opens from memory.
+            let mut all = head;
+            let at = all.len() as u64;
+            if reader.len() > at {
+                all.extend_from_slice(&reader.read_at(at, reader.len() - at)?);
+            }
             return Self::open(&all);
         }
         let header = Header::from_bytes(&head)?;
@@ -5176,6 +5182,16 @@ impl Rete {
         // format, and every later read inside it is served from memory.
         let first_len = first_read.max(HEADER_LEN as u64).min(reader.len());
         let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
+        #[cfg(feature = "v06-parity")]
+        if !crate::v06::open::is_v06(&first) {
+            let all = reader.read_at(0, reader.len())?;
+            if let Some(v6) = parity_image(&all) {
+                let r: std::sync::Arc<dyn RangeReader + Send + Sync> =
+                    std::sync::Arc::new(crate::reader::BytesReader(std::sync::Arc::from(v6)));
+                let head = r.read_at(0, crate::v06::FIRST_READ.min(r.len()))?;
+                return Self::open_v06(r, &head, true);
+            }
+        }
         let reader = crate::reader::PrefixReader::new(reader, first.clone());
         if crate::v06::open::is_v06(&first) {
             let r: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
@@ -5738,7 +5754,11 @@ impl Rete {
         p: Option<&str>,
         o: Option<&str>,
     ) -> Result<Vec<TermTriple>, FileError> {
-        let routed = match route_pattern(reader, s, p, o)? {
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
+        if crate::v06::open::is_v06(&head) {
+            return Ok(v06_query_ranged(reader, head, s, p, o, true)?.unwrap_or_default());
+        }
+        let routed = match route_pattern(reader, head, s, p, o)? {
             Some(routed) => routed,
             None => return Ok(Vec::new()),
         };
@@ -5764,8 +5784,103 @@ impl Rete {
         p: Option<&str>,
         o: Option<&str>,
     ) -> Result<bool, FileError> {
-        Ok(route_pattern(reader, s, p, o)?.is_some())
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
+        if crate::v06::open::is_v06(&head) {
+            return Ok(v06_query_ranged(reader, head, s, p, o, false)?.is_some());
+        }
+        Ok(route_pattern(reader, head, s, p, o)?.is_some())
     }
+}
+
+/// [`Rete::query_ranged`] / [`Rete::route_pattern_ranged`] on a `0x06` file
+/// through a borrowed reader: the front and the dictionary data — contiguous,
+/// what the `0x05` path reads as header + dictionary — in one more request
+/// after `head`, the pattern resolved there, then (with `fetch`) the routed
+/// tiles in one span. `None` when a bound term is not in the dictionary.
+fn v06_query_ranged<R: RangeReader>(
+    reader: &R,
+    head: Vec<u8>,
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+    fetch: bool,
+) -> Result<Option<Vec<TermTriple>>, FileError> {
+    use crate::v06::{kind, open::SparseReader, Header06, Root06, HEADER_LEN};
+    let len = reader.len();
+    let h = Header06::from_bytes(&head)?;
+    let root_end = (HEADER_LEN as u64 + h.root_len as u64).min(len);
+    let root_bytes = if root_end <= head.len() as u64 {
+        head[HEADER_LEN..root_end as usize].to_vec()
+    } else {
+        reader.read_at(HEADER_LEN as u64, root_end - HEADER_LEN as u64)?
+    };
+    let root = Root06::decode(&root_bytes, h.internal_codec)?;
+    let dict = root.section(kind::DICT_DATA).map(|d| d.abs(&h));
+    // The open below reads only the 1 KiB it must (not the 64 KiB first
+    // read): what it needs past that is the front and the dictionary, here.
+    let end = dict
+        .map_or(h.data_offset, |d| d.offset + d.len)
+        .max(crate::header::HEADER_LEN as u64)
+        .min(len);
+    let mut held = head;
+    if end > held.len() as u64 {
+        let at = held.len() as u64;
+        held.extend_from_slice(&reader.read_at(at, end - at)?);
+    }
+    let sparse = SparseReader::fetch(reader, held, &[])?;
+    let rete = Rete::open_ranged_lazy_with(sparse, 0)?;
+    let Some(pattern) = resolve_query_pattern(rete.dictionary(), s, p, o) else {
+        return Ok(None);
+    };
+    if !fetch {
+        return Ok(Some(Vec::new()));
+    }
+    let perm = GraphIndex::best_permutation_in(h.perms(), pattern);
+    let si = perm.section_index();
+    let index = rete.default_index();
+    let list = index.tile_sections()[si];
+    let n = list.len();
+    let [pa, _, _] = perm.order_pattern(pattern);
+    let (start, stop) = match pa {
+        Some(a) => {
+            let start = list.first_max_ge(a);
+            let mut stop = start;
+            while stop < n {
+                list.ensure_span(stop, stop + 1);
+                if list[stop].leading_range().0 > a {
+                    break;
+                }
+                stop += 1;
+            }
+            (start, stop)
+        }
+        None => {
+            list.ensure_span(0, n);
+            (0, n)
+        }
+    };
+    let ranges: Vec<(u64, u64)> = (start..stop)
+        .filter_map(|i| index.tile_range(si, i))
+        .collect();
+    let mut out = Vec::new();
+    if let (Some(&(lo, _)), Some(&(last, last_len))) = (ranges.first(), ranges.last()) {
+        // The routed tiles are one contiguous run of the section: one request.
+        let body = reader.read_at(lo, last + last_len - lo)?;
+        for &(off, l) in &ranges {
+            let at = (off - lo) as usize;
+            let tile = decompress(h.block_codec, &body[at..at + l as usize])?;
+            out.extend(GraphIndex::match_serialized_block(&tile, perm, pattern));
+        }
+    }
+    out.sort_unstable();
+    let d = rete.dictionary();
+    Ok(Some(
+        out.into_iter()
+            .filter_map(|(s, p, o)| {
+                Some((d.subject_term(s)?, d.predicate_term(p)?, d.object_term(o)?))
+            })
+            .collect(),
+    ))
 }
 
 /// A pattern routed to its permutation section: everything needed to fetch
@@ -5783,11 +5898,11 @@ struct RoutedPattern {
 /// section (header + dictionary + container framing only).
 fn route_pattern<R: RangeReader>(
     reader: &R,
+    head: Vec<u8>,
     s: Option<&str>,
     p: Option<&str>,
     o: Option<&str>,
 ) -> Result<Option<RoutedPattern>, FileError> {
-    let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
 
     let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
@@ -6030,6 +6145,16 @@ fn open_side_by_side<A, B>(
     (a(), b())
 }
 
+/// The `v06-parity` test hook: a 0x05 image converted to 0x06 (`None` for a
+/// 0x06 image, or one the converter refuses, such as per-graph named graphs).
+#[cfg(feature = "v06-parity")]
+fn parity_image(bytes: &[u8]) -> Option<Vec<u8>> {
+    if crate::v06::open::is_v06(bytes) || bytes.len() < HEADER_LEN {
+        return None;
+    }
+    crate::v06::write::convert_image(bytes, crate::v06::write::WriteOpts::default()).ok()
+}
+
 /// [`Rete::file_layout`] for a `0x06` file: the header, the root, the card
 /// region, then every front and data section, in file order.
 fn v06_layout(f: &crate::v06::open::V06File) -> Vec<LayoutSegment> {
@@ -6056,7 +6181,12 @@ fn v06_layout(f: &crate::v06::open::V06File) -> Vec<LayoutSegment> {
     ];
     let c = h.card_range();
     if c.len > 0 {
-        out.push(seg("metadata", "metadata (dataset card, zstd)".into(), c.offset, c.len));
+        out.push(seg(
+            "metadata",
+            "metadata (dataset card, zstd)".into(),
+            c.offset,
+            c.len,
+        ));
     }
     let b = h.build_range();
     if b.len > 0 {
@@ -6074,7 +6204,12 @@ fn v06_layout(f: &crate::v06::open::V06File) -> Vec<LayoutSegment> {
             crate::v06::kind::PYRAMID => "pyramid",
             _ => "directory",
         };
-        out.push(seg(kind, crate::v06::kind::name(s.kind).to_string(), a.offset, a.len));
+        out.push(seg(
+            kind,
+            crate::v06::kind::name(s.kind).to_string(),
+            a.offset,
+            a.len,
+        ));
     }
     out.sort_by_key(|s| s.offset);
     out
@@ -6469,13 +6604,13 @@ pub struct SummaryView {
 impl SummaryView {
     /// Read header â†’ dictionary â†’ pyramid-meta only (skips the index container).
     pub fn open_ranged<R: RangeReader>(reader: &R) -> Result<Option<Self>, FileError> {
-        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        let head = reader.read_at(0, (HEADER_LEN as u64).min(reader.len()))?;
         let header = Header::from_bytes(&head)?;
         if header.pyramid_meta_len == 0 {
             return Ok(None);
         }
         if header.version == crate::v06::VERSION {
-            return Self::open_ranged_v06(reader, &header).map(Some);
+            return Self::open_ranged_v06(reader, &header, head).map(Some);
         }
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
@@ -6512,14 +6647,41 @@ impl SummaryView {
     /// [`open_ranged`](Self::open_ranged) for a `0x06` file: the pyramid
     /// section, the schema, and the dictionary (its leaves and chunks read
     /// whole, as the `0x05` path reads the whole dictionary container).
-    fn open_ranged_v06<R: RangeReader>(reader: &R, header: &Header) -> Result<Self, FileError> {
+    fn open_ranged_v06<R: RangeReader>(
+        reader: &R,
+        header: &Header,
+        head: Vec<u8>,
+    ) -> Result<Self, FileError> {
         use crate::v06::{kind, open};
-        let (h, root) = open::read_front(reader)?;
-        let mb = open::read_section(reader, &h, &root, kind::PYRAMID)?
+        // One first read, then every range the view needs past it — the
+        // pyramid, the schema, the dictionary's leaves and chunks — in one
+        // batch.
+        let mut first = head;
+        let want_first = crate::v06::FIRST_READ.min(reader.len());
+        if want_first > first.len() as u64 {
+            let at = first.len() as u64;
+            first.extend_from_slice(&reader.read_at(at, want_first - at)?);
+        }
+        let pre = open::Prefixed {
+            first: &first,
+            r: reader,
+        };
+        let (h, root) = open::read_front(&pre)?;
+        let want: Vec<ByteRange> = [
+            kind::PYRAMID,
+            kind::SCHEMA,
+            kind::DICT_LEAVES,
+            kind::DICT_DATA,
+        ]
+        .iter()
+        .filter_map(|&k| root.section(k).map(|s| s.abs(&h)))
+        .collect();
+        let sparse = open::SparseReader::fetch(&pre, first.clone(), &want)?;
+        let mb = open::read_section(&sparse, &h, &root, kind::PYRAMID)?
             .ok_or(FileError::Container("0x06 file has no pyramid"))?;
         let mut meta =
             PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
-        if let Some(s) = read_schema_with_header(reader, header) {
+        if let Some(s) = read_schema_with_header(&sparse, header) {
             meta.class_hierarchy = s.class_hierarchy;
             meta.level_rollups = s.level_rollups;
             meta.level_links = s.level_links;
@@ -6527,12 +6689,6 @@ impl SummaryView {
             meta.disjoint_pairs = s.disjoint_pairs;
             meta.equivalent_pairs = s.equivalent_pairs;
         }
-        let first = reader.read_at(0, crate::v06::FIRST_READ.min(reader.len()))?;
-        let want: Vec<ByteRange> = [kind::DICT_LEAVES, kind::DICT_DATA]
-            .iter()
-            .filter_map(|&k| root.section(k).map(|s| s.abs(&h)))
-            .collect();
-        let sparse = open::SparseReader::fetch(reader, first.clone(), &want)?;
         let f = open::V06File::open(std::sync::Arc::new(sparse), &first)?;
         let dict = f.dictionary([true; 4])?;
         Ok(SummaryView {
@@ -6995,7 +7151,8 @@ mod tests {
             let resident = Rete::open(image).unwrap();
             let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
             let ranged = Rete::open_ranged(&SliceReader::new(leaked)).unwrap();
-            let lazy = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
+            let lazy =
+                Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
             for (s, p, o) in &shapes {
                 let want: Vec<_> = {
                     let mut v = Rete::open(&six).unwrap().query(*s, *p, *o);
@@ -7357,7 +7514,11 @@ mod tests {
         // Open it LAZILY through the offset shim and query it.
         let leaked: &'static [u8] = Box::leak(poly.into_boxed_slice());
         let counting = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
-        let lazy = Rete::open_ranged_lazy_with(OffsetReader::new(counting.clone(), detected), HEADER_LEN as u64).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(
+            OffsetReader::new(counting.clone(), detected),
+            HEADER_LEN as u64,
+        )
+        .unwrap();
 
         // The polyglot must answer exactly like the plain .rete it embeds.
         let plain = Rete::open(&image).unwrap();
@@ -8224,7 +8385,11 @@ mod tests {
 
         let eager_rows = run(&Rete::open(&bytes).unwrap());
         let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
-        let lazy = Rete::open_ranged_lazy_with(std::sync::Arc::new(SliceReader::new(leaked)), HEADER_LEN as u64).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(
+            std::sync::Arc::new(SliceReader::new(leaked)),
+            HEADER_LEN as u64,
+        )
+        .unwrap();
         let lazy_rows = run(&lazy);
         assert!(!lazy.index_incomplete());
 
@@ -9627,7 +9792,8 @@ mod tests {
             Vec<(String, String, String)>,
             crate::chunk_cache::CacheStats,
         ) {
-            let rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
+            let rete =
+                Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
             rete.dict.set_cache_cap(cap);
             let mut out = Vec::new();
             rete.dump_filtered_each(None, None, None, None, |s, p, o| {
@@ -9674,7 +9840,8 @@ mod tests {
     fn memory_budget_charges_the_fixed_directories() {
         use crate::reader::SliceReader;
         let leaked: &'static [u8] = Box::leak(build_multichunk_image().into_boxed_slice());
-        let rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
+        let rete =
+            Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
 
         let fixed = rete.fixed_overhead();
         // Every chunk and every tile has a descriptor; a multi-chunk dictionary
@@ -9714,7 +9881,8 @@ mod tests {
 
         // Under a cap smaller than the decompressed dictionary, a full dump
         // keeps the cache within it.
-        let rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
+        let rete =
+            Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
         rete.dict.set_cache_cap(128 * 1024);
         let mut rows = 0usize;
         rete.dump_filtered_each(None, None, None, None, |_, _, _| rows += 1);
@@ -9777,7 +9945,8 @@ mod tests {
             0,
         );
         let leaked: &'static [u8] = Box::leak(image.into_boxed_slice());
-        let mut rete = Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
+        let mut rete =
+            Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap();
 
         let opened = |r: &Rete| -> usize {
             match &r.named_graphs {
@@ -9909,7 +10078,8 @@ mod tests {
                 ),
                 (
                     "lazy",
-                    Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64).unwrap(),
+                    Rete::open_ranged_lazy_with(SliceReader::new(leaked), HEADER_LEN as u64)
+                        .unwrap(),
                 ),
             ];
             for graph in [None, Some("<http://ex/g1>"), Some("<http://ex/absent>")] {
@@ -10521,9 +10691,11 @@ mod tests {
         let path = std::env::var("RETE_DEBUG_FILE").expect("RETE_DEBUG_FILE");
         let p_iri = std::env::var("RETE_DEBUG_P").expect("RETE_DEBUG_P");
         let o_iri = std::env::var("RETE_DEBUG_O").expect("RETE_DEBUG_O");
-        let rete =
-            Rete::open_ranged_lazy_with(std::sync::Arc::new(FR(std::fs::File::open(&path).unwrap())), HEADER_LEN as u64)
-                .unwrap();
+        let rete = Rete::open_ranged_lazy_with(
+            std::sync::Arc::new(FR(std::fs::File::open(&path).unwrap())),
+            HEADER_LEN as u64,
+        )
+        .unwrap();
         let pid = rete.dict.predicate_id(&p_iri).expect("p resolves");
         let oid = rete.dict.object_id(&o_iri).expect("o resolves");
         eprintln!("pid={pid} oid={oid}");

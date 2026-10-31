@@ -31,6 +31,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
     let routed_shape =
         routed_triple_pattern(query).map_err(|e| anyhow::anyhow!("SPARQL parse error: {e}"))?;
     let header = read_header(source)?;
+    let v6 = read_v06_front(source)?;
     let source_kind = if is_url(source) { "url" } else { "local" };
     let summary = measure_summary(source)?;
     let routed = measure_routed_pattern(source, routed_shape.as_ref())?;
@@ -76,7 +77,10 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
                 "requests": full.requests,
                 "reads_index": full.reads_index,
             },
-            "sections": section_json(&header),
+            "sections": match &v6 {
+                Some((h, root)) => section_json_v06(h, root),
+                None => section_json(&header),
+            },
         });
         if explain {
             body.as_object_mut()
@@ -114,10 +118,14 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
                 reads_index: full.reads_index,
             },
         );
-        println!(
-            "  index section: offset {} · len {}",
-            header.root_dir_offset, header.root_dir_len
-        );
+        let (index_offset, index_len) = match &v6 {
+            Some((h, root)) => root
+                .section(rete_core::v06::kind::INDEX_DATA)
+                .map(|x| x.abs(h))
+                .map_or((0, 0), |r| (r.offset, r.len)),
+            None => (header.root_dir_offset, header.root_dir_len),
+        };
+        println!("  index section: offset {index_offset} · len {index_len}");
         if header.version >= 2 {
             println!(
                 "  note: SPARQL evaluation opens lazily (tile directories only) and \
@@ -366,9 +374,12 @@ fn measure_summary(source: &str) -> anyhow::Result<SummaryCost> {
 fn measure_full(source: &str) -> anyhow::Result<FullCost> {
     let reader = RangedSourceReader::open(source)?;
     let file_bytes = reader.len();
-    let head = reader.read_at(0, HEADER_LEN_U64)?;
+    let head = reader.read_at(0, HEADER_LEN_U64.min(file_bytes))?;
     let header = Header::from_bytes(&head)?;
-    let (bytes, requests) = full_open_budget(&header);
+    let (bytes, requests) = match rete_core::v06::open::is_v06(&head) {
+        true => full_open_budget_v06(&rete_core::v06::Header06::from_bytes(&head)?),
+        false => full_open_budget(&header),
+    };
     Ok(FullCost {
         available: true,
         file_bytes,
@@ -393,6 +404,24 @@ fn full_open_budget(header: &Header) -> (u64, u64) {
         }
     }
     (bytes, requests)
+}
+
+/// [`full_open_budget`] for a `0x06` file: the eager open reads the 1 KiB
+/// head, then the rest of the file in one more request, and opens from memory.
+fn full_open_budget_v06(h: &rete_core::v06::Header06) -> (u64, u64) {
+    (h.file_len, 1 + u64::from(h.file_len > HEADER_LEN_U64))
+}
+
+/// The front of a `0x06` source (`None` for a `0x05` one).
+fn read_v06_front(
+    source: &str,
+) -> anyhow::Result<Option<(rete_core::v06::Header06, rete_core::v06::Root06)>> {
+    let reader = RangedSourceReader::open(source)?;
+    let head = reader.read_at(0, 8.min(reader.len()))?;
+    if !rete_core::v06::open::is_v06(&head) {
+        return Ok(None);
+    }
+    Ok(Some(rete_core::v06::open::read_front(&reader)?))
 }
 
 /// The lazy SPARQL open budget (what `sparql-url` actually pays up front on a
@@ -459,6 +488,35 @@ fn section_json(header: &Header) -> serde_json::Value {
         "pyramid_meta": { "offset": header.pyramid_meta_offset, "len": header.pyramid_meta_len },
         "named_graphs": { "offset": header.named_graphs_offset, "len": header.named_graphs_len },
     })
+}
+
+/// A `0x06` file's layout: the header, the root, the card region, then every
+/// section by name.
+fn section_json_v06(
+    h: &rete_core::v06::Header06,
+    root: &rete_core::v06::Root06,
+) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    m.insert(
+        "header".into(),
+        serde_json::json!({ "offset": 0, "len": HEADER_LEN_U64 }),
+    );
+    m.insert(
+        "root".into(),
+        serde_json::json!({ "offset": HEADER_LEN_U64, "len": h.root_len }),
+    );
+    m.insert(
+        "card_region".into(),
+        serde_json::json!({ "offset": h.card_region_offset(), "len": h.card_region_len }),
+    );
+    for sec in &root.sections {
+        let r = sec.abs(h);
+        m.insert(
+            rete_core::v06::kind::name(sec.kind).to_string(),
+            serde_json::json!({ "offset": r.offset, "len": r.len }),
+        );
+    }
+    serde_json::Value::Object(m)
 }
 
 fn summary_answer_json(
@@ -740,6 +798,24 @@ mod tests {
                 full_open_budget(&header),
                 (reader.bytes_read(), reader.requests()),
                 "pyramid {pyramid}, text index {text}"
+            );
+            // And the same for the 0x06 file the writer makes of the default
+            // graph (per-graph named graphs are not a 0x06 layout).
+            let (dg, _) = rete_core::ingest::assemble_dataset_with_opts(
+                quads.iter().filter(|q| q.3.is_none()).cloned().collect(),
+                pyramid,
+                text,
+                None,
+                |_, _| Vec::new(),
+            );
+            let v6 = rete_core::v06::write::convert_image(&dg, Default::default()).unwrap();
+            let h = rete_core::v06::Header06::from_bytes(&v6).unwrap();
+            let reader = CountingReader::new(SliceReader::new(&v6));
+            Rete::open_ranged(&reader).unwrap();
+            assert_eq!(
+                full_open_budget_v06(&h),
+                (reader.bytes_read(), reader.requests()),
+                "0x06, pyramid {pyramid}, text index {text}"
             );
         }
     }

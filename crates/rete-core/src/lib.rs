@@ -194,8 +194,8 @@ pub mod range {
         LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{
-        detect_polyglot_base, BytesReader, CountingReader, OffsetReader, PrefixReader,
-        RangeReader, SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
+        detect_polyglot_base, BytesReader, CountingReader, OffsetReader, PrefixReader, RangeReader,
+        SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
     };
 }
 

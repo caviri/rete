@@ -421,15 +421,19 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
         let bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
         if bad.is_empty() {
             println!(
-                "OK — format 0x06, {}",
+                "OK — {} (format 0x06)",
                 match section {
                     Some(s) => format!("section {s} matches its digest"),
-                    None => "content hash and every section digest match".to_string(),
+                    None => "content hash matches, and every section digest".to_string(),
                 }
             );
             return Ok(());
         }
-        anyhow::bail!("FAILED — digest mismatch in: {}", bad.join(", "));
+        anyhow::bail!(
+            "FAILED — content hash mismatch: the digest of {} does not match (file corrupted \
+             or truncated)",
+            bad.join(", ")
+        );
     }
     if section.is_some() {
         anyhow::bail!("--section needs a format 0x06 file");
@@ -622,21 +626,39 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
 /// section table — where every part of the file is, and its digest.
 fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
     use rete_core::v06::{kind, open};
+    use rete_core::v06::{F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
     let (h, root) = open::read_front(reader)?;
     let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
-    println!("format 0x06 — {} bytes", h.file_len);
-    println!("  content hash : {}", hex(&h.content_hash));
-    println!("  statements   : {}", h.quad_count);
-    println!("  terms        : {}", h.term_count);
-    println!("  named graphs : {}", h.graph_count);
-    println!("  permutations : {}", h.perms().names().join(", "));
+    // The header's fields by name, as for a 0x05 file (`quad_count: …`).
+    println!("format version: 0x06");
+    println!("{h:#?}");
+    let flags: Vec<&str> = [
+        (F_NAMED, "named graphs"),
+        (F_QUOTED, "quoted triples"),
+        (F_TEXT_NAMED, "text covers named graphs"),
+        (F_QUAD_GRAPH_MAJOR, "quad tiles graph-major"),
+    ]
+    .into_iter()
+    .filter(|&(b, _)| h.flags & b != 0)
+    .map(|(_, n)| n)
+    .collect();
     println!(
-        "  flags        : {:#06b} (named graphs, quoted triples, text covers graphs, quad graph-major)",
-        h.flags
+        "format 0x06 — {} bytes, content hash {}",
+        h.file_len,
+        hex(&h.content_hash)
     );
-    println!("  codecs       : dict {}, tiles {}, front {}", h.dict_codec, h.block_codec, h.internal_codec);
-    println!("  front        : root {} B at 128, card region {} B (card {} B, record {} B), data at {}",
-        h.root_len, h.card_region_len, h.card_len, h.build_len, h.data_offset);
+    println!(
+        "  flags        : {}",
+        if flags.is_empty() {
+            "none".to_string()
+        } else {
+            flags.join(", ")
+        }
+    );
+    println!(
+        "  front        : root {} B at 128, card region {} B (card {} B, record {} B), data at {}",
+        h.root_len, h.card_region_len, h.card_len, h.build_len, h.data_offset
+    );
     println!("  sections     :");
     for s in &root.sections {
         let a = s.abs(&h);
