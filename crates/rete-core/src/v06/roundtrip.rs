@@ -336,3 +336,48 @@ fn convert_builds_the_label_index_a_build_would() {
     let r = lazy(&got);
     assert!(!r.prefix_search("gamma", 10).is_empty());
 }
+
+/// Records every range read.
+struct Logged(std::sync::Arc<[u8]>, std::sync::Mutex<Vec<(u64, u64)>>);
+
+impl crate::reader::RangeReader for Logged {
+    fn len(&self) -> u64 {
+        self.0.len() as u64
+    }
+    fn read_at(&self, o: u64, l: u64) -> std::io::Result<Vec<u8>> {
+        self.1.lock().unwrap().push((o, l));
+        self.0
+            .get(o as usize..(o + l) as usize)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| std::io::Error::other("oob"))
+    }
+}
+
+/// A join that probes thousands of subjects routed to the same leaf fetches
+/// that leaf once, not once per subject (it used to send one batch of 8,572
+/// copies of a 256-byte leaf here, and 2.7 GB for 460 k subjects on the
+/// OpenCitations sample).
+#[test]
+fn a_probe_join_faults_each_leaf_once() {
+    let v5 = image(60000, true, true, true, false);
+    let v6 = convert_image(&v5, WriteOpts::default()).unwrap();
+    let q = "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s a <http://ex.org/C3> ; ?p ?o } GROUP BY ?p";
+    let want = format!(
+        "{:?}",
+        crate::sparql::eval_query(&Rete::open(&v5).unwrap(), q).unwrap()
+    );
+    let r = std::sync::Arc::new(Logged(std::sync::Arc::from(&v6[..]), Default::default()));
+    let rete = Rete::open_ranged_lazy_with(r.clone(), 1024).unwrap();
+    r.1.lock().unwrap().clear();
+    let got = format!("{:?}", crate::sparql::eval_query(&rete, q).unwrap());
+    assert_eq!(got, want);
+    let (h, root) = open::read_front(&crate::reader::SliceReader::new(&v6)).unwrap();
+    let leaves = root.section(kind::INDEX_LEAVES).unwrap().abs(&h);
+    let reads = r.1.lock().unwrap().clone();
+    let leaf_reads = reads
+        .iter()
+        .filter(|&&(o, _)| o >= leaves.offset && o < leaves.offset + leaves.len)
+        .count();
+    assert!(leaf_reads <= 6, "{leaf_reads} index-leaf reads");
+    assert!(reads.len() < 40, "{} reads for the query", reads.len());
+}

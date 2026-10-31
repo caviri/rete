@@ -679,11 +679,16 @@ impl LeafedTokens {
     }
 
     fn ensure(&self, lis: &[usize]) {
-        let missing: Vec<usize> = lis
+        // Callers pass one leaf per pattern or term, so the same leaf can come
+        // many times over (a join probing 460 k subjects of one leaf): fetch
+        // each leaf once.
+        let mut missing: Vec<usize> = lis
             .iter()
             .copied()
             .filter(|&li| li < self.cells.len() && self.cells[li].get().is_none())
             .collect();
+        missing.sort_unstable();
+        missing.dedup();
         if missing.is_empty() {
             return;
         }

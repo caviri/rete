@@ -220,11 +220,16 @@ impl LeafedTiles {
 
     /// Fault every not-yet-resident leaf of `lis` in one batched read.
     pub fn ensure_leaves(&self, lis: &[usize]) {
-        let missing: Vec<usize> = lis
+        // Callers pass one leaf per pattern or term, so the same leaf can come
+        // many times over (a join probing 460 k subjects of one leaf): fetch
+        // each leaf once.
+        let mut missing: Vec<usize> = lis
             .iter()
             .copied()
             .filter(|&li| li < self.cells.len() && self.cells[li].get().is_none())
             .collect();
+        missing.sort_unstable();
+        missing.dedup();
         if missing.is_empty() {
             return;
         }
@@ -1209,23 +1214,26 @@ impl GraphIndex {
     /// bound leading ids of `patterns` route to (format `0x06`; a no-op on a
     /// resident directory).
     pub(crate) fn prefault_leaves(&self, patterns: &[Pattern]) {
-        let mut want: [Vec<usize>; NUM_PERMS] = Default::default();
+        let mut want: [std::collections::BTreeSet<usize>; NUM_PERMS] = Default::default();
         for &pat in patterns {
             let perm = Self::best_permutation_in(self.perms, pat);
             let [pa, _, _] = perm.order_pattern(pat);
             let si = perm.section_index();
             if let (TileList::Leafed(l), Some(a)) = (&self.sections[si], pa) {
-                for (li, lf) in l.leaves.iter().enumerate() {
-                    if lf.min_a <= a && a <= lf.max_a {
-                        want[si].push(li);
+                // Leaves ascend by leading id: the run whose range holds `a`.
+                let from = l.leaves.partition_point(|lf| lf.max_a < a);
+                for (li, lf) in l.leaves.iter().enumerate().skip(from) {
+                    if lf.min_a > a {
+                        break;
                     }
+                    want[si].insert(li);
                 }
             }
         }
         for (si, lis) in want.iter().enumerate() {
             if let TileList::Leafed(l) = &self.sections[si] {
                 if !lis.is_empty() {
-                    l.ensure_leaves(lis);
+                    l.ensure_leaves(&lis.iter().copied().collect::<Vec<_>>());
                 }
             }
         }
