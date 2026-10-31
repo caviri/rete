@@ -211,6 +211,13 @@ pub struct ExternalBuildOptions {
     /// [`GraphLayout::Quad`] writes the quad index (SPEC.md §6.5) through its
     /// own external sorts — see "Quad index" in the module docs.
     pub graphs: GraphLayout,
+    /// Bytes of `memory_budget` the input stream itself holds while it is
+    /// read — `rete merge`'s open shards, their dictionary, tile and block
+    /// caches capped to it (G22). The chunk phase, the only one that runs
+    /// while the stream is being read, sizes itself to the budget less this;
+    /// every later phase has the whole budget. `0` (the default) for a
+    /// parser, whose buffers are small.
+    pub input_memory: u64,
 }
 
 impl Default for ExternalBuildOptions {
@@ -226,6 +233,7 @@ impl Default for ExternalBuildOptions {
             type_override: None,
             text_index: None,
             graphs: GraphLayout::PerGraph,
+            input_memory: 0,
         }
     }
 }
@@ -317,7 +325,9 @@ where
     let budget = opts.memory_budget.max(64 << 20); // floor: 64 MiB
 
     // ---- Phase 1: chunk the input ------------------------------------------
-    let chunk_budget = (budget as f64 * CHUNK_BUDGET_FRACTION) as u64;
+    // The input's own share (a merge's shard readers) is out of the chunks'.
+    let chunk_phase = budget.saturating_sub(opts.input_memory).max(32 << 20);
+    let chunk_budget = (chunk_phase as f64 * CHUNK_BUDGET_FRACTION) as u64;
     // A text-index sort run holds at most a quarter of the budget in records;
     // its vectors may grow to twice that, which is the half the phase may use.
     let text_run_bytes = (budget / 4) as usize;
@@ -325,14 +335,26 @@ where
     let (chunk_budget, text_run_bytes) = TEST_SPLIT
         .with(|c| c.get())
         .unwrap_or((chunk_budget, text_run_bytes));
-    eprintln!(
-        "extbuild: budget {} MiB -> chunk target {} MiB",
-        budget >> 20,
-        chunk_budget >> 20
-    );
-    let working_cap = (budget as f64 * CHUNK_WORKING_FRACTION) as u64;
+    let working_cap = (chunk_phase as f64 * CHUNK_WORKING_FRACTION) as u64;
     #[cfg(test)]
     let working_cap = TEST_WORKING.with(|c| c.get()).unwrap_or(working_cap);
+    if opts.input_memory > 0 {
+        eprintln!(
+            "extbuild: budget {} MiB, {} MiB of it for reading the input -> chunk target {} MiB, \
+             {} MiB with the chunk's dictionary",
+            budget >> 20,
+            opts.input_memory >> 20,
+            chunk_budget >> 20,
+            working_cap >> 20
+        );
+    } else {
+        eprintln!(
+            "extbuild: budget {} MiB -> chunk target {} MiB, {} MiB with the chunk's dictionary",
+            budget >> 20,
+            chunk_budget >> 20,
+            working_cap >> 20
+        );
+    }
     let quad_layout = opts.graphs == GraphLayout::Quad;
     if quad_layout {
         crate::quad::check_perms(opts.perms).map_err(|_| {

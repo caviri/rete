@@ -33,10 +33,14 @@
 //!
 //! # Memory
 //!
-//! Bounded on both ends. Each input is opened LAZILY and walked with
-//! `Rete::dump_batch`, whose entire resume state is one subject id, so an input
-//! is never resident; the builder chunks and spills under `--memory-budget-mb`.
-//! Merging files far larger than RAM is the point.
+//! Bounded on both ends, by the one `--memory-budget-mb`. Each input is opened
+//! by range — never read whole, whatever its size — and walked with
+//! `Rete::dump_batch`, whose entire resume state is one subject id; its
+//! dictionary, tile and block caches are capped to a quarter of the budget
+//! ([`reader_share`]), and each named graph's index is dropped once the graph
+//! is walked. The builder's chunk phase, which runs while the inputs are
+//! read, takes the rest; its later phases the whole budget. Merging files far
+//! larger than RAM is the point.
 //!
 //! # The card
 //!
@@ -61,19 +65,47 @@ use crate::commands::card::{self, CardArgs};
 /// buffer stays trivial next to the builder's own budget.
 const BATCH: usize = 10_000;
 
+/// The share of `--memory-budget-mb` the walk of the inputs gets (G22): the
+/// open shard's dictionary chunk cache, index tile cache and raw block cache
+/// are capped to it, and the builder's chunk phase — the only phase that runs
+/// while a shard is open — sizes itself to the rest. A quarter, between
+/// 64 MiB and 1 GiB.
+///
+/// Up to 0.4.1 a shard was opened like any local file: read whole when small
+/// (its decoded dictionary and every permutation resident, about seven times
+/// the file), or lazily with no cap on its caches, and with every named
+/// graph's index kept once walked. None of it was in the budget: two halves of
+/// the OpenCitations sample merged at 3,026 MiB with a budget of 2,000.
+fn reader_share(budget: u64) -> u64 {
+    (budget / 4).clamp(64 << 20, 1 << 30)
+}
+
+/// Open one input for the walk: always by range, never read whole, with its
+/// caches capped to `share` bytes.
+fn open_input(path: &str, share: u64) -> anyhow::Result<Rete> {
+    crate::commands::range_source::open_local_ranged(path, Some(share))
+}
+
 /// Push every quad of one opened `.rete` into `visit`, graph by graph.
 ///
 /// `dump_batch` cuts batches on a subject boundary and reports `done`, so this
-/// resumes with a `u32` rather than holding a scan open across calls.
+/// resumes with a `u32` rather than holding a scan open across calls. Like
+/// `rete export`, it charges the named-graph directory it walks to the
+/// reader's share and drops each named graph's index once the graph is done,
+/// so a shard of many graphs holds one graph's tiles at a time.
 fn stream_file<E>(
-    rete: &Rete,
+    rete: &mut Rete,
     label: &str,
+    share: u64,
     visit: &mut dyn FnMut(RawQuad) -> Result<(), E>,
 ) -> Result<u64, E> {
     // `None` = the default graph, then each named graph in turn — the same slot
     // walk the language clients do.
     let mut slots: Vec<Option<String>> = vec![None];
     slots.extend(rete.graph_names().iter().map(|g| Some((*g).to_string())));
+    // Listing the graphs walked the directory, which stays resident: take it
+    // out of the dictionary's share.
+    rete.set_memory_budget(Some(share));
 
     let mut total: u64 = 0;
     for slot in slots {
@@ -88,6 +120,9 @@ fn stream_file<E>(
             if done {
                 break;
             }
+        }
+        if let Some(g) = &slot {
+            rete.release_named_graph(g);
         }
     }
     eprintln!("merge: {label} contributed {total} quad(s)");
@@ -177,8 +212,10 @@ pub(crate) fn merge_cmd(
     // named-graph layout: a quad-index input makes a quad-index merge.
     let mut label_index = false;
     let mut graphs = rete_core::GraphLayout::PerGraph;
+    let budget = memory_budget_mb.saturating_mul(1 << 20);
+    let share = reader_share(budget);
     for path in inputs {
-        let rete = crate::commands::range_source::open_local(path)?;
+        let rete = open_input(path, share)?;
         perms_bits |= rete.header().perms.bits();
         label_index |= rete.has_label_index();
         if rete.header().has_quad_index() {
@@ -262,15 +299,14 @@ pub(crate) fn merge_cmd(
                 visit(q)
             };
             for path in inputs {
-                // `open_local` is the canonical local opener: it reads small files
-                // whole and puts large ones behind a block-cached range reader, so
-                // a multi-gigabyte shard never becomes resident.
-                let rete = crate::commands::range_source::open_local(path).map_err(|e| {
+                // By range, behind a block cache, with every cache capped to
+                // the reader's share: a shard of any size is walked inside it.
+                let mut rete = open_input(path, share).map_err(|e| {
                     rete_core::extbuild::ExtBuildError::Ingest(rete_core::ingest::IngestError::Io(
                         format!("{path}: {e}"),
                     ))
                 })?;
-                stream_file(&rete, path, &mut counted)?;
+                stream_file(&mut rete, path, share, &mut counted)?;
                 // A shard that lost bytes to a failed read would silently shrink
                 // the merged graph, which is worse than failing.
                 if rete.index_incomplete() {
@@ -285,7 +321,7 @@ pub(crate) fn merge_cmd(
         },
         &out_path,
         rete_core::extbuild::ExternalBuildOptions {
-            memory_budget: memory_budget_mb.saturating_mul(1 << 20),
+            memory_budget: budget,
             tmp_dir: tmp_dir.map(std::path::PathBuf::from),
             // The card is derived from the merged file and appended after it
             // (below), so the stream writes neither a card nor a record.
@@ -297,6 +333,8 @@ pub(crate) fn merge_cmd(
             type_override: None,
             text_index: None,
             graphs,
+            // The open shard's capped caches, out of the chunk phase's share.
+            input_memory: share,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

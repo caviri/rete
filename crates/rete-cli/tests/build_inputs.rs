@@ -281,6 +281,88 @@ fn merge_folds_named_graph_shards() {
         .stdout(predicates::str::contains("quad_count: 3"));
 }
 
+/// G22: `rete merge` reads its inputs inside its own `--memory-budget-mb`.
+/// Up to 0.4.1 a small shard was read whole (its decoded dictionary and every
+/// permutation resident) and a large one opened with uncapped caches, none of
+/// it charged to the budget: the merge ran about 1 GiB over it and did not fit
+/// a 4 GiB container at 3,000 MiB. Now every shard, however small, is opened
+/// by range with its caches capped to a quarter of the budget, and the
+/// builder's chunk phase takes the rest. The merged file does not change.
+#[test]
+fn merge_reads_its_inputs_inside_the_budget() {
+    let f = fixture();
+    let (mut a, mut b) = (String::new(), String::new());
+    for i in 0..300 {
+        let shard = if i % 2 == 0 { &mut a } else { &mut b };
+        shard.push_str(&format!(
+            "<http://ex/s{i}> <http://ex/p{}> \"value {i}\" <http://ex/g{}> .\n\
+             <http://ex/s{i}> <http://ex/next> <http://ex/s{}> .\n",
+            i % 5,
+            i % 7,
+            (i + 1) % 300
+        ));
+    }
+    let union = f.write("all.nq", &format!("{a}{b}"));
+    let (a, b) = (f.write("a.nq", &a), f.write("b.nq", &b));
+    let (ra, rb) = (f.path("a.rete"), f.path("b.rete"));
+    for (src, dst) in [(&a, &ra), (&b, &rb)] {
+        rete()
+            .args(["build"])
+            .arg(src)
+            .arg("-o")
+            .arg(dst)
+            .assert()
+            .success();
+    }
+    let merge = |budget: &str, out: &std::path::Path| {
+        let run = rete()
+            .args(["merge"])
+            .arg(&ra)
+            .arg(&rb)
+            .arg("-o")
+            .arg(out)
+            .args(["--memory-budget-mb", budget])
+            .env("RETE_OPEN_DEBUG", "1")
+            .assert()
+            .success();
+        String::from_utf8(run.get_output().stderr.clone()).unwrap()
+    };
+    let (m512, m64) = (f.path("m512.rete"), f.path("m64.rete"));
+    let log = merge("512", &m512);
+    // Both shards by range, never read whole, though each is a few KB.
+    assert!(!log.contains("EAGER"), "{log}");
+    assert!(
+        log.matches("[open_local_ranged]").count() >= 2,
+        "an input was not opened by range: {log}"
+    );
+    // Their caches inside a quarter of the budget, and the chunks in the rest.
+    assert!(log.contains("[memory-budget] total=128MiB"), "{log}");
+    assert!(
+        log.contains("extbuild: budget 512 MiB, 128 MiB of it for reading the input"),
+        "{log}"
+    );
+    merge("64", &m64);
+    assert_eq!(
+        std::fs::read(&m512).unwrap(),
+        std::fs::read(&m64).unwrap(),
+        "the budget changed the merged file"
+    );
+    // ...which is the memory-bounded build of the union, byte for byte.
+    let built = f.path("built.rete");
+    rete()
+        .args(["build"])
+        .arg(&union)
+        .args(["--memory-budget-mb", "64", "-o"])
+        .arg(&built)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read(&m512).unwrap(),
+        std::fs::read(&built).unwrap(),
+        "the merge is not the build of its inputs' union"
+    );
+}
+
 /// `--text-index` on the memory-bounded path: it builds, the file is the same
 /// bytes as the in-RAM `--no-pyramid --text-index` build (cardless, so the
 /// whole file, not just the section), and `rete search --contains` answers —
