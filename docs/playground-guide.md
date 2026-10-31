@@ -93,10 +93,16 @@ would be a network read); the viewer names the **concept scheme** it can read
 from the IRI and shows the concept's identifier, rather than inventing a label.
 
 Below the card, its own clearly separated part of the modal, is the **build
-record**: when the file was written, by which `rete`, with which flags, and
-what each starter query was measured to cost — those cost figures shown *with
-the queries they describe*, since that is where you ask. A file that carries no
-build record says so plainly instead of showing blanks.
+record**: when the file was written and by which `rete` — the engine's
+version, commit (linked), target and features; the flags in force, as the
+command line that would reproduce them, and the writer's settings; each input
+by name, size and BLAKE3; the wall time, peak RAM, memory limit and CPUs, with
+the per-phase times folded underneath; the spill of a memory-bounded build; and,
+when the card was replaced by `rete recard`, when, by what, from which content
+hash and at what cost. Each starter query's measured cost is shown *with the
+query it describes*, since that is where you ask. A file that carries no build
+record says so plainly instead of showing blanks, and a field a record does not
+carry (an older writer) gets no row.
 
 It costs one `HEAD` and **one header read plus one coalesced range** — the card
 and the build record sit adjacent, so both arrive together. Never the

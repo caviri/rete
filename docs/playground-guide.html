@@ -680,10 +680,16 @@ card asks for an IRI instead of a string. A theme's IRI is not resolved (that
 would be a network read); the viewer names the <strong>concept scheme</strong> it can read
 from the IRI and shows the concept's identifier, rather than inventing a label.</p>
 <p>Below the card, its own clearly separated part of the modal, is the <strong>build
-record</strong>: when the file was written, by which <code>rete</code>, with which flags, and
-what each starter query was measured to cost — those cost figures shown <em>with
-the queries they describe</em>, since that is where you ask. A file that carries no
-build record says so plainly instead of showing blanks.</p>
+record</strong>: when the file was written and by which <code>rete</code> — the engine's
+version, commit (linked), target and features; the flags in force, as the
+command line that would reproduce them, and the writer's settings; each input
+by name, size and BLAKE3; the wall time, peak RAM, memory limit and CPUs, with
+the per-phase times folded underneath; the spill of a memory-bounded build; and,
+when the card was replaced by <code>rete recard</code>, when, by what, from which content
+hash and at what cost. Each starter query's measured cost is shown <em>with the
+query it describes</em>, since that is where you ask. A file that carries no build
+record says so plainly instead of showing blanks, and a field a record does not
+carry (an older writer) gets no row.</p>
 <p>It costs one <code>HEAD</code> and <strong>one header read plus one coalesced range</strong> — the card
 and the build record sit adjacent, so both arrive together. Never the
 dictionary, the index or the pyramid. That is the CARD tier: you learn what a

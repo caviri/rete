@@ -563,3 +563,145 @@ fn a_merge_writes_the_card_recard_writes() {
         "no curated fields: none carried from a shard"
     );
 }
+
+/// A graph built to make the card derivations disagree if they could (G17):
+/// every subject is typed, a third of them twice — the type written LAST is
+/// the lexicographically smaller class, so "last type in input order" and
+/// "highest dictionary id" pick different classes — some statements appear
+/// twice, the labels feed a text index, two named graphs carry quads, and the
+/// links fan out into more than `CARD_TOP_N` (100) class links, most of them
+/// tied on their count, so the top-100 cut is decided by the tie-break.
+fn g17_graph() -> String {
+    const SUBJECTS: usize = 600;
+    const CLASSES: usize = 150;
+    let ex = "http://example.test";
+    let mut nq = String::new();
+    for i in 0..SUBJECTS {
+        let s = format!("<{ex}/s{i:04}>");
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let class = |c: usize| format!("<{ex}/C{:03}>", c % CLASSES);
+        if i % 3 == 0 {
+            // The larger class first, the smaller one last.
+            nq.push_str(&format!("{s} {ty} {} .\n", class(i + 1)));
+        }
+        nq.push_str(&format!("{s} {ty} {} .\n", class(i)));
+        nq.push_str(&format!(
+            "{s} <http://www.w3.org/2000/01/rdf-schema#label> \"subject {i} about topic{} and theme{}\"@en .\n",
+            i % 40,
+            i % 7
+        ));
+        for k in 0..3 {
+            let line = format!(
+                "{s} <{ex}/p{k}> <{ex}/s{:04}> .\n",
+                (i * 37 + k * 101 + 1) % SUBJECTS
+            );
+            nq.push_str(&line);
+            if (i + k) % 11 == 0 {
+                nq.push_str(&line); // a duplicate statement
+            }
+        }
+        if i % 5 == 0 {
+            nq.push_str(&format!(
+                "{s} <{ex}/seen> \"20{:02}-01-01\"^^<http://www.w3.org/2001/XMLSchema#date> <{ex}/g{}> .\n",
+                i % 30,
+                i % 2
+            ));
+        }
+    }
+    nq
+}
+
+/// The memory-bounded build's card and `rete recard`'s are one derivation
+/// (#356), so they must be the same bytes on the graph above, where the
+/// in-RAM derivation is not: the in-RAM card counts the input multiset and
+/// classifies a multi-typed subject by its last type in input order, while
+/// both streaming paths read the finished file (deduplicated, index order).
+/// That difference is documented (docs/dataset-cards.md, "Maintaining a
+/// published card"), and this pins all three facts: the two streaming cards
+/// agree byte for byte; the in-RAM card differs in its class links; and
+/// re-carding the in-RAM file gives the streaming card, because the data
+/// sections — the text index included (G16) — are identical, so the
+/// measured text-index signal (`token_table_bytes`) agrees everywhere.
+#[test]
+fn a_bounded_build_and_a_recard_write_the_same_card_where_in_ram_differs() {
+    let fixture = common::fixture();
+    let src = fixture.write("g17.nq", g17_graph());
+    let card = fixture.write("card.json", CURATED);
+    let card_arg = card.to_str().unwrap();
+
+    let ext = fixture.path("ext.rete");
+    common::build(
+        &src,
+        &ext,
+        &[
+            "--memory-budget-mb",
+            "64",
+            "--text-index",
+            "--card-file",
+            card_arg,
+        ],
+    );
+    let recarded = fixture.path("recarded.rete");
+    common::rete()
+        .arg("recard")
+        .arg(&ext)
+        .arg("-o")
+        .arg(&recarded)
+        .arg("--keep-curated")
+        .assert()
+        .success();
+    assert_eq!(
+        card_bytes(&recarded),
+        card_bytes(&ext),
+        "recard = bounded build"
+    );
+    assert_eq!(content_hash(&recarded), content_hash(&ext));
+
+    let without_build = |p: &std::path::Path| {
+        let mut v = common::json(common::rete().arg("card").arg(p).arg("--json"));
+        v.as_object_mut().unwrap().remove("build");
+        v
+    };
+    let streamed = without_build(&ext);
+    assert_eq!(streamed, without_build(&recarded));
+    let links = streamed["class_links"].as_array().unwrap();
+    assert_eq!(links.len(), 100, "the top-100 cut is exercised");
+    assert_eq!(streamed["truncated"], true);
+    let token_table =
+        |c: &serde_json::Value| c["signals"]["text_index"]["token_table_bytes"].clone();
+    assert!(
+        token_table(&streamed).as_u64().is_some_and(|n| n > 0),
+        "{streamed}"
+    );
+
+    // The in-RAM build of the same input: the same data, a different card.
+    let ram = fixture.path("ram.rete");
+    common::build(
+        &src,
+        &ram,
+        &["--no-pyramid", "--text-index", "--card-file", card_arg],
+    );
+    assert_eq!(
+        data_sections(&std::fs::read(&ram).unwrap()),
+        data_sections(&std::fs::read(&ext).unwrap()),
+        "the in-RAM and memory-bounded builds write the same data sections"
+    );
+    let in_ram = without_build(&ram);
+    assert_eq!(token_table(&in_ram), token_table(&streamed));
+    assert_ne!(
+        in_ram["class_links"], streamed["class_links"],
+        "the in-RAM card no longer differs: update docs/dataset-cards.md, which says it does"
+    );
+    // …and only because of what it derived from: re-carding the in-RAM file
+    // gives the streaming card, byte for byte.
+    let ram_recarded = fixture.path("ram-recarded.rete");
+    common::rete()
+        .arg("recard")
+        .arg(&ram)
+        .arg("-o")
+        .arg(&ram_recarded)
+        .arg("--keep-curated")
+        .assert()
+        .success();
+    assert_eq!(card_bytes(&ram_recarded), card_bytes(&ext));
+}

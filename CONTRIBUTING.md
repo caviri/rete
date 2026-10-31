@@ -11,11 +11,12 @@ section). The common loop:
 ```sh
 cargo fmt --all                 # required: CI fails on any diff
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p rete-wasm --target wasm32-unknown-unknown -- -D warnings   # the browser engine, for its own target
 cargo test --workspace --exclude rete-bench   # round-trip, robustness, range, SPARQL
 bash scripts/smoke.sh           # end-to-end over every CLI subcommand
 ```
 
-CI (`.github/workflows/ci.yml`) runs fmt, clippy, the test matrix, the smoke
+CI (`.github/workflows/ci.yml`) runs fmt, clippy (for the host and for wasm32), the test matrix, the smoke
 test, a `--no-default-features` build, and the WASM build — all in containers.
 
 ## Generated files: keep them out of source commits

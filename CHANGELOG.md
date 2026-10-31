@@ -51,6 +51,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   its fan-out. The CLI's length probe takes the Python reader's fallback: a
   host that omits `Content-Length` on `HEAD`, or refuses `HEAD`, is measured
   with a `bytes=0-0` GET.
+- **The playground's Dataset Card shows the whole build record** (G14). Until
+  now its modal read only the fields builds wrote before 0.4.0 (time, builder,
+  a few flags). It now shows, one row each: the engine's commit (linked),
+  target and features; every flag in force, as the command line that would
+  reproduce it, and the writer's settings; each input by name, size and
+  BLAKE3; wall time, peak RAM, memory limit and CPUs, with the phases folded
+  underneath; a memory-bounded build's spill; and `rete recard`'s record (when,
+  by what, from which content hash, at what cost). Older records show what
+  they carry and nothing else.
 
 ### Fixed
 
@@ -62,6 +71,24 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   request; a larger body is refused by name (`… not kept in memory`) without
   being read. Tested against a real nginx with `max_ranges 0`
   (`tests/interop/range_ignoring_host.sh`).
+
+### Tooling
+
+- **CI lints the browser engine for wasm32** (G15). `cargo clippy --workspace`
+  compiles rete-wasm for the host, where its `wasm32` code is compiled out, so
+  dead code there reached main unseen (#347). The `quality` stage now runs
+  `cargo clippy -p rete-wasm --target wasm32-unknown-unknown -- -D warnings` for
+  the playground's build, the npm/MCPB one (`unicode-regex`) and the Asyncify
+  one.
+- **The memory-bounded build's card and `rete recard`'s are pinned
+  byte-identical** (G17) on a graph built to split them: duplicate statements,
+  multi-typed subjects, a text index, named graphs and more than 100 tied class
+  links. The in-RAM build's card differs there, as documented: it counts its
+  input and classifies a multi-typed subject by its last type, which is why
+  re-carding an OpenCitations file picks a different top 100 `class_links`. Its
+  data sections, the text index included, are the same bytes, so
+  `token_table_bytes` agrees on every path (G16), and re-carding it gives the
+  same card.
 
 ## [0.4.1] - 2026-10-30
 

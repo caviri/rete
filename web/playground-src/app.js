@@ -11512,20 +11512,27 @@ self.onmessage = function (e) {
         `Nothing about the build is known from the file — which is different from ` +
         `a build that measured nothing.</p></div>`;
     }
+    // One row per question — which binary, which flags, which inputs, what it
+    // cost — so a 0.4 record reads in a glance. A field the record does not
+    // carry (older writers, a re-card, an in-browser build) gets no row at all.
     const p = b.params || {};
-    const flags = [
-      p.no_pyramid ? "--no-pyramid" : "", p.text_index ? "--text-index" : "",
-      p.materialize ? "--materialize" : "", p.reason ? "--reason" : "",
-    ].filter(Boolean).join(" ");
+    const run = b.run || {};
+    const flags = buildRecordFlags(p);
+    const runParts = buildRecordRunParts(run);
+    const sp = b.spill;
     const rows = [
       b.built_at ? cardRow("Built at", esc(String(b.built_at))) : "",
       b.builder ? cardRow("Builder", esc(String(b.builder))) : "",
-      p.command ? cardRow("Command", `<code>${esc(String(p.command))}</code>`) : "",
+      b.engine ? cardRow("Engine", buildRecordEngineHtml(b.engine, b.host, b.builder)) : "",
       flags ? cardRow("Flags", `<code>${esc(flags)}</code>`) : "",
-      p.pyramid_algo ? cardRow("Pyramid algorithm", esc(String(p.pyramid_algo))) : "",
-      p.memory_budget_mb != null ? cardRow("Memory budget", `${cardInt(p.memory_budget_mb)} MB`) : "",
-      p.codec ? cardRow("Section codec", esc(String(p.codec))) : "",
-      p.card_top_n != null ? cardRow("Card list cap", cardInt(p.card_top_n)) : "",
+      p.write || p.codec ? cardRow("Writer", esc(buildRecordWriter(p.write || {}, p.codec))) : "",
+      buildRecordInputsRow(b.inputs, b.inputs_omitted),
+      runParts.length ? cardRow("Run", esc(runParts.join(" · "))) : "",
+      sp ? cardRow("Spill", esc([
+        buildRecordCount(sp.chunks, "chunk"), buildRecordCount(sp.merge_passes, "merge pass"),
+        buildRecordCount(sp.sort_runs, "sorted run"), `peak ${formatBytes(sp.scratch_peak_bytes)} on disk`,
+      ].join(" · "))) : "",
+      b.recarded ? cardRow("Re-carded", buildRecordRecardHtml(b.recarded)) : "",
     ].filter(Boolean).join("");
     const ctx = (b.query_costs || {}).context || {};
     const nCosts = ((b.query_costs || {}).queries || []).length;
@@ -11535,6 +11542,12 @@ self.onmessage = function (e) {
       `<strong>outside the content hash</strong>: two builds of identical data ` +
       `differ here on purpose, so <code>rete verify</code> does not cover it.</p>` +
       (rows ? `<table class="card-tbl card-meta">${rows}</table>` : "") +
+      buildRecordPhasesHtml(run.phases) +
+      (b.recarded
+        ? `<p class="microcopy">Re-carded files keep the build's own fields above — the ` +
+          `data sections were copied byte for byte — while the card and its query costs ` +
+          `are the re-card's.</p>`
+        : "") +
       (nCosts
         ? `<p class="microcopy">It also measured what each of the ${cardInt(nCosts)} starter ` +
           `queries costs — shown with the queries above. ` +
@@ -11542,6 +11555,152 @@ self.onmessage = function (e) {
           (ctx.note ? esc(String(ctx.note)) : "") + `</p>`
         : "") +
       `</div>`;
+  }
+
+  // The flags in force, as the command line that would reproduce them. The
+  // record stores EFFECTIVE values (default or not, since 0.4.0), so this is
+  // the whole configuration rather than only what was typed.
+  function buildRecordFlags(p) {
+    const f = [];
+    const cmd = String(p.command || "").replace(/\s*--memory-budget-mb$/, "");
+    if (cmd) f.push(`rete ${cmd}`);
+    const val = (flag, v) => { if (v != null && v !== "") f.push(`${flag} ${v}`); };
+    const on = (flag, v) => { if (v) f.push(flag); };
+    val("--format", p.format);
+    val("--memory-budget-mb", p.memory_budget_mb);
+    on("--no-pyramid", p.no_pyramid);
+    if (!p.no_pyramid) val("--pyramid-algo", p.pyramid_algo);
+    on("--text-index", p.text_index);
+    val("--text-index-graphs", p.text_index_graphs);
+    (p.text_index_include || []).forEach((x) => val("--text-index-include", x));
+    (p.text_index_exclude || []).forEach((x) => val("--text-index-exclude", x));
+    on("--label-index", p.label_index);
+    on("--no-schema", p.no_schema);
+    val("--permutations", p.permutations);
+    val("--named-graphs", p.named_graphs);
+    on("--collapse-graphs", p.collapse_graphs === true);
+    on("--strict", p.strict === true);
+    val("--quoted-triple-syntax", p.quoted_triple_syntax);
+    val("--type-predicate", p.type_predicate);
+    on("--materialize", p.materialize);
+    on("--reason", p.reason);
+    if (p.card_file && p.card_file.name) val("--card-file", p.card_file.name);
+    on("--no-card-costs", p.card_costs === false);
+    return f.join(" ");
+  }
+
+  function buildRecordWriter(w, codec) {
+    return [
+      codec ? `${codec} sections` : "",
+      w.tile_kib != null ? `${w.tile_kib} KiB tiles` : "",
+      w.dict_chunk_kib != null ? `${w.dict_chunk_kib} KiB dictionary chunks` : "",
+      w.zstd_level != null ? `zstd ${w.zstd_level}${w.zstd_frame ? ` (${w.zstd_frame} frames)` : ""}` : "",
+      w.frequent_objects ? `${cardInt(w.frequent_objects)} frequent objects first` : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  // A commit hash is a link to the source it names; anything else ("unknown")
+  // is shown as it is.
+  function buildRecordEngineHtml(e, host, builder) {
+    const id = `${e.name || ""} ${e.version || ""}`.trim();
+    const commit = String(e.commit || "");
+    const commitHtml = /^[0-9a-f]{7,40}$/.test(commit)
+      ? `commit <a href="https://github.com/caviri/rete/commit/${esc(commit)}" target="_blank" ` +
+        `rel="noopener" title="${esc(commit)}"><code>${esc(commit.slice(0, 10))}</code></a>`
+      : commit ? `commit ${esc(commit)}` : "";
+    return [
+      // The Builder row already names it, as a rule.
+      id && id !== String(builder || "") ? esc(id) : "",
+      commitHtml,
+      e.target ? esc(e.target) : "",
+      // A debug binary's timings are not a release build's: say so plainly.
+      e.profile ? (e.profile === "release" ? "release" : `<strong>${esc(e.profile)}</strong>`) : "",
+      Array.isArray(e.features) && e.features.length ? esc(e.features.join(", ")) : "",
+      host && (host.os || host.arch) ? esc(`on ${host.os || "?"}/${host.arch || "?"}`) : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  // Each input: its file name (never a path), what it was read as, its size,
+  // and the head of its BLAKE3 (the whole digest on hover).
+  function buildRecordInputsRow(inputs, omitted) {
+    if (!Array.isArray(inputs) || !inputs.length) return "";
+    const SHOWN = 4;
+    const line = (i) => [
+      `<code>${esc(String(i.name || "?"))}</code>`,
+      esc([i.format, i.compression].filter(Boolean).join("+")),
+      i.bytes != null ? esc(formatBytes(i.bytes)) : "",
+      i.blake3 ? `<span class="card-hash" title="BLAKE3 ${esc(i.blake3)}">${esc(String(i.blake3).slice(0, 12))}…</span>` : "",
+    ].filter(Boolean).join(" · ");
+    // Past the ones listed here, plus the ones the record only counted.
+    const more = Math.max(0, inputs.length - SHOWN) + Number(omitted || 0);
+    const label = inputs.length + Number(omitted || 0) === 1 ? "Input" : "Inputs";
+    return cardRow(label,
+      inputs.slice(0, SHOWN).map(line).join("<br>") +
+      (more > 0 ? `<br><span class="microcopy">+ ${cardInt(more)} more</span>` : ""));
+  }
+
+  function buildRecordCount(n, noun) {
+    const v = Number(n) || 0;
+    return `${cardInt(v)} ${noun}${v === 1 ? "" : noun.endsWith("s") ? "es" : "s"}`;
+  }
+
+  function buildRecordSeconds(ms) {
+    const s = Number(ms) / 1000;
+    if (s < 10) return `${s.toFixed(2)} s`;
+    if (s < 600) return `${s.toFixed(1)} s`;
+    if (s < 6000) return `${(s / 60).toFixed(1)} min`;
+    const min = Math.round(s / 60); // the big builds run for hours
+    return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} min`;
+  }
+
+  function buildRecordRunParts(r) {
+    return [
+      r.wall_ms != null ? `${buildRecordSeconds(r.wall_ms)} wall` : "",
+      r.peak_rss_bytes != null ? `peak RAM ${formatBytes(r.peak_rss_bytes)}` : "",
+      r.memory_limit_bytes != null ? `limit ${formatBytes(r.memory_limit_bytes)}` : "",
+      r.cpus != null ? `${cardInt(r.cpus)} CPU${r.cpus === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
+  }
+
+  // The phases partition the run: a small table, folded, with the longest
+  // phases' share visible at a glance.
+  function buildRecordPhasesHtml(phases) {
+    if (!Array.isArray(phases) || !phases.length) return "";
+    const total = phases.reduce((a, ph) => a + (Number(ph.ms) || 0), 0) || 1;
+    const rows = phases.map((ph) =>
+      `<tr><td>${esc(String(ph.phase || "?"))}</td>` +
+      `<td class="n">${esc(buildRecordSeconds(ph.ms || 0))}</td>` +
+      `<td class="n">${Math.round((100 * (Number(ph.ms) || 0)) / total)}%</td>` +
+      `<td class="n">${ph.peak_rss_bytes != null ? esc(`peak ${formatBytes(ph.peak_rss_bytes)}`) : ""}</td></tr>`
+    ).join("");
+    return `<details class="card-sec card-build-phases"><summary>Phases ` +
+      `<span class="microcopy">(${cardInt(phases.length)})</span></summary>` +
+      `<table class="card-tbl">${rows}</table></details>`;
+  }
+
+  // `recarded` names the card's replacement: when, by what, from which file
+  // identity, with which flags, at what cost.
+  function buildRecordRecardHtml(rc) {
+    const rp = rc.params || {};
+    const how = [
+      rp.in_place ? "--in-place" : "",
+      rp.keep_curated ? "--keep-curated" : "",
+      rp.card_file && rp.card_file.name ? `--card-file ${rp.card_file.name}` : "",
+      rp.card_costs === false ? "--no-card-costs" : "",
+      rp.memory_budget_mb ? `--memory-budget-mb ${rp.memory_budget_mb}` : "",
+    ].filter(Boolean).join(" ");
+    const e = rc.engine || {};
+    const commit = /^[0-9a-f]{7,40}$/.test(String(e.commit || "")) ? ` (${String(e.commit).slice(0, 10)})` : "";
+    return [
+      rc.at ? esc(String(rc.at)) : "",
+      rc.by ? esc(`by ${rc.by}${commit}`) : "",
+      rc.from_content_hash
+        ? `from <span class="card-hash" title="content hash ${esc(rc.from_content_hash)}">` +
+          `${esc(String(rc.from_content_hash).slice(0, 12))}…</span>`
+        : "",
+      how ? `<code>${esc(how)}</code>` : "",
+      ...buildRecordRunParts(rc.run || {}).map(esc),
+    ].filter(Boolean).join(" · ");
   }
 
   function showCardTab(which) {

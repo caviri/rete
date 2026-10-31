@@ -1521,13 +1521,27 @@ given neither `--keep-curated` nor `--card-file`. A bare `rete repyramid --card`
 **silently drops** `title`, `license`, `source` and `description`: its card
 flags take the curated half from flags or `--card-file` and nowhere else.
 
-A card derived by `rete recard` differs from the one a build derives from the
-same data in two places only, both because a finished file is read rather than
-its input: its counts are over the **deduplicated** statements the file holds,
-and a subject typed more than once is classified by the class with the highest
-dictionary id (index order) rather than the last type in input order. On input
-with neither — no duplicate statements, no multi-typed subjects — the two
-cards are identical, byte for byte, which the test suite holds it to. `card_tools.py verify --old … --new …` exists to
+A card derived by `rete recard` differs from the one an **in-RAM** build
+derives from the same data in two places only, both because a finished file is
+read rather than its input: its counts are over the **deduplicated** statements
+the file holds, and a subject typed more than once is classified by the class
+with the highest dictionary id (index order) rather than the last type in input
+order. On input with neither — no duplicate statements, no multi-typed
+subjects — the two cards are identical, byte for byte, which the test suite
+holds it to. Where there are, the difference shows in the counts and in which
+`class_links` make the top 100: on OpenCitations, where every bibliographic
+resource is typed twice (`fabio:Expression` and its specific type), a re-card
+picks a different top 100 than the in-RAM build did. That is the reading, not
+the data: without a pyramid the two builds write the same data sections, and
+re-carding either file gives one and the same card. The
+**memory-bounded** build (`--memory-budget-mb`) has no such difference: it runs
+`rete recard`'s derivation on the file it just wrote, so the two cards are the
+same bytes on any input — the test suite pins it on a graph built to split
+them (duplicates, multi-typed subjects, a text index, named graphs, and more
+than 100 tied class links). The text-index signal (`token_table_bytes`) is
+measured from the file, and since 0.4.1 (G16) the in-RAM and memory-bounded
+builds write the same TEXT_INDEX bytes, so it agrees on all three paths.
+`card_tools.py verify --old … --new …` exists to
 fail the run when a curated field goes missing, and the two proofs a re-card
 owes — identical N-Quads out of both files, and every new starter query
 returning rows — are what `scripts/recard/recard.sh` runs before it moves

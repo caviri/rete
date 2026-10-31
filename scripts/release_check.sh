@@ -20,6 +20,14 @@ quality() {
   # rete-bench's features unified into the workspace graph. Clippy compiles
   # every target, so it is a type-check too; it adds about a second warm.
   cargo clippy --workspace --all-targets -- -D warnings
+  # The line above compiles rete-wasm for the HOST, where everything behind
+  # `cfg(target_arch = "wasm32")` is compiled out, so dead code in the browser
+  # engine reached main unseen (#347, G15). Lint it for its own target, in the
+  # three shapes that ship: the playground's, the npm/MCPB package's
+  # (`unicode-regex`), and the Asyncify build's. Warm, about 25 s for all three.
+  cargo clippy -p rete-wasm --target wasm32-unknown-unknown -- -D warnings
+  cargo clippy -p rete-wasm --target wasm32-unknown-unknown --features unicode-regex -- -D warnings
+  cargo clippy -p rete-wasm --target wasm32-unknown-unknown --features asyncify -- -D warnings
   cargo test --workspace --exclude rete-bench
   cargo test -p rete-core --no-default-features
   cargo build -p rete-core --all-features
