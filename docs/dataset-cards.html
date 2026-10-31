@@ -831,8 +831,8 @@ missing key. In the JSON-LD projection it is <code>rete:quotedTriples</code>, wi
 <code>rete:quotedTripleExportSurfaces</code> and <code>rete:quotedTripleExportDefault</code> alongside
 when there is a choice to make.</p>
 <p><strong>Measured, never stored</strong>, for the same reasons as the two signals above — and
-one that matters more here than anywhere else: header flag bit 2
-(<code>FLAG_HAS_QUOTED_TRIPLES</code>, <a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>) has been
+one that matters more here than anywhere else: the header's quoted-triples flag
+(bit 1 in format <code>0x06</code>, bit 2 in <code>0x05</code>, <a href="SPEC.html#41-header-128-bytes-little-endian">SPEC §4.1</a>) has been
 written by every build since quoted triples were supported, so this is an honest
 answer for <strong>every file that already exists</strong>. The 44 published scholar datasets
 report it today, with no re-card and no rebuild. A stored field would have read
@@ -1309,9 +1309,10 @@ feeds), <code>parse+chunk</code>, <code>frequent_objects</code> (its <code>--fre
 0.4.2), <code>dictionary</code>, <code>encode</code> and <code>named_graphs</code> (the memory-bounded build
 and <code>merge</code>), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
 <code>labels+schema</code>, <code>dictionary_section</code>, <code>index_permutations</code>, <code>serialize</code>,
-<code>starter_queries</code>, <code>write</code> and <code>content_hash</code> (the read of every hashed section
-that places a card after the data needs: the memory-bounded build, <code>merge</code> and
-<code>recard --in-place</code>). In the memory-bounded build the SCHEMA pass is
+<code>starter_queries</code>, <code>write</code> and <code>content_hash</code> (in <code>0x05</code>, the read of every
+hashed section that placing a card after the data needs: the memory-bounded
+build, <code>merge</code> and <code>recard --in-place</code>; in <code>0x06</code>, the write of the card
+region). In the memory-bounded build the SCHEMA pass is
 fed from the remap and permutation merges, so part of its cost sits in
 <code>encode</code> and <code>index_permutations</code>; <code>labels+schema</code> is only its finish.</p>
 <p>Where a phase is a card's own work — <code>card_derive</code> and <code>starter_queries</code> in the
@@ -1352,11 +1353,13 @@ written over that reservation <strong>in place</strong>, padded with spaces — 
 trailing whitespace, and every reader of the section (serde, <code>JSON.parse</code>,
 Python's <code>json</code>) accepts it. Nothing else in the file moves; the wall time and
 peak RSS cover the final write. The padding is a few hundred bytes.</p>
-<p>The memory-bounded build reserves nothing, and neither does <code>rete merge</code>: the
-card and record are written
-together <strong>after the data</strong>, once everything they describe is on disk, and the
-record is sealed just before that write — its run covers every phase, the
-content hash included, but not the last few KB written.</p>
+<p>The memory-bounded build and <code>rete merge</code> write the card and the record once
+everything they describe is on disk: into the card region of the <code>0x06</code> file,
+with the record reserved at its widest form (every starter-query cost at
+<code>u64::MAX</code>), then the costs are measured again on the file as written and the
+sealed record patched into its reservation. In <code>0x06</code> a starter query's bytes
+depend on the layout, card region included, since the open reads the first
+64 KiB.</p>
 <h3 id="reproducible-records">Reproducible records</h3>
 <p>Without help, two builds of the same input differ in this section — the
 timestamps, the wall times, the peak RSS — and only here: the comparison to
@@ -1793,13 +1796,14 @@ section copied byte for byte, the offsets fixed, the content hash recomputed.
 Nothing is rebuilt, so nothing about the data can change, and the proof of that
 is byte identity of every data section (<code>card_tools.py sections-equal</code>), not a
 comparison of N-Quads exports. <strong><code>--in-place</code></strong> does the same without the copy:
-the new card and build record are appended after the data and the header is
+on a <code>0x06</code> file the new card and build record go into the card region's free
+space beside the old ones (on <code>0x05</code>, after the data) and the header is
 rewritten last, so a crash leaves either the old file or the new one, and the
 only writes are a few KB (<a href="cli.html#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify">cli.md</a>).</p>
 <table><thead><tr><th>the file's problem</th><th>command</th><th>ceiling</th></tr></thead><tbody>
 <tr><td>only the build record is missing; the queries answer</td><td><code>rete card-audit &lt;file&gt; --measure --write-costs</code></td><td>none from the rewrite — but an old card's <em>queries</em> need the RAM (below)</td></tr>
 <tr><td>the card is stale or its queries are broken</td><td><code>rete recard &lt;in&gt; -o &lt;out&gt; --keep-curated</code> (or <code>--card-file &lt;curated&gt;</code>)</td><td><strong>none from the statement count</strong>: memory is ~1 B per subject + <code>--memory-budget-mb</code> (1 GiB)</td></tr>
-<tr><td>same, on a file too big to copy</td><td><code>rete recard &lt;file&gt; --in-place --keep-curated</code></td><td>the same memory; disk: a few KB, plus the old card left behind as dead bytes</td></tr>
+<tr><td>same, on a file too big to copy</td><td><code>rete recard &lt;file&gt; --in-place --keep-curated</code></td><td>the same memory; disk: a few KB (on <code>0x05</code>, plus the old card left behind as dead bytes)</td></tr>
 <tr><td>the card <em>and</em> the pyramid or text index must change</td><td><code>rete repyramid &lt;in&gt; -o &lt;out&gt; --card --card-file &lt;curated&gt;</code></td><td><strong>~80 M statements</strong> (~70–100 M; ≈ 2 GB of a typically dense <code>.rete</code>)</td></tr>
 <tr><td>same, but past that</td><td><code>rete export &lt;in&gt; --format nq</code> → <code>rete build … --card-file &lt;curated&gt;</code></td><td><strong>~150 M statements</strong>, at ~2.5× the wall clock and 9–15× the <code>.rete</code> in staged text on disk</td></tr>
 </tbody></table>

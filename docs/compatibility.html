@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Compatibility & Cypher · rete docs</title>
-  <meta name="description" content="Format byte 0x05 is stable format generation 1, frozen on 2026-07-14 and first released in Rete 0.3.0. Files carrying the experimental generations 0x01–0x04 predate that freeze and must be rebuilt…" />
+  <meta name="description" content="Every writer now writes format byte 0x06, generation 2 (SPEC §4): a 128-byte header, a root block and the Dataset Card at the front of the file, inside the first 64 KiB a reader fetches, and the data…" />
   <link rel="canonical" href="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Compatibility &amp; Cypher · rete docs" />
-  <meta property="og:description" content="Format byte 0x05 is stable format generation 1, frozen on 2026-07-14 and first released in Rete 0.3.0. Files carrying the experimental generations 0x01–0x04 predate that freeze and must be rebuilt…" />
+  <meta property="og:description" content="Every writer now writes format byte 0x06, generation 2 (SPEC §4): a 128-byte header, a root block and the Dataset Card at the front of the file, inside the first 64 KiB a reader fetches, and the data…" />
   <meta property="og:url" content="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Compatibility &amp; Cypher · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Compatibility &amp; Cypher · rete docs" />
-  <meta name="twitter:description" content="Format byte 0x05 is stable format generation 1, frozen on 2026-07-14 and first released in Rete 0.3.0. Files carrying the experimental generations 0x01–0x04 predate that freeze and must be rebuilt…" />
+  <meta name="twitter:description" content="Every writer now writes format byte 0x06, generation 2 (SPEC §4): a 128-byte header, a root block and the Dataset Card at the front of the file, inside the first 64 KiB a reader fetches, and the data…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta name="rete:section" content="Guides" />
   <script>
@@ -610,6 +610,27 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <article class="content">
 <h1 id="compatibility-validation--interop">Compatibility, validation &amp; interop</h1>
 <h2 id="stable-rete-file-compatibility">Stable <code>.rete</code> file compatibility</h2>
+<h3 id="format-0x06-generation-2">Format <code>0x06</code> (generation 2)</h3>
+<p>Every writer now writes format byte <code>0x06</code>, generation 2 (<a href="SPEC.html#4-file-layout">SPEC §4</a>):
+a 128-byte header, a root block and the Dataset Card at the front of the file,
+inside the first 64 KiB a reader fetches, and the data after them. Readers of
+this release read both generations; <strong>readers up to 0.4.2 cannot read <code>0x06</code></strong>.
+They refuse it by name (<code>unsupported .rete format 0x06; this Rete build reads 0x05..=0x05</code>), never misread it.</p>
+<ul>
+<li><strong>Convert, do not rebuild.</strong> <code>rete convert in.rete -o out.rete</code> turns a <code>0x05</code>
+file into <code>0x06</code> from its sections: payload copied, never re-parsed. A file
+whose only labels are the pyramid's legacy label block gains the label index
+<code>build --label-index</code> writes (<code>--no-label-index</code> skips it); a file with
+per-graph named graphs is re-encoded as a quad index.</li>
+<li><strong>Identity.</strong> The content hash of a converted file is the content hash a
+fresh build of the same data writes. It is not the <code>0x05</code> file's hash: the
+generation is part of the identity.</li>
+<li><strong>Publish after the readers.</strong> Convert a published dataset only once the
+readers that fetch it (playground, MCPB, the Python and JS packages) run this
+release.</li>
+<li><strong><code>0x05</code> stays readable</strong> until the catalog is converted.</li>
+</ul>
+<h3 id="format-0x05-generation-1">Format <code>0x05</code> (generation 1)</h3>
 <p>Format byte <code>0x05</code> is stable format generation 1, frozen on <strong>2026-07-14</strong> and
 first released in Rete <strong>0.3.0</strong>. Files carrying the experimental generations
 <code>0x01</code>–<code>0x04</code> predate that freeze and must be rebuilt from RDF source. Every
@@ -816,10 +837,11 @@ in place). Both are invisible to older readers: verified with the released
 prints its known subset with no warning and <code>verify</code> passes (the section is
 outside the content hash).</p>
 <h3 id="a-card-after-the-data">A card after the data</h3>
-<p>The memory-bounded build, <code>rete merge</code> and <code>rete recard --in-place</code> write the
-Dataset Card (and the build record beside it) <strong>after every other section</strong>
-instead of between the header and the dictionary
-(<a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>).
+<p>In <code>0x05</code>, the memory-bounded build, <code>rete merge</code> and <code>rete recard --in-place</code>
+wrote the Dataset Card (and the build record beside it) <strong>after every other
+section</strong> instead of between the header and the dictionary
+(<a href="SPEC.html#49-generation-1-0x05-legacy-read-only">SPEC §4.9</a>). In <code>0x06</code> the card
+has one place, the card region at the front.
 Nothing about the format changes: the header has always been the directory,
 every reader has always located the card through it, and the content hash folds
 the card first wherever it lies — the same card on the same data hashes the same
