@@ -31,6 +31,11 @@ __version__ = _rete.__version__
 #: Version of the Rust engine compiled into this wheel. Tracks `__version__`'s
 #: major.minor; the patch components move independently.
 __engine_version__ = _rete.__engine_version__
+#: The engine features compiled into this wheel. A native wheel lists
+#: ``parallel`` (builds and dictionary decodes use every core; cap them with
+#: ``RAYON_NUM_THREADS``) and ``http`` (the CLI's range reader behind
+#: ``open(url)``); a Pyodide wheel lists neither.
+__engine_features__ = tuple(_rete.__engine_features__)
 __all__ = ["open", "build", "Builder", "Graph", "Term", "DEFAULT_GRAPH"]
 
 
@@ -629,8 +634,10 @@ class Graph:
 class _XhrRangeReader:
     """HTTP `Range` reader for Pyodide (JupyterLite, marimo WASM): synchronous
     ``XMLHttpRequest`` with a binary response, which browsers allow only in
-    web workers — where those tools run their kernels. Same contract as the
-    native reader: the server must answer 206, short bodies are errors."""
+    web workers — where those tools run their kernels. The server must answer
+    206 and short bodies are errors. (The native reader also serves a host
+    that ignores ``Range`` from its whole body, up to 256 MiB; this one does
+    not.)"""
 
     def __init__(self, url: str, headers: Optional[Mapping[str, str]] = None):
         from js import XMLHttpRequest  # only importable under Pyodide

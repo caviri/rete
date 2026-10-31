@@ -417,6 +417,15 @@ check "why-url"     "index_permutation|POS|tile" -- "$B" why-url "http://127.0.0
 check "sparql-url seq" "Bob|solution" -- env RETE_HTTP_CONCURRENCY=1 RETE_HTTP_RETRIES=0 "$B" sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "search-url label index" "Svobodová, Jana" -- "$B" search-url "http://127.0.0.1:8099/lab.rete" "svob"
 kill "$(cat "$T/srv.pid")" 2>/dev/null
+# A host that ignores Range (python's stock http.server answers 200 with the
+# whole body): a small file is kept and answers the same; one over the 256 MiB
+# cap (sparse, so it costs no disk) is refused by name, unread.
+mkdir -p "$T/plain" && cp "$T/web.rete" "$T/plain/web.rete" && truncate -s 300M "$T/plain/big.rete"
+( cd "$T/plain" && python3 -m http.server 8098 --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > "$T/plain.pid" )
+sleep 1
+check "sparql-url range-ignoring host" "Bob|solution" -- "$B" sparql-url "http://127.0.0.1:8098/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check_code "sparql-url whole body over cap" 1 "ignored the Range header.*not kept in memory" -- "$B" sparql-url "http://127.0.0.1:8098/big.rete" "SELECT * WHERE { ?s ?p ?o } LIMIT 1"
+kill "$(cat "$T/plain.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="
 # Flip one byte of the stored content hash (header bytes 8..24): the file still

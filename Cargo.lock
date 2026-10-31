@@ -1412,6 +1412,7 @@ dependencies = [
  "sha2",
  "spargebra 0.3.5",
  "thiserror",
+ "ureq",
  "zstd",
 ]
 

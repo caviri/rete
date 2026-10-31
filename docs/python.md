@@ -33,10 +33,16 @@ g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
 All four paths return the same `Graph`. Remote and local opens are **lazy**:
 the header, dictionary directory, and index tile directories load up front;
 tile payloads fault in per query and stay cached on the handle, so repeated
-queries get faster. The host serving a remote file must answer `Range`
+queries get faster. The host serving a remote file should answer `Range`
 requests with `206 Partial Content` (any S3/R2/CDN/GitHub URL does — see
-[Hosting your .rete](hosting.md)); anything else is a loud error, never a
-silently wrong slice.
+[Hosting your .rete](hosting.md)). A host that ignores `Range` and sends the
+whole file (`200`) is served from that body when it is at most 256 MiB, and
+refused by name above that; any other answer is a loud error, never a
+silently wrong slice. Remote reads go through the CLI's own HTTP reader:
+kept-alive connections, up to 16 ranges in flight, nearby ranges merged,
+transient failures retried, tuned by the same `RETE_HTTP_*` variables
+([CLI: Over HTTP](cli.md#over-http)). The Pyodide build reads through the
+browser instead (below) and still requires `206`.
 
 `g.stats()` reports the physical traffic since open —
 `{"fileLength": ..., "bytes": ..., "requests": ...}` — the number that makes
@@ -322,9 +328,21 @@ any CORS-enabled host.
 
 - **No silent partial results**: if a range fetch fails mid-query on a lazy
   handle, the query raises instead of returning fewer rows.
-- **The GIL is released** around every engine call, and remote range reads fan
-  out over an internal thread pool (16-way, like the CLI and the playground) —
-  other Python threads keep running during long queries.
+- **The GIL is released** around every engine call — opening, `query()`,
+  dumps and exports, searches, SHACL, `build()` and card derivation — so other
+  Python threads keep running during long calls, and two threads can query or
+  build at once.
+- **Native wheels use every core** inside those calls (since 0.4.2): a build's
+  sorts, permutations and compression and a query's dictionary decodes run on
+  rete-core's `parallel` feature (rayon), with the same bytes and rows as a
+  single-threaded build. `RAYON_NUM_THREADS=n` caps the pool; set it before the
+  first call. Remote range reads fan out over the HTTP reader's own threads
+  (16-way, like the CLI and the playground). `rete_graph.__engine_features__`
+  lists `parallel` and `http` on a native wheel; the Pyodide wheels have no
+  threads and list neither. As with any rayon user, the pool does not
+  survive `os.fork()`: a child forked after its parent built or queried must
+  not call into the engine (it can hang). With `multiprocessing`, use the
+  `spawn` or `forkserver` start method.
 - Errors surface as ordinary exceptions: `ValueError` for bad SPARQL or RDF
   input, `RuntimeError` for I/O and format problems.
 

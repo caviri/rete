@@ -79,6 +79,10 @@ zstd = { workspace = true, optional = true }
 # Data-parallel query evaluator (prototype). Behind the `parallel` feature so it
 # is never pulled into wasm (the wasm crate builds with --no-default-features).
 rayon = { version = "1", optional = true }
+# Blocking HTTP(S) range reads (the `http` feature): the reader the CLI, the
+# Python wheels and the R package share. rustls via `tls`, so no system OpenSSL
+# anywhere a native client lands. Never in a wasm build.
+ureq = { version = "2", optional = true, default-features = false, features = ["tls"] }
 
 [dev-dependencies]
 # Property-based testing (tests only — never shipped, so the dep weight and the
@@ -122,6 +126,11 @@ rdf12-turtle = ["dep:oxttl12", "dep:oxrdf12"]
 # Prototype data-parallel query evaluator. NOT default; wasm must never enable it
 # (wasm has no threads). Enables the `parallel` module + `rayon`.
 parallel = ["dep:rayon"]
+# `rete_core::http::HttpRangeReader`: kept-alive, parallel, coalesced HTTP(S)
+# range reads with retries, and the bounded whole-body fallback for hosts that
+# ignore `Range`. Native only (it opens sockets and spawns threads); the browser
+# engine has its own readers.
+http = ["dep:ureq"]
 # getrandom's browser backend (crypto.getRandomValues, via js-sys/wasm-bindgen),
 # for BOTH getrandom lines: 0.2 (SPARQL RAND/UUID/BNODE) and 0.3 (oxrdf 0.3's
 # blank-node ids, reached only with `rdf12-turtle`). Enable ONLY for a wasm

@@ -312,6 +312,18 @@ jobs:
             -e CARGO_TARGET_DIR=/work/target
             -v ${{ github.workspace }}:/work -w /work ${{ needs.image.outputs.tag }}
         run: bash tests/interop/oxigraph.sh
+      # The other third-party server: a real nginx with `max_ranges 0`, which
+      # answers every range request 200 with the whole file. The CLI's reader
+      # must keep a small body (one GET, the same rows) and refuse a 300 MiB one
+      # by name without downloading it. python-test.yml runs the wheel's side.
+      - name: A host that ignores Range (nginx), through the CLI
+        env:
+          RETE_DEV_RUN: >-
+            docker run --rm --user root
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup
+            -e CARGO_TARGET_DIR=/work/target
+            -v ${{ github.workspace }}:/work -w /work ${{ needs.image.outputs.tag }}
+        run: bash tests/interop/range_ignoring_host.sh
 
   shellcheck:
     name: shellcheck

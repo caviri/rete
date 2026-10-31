@@ -297,3 +297,8 @@ pub use text_index::{
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 #[doc(hidden)]
 pub use triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder, ZoneMap};
+
+/// HTTP(S) range reads for native hosts (the `http` feature): the reader the
+/// CLI and the Python and R clients share.
+#[cfg(feature = "http")]
+pub mod http;

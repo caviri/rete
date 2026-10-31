@@ -9,11 +9,13 @@ on:
     paths:
       - "clients/python/**"
       - "crates/rete-core/**"
+      - "tests/interop/range_ignoring_host.sh"
       - ".github/workflows/python-test.yml"
   pull_request:
     paths:
       - "clients/python/**"
       - "crates/rete-core/**"
+      - "tests/interop/range_ignoring_host.sh"
       - ".github/workflows/python-test.yml"
   workflow_dispatch:
 
@@ -58,3 +60,9 @@ jobs:
           uv pip install --python .venv/bin/python dist/*.whl pytest pandas rdflib pyoxigraph==0.5.11
           RETE_REMOTE_URL=https://data.graphplaza.com/boe/boe.rete \
             .venv/bin/python -m pytest clients/python/tests -q
+      # The wheel against a real nginx that ignores Range (`max_ranges 0`): a
+      # small file is kept whole and answers the same rows, a 300 MiB one is
+      # refused by name without being downloaded. ci.yml's `interop` job runs
+      # the CLI's side of the same script.
+      - name: A host that ignores Range (nginx), through the wheel
+        run: bash tests/interop/range_ignoring_host.sh --no-cli --wheel dist/*.whl

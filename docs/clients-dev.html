@@ -629,7 +629,7 @@ floors, MSRV) never see binding-only changes.</p>
   Cargo.toml               # cdylib `_rete`; pyo3 abi3-py39, rete-core, ureq
   pyproject.toml           # maturin backend; the PyPI version lives HERE
   src/lib.rs               # bindings, mirroring the wasm Graph/RemoteGraph
-  src/readers.rs           # Local (pread) / Http (Range) / Py (callback) readers
+  src/readers.rs           # Local (pread) / Http (rete-core's) / Py (callback) readers
   python/rete_graph/       # pure-Python layer: Term parsing, open(), Builder
   tests/                   # pytest; Range-capable local HTTP fixture
   examples/tutorial.ipynb  # executed notebook (re-run it when the API changes)
@@ -640,8 +640,11 @@ floors, MSRV) never see binding-only changes.</p>
 JSON envelopes, same lazy-open pipeline (counting reader → block cache →
 <code>open_ranged_lazy</code>), same incomplete-fetch-is-an-error contract.</li>
 <li>Every engine call runs inside <code>Python::detach</code> (PyO3 ≥ 0.26's name for
-<code>allow_threads</code>: the GIL is released); the HTTP reader's
-16-way <code>read_many</code> matches the CLI and the browser fetch pool.</li>
+<code>allow_threads</code>: the GIL is released). The native wheel builds rete-core
+with <code>parallel</code> (rayon: builds and dictionary decodes use every core) and
+<code>http</code> (the CLI's HTTP reader: 16 in flight, coalesced, retried, bounded
+whole-body fallback); <code>AnyReader</code> must forward <code>concurrency()</code> as well as
+<code>read_many</code>, or the planner sees a serial reader.</li>
 <li>The engine emits N-Triples tokens (<code>&lt;iri&gt;</code>); the pure-Python layer converts
 them to clean values everywhere (<code>Term</code>, <code>schema()</code>, <code>graph_names()</code>,
 searches). Keep new bindings consistent with that.</li>
@@ -725,8 +728,10 @@ pure-Python <code>_XhrRangeReader</code> — synchronous <code>XMLHttpRequest</c
 responses, which browsers allow <strong>only in web workers</strong>; JupyterLite and
 marimo run their kernels there. The engine stays fully synchronous: no
 Asyncify anywhere.</li>
-<li><strong>No threads in wasm</strong> → with the HTTP reader gone, nothing spawns threads;
-the Python-callback reader uses the default sequential <code>read_many</code>.</li>
+<li><strong>No threads in wasm</strong> → with the HTTP reader gone and rete-core's
+<code>parallel</code> feature off (both sit in the <code>cfg(not(target_os = "emscripten"))</code>
+dependency table), nothing spawns threads; the Python-callback reader uses
+the default sequential <code>read_many</code>.</li>
 <li><strong>No C zstd encoder</strong> → rete-core builds without the <code>compression</code> feature;
 reads of compressed files still work (pure-Rust decoder), in-browser
 <code>build()</code> writes codec NONE like the playground's Build tab.</li>
@@ -955,8 +960,9 @@ Rust toolchain — and it exercises the exact source layout CRAN will see.</p>
 <li><code>clients/&lt;lang&gt;/</code> with its own toolchain and lockfile; bind <code>rete-core</code>
 natively (R: extendr; Go: cgo over a small C ABI crate).</li>
 <li>Mirror the wasm <code>Graph</code>/<code>RemoteGraph</code> surface and the reader contract:
-HTTP Range with a hard 206 requirement, short reads are errors, batched
-<code>read_many</code> fetched concurrently, block cache on top, and the
+use rete-core's <code>http</code> reader (206, or a whole body up to 256 MiB; short
+reads are errors; batched <code>read_many</code> fetched concurrently), forward
+<code>concurrency()</code>, put the block cache on top, and keep the
 incomplete-fetch guard before returning results.</li>
 <li>Parse the shared JSON envelopes; present clean IRIs/values, not <code>&lt;tokens&gt;</code>.</li>
 <li>Two workflows: <code>&lt;lang&gt;-test.yml</code> paths-filtered to the client + rete-core,

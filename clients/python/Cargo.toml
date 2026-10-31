@@ -33,8 +33,18 @@ serde_json = "1"
 # Native-only: browsers have no sockets, so the blocking HTTP reader and the
 # SERVICE client are compiled out on emscripten — there, remote reads route
 # through the Python-object reader (sync XHR in the pure-Python layer).
+#
+# `parallel` (rayon) is native-only for the same reason: Pyodide has no
+# threads. It spreads a build's sorts, permutations and tile/chunk compression
+# over every core, and a query's dictionary decodes over a small pool; the
+# bytes are the same as the serial build's. `http` is rete-core's range reader,
+# the one the CLI uses (kept-alive, 16 in flight, coalesced, retried, and the
+# bounded whole-body fallback for hosts that ignore Range).
+#
+# Cargo's feature resolver 2 (edition 2021) enables these only when the target
+# matches, so the emscripten build keeps the feature-less base dependency above.
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
-rete-core = { path = "../../crates/rete-core", features = ["compression"] }
-# Blocking HTTP(S) range reads + SERVICE federation, mirroring rete-cli
-# (rustls via the `tls` feature — no system OpenSSL anywhere wheels land).
+rete-core = { path = "../../crates/rete-core", features = ["compression", "parallel", "http"] }
+# SERVICE federation's HTTP client, mirroring rete-cli (rustls via the `tls`
+# feature — no system OpenSSL anywhere wheels land).
 ureq = { version = "2", default-features = false, features = ["tls"] }

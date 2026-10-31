@@ -41,12 +41,15 @@ rm -f "$STAGE/rete/src/rust/rete-core/.cargo-ok" \
       "$STAGE/rete/src/rust/rete-core/.cargo_vcs_info.json" \
       "$STAGE/rete/src/rust/rete-core/Cargo.toml.orig"
 
-sed -i "s|path = '../../../../crates/rete-core'|path = 'rete-core'|" \
+# Every declaration of the dependency (the native-only target table names it a
+# second time, to add `parallel`), not just the first.
+sed -i "s|path = '../../../../crates/rete-core'|path = 'rete-core'|g" \
     "$STAGE/rete/src/rust/Cargo.toml"
-grep -q "path = 'rete-core'" "$STAGE/rete/src/rust/Cargo.toml" || {
-    echo "ERROR: failed to re-point the rete-core dependency" >&2
+if ! grep -q "path = 'rete-core'" "$STAGE/rete/src/rust/Cargo.toml" ||
+   grep -q "crates/rete-core'" "$STAGE/rete/src/rust/Cargo.toml"; then
+    echo "ERROR: failed to re-point every rete-core dependency" >&2
     exit 1
-}
+fi
 
 if [ "$VENDOR" = "--vendor" ]; then
     echo "=== vendoring registry crates for offline builds ==="

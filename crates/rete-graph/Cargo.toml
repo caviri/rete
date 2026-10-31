@@ -25,4 +25,5 @@ default = ["compression"]
 # — a facade that silently dropped a feature would be worse than no facade.
 compression = ["rete-core/compression"]
 parallel = ["rete-core/parallel"]
+http = ["rete-core/http"]
 wasm-js = ["rete-core/wasm-js"]

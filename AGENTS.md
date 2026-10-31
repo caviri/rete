@@ -207,6 +207,14 @@ N-Triples `UCHAR` escapes while rete stores the token verbatim, so a fixture
 must not contain both spellings of one IRI or the round-trip count silently
 drops by one.
 
+`tests/interop/range_ignoring_host.sh` is its sibling for HTTP: a real nginx
+with `max_ranges 0` (every range request answered `200` with the whole file)
+against the reader the CLI and the Python and R clients share (rete-core's
+`http` feature). A small file must be kept whole — one GET, the same rows — and
+a 300 MiB one refused by name without being downloaded (nginx's own log says
+how many bytes it sent). The `interop` job runs the CLI side;
+`python-test.yml` runs it with `--no-cli --wheel dist/*.whl`.
+
 ### The scholar export driver
 
 `scripts/export_scholar_nquads.sh` publishes the N-Quads constellation and

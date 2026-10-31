@@ -635,10 +635,16 @@ g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
 <p>All four paths return the same <code>Graph</code>. Remote and local opens are <strong>lazy</strong>:
 the header, dictionary directory, and index tile directories load up front;
 tile payloads fault in per query and stay cached on the handle, so repeated
-queries get faster. The host serving a remote file must answer <code>Range</code>
+queries get faster. The host serving a remote file should answer <code>Range</code>
 requests with <code>206 Partial Content</code> (any S3/R2/CDN/GitHub URL does — see
-<a href="hosting.html">Hosting your .rete</a>); anything else is a loud error, never a
-silently wrong slice.</p>
+<a href="hosting.html">Hosting your .rete</a>). A host that ignores <code>Range</code> and sends the
+whole file (<code>200</code>) is served from that body when it is at most 256 MiB, and
+refused by name above that; any other answer is a loud error, never a
+silently wrong slice. Remote reads go through the CLI's own HTTP reader:
+kept-alive connections, up to 16 ranges in flight, nearby ranges merged,
+transient failures retried, tuned by the same <code>RETE_HTTP_*</code> variables
+(<a href="cli.html#over-http">CLI: Over HTTP</a>). The Pyodide build reads through the
+browser instead (below) and still requires <code>206</code>.</p>
 <p><code>g.stats()</code> reports the physical traffic since open —
 <code>{"fileLength": ..., "bytes": ..., "requests": ...}</code> — the number that makes
 the lazy story visible: a <code>LIMIT 3</code> scan of a 6.9 MB remote file fetches
@@ -862,9 +868,21 @@ any CORS-enabled host.</p>
 <ul>
 <li><strong>No silent partial results</strong>: if a range fetch fails mid-query on a lazy
 handle, the query raises instead of returning fewer rows.</li>
-<li><strong>The GIL is released</strong> around every engine call, and remote range reads fan
-out over an internal thread pool (16-way, like the CLI and the playground) —
-other Python threads keep running during long queries.</li>
+<li><strong>The GIL is released</strong> around every engine call — opening, <code>query()</code>,
+dumps and exports, searches, SHACL, <code>build()</code> and card derivation — so other
+Python threads keep running during long calls, and two threads can query or
+build at once.</li>
+<li><strong>Native wheels use every core</strong> inside those calls (since 0.4.2): a build's
+sorts, permutations and compression and a query's dictionary decodes run on
+rete-core's <code>parallel</code> feature (rayon), with the same bytes and rows as a
+single-threaded build. <code>RAYON_NUM_THREADS=n</code> caps the pool; set it before the
+first call. Remote range reads fan out over the HTTP reader's own threads
+(16-way, like the CLI and the playground). <code>rete_graph.__engine_features__</code>
+lists <code>parallel</code> and <code>http</code> on a native wheel; the Pyodide wheels have no
+threads and list neither. As with any rayon user, the pool does not
+survive <code>os.fork()</code>: a child forked after its parent built or queried must
+not call into the engine (it can hang). With <code>multiprocessing</code>, use the
+<code>spawn</code> or <code>forkserver</code> start method.</li>
 <li>Errors surface as ordinary exceptions: <code>ValueError</code> for bad SPARQL or RDF
 input, <code>RuntimeError</code> for I/O and format problems.</li>
 </ul>

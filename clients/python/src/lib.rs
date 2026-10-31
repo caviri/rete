@@ -5,8 +5,12 @@
 //! Python values by the pure-Python `rete_graph` wrapper package.
 //!
 //! Every potentially slow call runs inside `Python::detach` (PyO3's name for
-//! the old `allow_threads` since 0.26), so remote range fetches (which fan out
-//! over a thread pool) never hold the GIL.
+//! the old `allow_threads` since 0.26): opening, querying, dumping, searching,
+//! validating, building and deriving a card never hold the GIL, so other
+//! Python threads keep running. Inside those calls the native wheels use more
+//! than one core: remote range fetches fan out over the HTTP reader's threads,
+//! and rete-core's `parallel` feature (rayon, off on Pyodide) spreads a build's
+//! sorts and compression and a query's dictionary decodes across the machine.
 
 mod readers;
 
@@ -276,12 +280,14 @@ impl Graph {
     }
 
     /// The named-graph IRIs of a dataset.
-    fn graph_names(&self) -> Vec<String> {
-        self.rete
-            .graph_names()
-            .into_iter()
-            .map(str::to_owned)
-            .collect()
+    fn graph_names(&self, py: Python<'_>) -> Vec<String> {
+        py.detach(|| {
+            self.rete
+                .graph_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        })
     }
 
     /// Label prefix search over the pyramid's label index:
@@ -399,7 +405,8 @@ fn open_path(py: Python<'_>, path: String) -> PyResult<Graph> {
 }
 
 /// Open a remote `.rete` over HTTP range requests, lazily. `headers` ride on
-/// every request (auth tokens, custom User-Agent). Native-only: the Pyodide
+/// every request (auth tokens, custom User-Agent). The reader is rete-core's,
+/// tuned by the CLI's `RETE_HTTP_*` variables. Native-only: the Pyodide
 /// build's `open()` routes URLs through the sync-XHR Python reader instead.
 #[cfg(not(target_os = "emscripten"))]
 #[pyfunction]
@@ -412,7 +419,9 @@ fn open_url(
     let headers: Vec<(String, String)> =
         headers.map(|h| h.into_iter().collect()).unwrap_or_default();
     py.detach(|| {
-        let reader = HttpRangeReader::open(&url, headers).map_err(runtime_err)?;
+        let policy = rete_core::http::FetchPolicy::from_env();
+        let reader =
+            HttpRangeReader::open_with_headers(&url, headers, policy).map_err(runtime_err)?;
         open_lazy(AnyReader::Http(reader))
     })
 }
@@ -695,5 +704,19 @@ fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The binding's version tracks the binding; this reports the engine actually
     // compiled into the wheel, which is what "does my install support X?" means.
     m.add("__engine_version__", rete_core::VERSION)?;
+    // The rete-core features compiled into this wheel: a native wheel has
+    // `parallel` and `http`, a Pyodide one has neither.
+    m.add("__engine_features__", engine_features())?;
     Ok(())
+}
+
+/// The rete-core features this module was built with: the ones a build
+/// record names (`compression`, `parallel`, …), as rete-core reports them, and
+/// `http` when the native range reader (`open_url`) is compiled in.
+fn engine_features() -> Vec<&'static str> {
+    let mut f = rete_core::build_trace::enabled_features();
+    if cfg!(not(target_os = "emscripten")) {
+        f.push("http");
+    }
+    f
 }

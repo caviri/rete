@@ -1948,10 +1948,21 @@ where both start;</li>
 (never past 8 MiB), and slices them apart again;</li>
 <li>retries a transient failure (a dropped connection, a short body, <code>408</code>,
 <code>429</code>, a <code>5xx</code>) twice with backoff, and fails at once on a permanent one: a
-host that ignores <code>Range</code> (<code>200</code> for a range request), a <code>Content-Range</code> for
-the wrong offset, a <code>404</code>. One range failing fails the batch, and a query
-never returns a partial answer as if it were whole.</li>
+<code>Content-Range</code> for the wrong offset, a <code>404</code>. One range failing fails the
+batch, and a query never returns a partial answer as if it were whole;</li>
+<li>copes with a host that <strong>ignores <code>Range</code></strong> (a plain static server, a proxy
+that strips the header: <code>200</code> and the whole body for a range request). Since
+0.4.2 that body is kept when it is the file (the length the <code>HEAD</code> reported)
+and at most <strong>256 MiB</strong>, the browser readers' cap, and every later read is a
+slice of it, with no further request; a larger body is refused by name
+(<code>the host ignored the Range header … not kept in memory</code>) without being
+read. Before 0.4.2 every such host was refused. A host that omits
+<code>Content-Length</code> on <code>HEAD</code>, or refuses <code>HEAD</code> (a GET-only presigned URL), is
+measured with a <code>bytes=0-0</code> GET instead.</li>
 </ul>
+<p>The Python and R clients read remote files through this same reader (it lives
+in rete-core, behind its <code>http</code> feature), so all of the above, and the knobs
+below, apply to <code>rete_graph.open(url)</code> and <code>rete_open(url)</code> too.</p>
 <p>Knobs: <code>RETE_HTTP_CONCURRENCY</code> (requests in flight, 1–64, default 16; <code>1</code>
 fetches one range at a time, the behaviour before 0.4.0),
 <code>RETE_HTTP_COALESCE_KB</code> (default 32; <code>0</code> merges only touching ranges) and

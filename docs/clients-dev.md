@@ -28,7 +28,7 @@ clients/python/
   Cargo.toml               # cdylib `_rete`; pyo3 abi3-py39, rete-core, ureq
   pyproject.toml           # maturin backend; the PyPI version lives HERE
   src/lib.rs               # bindings, mirroring the wasm Graph/RemoteGraph
-  src/readers.rs           # Local (pread) / Http (Range) / Py (callback) readers
+  src/readers.rs           # Local (pread) / Http (rete-core's) / Py (callback) readers
   python/rete_graph/       # pure-Python layer: Term parsing, open(), Builder
   tests/                   # pytest; Range-capable local HTTP fixture
   examples/tutorial.ipynb  # executed notebook (re-run it when the API changes)
@@ -40,8 +40,11 @@ Design invariants worth keeping:
   JSON envelopes, same lazy-open pipeline (counting reader → block cache →
   `open_ranged_lazy`), same incomplete-fetch-is-an-error contract.
 - Every engine call runs inside `Python::detach` (PyO3 ≥ 0.26's name for
-  `allow_threads`: the GIL is released); the HTTP reader's
-  16-way `read_many` matches the CLI and the browser fetch pool.
+  `allow_threads`: the GIL is released). The native wheel builds rete-core
+  with `parallel` (rayon: builds and dictionary decodes use every core) and
+  `http` (the CLI's HTTP reader: 16 in flight, coalesced, retried, bounded
+  whole-body fallback); `AnyReader` must forward `concurrency()` as well as
+  `read_many`, or the planner sees a serial reader.
 - The engine emits N-Triples tokens (`<iri>`); the pure-Python layer converts
   them to clean values everywhere (`Term`, `schema()`, `graph_names()`,
   searches). Keep new bindings consistent with that.
@@ -140,8 +143,10 @@ JupyterLite, marimo WASM. How it works, all behind
   responses, which browsers allow **only in web workers**; JupyterLite and
   marimo run their kernels there. The engine stays fully synchronous: no
   Asyncify anywhere.
-- **No threads in wasm** → with the HTTP reader gone, nothing spawns threads;
-  the Python-callback reader uses the default sequential `read_many`.
+- **No threads in wasm** → with the HTTP reader gone and rete-core's
+  `parallel` feature off (both sit in the `cfg(not(target_os = "emscripten"))`
+  dependency table), nothing spawns threads; the Python-callback reader uses
+  the default sequential `read_many`.
 - **No C zstd encoder** → rete-core builds without the `compression` feature;
   reads of compressed files still work (pure-Rust decoder), in-browser
   `build()` writes codec NONE like the playground's Build tab.
@@ -390,8 +395,9 @@ The checklist that made Python work:
 1. `clients/<lang>/` with its own toolchain and lockfile; bind `rete-core`
    natively (R: extendr; Go: cgo over a small C ABI crate).
 2. Mirror the wasm `Graph`/`RemoteGraph` surface and the reader contract:
-   HTTP Range with a hard 206 requirement, short reads are errors, batched
-   `read_many` fetched concurrently, block cache on top, and the
+   use rete-core's `http` reader (206, or a whole body up to 256 MiB; short
+   reads are errors; batched `read_many` fetched concurrently), forward
+   `concurrency()`, put the block cache on top, and keep the
    incomplete-fetch guard before returning results.
 3. Parse the shared JSON envelopes; present clean IRIs/values, not `<tokens>`.
 4. Two workflows: `<lang>-test.yml` paths-filtered to the client + rete-core,
