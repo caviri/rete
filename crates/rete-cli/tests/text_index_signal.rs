@@ -48,8 +48,8 @@ fn text_index_section(image: &[u8]) -> Option<(usize, usize)> {
     }
     let r = rete_core::SliceReader::new(image);
     let (h, root) = rete_core::v06::open::read_front(&r).unwrap();
-    let leaves = root.section(kind::TEXT_LEAVES)?.abs(&h);
-    let data = root.section(kind::TEXT_DATA)?.abs(&h);
+    let leaves = root.section(kind::TEXT_LEAVES)?.abs(&h).ok()?;
+    let data = root.section(kind::TEXT_DATA)?.abs(&h).ok()?;
     Some((leaves.offset as usize, (leaves.len + data.len) as usize))
 }
 

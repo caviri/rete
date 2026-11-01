@@ -57,7 +57,7 @@ fn sections(bytes: &[u8]) -> Vec<(u16, u64, u64)> {
         let (c, b) = (h.card_range(), h.build_range());
         let mut all = vec![(1, c.offset, c.len), (7, b.offset, b.len)];
         all.extend(root.sections.iter().map(|x| {
-            let r = x.abs(&h);
+            let r = x.abs(&h).unwrap();
             (100 + x.kind as u16, r.offset, r.len)
         }));
         return all;

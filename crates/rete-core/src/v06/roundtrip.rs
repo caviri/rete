@@ -374,7 +374,7 @@ fn a_probe_join_faults_each_leaf_once() {
     let got = format!("{:?}", crate::sparql::eval_query(&rete, q).unwrap());
     assert_eq!(got, want);
     let (h, root) = open::read_front(&crate::reader::SliceReader::new(&v6)).unwrap();
-    let leaves = root.section(kind::INDEX_LEAVES).unwrap().abs(&h);
+    let leaves = root.section(kind::INDEX_LEAVES).unwrap().abs(&h).unwrap();
     let reads = r.1.lock().unwrap().clone();
     let leaf_reads = reads
         .iter()

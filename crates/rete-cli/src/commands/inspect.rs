@@ -666,7 +666,7 @@ fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
     );
     println!("  sections     :");
     for s in &root.sections {
-        let a = s.abs(&h);
+        let a = s.abs(&h)?;
         println!(
             "    {:<13} {:>14} + {:<12} digest {}",
             kind::name(s.kind),

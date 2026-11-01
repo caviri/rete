@@ -2885,11 +2885,13 @@ pub fn verify_ranged_v06(
         if only.is_some_and(|k| k != s.kind) {
             continue;
         }
-        let a = s.abs(&h);
-        if a.offset.checked_add(a.len).is_none_or(|e| e > h.file_len) {
-            bad.push(crate::v06::kind::name(s.kind).to_string());
-            continue;
-        }
+        let a = match s.abs(&h) {
+            Ok(a) if a.offset + a.len <= h.file_len => a,
+            _ => {
+                bad.push(crate::v06::kind::name(s.kind).to_string());
+                continue;
+            }
+        };
         let mut hs = blake3::Hasher::new();
         let mut at = a.offset;
         while at < a.offset + a.len {
@@ -6018,7 +6020,7 @@ fn v06_query_ranged<R: RangeReader>(
         reader.read_at(HEADER_LEN as u64, root_end - HEADER_LEN as u64)?
     };
     let root = Root06::decode(&root_bytes, h.internal_codec)?;
-    let dict = root.section(kind::DICT_DATA).map(|d| d.abs(&h));
+    let dict = root.section(kind::DICT_DATA).and_then(|d| d.abs(&h).ok());
     // The open below reads only the 1 KiB it must (not the 64 KiB first
     // read): what it needs past that is the front and the dictionary, here.
     let end = dict
@@ -6401,7 +6403,7 @@ fn v06_layout(f: &crate::v06::open::V06File) -> Vec<LayoutSegment> {
         out.push(seg("build-info", "build record".into(), b.offset, b.len));
     }
     for s in &f.root.sections {
-        let a = s.abs(h);
+        let Ok(a) = s.abs(h) else { continue };
         let kind: &'static str = match s.kind {
             crate::v06::kind::SCHEMA => "schema",
             crate::v06::kind::DICT_DATA => "dictionary",
@@ -6882,7 +6884,7 @@ impl SummaryView {
             kind::DICT_DATA,
         ]
         .iter()
-        .filter_map(|&k| root.section(k).map(|s| s.abs(&h)))
+        .filter_map(|&k| root.section(k).and_then(|s| s.abs(&h).ok()))
         .collect();
         let sparse = open::SparseReader::fetch(&pre, first.clone(), &want)?;
         let mb = open::read_section(&sparse, &h, &root, kind::PYRAMID)?

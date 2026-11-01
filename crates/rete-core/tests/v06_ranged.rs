@@ -75,7 +75,7 @@ fn v6(image: Vec<u8>) -> Vec<u8> {
 /// `[start, end)` of section `k` of a 0x06 image.
 fn region(image: &[u8], k: u8) -> (u64, u64) {
     let (h, root) = read_front(&SliceReader::new(image)).unwrap();
-    let r = root.section(k).expect("section present").abs(&h);
+    let r = root.section(k).expect("section present").abs(&h).unwrap();
     (r.offset, r.offset + r.len)
 }
 

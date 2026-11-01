@@ -65,11 +65,8 @@ impl V06File {
         }
         let root = Root06::decode(&root_bytes, h.internal_codec)?;
         for s in &root.sections {
-            let a = s.abs(&h);
-            let end = a
-                .offset
-                .checked_add(a.len)
-                .ok_or(FileError::Container("0x06 section overflows"))?;
+            let a = s.abs(&h)?;
+            let end = a.offset + a.len;
             let ok = if kind::is_front(s.kind) {
                 a.offset >= h.front_base() && end <= h.data_offset
             } else {
@@ -90,7 +87,7 @@ impl V06File {
 
     /// The absolute range of section `k`, if present.
     pub fn section(&self, k: u8) -> Option<ByteRange> {
-        self.root.section(k).map(|s| s.abs(&self.h))
+        self.root.section(k).and_then(|s| s.abs(&self.h).ok())
     }
 
     /// A batched leaf fetcher over this file's reader (leaves are stored with
@@ -479,7 +476,7 @@ impl V06File {
             if only.is_some_and(|k| k != s.kind) {
                 continue;
             }
-            let a = s.abs(&self.h);
+            let a = s.abs(&self.h)?;
             let mut h = blake3::Hasher::new();
             let mut at = a.offset;
             while at < a.offset + a.len {
@@ -530,7 +527,7 @@ pub fn read_section<R: RangeReader + ?Sized>(
 ) -> Result<Option<Vec<u8>>, FileError> {
     match root.section(k) {
         Some(s) => {
-            let a = s.abs(h);
+            let a = s.abs(h)?;
             Ok(Some(r.read_at(a.offset, a.len)?))
         }
         None => Ok(None),
@@ -628,7 +625,7 @@ impl SparseReader {
         let held = first.len() as u64;
         let want: Vec<(u64, u64)> = ranges
             .iter()
-            .filter(|g| g.len > 0 && g.offset + g.len > held)
+            .filter(|g| g.len > 0 && g.offset.saturating_add(g.len) > held)
             .map(|g| (g.offset, g.len))
             .collect();
         let mut parts = vec![(0u64, first)];

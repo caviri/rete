@@ -121,7 +121,7 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
         let (index_offset, index_len) = match &v6 {
             Some((h, root)) => root
                 .section(rete_core::v06::kind::INDEX_DATA)
-                .map(|x| x.abs(h))
+                .and_then(|x| x.abs(h).ok())
                 .map_or((0, 0), |r| (r.offset, r.len)),
             None => (header.root_dir_offset, header.root_dir_len),
         };
@@ -510,7 +510,7 @@ fn section_json_v06(
         serde_json::json!({ "offset": h.card_region_offset(), "len": h.card_region_len }),
     );
     for sec in &root.sections {
-        let r = sec.abs(h);
+        let Ok(r) = sec.abs(h) else { continue };
         m.insert(
             rete_core::v06::kind::name(sec.kind).to_string(),
             serde_json::json!({ "offset": r.offset, "len": r.len }),

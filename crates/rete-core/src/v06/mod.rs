@@ -395,17 +395,21 @@ pub const UNIT_MAX: u64 = 16 << 20;
 pub const CARD_MAX: u64 = 64 << 20;
 
 impl Sec06 {
-    /// The absolute byte range of this section in a file with header `h`.
-    pub fn abs(&self, h: &Header06) -> crate::file::ByteRange {
+    /// The absolute byte range of this section in a file with header `h`;
+    /// an error when its offset or end overflows (a hostile root).
+    pub fn abs(&self, h: &Header06) -> Result<crate::file::ByteRange, crate::file::FileError> {
         let base = if kind::is_front(self.kind) {
             h.front_base()
         } else {
             h.data_offset
         };
-        crate::file::ByteRange {
-            offset: base + self.offset,
+        let overflow = || crate::file::FileError::Container("0x06 section overflows");
+        let offset = base.checked_add(self.offset).ok_or_else(overflow)?;
+        offset.checked_add(self.len).ok_or_else(overflow)?;
+        Ok(crate::file::ByteRange {
+            offset,
             len: self.len,
-        }
+        })
     }
 }
 
@@ -722,7 +726,7 @@ pub fn decode_index_root(p: &[u8]) -> Result<Vec<PermRoot>, FileError> {
         let data_off = c.uv()?;
         let data_len = c.uv()?;
         let nl = c.count(p.len() as u64)?;
-        let mut leaves = Vec::with_capacity(nl);
+        let mut leaves = Vec::with_capacity(nl.min(p.len() / 5));
         let mut first = 0usize;
         for _ in 0..nl {
             let ln = c.count(u32::MAX as u64)?;
@@ -794,7 +798,7 @@ pub fn decode_text_root(p: &[u8]) -> Result<TextRoot, FileError> {
     let scope = c.lp()?.to_vec();
     let n_tokens = c.count(u32::MAX as u64)?;
     let nl = c.count(p.len() as u64)?;
-    let mut leaves = Vec::with_capacity(nl);
+    let mut leaves = Vec::with_capacity(nl.min(p.len() / 5));
     let mut first = 0usize;
     for _ in 0..nl {
         let n = c.count(u32::MAX as u64)?;
@@ -923,7 +927,7 @@ pub fn decode_quad_root(p: &[u8]) -> Result<QuadRoot, FileError> {
         let si = c.count(5)?;
         let n_tiles = c.count(u32::MAX as u64)?;
         let nl = c.count(p.len() as u64)?;
-        let mut leaves = Vec::with_capacity(nl);
+        let mut leaves = Vec::with_capacity(nl.min(p.len() / 5));
         let mut first = 0usize;
         for _ in 0..nl {
             let n = c.count(u32::MAX as u64)?;
@@ -1508,5 +1512,75 @@ mod id_width_tests {
                 "{e}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod hostile_root_tests {
+    use super::*;
+
+    fn sec(kind: u8, offset: u64, len: u64) -> Sec06 {
+        Sec06 {
+            kind,
+            max_block: 0,
+            offset,
+            len,
+            digest: [0; 16],
+        }
+    }
+
+    #[test]
+    fn section_range_overflow_is_an_error() {
+        let h = Header06 {
+            data_offset: 100,
+            ..Header06::default()
+        };
+        // A data section, a front section, an offset that overflows the base,
+        // and one whose end overflows.
+        for (k, o, l) in [
+            (kind::DICT_DATA, u64::MAX, 0),
+            (kind::DICT_DATA, u64::MAX - 50, 10),
+            (kind::DICT_DATA, 10, u64::MAX),
+            (kind::DICT_LEAVES, u64::MAX, 1),
+        ] {
+            assert!(sec(k, o, l).abs(&h).is_err(), "kind {k} offset {o} len {l}");
+        }
+        let ok = sec(kind::DICT_DATA, 5, 7).abs(&h).unwrap();
+        assert_eq!((ok.offset, ok.len), (105, 7));
+    }
+
+    /// A root whose leaf count is as large as the payload allows but whose
+    /// leaf entries are missing: refused, not reserved for.
+    fn varints(vals: &[u64]) -> Vec<u8> {
+        let mut v = Vec::new();
+        for &x in vals {
+            write_uvarint(&mut v, x);
+        }
+        v
+    }
+
+    #[test]
+    fn index_root_with_a_huge_leaf_count_is_refused() {
+        // 1 permutation: si 0, n_tiles 1, data_off 0, data_len 0, nl = 60 ...
+        let mut p = varints(&[1, 0, 1, 0, 0, 60]);
+        p.resize(p.len() + 54, 0);
+        assert!(decode_index_root(&p).is_err());
+    }
+
+    #[test]
+    fn text_root_with_a_huge_leaf_count_is_refused() {
+        // empty scope, 1 token, nl = 60, then too few entries.
+        let mut p = varints(&[0, 1, 60]);
+        p.resize(p.len() + 50, 0);
+        assert!(decode_text_root(&p).is_err());
+    }
+
+    #[test]
+    fn quad_root_with_a_huge_leaf_count_is_refused() {
+        // graph_count, quad_count, block_graphs, empty p0, gdir_len, 1 order:
+        // si 0, n_tiles 1, nl = 60, then too few entries.
+        let mut p = varints(&[1, 1, 1, 0, 0, 1, 0, 1, 60]);
+        p.resize(p.len() + 50, 0);
+        assert!(decode_quad_root(&p).is_err());
     }
 }

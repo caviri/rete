@@ -1938,7 +1938,7 @@ mod tests {
                     rete_core::v06::open::read_front(&rete_core::SliceReader::new(b)).unwrap();
                 let mut out = root.unit(tag::TEXT).unwrap().to_vec();
                 for k in [kind::TEXT_LEAVES, kind::TEXT_DATA] {
-                    let r = root.section(k).unwrap().abs(&h);
+                    let r = root.section(k).unwrap().abs(&h).unwrap();
                     out.extend_from_slice(&b[r.offset as usize..(r.offset + r.len) as usize]);
                 }
                 return (out, h.presence & P_TEXT_PARTIAL != 0);
