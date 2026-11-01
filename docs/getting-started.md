@@ -161,4 +161,3 @@ Continue with the [playground](playground-guide.md), the
 <a id="testing"></a>
 Source builds, synthetic fixtures and test commands belong in
 [Contributing](contributing.md).
-
