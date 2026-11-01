@@ -167,6 +167,36 @@ function g0() {
     );
   }
   try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_yasgui_wasm_parity.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "yasgui.html embeds this build's engine and a reproducible stamp",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? "" : out.slice(-200),
+    );
+  } catch (e) {
+    record("G0", "yasgui.html embeds this build's engine and a reproducible stamp", false,
+      String(e.stderr || e.stdout || e).slice(-200));
+  }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/test_url_normalize.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "remote URL normalization: host:port accepted, empty or non-http(s) refused",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? `${verdict.cases} cases` : out.slice(-200),
+    );
+  } catch (e) {
+    record("G0", "remote URL normalization: host:port accepted, empty or non-http(s) refused",
+      false, String(e.stderr || e.stdout || e).slice(-200));
+  }
+  try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/check_social_previews.mjs`, {
       encoding: "utf8",
     });

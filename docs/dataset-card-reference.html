@@ -664,7 +664,7 @@ newlines.</p>
 <tr><td><code>signals.quoted_triples</code></td><td><strong>measured</strong></td><td>Whether the dataset holds <strong>quoted triples</strong>, and which surfaces an export can write them in — <code>{present, export_surfaces, export_default}</code>. Derived from header flag bit 2, and also never written. See <a href="#the-quoted-triple-signal-measured-not-stored">The quoted-triple signal</a>.</td></tr>
 <tr><td><code>signals.annotation_predicates</code>, <code>signals.quoting_predicates</code>, <code>signals.annotated_statement</code></td><td>derived</td><td>The <strong>vocabulary of the RDF-star layer</strong>, when there is one: the predicates that annotate a statement, the predicates whose <em>value</em> is a statement, and the one <code>(quoted predicate, annotating predicate)</code> pair witnessed on a statement this graph both asserts and annotates. Empty and omitted on a graph with no quoted triples. See <a href="#querying-the-star-layer">Querying the star layer</a>.</td></tr>
 <tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
-<tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
+<tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial). Also set when the subject-namespace tally overflowed (see below).</td></tr>
 <tr><td><code>top_n</code></td><td>derived</td><td>The cap the profile lists were derived under — the number <code>truncated</code> was hinting at without stating.</td></tr>
 <tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> <strong>spec version</strong> the card was written against — the format's version, not the dataset's.</td></tr>
 </tbody></table>
@@ -675,6 +675,11 @@ list is <strong>capped</strong> and <strong>deterministically ordered</strong> (
 broken lexically), so building the same input twice yields a <strong>byte-identical</strong>
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching <code>rete progressive</code>.</p>
+<p>The subject-namespace tally (it only feeds <code>signals.base_iri</code>) is <strong>bounded</strong> at
+65,536 distinct namespaces, so a graph whose identifiers contain slashes (DataCite DOIs)
+cannot grow it with the record count. At or under the cap the card is byte-identical to an
+unbounded tally; past it the counts are a deterministic space-saving summary, the common prefix
+stays exact, and the card is marked <code>truncated</code>.</p>
 <h3 id="the-full-text-signal-measured-not-stored">The full-text signal: measured, not stored</h3>
 <p>A <code>.rete</code> carries an optional <strong>TEXT_INDEX section</strong> (kind <code>6</code>, or <code>11</code> for an
 index restricted to some predicates — <a href="SPEC.html#63-full-text-index-text_index-section-optional">SPEC §6.3</a>),

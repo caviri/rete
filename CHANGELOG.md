@@ -7,6 +7,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Card derivation no longer runs out of memory on graphs with millions of distinct subject
+  namespaces.** The tally behind `signals.base_iri` kept one entry per distinct IRI-up-to-last-slash,
+  which on DataCite (`https://doi.org/<prefix>/<suffix>`) grew with the record count (about 4 GB a
+  minute, past any `--memory-budget-mb`). It is now bounded at 65,536 entries in `build`, `recard`
+  and the in-memory derivation, counted in the budget line. Cards of graphs at or under the cap are
+  byte-identical; past it the card is marked `truncated`.
 - **A corrupt or hostile `.rete` is refused cleanly instead of panicking or
   decoding to wrong ids.** Container lengths and counts are checked before they
   size a slice (a length near 2^64 overflowed `pos + len`; on wasm32 a length or
@@ -27,6 +33,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   directory left by a killed build was reused. It is now
   `.rete-extbuild-<pid>-<seq>-<random>`, created exclusively: a name that
   exists is never adopted, and no other directory is touched.
+
+- **`docs/yasgui.html` ships the current engine.** Nothing rebuilt it: it said
+  "Built 2026-08-08 from unknown." and had no `partition_plan` and no quad
+  index. `scripts/build_wasm.sh` now builds it with the playground, stamped with
+  the workspace version instead of a date, CI's wasm job fails when the tracked
+  page differs from its rebuild, and the gate checks that it embeds this
+  build's glue and engine.
+- **The playground accepts `localhost:8090/x.rete`** (and any `host:port/…`
+  on localhost, an IP or a dotted name), which it refused as an unknown
+  scheme; like any address typed without a scheme it opens over https. It
+  refuses an `http(s):` address with no host (`https:`, `https:///x.rete`) and
+  a port past 65535, which it used to pass to the reader.
 
 ## [0.4.2] - 2026-10-31
 
