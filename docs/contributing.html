@@ -4,21 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
-  <title>Contributing · rete docs</title>
-  <meta name="description" content="Use the development container to build rete itself. It contains the Rust, Python and WebAssembly tooling used by the project, so you do not need to reconstruct the toolchain on your host." />
+  <title>Development · rete docs</title>
+  <meta name="description" content="Start here to understand the code, make a change and check that it works. The Rust core is shared by the CLI and language bindings; the documentation, browser applications and release tooling live…" />
   <link rel="canonical" href="https://caviri.github.io/rete/contributing.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
-  <meta property="og:title" content="Contributing · rete docs" />
-  <meta property="og:description" content="Use the development container to build rete itself. It contains the Rust, Python and WebAssembly tooling used by the project, so you do not need to reconstruct the toolchain on your host." />
+  <meta property="og:title" content="Development · rete docs" />
+  <meta property="og:description" content="Start here to understand the code, make a change and check that it works. The Rust core is shared by the CLI and language bindings; the documentation, browser applications and release tooling live…" />
   <meta property="og:url" content="https://caviri.github.io/rete/contributing.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/contributing.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Contributing · rete docs" />
+  <meta property="og:image:alt" content="Development · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Contributing · rete docs" />
-  <meta name="twitter:description" content="Use the development container to build rete itself. It contains the Rust, Python and WebAssembly tooling used by the project, so you do not need to reconstruct the toolchain on your host." />
+  <meta name="twitter:title" content="Development · rete docs" />
+  <meta name="twitter:description" content="Start here to understand the code, make a change and check that it works. The Rust core is shared by the CLI and language bindings; the documentation, browser applications and release tooling live…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/contributing.png" />
   <meta name="rete:section" content="Project" />
   <script>
@@ -529,7 +529,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     </button>
     <span class="mbar-id">
       <span class="mbar-sec"><a href="index.html">rete</a> · Project</span>
-      <span class="mbar-title">Contributing</span>
+      <span class="mbar-title">Development</span>
     </span>
     <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
   </header>
@@ -556,7 +556,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="compatibility.html">Compatibility and limits</a></li>
         <li class="nav-h">Project</li>
         <li><a href="apps.html">Apps and experiments</a></li>
-        <li><a href="contributing.html" class="active">Contributing</a></li>
+        <li><a href="contributing.html" class="active">Development</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -566,30 +566,36 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 
-<h1 id="contributing">Contributing</h1>
-<p>Use the development container to build rete itself. It contains the Rust,
-Python and WebAssembly tooling used by the project, so you do not need to
-reconstruct the toolchain on your host.</p>
-<p>If you only want to use rete, start with the <a href="getting-started.html">Quickstart</a>
-or a <a href="clients.html">language client</a>.</p>
+<h1 id="contributing">Development</h1>
+<p>Start here to understand the code, make a change and check that it works.
+The Rust core is shared by the CLI and language bindings; the documentation,
+browser applications and release tooling live alongside it. You do not need
+to learn the whole repository before making a useful contribution.</p>
+<h2 id="find-the-right-part-of-the-project">Choose where to start</h2>
+<table><thead><tr><th>I want to…</th><th>Read this</th></tr></thead><tbody>
+<tr><td>Find the right code and follow a query through the engine</td><td><a href="architecture.html">Repository and core</a></td></tr>
+<tr><td>Understand what the tests cover and what CI runs</td><td><a href="testing.html">Tests, coverage and CI</a></td></tr>
+<tr><td>Measure performance and interpret existing results</td><td><a href="benchmarks.html">Benchmarks</a></td></tr>
+<tr><td>Change a language binding</td><td><a href="clients-dev.html">Client development</a></td></tr>
+<tr><td>Prepare a release</td><td><a href="release.html">Release guide</a></td></tr>
+</tbody></table>
+<p>The <a href="SPEC.html">format specification</a> and <a href="compatibility.html">compatibility reference</a>
+describe the contracts that engine changes must preserve. To use rete without
+changing it, follow the <a href="getting-started.html">Quickstart</a>.</p>
 <h2 id="build-and-test">Build and test</h2>
 <p>From a checkout of the repository:</p>
 <pre><code class="language-sh">docker compose build dev
 docker compose run --rm dev cargo build --release -p rete-cli
 docker compose run --rm dev cargo test --workspace --exclude rete-bench
 </code></pre>
-<p>The <a href="https://github.com/caviri/rete/blob/main/CONTRIBUTING.md">contributor guide</a>
-covers formatting, linting, generated artifacts and the regression gate.
-Use a distinct <code>COMPOSE_PROJECT_NAME</code> when working in another worktree so
-builds do not share their target directory.</p>
-<h2 id="find-the-right-part-of-the-project">Find the right part of the project</h2>
-<p><a href="architecture.html">Architecture</a> maps the crates and execution paths.
-The <a href="SPEC.html">format specification</a> and <a href="compatibility.html">compatibility reference</a>
-describe the contracts an implementation change must preserve.</p>
-<p><a href="clients-dev.html">Client development</a> covers the language bindings and their
-packaging. The <a href="release.html">release guide</a> owns the release procedure;
-publishing a dataset is a separate workflow described in
-<a href="build-and-publish.html">Build and publish</a>.</p>
+<p>The development image contains the pinned Rust, Python and WebAssembly
+tooling. The build produces the CLI; the tests check the Rust workspace,
+excluding the benchmark crate. Client packages and browser behavior have
+their own checks, explained in <a href="testing.html">Tests, coverage and CI</a>.</p>
+<p>Use a distinct <code>COMPOSE_PROJECT_NAME</code> in each worktree so builds do not share
+their target directory. The
+<a href="https://github.com/caviri/rete/blob/main/CONTRIBUTING.md">contributor guide</a>
+has the full local workflow, including formatting and generated artifacts.</p>
 <h2 id="change-the-documentation">Change the documentation</h2>
 <p>Edit Markdown in <code>docs/</code>, then regenerate the site:</p>
 <pre><code class="language-sh">docker compose run --rm dev cargo test -p docgen
@@ -600,6 +606,11 @@ docker compose run --rm dev python3 scripts/check_docs_links.py
 and how to recognize its result. Link to canonical reference material rather
 than repeating it, and preserve existing heading links when changing titles.
 Keep authored documentation and generated HTML in separate commits.</p>
+<p>These development pages describe the checked-in tooling, reviewed on
+2026-11-01. For the status of a particular commit, use its
+<a href="https://github.com/caviri/rete/actions/workflows/ci.yml">CI run</a>. Keep this guide
+in step with changes to the workspace, check scripts and workflows; recorded
+benchmark results retain their original measurement context.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -622,7 +633,7 @@ Keep authored documentation and generated HTML in separate commits.</p>
     <div class="mdrawer-head">
       <div class="mdrawer-who">
         <span class="mdrawer-eyebrow">Project</span>
-        <span class="mdrawer-title" id="mdrawerTitle">Contributing</span>
+        <span class="mdrawer-title" id="mdrawerTitle">Development</span>
       </div>
       <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
         <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
