@@ -18,6 +18,10 @@ file only once the readers that fetch it run this release. See
 
 ### Added
 
+- **Card file: `base_iri`.** An optional curated `base_iri` (an absolute IRI) overrides the derived
+  `signals.base_iri` and the starter queries built on it. Past the namespace-tally cap the derived
+  value is only an approximate dominant namespace.
+
 - **`rete convert in.rete -o out.rete`** turns a `0x05` file into `0x06` from
   its sections, without parsing RDF: one read and one write of the file (4.7 s
   for the 205 MB OpenCitations sample). The output has the content hash a
