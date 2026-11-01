@@ -20,6 +20,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   its last rows), the named-graph walk (it panicked), `query_ranged` and the
   card read. New fuzz-style tests overwrite every position of a file with these
   varints and shorten every read of an open in turn.
+- **Memory-bounded builds sharing a `--tmp-dir` no longer delete each other's
+  spill.** The spill directory was `.rete-extbuild-<pid>-<seq>`, and in a
+  container the pid is usually 1, so two builds writing to one folder got the
+  same directory and the first to finish removed it under the other; a
+  directory left by a killed build was reused. It is now
+  `.rete-extbuild-<pid>-<seq>-<random>`, created exclusively: a name that
+  exists is never adopted, and no other directory is touched.
 
 ## [0.4.2] - 2026-10-31
 

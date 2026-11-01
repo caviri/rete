@@ -95,7 +95,10 @@ Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:
   lost to a bash bug in the pipeline that launched it. Add
   `--oom-score-adj -500` so a busy Docker VM OOM-kills something else first.
 - **Spill sizing**: the spill (`--tmp-dir`) lives in a
-  `.rete-extbuild-<pid>-<seq>` SUBDIR of `--tmp-dir`. Every spill file is
+  fresh `.rete-extbuild-<pid>-<seq>-<random>` SUBDIR of `--tmp-dir`, so
+  builds can share one `--tmp-dir` (up to 0.4.2 two containers, both pid 1,
+  shared a directory and deleted each other's spill); a directory a killed
+  build left behind is never reused, so delete it once no build is running. Every spill file is
   compressed (delta-varint id runs, front-coded terms, zstd blocks) and the
   six permutations are chained, so the statements are on disk once at a
   time. The peak is now usually in the last permutations, and most of it is
