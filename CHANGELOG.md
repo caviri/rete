@@ -5,6 +5,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **Card file: `base_iri`.** An optional curated `base_iri` (an absolute IRI) overrides the derived
+  `signals.base_iri` and the starter queries built on it. Past the namespace-tally cap the derived
+  value is only an approximate dominant namespace.
+
 ### Fixed
 
 - **Card derivation no longer runs out of memory on graphs with millions of distinct subject

@@ -52,7 +52,32 @@ pub const CURATED_CARD_FIELDS: &[&str] = &[
     "theme",
     "extra",
     "example_queries",
+    "base_iri",
 ];
+
+/// Validate a curated `base_iri`: an absolute IRI (RFC 3986 scheme, `:`, a
+/// non-empty remainder) with no whitespace, control or IRI-forbidden characters.
+pub fn check_base_iri(b: &str) -> Result<(), String> {
+    let bad = |why: &str| Err(format!("base_iri {b:?} is not an absolute IRI: {why}"));
+    let Some((scheme, rest)) = b.split_once(':') else {
+        return bad("no scheme");
+    };
+    let mut chars = scheme.chars();
+    let scheme_ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !scheme_ok {
+        return bad("invalid scheme");
+    }
+    if rest.is_empty() {
+        return bad("nothing after the scheme");
+    }
+    if b.chars()
+        .any(|c| c.is_control() || c.is_whitespace() || "<>\"{}|\\^`".contains(c))
+    {
+        return bad("forbidden character");
+    }
+    Ok(())
+}
 
 /// The pointer appended to an unknown-top-level-key error. A stray key is
 /// usually a typo — or a custom field that belongs in the bag — and saying so
@@ -399,6 +424,11 @@ pub fn validate_curated_card(doc: &Value) -> Result<Value, String> {
             "title" | "license" | "source" | "created" | "version" | "canonical_url"
             | "sparql_endpoint" | "source_date" | "doi" | "cite_as" => {
                 Value::String(expect_string(k, v)?)
+            }
+            "base_iri" => {
+                let b = expect_string(k, v)?;
+                check_base_iri(&b)?;
+                Value::String(b)
             }
             "derived_from" | "example_queries" => Value::from(expect_string_array(k, v)?),
             "keywords" => Value::from(normalize_string_list(

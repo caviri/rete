@@ -127,6 +127,12 @@ cannot grow it with the record count. At or under the cap the card is byte-ident
 unbounded tally; past it the counts are a deterministic space-saving summary, the common prefix
 stays exact, and the card is marked `truncated`.
 
+Past the cap the derived `base_iri` is an approximate dominant namespace (DataCite: `https://doi.org/10.57451/`
+instead of `https://doi.org/`). Set a curated `"base_iri"` in the card file to override it: an absolute IRI
+(a scheme, then no whitespace or other characters IRIs forbid). It wins over the derived value in `signals.base_iri`
+and so in the starter queries that use it (`lk-external`). `recard --keep-curated` does not carry it (a card does not say
+whether its base was derived or curated): pass the card file again.
+
 ### The full-text signal: measured, not stored
 
 A `.rete` carries an optional **TEXT_INDEX section** (kind `6`, or `11` for an

@@ -753,6 +753,14 @@ pub struct CardInput {
     pub extra: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub example_queries: Vec<String>,
+    /// A curated `signals.base_iri`, overriding the derived one: an absolute IRI
+    /// that prefixes the dataset's own identifiers. The derived value is the
+    /// longest common subject prefix, which past the namespace-tally cap
+    /// ([`NS_TALLY_CAP`]) degrades to an approximate dominant namespace (DataCite:
+    /// `https://doi.org/10.57451/` instead of `https://doi.org/`). Validated by
+    /// [`normalize`](Self::normalize). Not carried by [`from_card`](Self::from_card):
+    /// a card does not record whether its base was derived or curated.
+    pub base_iri: Option<String>,
 }
 
 /// Deserialize `description` from either a JSON string or an array of lines.
@@ -804,6 +812,7 @@ impl CardInput {
             theme: card.theme.clone(),
             extra: card.extra.clone(),
             example_queries: card.example_queries.clone(),
+            base_iri: None,
         }
     }
 
@@ -827,6 +836,7 @@ impl CardInput {
             && self.theme.is_empty()
             && self.extra.is_empty()
             && self.example_queries.is_empty()
+            && self.base_iri.is_none()
     }
 
     /// Move every curated field into a card (the shared step of all derivation
@@ -850,6 +860,9 @@ impl CardInput {
         card.theme = self.theme;
         card.extra = self.extra;
         card.example_queries = self.example_queries;
+        if self.base_iri.is_some() {
+            card.signals.base_iri = self.base_iri;
+        }
     }
 
     /// Parse a curated card **document** — the JSON a publisher writes for
@@ -901,6 +914,9 @@ impl CardInput {
         self.extra = crate::card_input::normalize_extra(bag)?
             .into_iter()
             .collect();
+        if let Some(b) = &self.base_iri {
+            crate::card_input::check_base_iri(b)?;
+        }
         Ok(self)
     }
 }
@@ -3285,6 +3301,38 @@ mod tests {
     /// New curated identity/provenance fields round-trip through a card-file
     /// JSON document and into the card, and absent ones are omitted from the
     /// stored bytes (size discipline).
+    #[test]
+    fn curated_base_iri_overrides_derived_and_is_validated() {
+        let quads = vec![q(
+            "<https://doi.org/10.1/a>",
+            "<http://ex/p>",
+            "<http://ex/o>",
+        )];
+        let derived = derive_card(&quads, 3, 0, CardInput::default());
+        assert_eq!(
+            derived.signals.base_iri.as_deref(),
+            Some("https://doi.org/10.1/")
+        );
+        let input = CardInput::from_json_str(r#"{"base_iri": "https://doi.org/"}"#).unwrap();
+        assert!(!input.is_empty());
+        let card = derive_card(&quads, 3, 0, input.clone());
+        assert_eq!(card.signals.base_iri.as_deref(), Some("https://doi.org/"));
+        let counts = curated_counts_card(1, 3, input);
+        assert_eq!(counts.signals.base_iri.as_deref(), Some("https://doi.org/"));
+        for bad in [
+            "doi.org/",
+            "",
+            "https:",
+            "1http://x/",
+            "http://a b/",
+            "http://x/<y>",
+        ] {
+            let doc = serde_json::json!({ "base_iri": bad }).to_string();
+            let err = CardInput::from_json_str(&doc).unwrap_err();
+            assert!(err.contains("base_iri"), "{bad}: {err}");
+        }
+    }
+
     #[test]
     fn curated_identity_fields_round_trip() {
         let input: CardInput = serde_json::from_str(
