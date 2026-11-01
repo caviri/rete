@@ -213,7 +213,12 @@ pub(crate) fn merge_cmd(
     // file always carries a SCHEMA section, as `rete build` writes. And the
     // named-graph layout: a quad-index input makes a quad-index merge.
     let mut label_index = false;
-    let mut graphs = rete_core::GraphLayout::PerGraph;
+    // Format 0x06 stores named graphs in the quad index only.
+    let mut graphs = if super::v06::writes_legacy() {
+        rete_core::GraphLayout::PerGraph
+    } else {
+        rete_core::GraphLayout::Quad
+    };
     let budget = memory_budget_mb.saturating_mul(1 << 20);
     let share = reader_share(budget);
     // What the walk will read, for `--progress`: every input's statements.
@@ -373,6 +378,7 @@ pub(crate) fn merge_cmd(
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
+    super::v06::finish_file(output)?;
     if let (Some(info), Some(curated)) = (info.as_mut(), curated) {
         crate::commands::build::append_full_card(
             output,

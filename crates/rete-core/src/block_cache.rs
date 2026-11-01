@@ -25,8 +25,8 @@
 //! chunks) that is an out-of-memory crash, not a slowdown.
 
 use crate::reader::RangeReader;
-use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// Default block size: 64 KiB — large enough to swallow a dictionary chunk or an
 /// index tile in one fetch, small enough to keep over-fetch modest.
@@ -82,6 +82,10 @@ struct CacheState {
     map: HashMap<u64, CacheEntry>,
     used: u64,
     tick: u64,
+    /// Blocks a reader is fetching right now: a concurrent reader that wants
+    /// one waits for it ([`BlockCacheReader::landed`]) instead of fetching the
+    /// same bytes a second time.
+    in_flight: HashSet<u64>,
 }
 
 pub struct BlockCacheReader<R> {
@@ -90,6 +94,9 @@ pub struct BlockCacheReader<R> {
     len: u64,
     cap: u64,
     cache: Mutex<CacheState>,
+    /// Signalled whenever a fetch lands (or fails) and clears its in-flight
+    /// marks.
+    landed: Condvar,
 }
 
 impl<R: RangeReader> BlockCacheReader<R> {
@@ -106,7 +113,9 @@ impl<R: RangeReader> BlockCacheReader<R> {
                 map: HashMap::new(),
                 used: 0,
                 tick: 0,
+                in_flight: HashSet::new(),
             }),
+            landed: Condvar::new(),
         }
     }
 
@@ -147,24 +156,58 @@ impl<R: RangeReader> BlockCacheReader<R> {
     /// the missing ones as coalesced spans through `read_many`. Already-resident
     /// wanted blocks get their recency stamp refreshed.
     fn ensure(&self, want: &BTreeSet<u64>) -> std::io::Result<()> {
-        let missing: Vec<u64> = {
+        // Resident blocks are touched; blocks another reader is fetching are
+        // waited for, not fetched again (a parallel open walks two containers
+        // at once and both often want the next block); the rest are claimed.
+        let (missing, others): (Vec<u64>, Vec<u64>) = {
             let mut st = self.cache.lock().unwrap();
             st.tick += 1;
             let tick = st.tick;
-            want.iter()
-                .copied()
-                .filter(|b| match st.map.get_mut(b) {
-                    Some(e) => {
-                        e.stamp = tick;
-                        false
-                    }
-                    None => true,
-                })
-                .collect()
+            let mut missing = Vec::new();
+            let mut others = Vec::new();
+            for &b in want {
+                if let Some(e) = st.map.get_mut(&b) {
+                    e.stamp = tick;
+                } else if st.in_flight.contains(&b) {
+                    others.push(b);
+                } else {
+                    missing.push(b);
+                }
+            }
+            for &b in &missing {
+                st.in_flight.insert(b);
+            }
+            (missing, others)
         };
+        let fetched = self.fetch_claimed(&missing);
+        if !others.is_empty() {
+            let mut st = self.cache.lock().unwrap();
+            while others.iter().any(|b| st.in_flight.contains(b)) {
+                st = self.landed.wait(st).unwrap();
+            }
+            // A block the other reader failed to fetch is read directly by
+            // `assemble`: correctness never depends on residency.
+        }
+        fetched
+    }
+
+    /// Fetch the blocks this reader claimed in [`ensure`](Self::ensure), cache
+    /// them, and clear their in-flight marks whatever the outcome.
+    fn fetch_claimed(&self, missing: &[u64]) -> std::io::Result<()> {
         if missing.is_empty() {
             return Ok(());
         }
+        let r = self.fetch_missing(missing);
+        let mut st = self.cache.lock().unwrap();
+        for b in missing {
+            st.in_flight.remove(b);
+        }
+        drop(st);
+        self.landed.notify_all();
+        r
+    }
+
+    fn fetch_missing(&self, missing: &[u64]) -> std::io::Result<()> {
         // Coalesce consecutive block indices into one span each.
         let mut spans: Vec<(u64, u64)> = Vec::new();
         let mut runs: Vec<(u64, u64)> = Vec::new();
@@ -186,6 +229,18 @@ impl<R: RangeReader> BlockCacheReader<R> {
         let blobs = self.inner.read_many(&spans)?;
         if blobs.len() != spans.len() {
             return Err(std::io::Error::other("block fetch returned wrong count"));
+        }
+        // A blob of any other length than its span is not that span: caching
+        // a short one would hand the parsers a silently truncated block.
+        if let Some(((o, l), b)) = spans
+            .iter()
+            .zip(&blobs)
+            .find(|((_, l), b)| b.len() as u64 != *l)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("block fetch at {o} returned {} bytes, not {l}", b.len()),
+            ));
         }
         let mut st = self.cache.lock().unwrap();
         st.tick += 1;
@@ -274,6 +329,12 @@ impl<R: RangeReader> BlockCacheReader<R> {
             }
             out.extend_from_slice(&blk[within..within + take]);
             pos += take as u64;
+        }
+        if out.len() as u64 != len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("short read: {} of {len} bytes at {offset}", out.len()),
+            ));
         }
         Ok(out)
     }
@@ -375,6 +436,55 @@ mod tests {
             "physical: {}",
             counting.requests()
         );
+    }
+
+    /// A slow reader that counts its reads.
+    struct Slow(Vec<u8>, std::sync::atomic::AtomicUsize);
+    impl RangeReader for Slow {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            Ok(self.0[offset as usize..(offset + len) as usize].to_vec())
+        }
+    }
+
+    /// Readers that want the same block at the same time fetch it once: the
+    /// others wait for it to land (a parallel open walks two containers at
+    /// once, and both used to fetch, and count, the next block).
+    #[test]
+    fn concurrent_readers_fetch_a_block_once() {
+        let r = BlockCacheReader::new(Slow(vec![3u8; 100_000], Default::default()), 4096);
+        std::thread::scope(|s| {
+            for _ in 0..6 {
+                s.spawn(|| assert_eq!(r.read_at(5000, 100).unwrap(), vec![3u8; 100]));
+            }
+        });
+        assert_eq!(r.inner.1.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A reader that answers every range one byte short (audit fix 9).
+    struct Short(Vec<u8>);
+    impl RangeReader for Short {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            let end = (offset + len).saturating_sub(1) as usize;
+            Ok(self.0[offset as usize..end].to_vec())
+        }
+    }
+
+    /// A short blob from the inner reader is an error, never a short block
+    /// cached and handed out as if it were the range.
+    #[test]
+    fn a_short_blob_is_refused_not_cached() {
+        let r = BlockCacheReader::new(Short(vec![9u8; 10_000]), 4096);
+        let err = r.read_at(100, 50).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof, "{err}");
+        assert!(r.read_many(&[(0, 10), (5000, 10)]).is_err());
     }
 
     #[test]

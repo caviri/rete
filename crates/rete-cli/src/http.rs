@@ -81,7 +81,8 @@ mod tests {
     #[test]
     fn ranged_source_hands_batches_to_the_http_reader() {
         use crate::commands::range_source::RangedSourceReader;
-        let data: Vec<u8> = (0..=255u8).cycle().take(1 << 20).collect();
+        // Past the 8 MiB a remote file is fetched whole at open.
+        let data: Vec<u8> = (0..=255u8).cycle().take(9 << 20).collect();
         let (url, max_in_flight) = serve(data.clone());
         let r = RangedSourceReader::open(&url).unwrap();
         assert!(r.concurrency() > 1);

@@ -212,7 +212,9 @@ fn a_restricted_text_index_is_self_digested_not_hashed() {
         ),
         ["<http://ex/e1>"]
     );
-    let lazy = Rete::open_ranged_lazy(Recorded::new(bytes.clone())).unwrap();
+    let lazy =
+        Rete::open_ranged_lazy_with(Recorded::new(bytes.clone()), rete_core::HEADER_LEN as u64)
+            .unwrap();
     assert!(lazy.text_index_scope().unwrap().restricts_predicates());
     assert_eq!(
         rows(
@@ -290,7 +292,7 @@ fn contains_inside_graph_reads_the_text_index_only_when_it_covers_the_graphs() {
         let h = Header::from_bytes(&bytes).unwrap();
         let text = (h.text_index_offset, h.text_index_len);
         let rec = Recorded::new(bytes);
-        let rete = Rete::open_ranged_lazy(rec.clone()).unwrap();
+        let rete = Rete::open_ranged_lazy_with(rec.clone(), rete_core::HEADER_LEN as u64).unwrap();
         rec.take();
         assert_eq!(rows(&rete, q), ["<http://ex/p1>"]);
         assert_eq!(
@@ -303,7 +305,7 @@ fn contains_inside_graph_reads_the_text_index_only_when_it_covers_the_graphs() {
     let bytes = build(Some(TextIndexScope::default()));
     let h = Header::from_bytes(&bytes).unwrap();
     let rec = Recorded::new(bytes);
-    let rete = Rete::open_ranged_lazy(rec.clone()).unwrap();
+    let rete = Rete::open_ranged_lazy_with(rec.clone(), rete_core::HEADER_LEN as u64).unwrap();
     rec.take();
     assert_eq!(
         rows(

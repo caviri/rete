@@ -638,7 +638,7 @@ POS, OSP, SOP, PSO, and OPS. The first three suffice to match any pattern
 shape at the same longest bound prefix, and are always written; the other
 three let any join key be streamed pre-sorted, enabling sort-merge joins.
 <code>rete build --permutations 3</code> drops them, and the header's permutation mask
-records which set the file carries (<a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>).</li>
+records which set the file carries (<a href="SPEC.html#41-header-128-bytes-little-endian">SPEC §4.1</a>).</li>
 <li>Compute the pyramid summary: community hierarchy, super-edges, predicate
 totals, class/type summaries, and named-graph metadata.</li>
 <li>Optionally attach dataset-card metadata into the reserved metadata section.</li>

@@ -525,6 +525,12 @@ impl Dictionary {
         self.has_quoted_triples
     }
 
+    /// Record whether the dataset holds quoted triples (a read-back dictionary
+    /// takes it from the file header).
+    pub fn set_has_quoted_triples(&mut self, v: bool) {
+        self.has_quoted_triples = v;
+    }
+
     /// Did any lazy chunk fetch fail since this dictionary was opened — or
     /// since the last [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {

@@ -112,7 +112,7 @@ fn constants_resolve_in_one_batched_read_before_any_tile() {
         let want = select(&resident, q);
         assert!(!want.is_empty(), "{q}");
         let rec = Calls::new(bytes.clone());
-        let lazy = Rete::open_ranged_lazy(rec.clone()).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(rec.clone(), rete_core::HEADER_LEN as u64).unwrap();
         rec.take();
         assert_eq!(select(&lazy, q), want, "{q}");
         assert!(!lazy.index_incomplete());

@@ -3081,7 +3081,7 @@ fn write_final_file(
     hash.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
 
     let header = Header {
-        version: crate::header::CURRENT_FORMAT_VERSION,
+        version: crate::header::LEGACY_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
             | if named_len > 0 || quad.is_some() {
                 FLAG_HAS_QUADS
@@ -3114,6 +3114,7 @@ fn write_final_file(
         dict_codec: codec,
         block_codec: codec,
         pyramid_levels: 0,
+        id_widths: 0,
         perms,
         quad_count,
         term_count: dict.term_count,

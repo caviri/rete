@@ -34,7 +34,7 @@ inputs and outputs rather than reimplement engine logic.
    shape at the same longest bound prefix, and are always written; the other
    three let any join key be streamed pre-sorted, enabling sort-merge joins.
    `rete build --permutations 3` drops them, and the header's permutation mask
-   records which set the file carries ([SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)).
+   records which set the file carries ([SPEC §4.1](SPEC.md#41-header-128-bytes-little-endian)).
 4. Compute the pyramid summary: community hierarchy, super-edges, predicate
    totals, class/type summaries, and named-graph metadata.
 5. Optionally attach dataset-card metadata into the reserved metadata section.

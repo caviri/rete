@@ -1,0 +1,13 @@
+{
+ "oc/opencitations-2026-06-small-full-labels-quad.rete": {"layout": "layouts/oc-small-quad.json", "path": "D:/pro/Links/rete/data/scripts/development/opencitations/out/files-0.4.0/opencitations-2026-06-small-full-labels-quad.rete"},
+ "dr/davidrumsey.rete": {"layout": "layouts/dr.json", "path": "D:/pro/Links/rete/data/davidrumsey-maps/davidrumsey.rete"},
+ "tci/tree-city-inventory.rete": {"layout": "layouts/tci.json", "path": "D:/pro/Links/rete/data/tree-city-inventory/tree-city-inventory.rete"},
+ "sw/swissubase.rete": {"layout": "layouts/sw.json", "path": "D:/pro/Links/rete/data/swissubase/swissubase.rete"},
+ "cat/mtg.rete": {"layout": "layouts/mtg.json", "path": "files/cat/mtg.rete"},
+ "cat/arxiu.rete": {"layout": "layouts/arxiu.json", "path": "files/cat/arxiu.rete"},
+ "modern/mtg-modern.rete": {"layout": "layouts/mtg-modern.json", "path": "files/modern/mtg-modern.rete"},
+ "modern/tci-modern.rete": {"layout": "layouts/tci-modern.json", "path": "files/modern/tci-modern.rete"},
+ "gate/card-full.rete": {"layout": "layouts/gate-card-full.json", "path": "files/gate/card-full.rete"},
+ "gate/named-graphs-only.rete": {"layout": "layouts/gate-named.json", "path": "files/gate/named-graphs-only.rete"},
+ "gate/worldcup2026.rete": {"layout": "layouts/gate-worldcup.json", "path": "files/gate/worldcup2026.rete"}
+}
