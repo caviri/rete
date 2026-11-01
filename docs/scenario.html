@@ -45,7 +45,8 @@
   --border:#d9e2de; --code-bg:#eef3f1; --code-border:#cfd9d5;
   --accent-deep:#0b4f42; --iri:#0b6f5e; --on-accent:#ffffff;
   --tint:#eaf1ed; --warm:#fff8f4;
-  --hl-kw:#8a3d5a; --hl-str:#0b745f; --hl-num:#a85424; --hl-comment:#78877f;
+  --hl-kw:#8a3d5a; --hl-str:#0b745f; --hl-num:#a85424; --hl-comment:#53685d;
+  --hl-fn:#235e9c; --hl-flag:#87500a;
   --rail-bg:rgba(255,255,255,.72); --bevel:rgba(255,255,255,.8);
   --shadow:0 18px 44px rgba(32,47,41,.10);
   color-scheme: light;
@@ -58,7 +59,8 @@
   --border:#2a352f; --code-bg:#1a231e; --code-border:#31403a;
   --accent-deep:#7fdcc7; --iri:#6fcdb6;
   --tint:#1a2620; --warm:#2c211a;
-  --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#7d8d85;
+  --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#a0b5a9;
+  --hl-fn:#8abcf3; --hl-flag:#edb974;
   --rail-bg:rgba(23,31,27,.85); --bevel:rgba(255,255,255,.06);
   --shadow:0 18px 44px rgba(0,0,0,.45);
   color-scheme: dark;
@@ -70,7 +72,8 @@
     --border:#2a352f; --code-bg:#1a231e; --code-border:#31403a;
     --accent-deep:#7fdcc7; --iri:#6fcdb6;
     --tint:#1a2620; --warm:#2c211a;
-    --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#7d8d85;
+    --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#a0b5a9;
+    --hl-fn:#8abcf3; --hl-flag:#edb974;
     --rail-bg:rgba(23,31,27,.85); --bevel:rgba(255,255,255,.06);
     --shadow:0 18px 44px rgba(0,0,0,.45);
     color-scheme: dark;
@@ -206,14 +209,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content li { margin:.18rem 0; }
 .content code {
   background:var(--code-bg); border:1px solid var(--code-border); padding:.08em .34em;
-  border-radius:5px; font-size:.88em;
+  border-radius:5px; font-size:.88em; color:var(--accent-deep);
 }
 .content pre {
   background:var(--tint); border:1px solid var(--code-border); border-radius:8px;
   max-width:100%; padding:1rem 1.1rem; overflow:auto; line-height:1.52;
   box-shadow:inset 0 1px 0 var(--bevel);
 }
-.content pre code { display:block; min-width:100%; width:max-content; background:none; border:0; padding:0; font-size:.85rem; }
+.content pre code { display:block; min-width:100%; width:max-content; background:none; border:0; padding:0; font-size:.85rem; color:var(--fg); }
+.code-block { min-width:0; max-width:100%; margin:1rem 0; border:1px solid var(--code-border); border-radius:8px; overflow:hidden; background:var(--tint); }
+.code-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem .8rem; padding:.35rem .65rem; border-bottom:1px solid var(--code-border); background:var(--code-bg); font-size:.8rem; }
+.code-language { color:var(--muted); }
+.code-status { flex:1; color:var(--fg); }
+.code-copy { margin-left:auto; flex-shrink:0; padding:.35rem .65rem; border:1px solid var(--code-border); border-radius:5px; background:var(--panel); color:var(--accent-deep); font:inherit; cursor:pointer; }
+.code-copy:hover { border-color:var(--accent); }
+.code-copy:focus-visible, .code-block pre:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
+.content .code-block pre { margin:0; border:0; border-radius:0; }
+@media(max-width:780px) { .code-copy { min-height:44px; min-width:60px; } }
 .content blockquote {
   margin:1.15rem 0; padding:.65rem 1rem; border-left:4px solid var(--accent-2);
   background:var(--warm); color:#49362e; border-radius:0 8px 8px 0;
@@ -285,10 +297,10 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content pre code .tok-str  { color:var(--hl-str); }
 .content pre code .tok-kw   { color:var(--hl-kw); font-weight:700; }
 .content pre code .tok-num  { color:var(--hl-num); }
-.content pre code .tok-fn   { color:var(--iri); }
+.content pre code .tok-fn   { color:var(--hl-fn); }
 .content pre code .tok-iri  { color:var(--iri); }
 .content pre code .tok-var  { color:var(--hl-num); }
-.content pre code .tok-flag { color:#9a5a14; }
+.content pre code .tok-flag { color:var(--hl-flag); }
 .content pre code .tok-punct{ color:var(--muted); }
 
 @media (max-width:1120px) { .page { grid-template-columns:minmax(0,1fr); } .rail { display:none; } }
@@ -756,18 +768,27 @@ sharing the query. A custom dashboard can use the <a href="browser.html">Browser
   var RUST = kw(["as","async","await","break","const","continue","crate","dyn","else","enum","extern","false","fn","for","if","impl","in","let","loop","match","mod","move","mut","pub","ref","return","self","Self","static","struct","super","trait","true","type","unsafe","use","where","while"]);
   var PY = kw(["def","return","import","from","as","for","in","if","elif","else","while","with","class","lambda","None","True","False","and","or","not","is","pass","break","continue","try","except","finally","raise","yield","global","nonlocal","assert","del","print","async","await"]);
   var SPARQL = kw(["SELECT","CONSTRUCT","ASK","DESCRIBE","WHERE","PREFIX","BASE","FILTER","OPTIONAL","UNION","MINUS","GRAPH","SERVICE","BIND","VALUES","DISTINCT","REDUCED","ORDER","BY","ASC","DESC","GROUP","HAVING","LIMIT","OFFSET","FROM","NAMED","COUNT","SUM","AVG","MIN","MAX","SAMPLE","STR","LANG","DATATYPE","BOUND","IRI","URI","REGEX","EXISTS","NOT","AS"], "i");
-  var SH = kw(["rete","cargo","docker","python3","python","pip","curl","wget","cd","cp","mv","rm","ls","mkdir","cat","grep","echo","node","git","wasm-pack","jq","tee","export","sudo","bash","sh"]);
+  var SH = kw(["rete","cargo","docker","python3","python","py","pip","uv","npm","npx","curl","wget","cd","cp","mv","rm","ls","mkdir","cat","grep","echo","node","git","wasm-pack","jq","tee","export","sudo","bash","sh"]);
   var JS = kw(["const","let","var","function","return","if","else","for","while","do","switch","case","break","continue","new","class","extends","super","this","typeof","instanceof","in","of","await","async","import","from","export","default","try","catch","finally","throw","yield","true","false","null","undefined","void","delete"]);
   var RULES = {
     rust:   [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/\b[a-z_]\w*!/y,"fn"],[RUST,"kw"],[NUM,"num"],[IDENT,null]],
     py:     [[COM_HASH,"com"],[STR,"str"],[/@\w+/y,"fn"],[PY,"kw"],[NUM,"num"],[IDENT,null]],
-    sh:     [[COM_HASH,"com"],[STR,"str"],[FLAG,"flag"],[SH,"fn"],[NUM,"num"],[IDENT,null]],
+    sh:     [[COM_HASH,"com"],[STR,"str"],[/\$(?:\{[^}]+\}|[A-Za-z_]\w*)/y,"var"],[FLAG,"flag"],[kw(["alias","function","if","then","else","fi","for","in","do","done"]),"kw"],[SH,"fn"],[NUM,"num"],[IDENT,null]],
     js:     [[COM_SLASH,"com"],[COM_BLOCK,"com"],[STR,"str"],[/`(?:\\.|[^`\\])*`/y,"str"],[JS,"kw"],[/\b[A-Za-z_]\w*(?=\s*\()/y,"fn"],[NUM,"num"],[IDENT,null]],
     json:   [[STR,"str"],[kw(["true","false","null"]),"kw"],[NUM,"num"],[IDENT,null]],
     sparql: [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[VAR,"var"],[/\ba\b/y,"kw"],[SPARQL,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]],
-    ttl:    [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[/@[A-Za-z]+/y,"kw"],[/\ba\b/y,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]]
+    ttl:    [[COM_HASH,"com"],[IRI,"iri"],[STR,"str"],[/@[A-Za-z]+/y,"kw"],[/\ba\b/y,"kw"],[PNAME,"fn"],[NUM,"num"],[IDENT,null]],
+    powershell: [[COM_HASH,"com"],[STR,"str"],[/[$@](?:\{[^}]+\}|[A-Za-z_]\w*)/y,"var"],[FLAG,"flag"],[kw(["function","param","if","else","foreach","in","return","true","false","null"],"i"),"kw"],[SH,"fn"],[/\b[A-Za-z]+-[A-Za-z]+/y,"fn"],[NUM,"num"],[IDENT,null]],
+    r: [[COM_HASH,"com"],[STR,"str"],[kw(["function","if","else","for","in","while","repeat","return","TRUE","FALSE","NULL","NA","Inf"]),"kw"],[/\b[A-Za-z_.][\w.]*(?=\s*\()/y,"fn"],[/<-|->|\|>|%[\w]*%/y,"kw"],[NUM,"num"],[IDENT,null]],
+    toml: [[COM_HASH,"com"],[STR,"str"],[/\[\[?[^\]\n]+\]\]?/y,"fn"],[/[\w.-]+(?=\s*=)/y,"fn"],[kw(["true","false"]),"kw"],[NUM,"num"],[IDENT,null]],
+    yaml: [[COM_HASH,"com"],[STR,"str"],[/[\w.-]+(?=\s*:)/y,"fn"],[kw(["true","false","null","yes","no"],"i"),"kw"],[/[&*][\w-]+/y,"var"],[NUM,"num"],[IDENT,null]],
+    markup: [[/<!--[\s\S]*?-->/y,"com"],[STR,"str"],[/<\/?[\w:.-]+|\/?\>|<\?[\w-]+|\?>/y,"kw"],[/[\w:-]+(?=\s*=)/y,"fn"],[/&(?:#\d+|#x[\da-f]+|\w+);/iy,"str"],[IDENT,null]],
+    dockerfile: [[COM_HASH,"com"],[STR,"str"],[kw(["FROM","AS","RUN","CMD","LABEL","EXPOSE","ENV","ADD","COPY","ENTRYPOINT","VOLUME","USER","WORKDIR","ARG","ONBUILD","STOPSIGNAL","HEALTHCHECK","SHELL"],"i"),"kw"],[FLAG,"flag"],[SH,"fn"],[NUM,"num"],[IDENT,null]],
+    mermaid: [[/%%.*/y,"com"],[STR,"str"],[kw(["graph","flowchart","subgraph","end","sequenceDiagram","participant","classDiagram","stateDiagram","TD","LR","TB","BT","RL"]),"kw"],[/-->|---|==>|-\.->/y,"fn"],[NUM,"num"],[IDENT,null]],
+    plain: []
   };
-  var ALIAS = {bash:"sh",shell:"sh",console:"sh",sh:"sh",rs:"rust",rust:"rust",python:"py",py:"py",js:"js",javascript:"js",mjs:"js",json:"json",sparql:"sparql",turtle:"ttl",ttl:"ttl",nt:"ttl",ntriples:"ttl",nq:"ttl",trig:"ttl"};
+  var ALIAS = {bash:"sh",shell:"sh",console:"sh",sh:"sh",rs:"rust",rust:"rust",python:"py",py:"py",js:"js",javascript:"js",mjs:"js",json:"json",sparql:"sparql",turtle:"ttl",ttl:"ttl",nt:"ttl",ntriples:"ttl",nq:"ttl",trig:"ttl",powershell:"powershell",pwsh:"powershell",r:"r",toml:"toml",yaml:"yaml",yml:"yaml",html:"markup",xml:"markup",dockerfile:"dockerfile",mermaid:"mermaid"};
+  var LABELS = {sh:"Shell",py:"Python",js:"JavaScript",rust:"Rust",json:"JSON",sparql:"SPARQL",ttl:"RDF",powershell:"PowerShell",r:"R",toml:"TOML",yaml:"YAML",markup:"Markup",dockerfile:"Dockerfile",mermaid:"Mermaid",plain:"Text"};
   function highlight(code, rules){
     var out = "", i = 0, n = code.length;
     outer: while (i < n){
@@ -785,14 +806,53 @@ sharing the query. A custom dashboard can use the <a href="browser.html">Browser
     }
     return out;
   }
-  document.addEventListener("DOMContentLoaded", function () {
-    var blocks = document.querySelectorAll('pre code[class*="language-"]');
-    blocks.forEach(function (el) {
-      var cls = (el.className.match(/language-([\w-]+)/) || [])[1] || "";
-      var rules = RULES[ALIAS[cls.toLowerCase()] || ""];
-      if (!rules) return;
-      el.innerHTML = highlight(el.textContent, rules);
-    });
+  var enhanced = new WeakMap(), blockCount = 0;
+  function enhance(el) {
+    if (!el || !el.matches('.content pre > code')) return;
+    var cls = (el.className.match(/language-([\w-]+)/) || [])[1] || "";
+    var language = ALIAS[cls.toLowerCase()] || 'plain';
+    var text = el.textContent;
+    el.innerHTML = highlight(text, RULES[language]);
+    var state = enhanced.get(el);
+    if (!state) {
+      var pre = el.parentElement, block = document.createElement('div');
+      block.className = 'code-block';
+      var toolbar = document.createElement('div'); toolbar.className = 'code-toolbar';
+      var label = document.createElement('span'); label.className = 'code-language';
+      var status = document.createElement('span'); status.className = 'code-status';
+      status.setAttribute('role', 'status');
+      var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'code-copy';
+      copy.setAttribute('aria-label', 'Copy code block ' + (++blockCount));
+      toolbar.append(label, status, copy);
+      pre.before(block); block.append(toolbar, pre);
+      pre.tabIndex = 0;
+      state = { label: label, status: status, copy: copy, revision: 0 };
+      enhanced.set(el, state);
+      copy.addEventListener('click', async function () {
+        var current = state.revision, command = el.textContent;
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard unavailable');
+          await navigator.clipboard.writeText(command);
+          if (current !== state.revision) return;
+          copy.textContent = 'Copied';
+          status.textContent = 'Code copied.';
+        } catch (_) {
+          if (current !== state.revision) return;
+          var range = document.createRange(); range.selectNodeContents(el);
+          var selection = window.getSelection();
+          if (selection) { selection.removeAllRanges(); selection.addRange(range); }
+          status.textContent = 'Code selected. Copy with your keyboard or context menu.';
+        }
+      });
+    }
+    state.revision++;
+    state.label.textContent = LABELS[language];
+    state.copy.textContent = 'Copy';
+    state.status.textContent = '';
+  }
+  document.addEventListener('rete:code-updated', function (event) { enhance(event.detail); });
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.content pre > code').forEach(enhance);
   });
 })();
 </script>
