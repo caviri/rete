@@ -55,6 +55,12 @@ sidebar; a page need not be in it to render. Link specialist pages from a guide
 or the reference directory and give them a parent in `parent_for`.
 Missing registered sources produce warnings and are omitted from navigation.
 
+Code blocks share syntax highlighting and a copy button, including installation
+commands that change with the selector. After changing this behavior, run
+`node tests/docgen/code_blocks.cjs` in the dev image with the browser gate's
+Playwright dependencies installed. The docs CI job runs this check across every
+generated page, including clipboard denial and the no-JavaScript fallback.
+
 Write for one audience and task per guide. Explain what an example does and
 what its result means; link to canonical details rather than repeating them.
 Keep technical limits beside the action they affect. Preserve old heading IDs

@@ -134,10 +134,9 @@ pub fn render() -> String {
 <div class="install-result" aria-live="polite" aria-atomic="true">
 <p class="install-selection">Command line · Linux · Docker</p>
 <p class="install-note">{}</p>
-<div class="install-command"><pre tabindex="0" aria-label="Installation commands"><code>{}</code></pre><button type="button" class="install-copy" hidden>Copy commands</button></div>
+<div class="install-command"><pre tabindex="0" aria-label="Installation commands"><code class="language-sh">{}</code></pre></div>
 <p class="install-next"><a href="{}">{}</a></p>
 </div>
-<p class="install-copy-status" role="status" aria-live="polite"></p>
 <noscript><p>The command above uses Docker in a Linux/macOS shell. For PowerShell, see the <a href="getting-started.html#getting-the-cli">Quickstart</a>. Other instructions: <a href="python.html">Python</a>, <a href="javascript.html">JavaScript</a>, <a href="rust-api.html">Rust</a>.</p></noscript>
 {templates}
 <script>{SCRIPT}</script>
@@ -168,12 +167,9 @@ const STYLE: &str = r#"
 .install-selector .install-note { font-size:.92rem; margin:.5rem 0 .9rem; }
 .install-selector .install-command { min-width:0; }
 .install-selector pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
-.install-selector pre code { white-space:pre-wrap; }
-.install-selector .install-copy { display:block; margin:.65rem 0 0 auto; border:1px solid var(--border); border-radius:5px; padding:.45rem .7rem; font:inherit; font-size:.85rem; background:var(--side); color:var(--accent-deep); cursor:pointer; }
-.install-selector .install-copy:hover { border-color:var(--accent); }
-.install-selector .install-copy:focus-visible, .install-selector pre:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.install-selector pre code { white-space:pre-wrap; width:auto; overflow-wrap:anywhere; }
+.install-selector .code-block { margin:0; }
 .install-selector .install-next { margin:.85rem 0 0; }
-.install-selector .install-copy-status { min-height:1.3em; margin:.35rem 0 0; font-size:.85rem; color:var(--muted); }
 @media(max-width:520px) { .install-selector { padding:1rem; } .install-selector .install-choices label { padding:.55rem .65rem; } }
 "#;
 
@@ -186,9 +182,6 @@ const SCRIPT: &str = r#"
   const note = root.querySelector('.install-note');
   const next = root.querySelector('.install-next a');
   const selection = root.querySelector('.install-selection');
-  const copy = root.querySelector('.install-copy');
-  const status = root.querySelector('.install-copy-status');
-  let revision = 0;
   const chosen = name => form.querySelector('input[name="install-' + name + '"]:checked');
   function update() {
     const system = chosen('system');
@@ -204,37 +197,17 @@ const SCRIPT: &str = r#"
     const manager = chosen('package');
     const item = available.find(item => item.dataset.package === manager.value).content;
     code.textContent = item.querySelector('code').textContent;
+    code.className = system.value === 'windows' ? 'language-powershell' : 'language-sh';
+    document.dispatchEvent(new CustomEvent('rete:code-updated', { detail: code }));
     note.textContent = item.querySelector('p').textContent;
     next.href = item.querySelector('a').getAttribute('href');
     next.textContent = item.querySelector('a').textContent;
     selection.textContent = [product, system, manager].map(input => input.nextElementSibling.textContent).join(' · ');
-    copy.textContent = 'Copy commands';
-    status.textContent = '';
-    revision++;
   }
   form.addEventListener('submit', event => event.preventDefault());
   form.addEventListener('change', update);
-  copy.addEventListener('click', async function () {
-    const current = revision;
-    const command = code.textContent;
-    try {
-      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard unavailable');
-      await navigator.clipboard.writeText(command);
-      if (current !== revision) return;
-      copy.textContent = 'Copied';
-      status.textContent = 'Commands copied.';
-    } catch (_) {
-      if (current !== revision) return;
-      const range = document.createRange();
-      range.selectNodeContents(code);
-      const selected = window.getSelection();
-      if (selected) { selected.removeAllRanges(); selected.addRange(range); }
-      status.textContent = 'Copy is unavailable here. The commands are selected; copy them with your keyboard or context menu.';
-    }
-  });
   update();
   form.hidden = false;
-  copy.hidden = false;
 })();
 "#;
 
