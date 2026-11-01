@@ -97,6 +97,7 @@ newlines.
 | `keywords` | **curated** (`--card-file` only) | Free-text tags (`dcat:keyword` / `schema:keywords` in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (`dcat:keyword` is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build. |
 | `theme` | **curated** (`--card-file` only) | **IRIs into a controlled vocabulary** (`dcat:theme`), e.g. the [EU data themes](http://publications.europa.eu/resource/authority/data-theme). IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at `keywords`; the agreed concept scheme is the whole value `dcat:theme` adds. [Where to get one](#where-to-get-theme-iris). Canonicalized like `keywords`. (There is deliberately **no curated language field**: in RDF the language rides on every literal, so the card *measures* it — see the `languages` row below and [the rule](#first-class-field-or-the-bag-the-rule).) |
 | `example_queries` | **curated** (`--card-file` only) | Sample queries a consumer can run. |
+| `base_iri` | **curated** (`--card-file` only) | Overrides the derived `signals.base_iri` (an absolute IRI). See below. |
 | `extra` | **curated** (`--card-file` only) | Publisher-defined **custom fields** — one bounded bag, see [Custom fields](#custom-fields-the-extra-bag). |
 | `triple_count` | derived | Triples in the **default graph**. |
 | `quad_count`, `named_graph_count` | derived | Total statements and number of named graphs. |
@@ -132,6 +133,12 @@ The subject-namespace tally (it only feeds `signals.base_iri`) is **bounded** at
 cannot grow it with the record count. At or under the cap the card is byte-identical to an
 unbounded tally; past it the counts are a deterministic space-saving summary, the common prefix
 stays exact, and the card is marked `truncated`.
+
+Past the cap the derived `base_iri` is an approximate dominant namespace (DataCite: `https://doi.org/10.57451/`
+instead of `https://doi.org/`). Set a curated `"base_iri"` in the card file to override it: an absolute IRI
+(a scheme, then no whitespace or other characters IRIs forbid). It wins over the derived value in `signals.base_iri`
+and so in the starter queries that use it (`lk-external`). `recard --keep-curated` does not carry it (a card does not say
+whether its base was derived or curated): pass the card file again.
 
 ### The full-text signal: measured, not stored
 

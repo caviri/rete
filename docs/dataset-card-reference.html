@@ -648,6 +648,7 @@ newlines.</p>
 <tr><td><code>keywords</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Free-text tags (<code>dcat:keyword</code> / <code>schema:keywords</code> in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (<code>dcat:keyword</code> is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build.</td></tr>
 <tr><td><code>theme</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td><strong>IRIs into a controlled vocabulary</strong> (<code>dcat:theme</code>), e.g. the <a href="http://publications.europa.eu/resource/authority/data-theme">EU data themes</a>. IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at <code>keywords</code>; the agreed concept scheme is the whole value <code>dcat:theme</code> adds. <a href="#where-to-get-theme-iris">Where to get one</a>. Canonicalized like <code>keywords</code>. (There is deliberately <strong>no curated language field</strong>: in RDF the language rides on every literal, so the card <em>measures</em> it — see the <code>languages</code> row below and <a href="#first-class-field-or-the-bag-the-rule">the rule</a>.)</td></tr>
 <tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
+<tr><td><code>base_iri</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Overrides the derived <code>signals.base_iri</code> (an absolute IRI). See below.</td></tr>
 <tr><td><code>extra</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Publisher-defined <strong>custom fields</strong> — one bounded bag, see <a href="#custom-fields-the-extra-bag">Custom fields</a>.</td></tr>
 <tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
 <tr><td><code>quad_count</code>, <code>named_graph_count</code></td><td>derived</td><td>Total statements and number of named graphs.</td></tr>
@@ -682,6 +683,11 @@ card — the card folds into a reproducible content hash. Counts are over the ra
 cannot grow it with the record count. At or under the cap the card is byte-identical to an
 unbounded tally; past it the counts are a deterministic space-saving summary, the common prefix
 stays exact, and the card is marked <code>truncated</code>.</p>
+<p>Past the cap the derived <code>base_iri</code> is an approximate dominant namespace (DataCite: <code>https://doi.org/10.57451/</code>
+instead of <code>https://doi.org/</code>). Set a curated <code>"base_iri"</code> in the card file to override it: an absolute IRI
+(a scheme, then no whitespace or other characters IRIs forbid). It wins over the derived value in <code>signals.base_iri</code>
+and so in the starter queries that use it (<code>lk-external</code>). <code>recard --keep-curated</code> does not carry it (a card does not say
+whether its base was derived or curated): pass the card file again.</p>
 <h3 id="the-full-text-signal-measured-not-stored">The full-text signal: measured, not stored</h3>
 <p>A <code>.rete</code> carries an optional <strong>TEXT_INDEX section</strong> (kind <code>6</code>, or <code>11</code> for an
 index restricted to some predicates — <a href="SPEC.html#63-full-text-index-text_index-section-optional">SPEC §6.3</a>),
