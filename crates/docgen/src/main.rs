@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 
+mod install;
+
 /// Crate version, shown in the sidebar next to the repository link.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPO_URL: &str = "https://github.com/caviri/rete";
@@ -40,6 +42,7 @@ const PAGES: &[(&str, &str)] = &[
     ("index.md", "Overview"),
     ("intro.md", "Graph concepts"),
     ("getting-started.md", "Quickstart"),
+    ("install.md", "Install rete"),
     ("scenario.md", "Real-world scenario"),
     ("playground-guide.md", "Playground"),
     ("plaza-guide.md", "Plaza — dataset gallery"),
@@ -145,6 +148,62 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
+/// A few direct routes under task hubs, not the full catalogue of examples.
+const NAV_CHILDREN: &[(&str, &[(&str, &str)])] = &[
+    ("getting-started.md", &[("install.md", "Install rete")]),
+    (
+        "build-and-publish.md",
+        &[
+            ("dataset-cards.md", "Dataset Cards"),
+            ("hosting.md", "Hosting"),
+            ("data-engineering.md", "Large builds and tables"),
+        ],
+    ),
+    (
+        "query-and-analyze.md",
+        &[
+            ("graph-algorithms.md", "Graph algorithms"),
+            ("federation.md", "Federation"),
+            ("reasoning.md", "Reasoning"),
+        ],
+    ),
+    (
+        "clients.md",
+        &[
+            ("python.md", "Python"),
+            ("javascript.md", "JavaScript"),
+            ("r.md", "R"),
+        ],
+    ),
+    (
+        "integrations.md",
+        &[
+            ("plaza-guide.md", "Plaza"),
+            ("file-explorer.md", "File Explorer"),
+            ("yasgui-guide.md", "SPARQL IDE"),
+        ],
+    ),
+    ("recipes.md", &[("scenario.md", "Dependency walkthrough")]),
+    (
+        "reference.md",
+        &[
+            ("SPEC.md", "File format"),
+            ("rust-api.md", "Rust API"),
+            ("conformance.md", "SPARQL conformance"),
+        ],
+    ),
+    (
+        "contributing.md",
+        &[
+            ("architecture.md", "Repository and core"),
+            ("benchmarks.md", "Benchmarks"),
+            ("testing.md", "Tests, coverage and CI"),
+            ("clients-dev.md", "Client development"),
+            ("release.md", "Releases"),
+        ],
+    ),
+];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Docs dir: first CLI arg, else ./docs.
     let docs_dir: PathBuf = std::env::args()
@@ -190,6 +249,11 @@ fn render_docs(docs_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
             let rel = src.strip_prefix("docs/").unwrap_or(src);
             aspect_ratio(&docs_dir.join(rel))
         });
+        let body = if *md == "install.md" {
+            body.replace("<!-- install-selector -->", &install::render())
+        } else {
+            body
+        };
         let html_name = md.replace(".md", ".html");
         let page = template(title, &body, md, &summarize(&markdown), &missing);
         let out = docs_dir.join(&html_name);
@@ -346,6 +410,7 @@ fn parent_for(md: &str) -> Option<&'static str> {
         return None;
     }
     Some(match md {
+        "install.md" => "getting-started.md",
         "python.md" | "python-build-tutorial.md" | "javascript.md" | "r.md" => "clients.md",
         "agents.md"
         | "agent-frameworks.md"
@@ -712,8 +777,9 @@ fn rewrite_links(html: &str) -> String {
 
 fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &[&str]) -> String {
     let mut nav_items: Vec<String> = Vec::new();
+    let context = parent_for(current_md).unwrap_or(current_md);
     for (section, pages) in SECTIONS {
-        nav_items.push(format!("<li class=\"nav-h\">{section}</li>"));
+        nav_items.push(format!("<li><details class=\"nav-section\" open><summary class=\"nav-h\">{section}</summary><ul>"));
         for (md, t) in *pages {
             // A nav entry for a page this run did not produce would be a link to
             // nothing on all 50 pages — the exact breakage `check_docs_links.py`
@@ -723,13 +789,60 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
                 continue;
             }
             let href = md.replace(".md", ".html");
-            let class = if *md == parent_for(current_md).unwrap_or(current_md) {
+            let class = if *md == current_md {
                 " class=\"active\""
             } else {
                 ""
             };
-            nav_items.push(format!("<li><a href=\"{href}\"{class}>{t}</a></li>"));
+            let current = if *md == current_md {
+                " aria-current=\"page\""
+            } else {
+                ""
+            };
+            let children: Vec<_> = NAV_CHILDREN
+                .iter()
+                .find(|(parent, _)| parent == md)
+                .map(|(_, children)| {
+                    children
+                        .iter()
+                        .filter(|(child, _)| {
+                            !missing.contains(child) && PAGES.iter().any(|p| p.0 == *child)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if children.is_empty() {
+                let class = if *md == context {
+                    " class=\"active\""
+                } else {
+                    ""
+                };
+                nav_items.push(format!(
+                    "<li><a href=\"{href}\"{class}{current}>{t}</a></li>"
+                ));
+            } else {
+                let open = if *md == context { " open" } else { "" };
+                let summary_class = if *md == context {
+                    " class=\"nav-context\""
+                } else {
+                    ""
+                };
+                nav_items.push(format!("<li class=\"nav-group\"><details data-nav-page=\"{md}\"{open}><summary{summary_class}>{t}</summary><ul class=\"nav-sub\"><li><a href=\"{href}\"{class}{current}>Overview</a></li>"));
+                for (child, label) in children {
+                    let child_current = if *child == current_md {
+                        " class=\"nav-current\" aria-current=\"page\""
+                    } else {
+                        ""
+                    };
+                    nav_items.push(format!(
+                        "<li><a href=\"{}\"{child_current}>{label}</a></li>",
+                        child.replace(".md", ".html")
+                    ));
+                }
+                nav_items.push("</ul></details></li>".into());
+            }
         }
+        nav_items.push("</ul></details></li>".into());
     }
     let parent = parent_for(current_md).filter(|md| !missing.contains(md));
     let parent_link = parent
@@ -938,7 +1051,7 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
 </head>
 <body>
   {topbar}
-  <nav class="sidebar">
+  <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
     <p class="meta"><span class="ver">v{version}</span> <a href="{repo}">caviri/rete</a></p>
@@ -1068,36 +1181,51 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 .sidebar .meta a:hover { background:none; text-decoration:underline; }
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .sidebar li { margin:.08rem 0; }
-.sidebar li.nav-h {
-  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
-  letter-spacing:.09em; text-transform:uppercase; color:var(--side-fg);
-}
-.sidebar li.nav-h:first-child { margin-top:.2rem; }
 .sidebar a {
   color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
   border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
 }
 .sidebar a:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
 .sidebar a.active { background:var(--panel); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; box-shadow:0 6px 18px rgba(20,125,105,.10); }
-.sidebar .nav-group summary {
-  cursor:pointer; list-style:none; padding:.42rem .62rem; font-size:.93rem; line-height:1.25;
-  color:var(--side-fg); border-left:3px solid transparent; border-radius:0 6px 6px 0;
+/* Native disclosures also work without JavaScript. The mobile drawer clones
+   this same tree, including the open ancestors of the current page. */
+:is(.sidebar,.mdrawer) .nav-section > summary,
+:is(.sidebar,.mdrawer) .nav-group > details > summary {
+  display:flex; align-items:center; gap:.5rem; list-style:none; cursor:pointer;
+  padding:.42rem .62rem; color:var(--side-fg); font-size:.93rem; line-height:1.3;
+  border-left:3px solid transparent; border-radius:0 6px 6px 0;
 }
-.sidebar .nav-group summary::-webkit-details-marker { display:none; }
-.sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
-.sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
-.sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
-/* The summary title is a link to the overview; keep it inline (no second block
-   padding) so it reads as the group heading, not a nested item. */
-.sidebar .nav-group summary a { display:inline; padding:0; margin:0; border:0; border-radius:0; box-shadow:none; color:inherit; font-size:inherit; line-height:inherit; }
-.sidebar .nav-group summary a:hover { background:none; color:inherit; }
-.sidebar .nav-group summary a.active { background:none; box-shadow:none; color:var(--accent-deep); font-weight:700; }
-.sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
-.sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
-.sidebar .nav-sub a:hover { color:var(--accent-deep); }
-.sidebar .nav-sub a.active { font-weight:700; color:var(--accent-deep); }
+:is(.sidebar,.mdrawer) .nav-section > summary {
+  margin-top:.9rem; font-size:.76rem; font-weight:700;
+}
+:is(.sidebar,.mdrawer) li:first-child > .nav-section > summary { margin-top:0; }
+:is(.sidebar,.mdrawer) summary::-webkit-details-marker { display:none; }
+:is(.sidebar,.mdrawer) .nav-section > summary::after,
+:is(.sidebar,.mdrawer) .nav-group > details > summary::after {
+  content:""; flex:0 0 .4rem; width:.4rem; height:.4rem; margin-left:auto;
+  border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor;
+  transform:rotate(-45deg); opacity:.7;
+}
+:is(.sidebar,.mdrawer) .nav-section[open] > summary::after,
+:is(.sidebar,.mdrawer) .nav-group > details[open] > summary::after { transform:rotate(45deg); }
+:is(.sidebar,.mdrawer) summary:hover { background:var(--tint); }
+:is(.sidebar,.mdrawer) .nav-group > details > summary.nav-context {
+  color:var(--accent-deep); font-weight:700; border-left-color:var(--accent);
+}
+:is(.sidebar,.mdrawer) a:focus-visible,
+:is(.sidebar,.mdrawer) summary:focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px;
+}
+:is(.sidebar,.mdrawer) .nav-sub {
+  padding-left:.55rem; margin:.1rem 0 .35rem .75rem; border-left:1px solid var(--border);
+}
+:is(.sidebar,.mdrawer) .nav-sub a { font-size:.84rem; padding:.36rem .6rem; color:var(--muted); }
+:is(.sidebar,.mdrawer) .nav-sub a.nav-current {
+  color:var(--accent-deep); font-weight:700; background:var(--tint); border-left-color:var(--accent);
+}
 .sidebar .foot { margin-top:1.3rem; font-size:.85rem; }
 .sidebar .foot a { display:inline; padding:0; border:0; color:var(--muted); }
+#keyterms:empty { display:none; }
 
 main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 .page {
@@ -1235,7 +1363,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 @media (max-width:780px) {
   body { display:block; background:var(--bg); }
   .sidebar { width:100%; min-height:auto; position:static; border-right:0; border-bottom:1px solid var(--border); background:var(--side); }
-  .sidebar ul { columns:2; column-gap:.7rem; }
+  .sidebar > ul { columns:2; column-gap:.7rem; }
+  .sidebar ul ul { columns:1; }
   .sidebar li { break-inside:avoid; }
   .page { padding:0 1.15rem; }
   .content { padding-top:2rem; }
@@ -1445,21 +1574,9 @@ const MOBILE_CSS: &str = r#"
   .mdrawer a:active { background:rgba(20,125,105,.1); }
   .mdrawer a.active { background:var(--tint); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; }
   .mdrawer .toc-sub a { padding-left:1.5rem; font-size:.84rem; color:var(--muted); }
-  .mdrawer li.nav-h {
-    margin:1rem 0 .2rem; padding:0 .6rem; font-size:.63rem; font-weight:800;
-    letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
-  }
-  .mdrawer li.nav-h:first-child { margin-top:.1rem; }
-  .mdrawer .nav-group summary {
-    display:flex; align-items:center; padding:.5rem .6rem; font-size:.9rem; line-height:1.3;
-    list-style:none; cursor:pointer;
-  }
-  .mdrawer .nav-group summary::-webkit-details-marker { display:none; }
-  .mdrawer .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
-  .mdrawer .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
-  .mdrawer .nav-group summary a { display:inline; padding:0; border:0; border-radius:0; background:none; font-size:inherit; }
-  .mdrawer .nav-sub { margin:.1rem 0 .3rem .6rem; padding-left:.5rem; border-left:1px solid var(--border); }
-  .mdrawer .nav-sub a { font-size:.82rem; padding:.36rem .6rem; color:var(--muted); }
+  .mdrawer .nav-section > summary,
+  .mdrawer .nav-group > details > summary,
+  .mdrawer .nav-sub a { min-height:44px; }
 
   /* The page turn: a short slide out before the browser fetches the next
      document. It is the only motion the gesture adds, and it does not run at
@@ -1861,7 +1978,7 @@ const MOBILE_JS: &str = r##"
     /* ---- 2. open / close, with a focus trap -------------------------------- */
     var lastFocus = null, closeTimer = null;
     function focusable() {
-      return [].slice.call(drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+      return [].slice.call(drawer.querySelectorAll('a[href],summary,button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
         .filter(function (el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
     }
     function isOpen() { return document.documentElement.classList.contains("drawer-open"); }
@@ -2037,7 +2154,7 @@ mod tests {
     #[test]
     fn registry_and_sidebar_are_complete_unique_and_classified() {
         use std::collections::HashSet;
-        assert_eq!(super::PAGES.len(), 67);
+        assert_eq!(super::PAGES.len(), 68);
         let published: HashSet<_> = super::PAGES.iter().map(|p| p.0).collect();
         assert_eq!(published.len(), super::PAGES.len());
         assert_eq!(super::SECTIONS.len(), 4);
@@ -2049,6 +2166,18 @@ mod tests {
         assert_eq!(visible.len(), 15);
         assert_eq!(visible.iter().collect::<HashSet<_>>().len(), 15);
         assert!(visible.iter().all(|md| published.contains(md)));
+        let mut children = HashSet::new();
+        for (parent, entries) in super::NAV_CHILDREN {
+            assert!(visible.contains(parent));
+            for (child, _) in *entries {
+                assert!(published.contains(child));
+                assert!(
+                    children.insert(child),
+                    "duplicate navigation child: {child}"
+                );
+                assert_eq!(super::parent_for(child), Some(*parent));
+            }
+        }
         for (md, _) in super::PAGES {
             if !visible.contains(md) {
                 assert!(visible.contains(&super::parent_for(md).expect("specialist parent")));
@@ -2073,7 +2202,9 @@ mod tests {
         let output = std::fs::read_to_string(docs.join("python.html")).unwrap();
         assert!(output.contains("id=\"stable\""));
         assert!(output.contains("Back to Language clients"));
-        assert!(output.contains("href=\"clients.html\" class=\"active\""));
+        assert!(output.contains(
+            "<details data-nav-page=\"clients.md\" open><summary class=\"nav-context\">"
+        ));
         std::fs::write(docs.join("unclassified.md"), "# New").unwrap();
         assert!(super::validate_registry(&docs)
             .unwrap_err()
@@ -2109,7 +2240,7 @@ mod tests {
         assert_eq!(super::reading_order(&[]).len(), 4);
         let page = super::template("Python", "<h1>Python</h1>", "python.md", "", &[]);
         assert!(page.contains("Back to Language clients"));
-        assert!(!page.contains("class=\"nav-group\""));
+        assert!(page.contains("class=\"nav-group\""));
         assert!(!page.contains("rel=\"next\""));
         for (md, parent, title) in [
             (
@@ -2139,8 +2270,11 @@ mod tests {
                 "{md} must return to the hub that lists it"
             );
             assert!(
-                page.contains(&format!("href=\"{parent}\" class=\"active\"")),
-                "{md} must highlight its parent hub"
+                page.contains(&format!(
+                    "<details data-nav-page=\"{}\" open><summary class=\"nav-context\">",
+                    parent.replace(".html", ".md")
+                )),
+                "{md} must open and highlight its parent hub"
             );
         }
         assert_eq!(
@@ -2152,6 +2286,27 @@ mod tests {
     }
     use super::{aspect_ratio, classify_images, render_markdown, SQUARE_MAX_RATIO};
     use std::path::PathBuf;
+
+    #[test]
+    fn development_disclosures_open_the_current_path_and_skip_missing_children() {
+        let page = super::template("Coverage", "<h1>Coverage</h1>", "testing.md", "", &[]);
+        assert!(page.contains("<details class=\"nav-section\" open>"));
+        assert!(page.contains("<details data-nav-page=\"contributing.md\" open>"));
+        assert!(page.contains("href=\"testing.html\" class=\"nav-current\" aria-current=\"page\""));
+        assert!(!page.contains("href=\"contributing.html\" class=\"active\""));
+        let index = super::template(
+            "Overview",
+            "<h1>Overview</h1>",
+            "index.md",
+            "",
+            &["testing.md"],
+        );
+        assert!(index.contains("<details data-nav-page=\"contributing.md\">"));
+        assert!(!index.contains("href=\"testing.html\""));
+        let app = super::template("Atlas", "<h1>Atlas</h1>", "atlas.md", "", &[]);
+        assert!(app.contains("href=\"apps.html\" class=\"active\">Apps and experiments"));
+        assert!(!app.contains("href=\"apps.html\" class=\"active\" aria-current"));
+    }
 
     /// The shipped diagrams, measured. This is the classification the site
     /// depends on, so it is asserted against the real files rather than a
