@@ -405,8 +405,8 @@ struct ExistsEntry {
     sols: Vec<crate::row::Row>,
     loaded: bool,
     probe: Option<ExistsProbe>,
-    /// A BGP sub-plan probed per outer row instead of loaded (`None` once it
-    /// ran out of budget, or when loading it whole is the cheaper plan).
+    /// A fat BGP sub-plan probed per outer row instead of loaded (`None` when
+    /// loading it whole is the cheaper plan).
     corr: Option<crate::bgp::CorrelatedProbe>,
 }
 
@@ -2491,9 +2491,8 @@ mod tests {
         })
     }
 
-    /// `FILTER (NOT) EXISTS` and `MINUS` over a BGP probe the BGP per outer
-    /// row (and fall back to one whole evaluation once the probe budget is
-    /// spent): the same rows as loading it, in every shape.
+    /// `FILTER (NOT) EXISTS` and `MINUS` over a fat BGP probe it per outer
+    /// row: the same rows as loading it, in every shape.
     #[test]
     fn correlated_exists_and_minus_match_whole_evaluation() {
         let rete = people();

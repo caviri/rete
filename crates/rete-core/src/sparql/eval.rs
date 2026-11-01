@@ -2360,13 +2360,11 @@ impl MinusRight {
 /// by the slots the left side always binds ([`MinusRight`]); left rows then
 /// stream through a filter.
 ///
-/// A BGP right side that shares a certainly-bound variable with the left is
-/// instead **probed per left row** while that is cheaper than loading it
-/// ([`crate::bgp::CorrelatedProbe`]): a left row is eliminated iff the BGP,
-/// with the row's bindings substituted, has a solution, and a row binding none
-/// of the BGP's variables is kept (disjoint domains). Past the probe budget the
-/// right side is loaded and the rest of the left stream uses the index; the
-/// rows are the same either way.
+/// A fat BGP right side that shares a certainly-bound variable with the left
+/// is instead **probed per left row** ([`crate::bgp::CorrelatedProbe`]): a
+/// left row is eliminated iff the BGP, with the row's bindings substituted,
+/// has a solution, and a row binding none of the BGP's variables is kept
+/// (disjoint domains). The rows are the same either way.
 fn minus_iter<'q>(
     ctx: &'q Ctx<'q>,
     index: &'q GraphIndex,
@@ -2376,26 +2374,11 @@ fn minus_iter<'q>(
 ) -> RowIter<'q> {
     if let Plan::Bgp(patterns) = r {
         let lcert = certain_bound(ctx, l, ctx.slots.len());
-        if let Some(mut corr) = crate::bgp::CorrelatedProbe::new(ctx, index, patterns, &lcert) {
-            let mut loaded: Option<Option<MinusRight>> = None;
-            return Box::new(eval_plan_iter(ctx, index, nf, l).filter(move |lb| {
-                if loaded.is_none() {
-                    if !corr.shares(lb) {
-                        return true;
-                    }
-                    match corr.probe(ctx, index, lb) {
-                        Some(hit) => return !hit,
-                        None => {
-                            let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
-                            loaded = Some(MinusRight::build(ctx, l, right));
-                        }
-                    }
-                }
-                !loaded
-                    .as_ref()
-                    .and_then(Option::as_ref)
-                    .is_some_and(|m| m.eliminates(lb))
-            }));
+        if let Some(corr) = crate::bgp::CorrelatedProbe::new(ctx, index, patterns, &lcert) {
+            return Box::new(
+                eval_plan_iter(ctx, index, nf, l)
+                    .filter(move |lb| !(corr.shares(lb) && corr.probe(ctx, index, lb))),
+            );
         }
     }
     let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();

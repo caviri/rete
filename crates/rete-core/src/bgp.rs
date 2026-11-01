@@ -447,30 +447,34 @@ fn is_unbound_class(ctx: &Ctx, t: &(SlotTerm, SlotTerm, SlotTerm), shared: &[usi
     )
 }
 
+/// Is a BGP whose cheapest pattern is estimated at `est` rows fat enough that
+/// probing it per outer row beats loading it? [`FAT_SCAN_ROWS`]; tests set the
+/// probe floor instead, to drive the path over a graph small enough to check.
+fn fat_enough(est: f64) -> bool {
+    #[cfg(test)]
+    if TEST_LIMITS.with(|c| c.get()).is_some() {
+        return est >= limits().probe_floor;
+    }
+    est >= FAT_SCAN_ROWS
+}
+
 /// A BGP probed once per outer row instead of evaluated whole: the shape of a
 /// correlated `FILTER (NOT) EXISTS` or `MINUS` over a BGP. Each outer row's
-/// bound variables become constants of the probe ([`ProbeJoin`]), so the
+/// bound variables become constants of the probe ([`ProbeJoin`]), so a fat
 /// BGP is never loaded; a row costs a few index lookups and stops at its
-/// first solution.
-///
-/// Probing is chosen only when it beats evaluating the BGP once and
-/// indexing it: the BGP is fat (its cheapest pattern spans [`FAT_SCAN_ROWS`]),
-/// or the rows probed so far stay within [`probe_row_budget`]; past the budget
-/// [`Self::probe`] returns `None` and the caller falls back to the whole
-/// evaluation, which answers every row the same.
+/// first solution. A BGP below [`FAT_SCAN_ROWS`] is cheap to load once and
+/// index, so it keeps that plan: probing it would only fault scattered tiles.
 pub(crate) struct CorrelatedProbe {
     /// `None`: a constant is not in the file, so no row has a solution.
     plan: Option<ProbePlan>,
     /// The variable slots the BGP mentions.
     slots: Vec<usize>,
-    budget: usize,
-    used: usize,
 }
 
 impl CorrelatedProbe {
     /// `seed` marks the slots the outer rows certainly bind. `None` = evaluate
     /// whole: the BGP is empty, shares no variable with the outer side, or is
-    /// cheap enough that one evaluation wins.
+    /// not fat.
     pub(crate) fn new(
         ctx: &Ctx,
         index: &GraphIndex,
@@ -495,24 +499,16 @@ impl CorrelatedProbe {
         if !slots.iter().any(|&i| seed[i]) {
             return None;
         }
+        // An unknown constant empties the BGP for every row.
         let Some(est) = bgp_min_estimate(ctx, index, patterns) else {
-            return Some(CorrelatedProbe {
-                plan: None,
-                slots,
-                budget: usize::MAX,
-                used: 0,
-            });
+            return Some(CorrelatedProbe { plan: None, slots });
         };
-        let budget = if est >= FAT_SCAN_ROWS {
-            usize::MAX
-        } else {
-            probe_row_budget(bgp_total_estimate(ctx, index, patterns).unwrap_or(est))?
-        };
+        if !fat_enough(est) {
+            return None;
+        }
         Some(CorrelatedProbe {
             plan: ProbePlan::new(ctx, index, patterns, seed),
             slots,
-            budget,
-            used: 0,
         })
     }
 
@@ -522,19 +518,15 @@ impl CorrelatedProbe {
     }
 
     /// Does the BGP, with `row`'s bindings substituted, have a solution?
-    /// `None`: the probe budget is spent, or `row` binds none of the BGP's
-    /// variables; evaluate whole.
-    pub(crate) fn probe(&mut self, ctx: &Ctx, index: &GraphIndex, row: &Row) -> Option<bool> {
-        if !self.shares(row) || self.used >= self.budget {
-            return None;
-        }
-        self.used += 1;
-        Some(match &self.plan {
+    /// Callers check [`Self::shares`] first: a row that binds none of the
+    /// BGP's variables would re-evaluate all of it.
+    pub(crate) fn probe(&self, ctx: &Ctx, index: &GraphIndex, row: &Row) -> bool {
+        match &self.plan {
             None => false,
             Some(plan) => ProbeJoin::from_plan(ctx, index, plan, row.clone())
                 .next()
                 .is_some(),
-        })
+        }
     }
 }
 

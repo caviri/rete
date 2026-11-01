@@ -180,12 +180,8 @@ impl FExpr {
                         corr,
                     }
                 });
-                if let Some(c) = entry.corr.as_mut().filter(|c| c.shares(b)) {
-                    match c.probe(ctx, index, b) {
-                        Some(v) => return Some(v),
-                        // Budget spent: one whole evaluation from here on.
-                        None => entry.corr = None,
-                    }
+                if let Some(c) = entry.corr.as_ref().filter(|c| c.shares(b)) {
+                    return Some(c.probe(ctx, index, b));
                 }
                 if !entry.loaded {
                     entry.sols = eval_plan_in(ctx, index, None, plan);

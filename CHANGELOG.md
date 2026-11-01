@@ -58,6 +58,18 @@ file only once the readers that fetch it run this release. See
   depend on the layout, card region included: the open reads the first 64 KiB).
 - The memory-bounded build and `rete merge` write their stream as `0x05` and
   convert it (one copy pass; the next release streams `0x06`).
+- **Planner: fewer whole-pattern loads.** `FILTER (NOT) EXISTS` and `MINUS` over
+  a fat BGP (cheapest pattern at least a million rows) probe it once per outer
+  row instead of loading it. A join with a `UNION` whose branches are BGPs
+  pushes the other side's rows (a `VALUES` block, or a preceding pattern) into
+  each branch, instead of evaluating every branch whole: on the OpenCitations
+  sample `VALUES` over 30 records and three branches went from 1.5 GB and
+  2-5 s to 43 MB and 0.12 s. A BGP joined with a few rows now probes when the
+  sum of its patterns' estimates is large, not only its cheapest one (the
+  journal query: 0.36 s and 76 MB to 0.08 s and 16 MB). `?x a ?c` joined on a
+  bound `?x` probes per subject. A pattern inside `GRAPH <g>` is sized by the
+  graph's own triple count (the quad directory's), not the file's; the default
+  graph keeps the file total. Same rows as before for every shape.
 
 ### Fixed
 
