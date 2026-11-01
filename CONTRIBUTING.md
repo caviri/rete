@@ -47,6 +47,9 @@ Application pages such as `playground.html`, `yasgui.html` and `atlas-app.html`
 have their own builders (next section); docgen renders their Markdown guides.
 
 Register every public root `docs/*.md` in `PAGES` in `crates/docgen/src/main.rs`.
+`NAV_CHILDREN` adds a small set of direct links inside an expandable task hub;
+keep each child's `parent_for` mapping consistent. The sidebar and mobile
+drawer use the same native disclosures, which must also work without JavaScript.
 Docgen rejects unregistered root pages. `SECTIONS` controls only the small
 sidebar; a page need not be in it to render. Link specialist pages from a guide
 or the reference directory and give them a parent in `parent_for`.

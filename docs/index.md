@@ -5,6 +5,7 @@ on a web host that supports byte-range requests. A client can then read the
 parts needed for a SPARQL query without downloading the file first.
 
 **[Try the Playground](playground-guide.md)** or **[build your first graph](getting-started.md)**.
+Choose a package and system in the [installation selector](install.md).
 If RDF is new to you, begin with [Graph concepts](intro.md).
 
 <span id="why"></span>
