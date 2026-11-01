@@ -7,6 +7,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Card derivation no longer runs out of memory on graphs with millions of distinct subject
+  namespaces.** The tally behind `signals.base_iri` kept one entry per distinct IRI-up-to-last-slash,
+  which on DataCite (`https://doi.org/<prefix>/<suffix>`) grew with the record count (about 4 GB a
+  minute, past any `--memory-budget-mb`). It is now bounded at 65,536 entries in `build`, `recard`
+  and the in-memory derivation, counted in the budget line. Cards of graphs at or under the cap are
+  byte-identical; past it the card is marked `truncated`.
 - **A corrupt or hostile `.rete` is refused cleanly instead of panicking or
   decoding to wrong ids.** Container lengths and counts are checked before they
   size a slice (a length near 2^64 overflowed `pos + len`; on wasm32 a length or
