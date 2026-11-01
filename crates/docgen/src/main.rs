@@ -82,14 +82,16 @@ const PAGES: &[(&str, &str)] = &[
     ("release.md", "Release guide"),
     ("topic-modeling.md", "Topic modeling (LDA)"),
     ("multi-criteria.md", "Multi-criteria communities"),
-    ("architecture.md", "Architecture"),
+    ("architecture.md", "Repository and core"),
     ("SPEC.md", "Format specification"),
     ("rust-api.md", "Rust API"),
     ("browser.md", "WASM bindings reference"),
     ("clients-dev.md", "Client development & releases"),
     ("parallel-browser.md", "Parallel in browser (exp.)"),
     ("data-engineering.md", "Tables, VKG & big builds"),
-    ("BENCHMARK.md", "Benchmarks"),
+    ("BENCHMARK.md", "Benchmark measurements"),
+    ("benchmarks.md", "Benchmarks"),
+    ("testing.md", "Tests, coverage and CI"),
     ("conformance.md", "SPARQL 1.1 conformance"),
     ("neuro-showcase-guide.md", "Neuromorphology"),
     ("graph-algorithms.md", "Graph algorithms"),
@@ -100,7 +102,7 @@ const PAGES: &[(&str, &str)] = &[
     ("recipes.md", "Worked examples"),
     ("reference.md", "API and technical reference"),
     ("apps.md", "Apps and experiments"),
-    ("contributing.md", "Contributing"),
+    ("contributing.md", "Development"),
     ("dataset-card-reference.md", "Dataset Card reference"),
 ];
 
@@ -138,7 +140,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Project",
         &[
             ("apps.md", "Apps and experiments"),
-            ("contributing.md", "Contributing"),
+            ("contributing.md", "Development"),
         ],
     ),
 ];
@@ -367,15 +369,14 @@ fn parent_for(md: &str) -> Option<&'static str> {
         | "topic-modeling.md"
         | "multi-criteria.md"
         | "graph-algorithms.md" => "query-and-analyze.md",
-        "architecture.md"
-        | "SPEC.md"
+        "SPEC.md"
         | "rust-api.md"
         | "browser.md"
         | "manifest.md"
-        | "BENCHMARK.md"
         | "conformance.md"
         | "parallel-browser.md" => "reference.md",
-        "clients-dev.md" | "release.md" => "contributing.md",
+        "architecture.md" | "benchmarks.md" | "BENCHMARK.md" | "testing.md" | "clients-dev.md"
+        | "release.md" => "contributing.md",
         _ => "apps.md",
     })
 }
@@ -2036,7 +2037,7 @@ mod tests {
     #[test]
     fn registry_and_sidebar_are_complete_unique_and_classified() {
         use std::collections::HashSet;
-        assert_eq!(super::PAGES.len(), 65);
+        assert_eq!(super::PAGES.len(), 67);
         let published: HashSet<_> = super::PAGES.iter().map(|p| p.0).collect();
         assert_eq!(published.len(), super::PAGES.len());
         assert_eq!(super::SECTIONS.len(), 4);
