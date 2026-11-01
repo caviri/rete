@@ -31,6 +31,25 @@ SECTION_TEXT_INDEX = 6
 # The same index restricted to some predicates (`--text-index-include/-exclude`):
 # its own kind so that readers older than 0.4.0 do not prune CONTAINS with it.
 SECTION_TEXT_INDEX_PARTIAL = 11
+# Format 0x06 (SPEC.md 4.1): a 128-byte header, then the root and the card region.
+# The section table is in the (compressed) root, so what the first 1 KiB can
+# say about the sections is the header's `presence` bits.
+HEADER06_LEN = 128
+PRESENCE_OFFSET = 78
+P_TEXT = 1
+P_LABELS = 4
+P_SCHEMA = 8
+P_PYRAMID = 16
+P_QUAD = 32
+PRESENCE_NAMES = {
+    P_TEXT: "TextIndex",
+    P_LABELS: "LabelIndex",
+    P_SCHEMA: "Schema",
+    P_PYRAMID: "PyramidMeta",
+    P_QUAD: "QuadIndex",
+}
+SUPPORTED_FORMATS = (5, 6)
+
 SECTION_NAMES = {
     1: "Metadata",
     2: "Dictionary",
@@ -68,6 +87,26 @@ def parse_sections(body: bytes) -> list[dict]:
             }
         )
     return sections
+
+
+def parse_header06(body: bytes) -> dict | None:
+    """Decode the 0x06 header from the first 128 bytes: presence bits and the
+    card range (root_len at 32, card_off at 80, card_len at 84; the card
+    region starts right after the root)."""
+    if len(body) < HEADER06_LEN or body[:4] != b"RETE" or body[4] != 6:
+        return None
+    if struct.unpack_from("<H", body, 6)[0] != HEADER06_LEN:
+        return None
+    root_len, region_len = struct.unpack_from("<II", body, 32)
+    presence = struct.unpack_from("<H", body, PRESENCE_OFFSET)[0]
+    card_off, card_len = struct.unpack_from("<II", body, 80)
+    region = HEADER06_LEN + root_len
+    return {
+        "presence": presence,
+        "cardOffset": region + card_off,
+        "cardLength": card_len,
+        "cardRegionEnd": region + region_len,
+    }
 
 
 def parse_content_range(value: str) -> tuple[int, int, int] | None:
@@ -121,15 +160,40 @@ def validate_probe(
     if body[:4] != b"RETE":
         errors.append("header magic is not RETE")
     format_version = body[4] if len(body) > 4 else None
-    if format_version != 5:
-        errors.append(f"expected stable format byte 5, got {format_version}")
+    if format_version not in SUPPORTED_FORMATS:
+        errors.append(f"expected stable format byte 5 or 6, got {format_version}")
     content_hash = body[8:24].hex() if len(body) >= 24 else None
-    sections = parse_sections(body)
-    text_index_bytes = sum(
-        section["length"]
-        for section in sections
-        if section["kind"] in (SECTION_TEXT_INDEX, SECTION_TEXT_INDEX_PARTIAL)
-    )
+    has_text_index = False
+    card = None
+    if format_version == 6:
+        header = parse_header06(body)
+        if header is None:
+            errors.append("malformed 0x06 header")
+            sections = []
+            text_index_bytes = 0
+        else:
+            sections = [
+                {"name": name, "kind": bit, "length": 0}
+                for bit, name in PRESENCE_NAMES.items()
+                if header["presence"] & bit
+            ]
+            # Section lengths live in the root, past this range: presence only.
+            text_index_bytes = 0
+            has_text_index = bool(header["presence"] & P_TEXT)
+            card = {"offset": header["cardOffset"], "length": header["cardLength"]}
+            if card["length"] and (
+                card["offset"] + card["length"] > header["cardRegionEnd"]
+                or (size is not None and header["cardRegionEnd"] > size)
+            ):
+                errors.append("0x06 card range lies outside the card region")
+    else:
+        sections = parse_sections(body)
+        text_index_bytes = sum(
+            section["length"]
+            for section in sections
+            if section["kind"] in (SECTION_TEXT_INDEX, SECTION_TEXT_INDEX_PARTIAL)
+        )
+        has_text_index = text_index_bytes > 0
 
     if expected:
         if expected.get("formatVersion") != format_version:
@@ -148,6 +212,8 @@ def validate_probe(
         "size": size,
         "sections": [section["name"] for section in sections],
         "textIndexBytes": text_index_bytes,
+        "hasTextIndex": has_text_index,
+        "card": card,
         "errors": errors,
     }
 
@@ -211,6 +277,7 @@ def text_index_failures(targets: list[dict], results: list[dict]) -> list[str]:
     for target in targets:
         expected[target["dataset"]] += 1
     observed: dict[str, int] = defaultdict(int)
+    indexed: dict[str, bool] = defaultdict(bool)
     probed: dict[str, int] = defaultdict(int)
     by_key = {target["key"]: target["dataset"] for target in targets}
     for result in results:
@@ -219,13 +286,14 @@ def text_index_failures(targets: list[dict], results: list[dict]) -> list[str]:
             continue
         probed[dataset] += 1
         observed[dataset] += result.get("textIndexBytes") or 0
+        indexed[dataset] |= bool(result.get("hasTextIndex"))
     failures = []
     for dataset, declares in sorted(declared.items()):
         # Only judge a dataset every one of whose shards answered: a partial
         # sweep cannot prove the ABSENCE of an index the missing shard may hold.
         if probed.get(dataset, 0) != expected[dataset]:
             continue
-        has_index = observed[dataset] > 0
+        has_index = observed[dataset] > 0 or indexed[dataset]
         if declares and not has_index:
             failures.append(
                 f"{dataset}: catalog declares textIndex but the published file has "
@@ -233,7 +301,7 @@ def text_index_failures(targets: list[dict], results: list[dict]) -> list[str]:
             )
         elif has_index and not declares:
             failures.append(
-                f"{dataset}: the published file carries a TEXT_INDEX ({observed[dataset]:,} bytes) "
+                f"{dataset}: the published file carries a TEXT_INDEX "
                 "the catalog never declares — add `textIndex: true` and say so in the description"
             )
     return failures
