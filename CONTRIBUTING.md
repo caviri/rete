@@ -3,6 +3,9 @@
 Thanks for your interest in rete. This is an experimental project; the notes
 below keep changes reviewable and the build reproducible.
 
+For a guided introduction, start with [Development](docs/contributing.md):
+the repository and core map, tests and coverage, CI, and benchmark methodology.
+
 ## Everything builds in Docker
 
 Nothing builds on the host. Use the dev container (see the README "Develop"

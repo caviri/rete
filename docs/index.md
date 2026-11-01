@@ -53,6 +53,6 @@ version or a build feature. Rete remains a 0.x project; format generation
 alone does not guarantee that an older reader supports every newer feature.
 
 The [technical reference](reference.md) links exact command, API and format
-contracts. For implementation work, use [Contributing](contributing.md).
+contracts. For implementation work, use [Development](contributing.md).
 Source and release history are available in the
 [repository](https://github.com/caviri/rete).

@@ -2,7 +2,7 @@
 
 Maintainer documentation for the language clients under `clients/` — how they
 are laid out, built, tested, and released. **Users** should read the pages in
-the *Clients* nav section instead (e.g. [Python — rete-graph](python.md)).
+the [Language clients](clients.md) entry instead (e.g. [Python — rete-graph](python.md)).
 
 ## Monorepo layout
 
@@ -12,10 +12,18 @@ One directory per language client, each owning its toolchain:
 clients/
   python/        # PyO3 + maturin -> PyPI `rete-graph`
   r/             # extendr + rextendr -> CRAN/R-universe `rete`
-  go/            # (future)
+  js/            # npm library and CLI, built from the WASM engine
+  java/          # Java API and a separately built C-ABI WASM module
+  blender/       # Blender integration
+  mcpb/          # MCP bundle and stdio integration
+  relay/         # HTTP/SPARQL/MCP service
+  tauri/         # desktop application
 ```
 
-Clients consume `crates/rete-core` — never the other way around. The Python
+Clients consume the engine through native or WASM bindings — never the other
+way around. See [Repository and core](architecture.md) for the shared layers,
+and [Tests, coverage and CI](testing.md) for how client checks relate to the
+workspace checks. The Python
 crate is **excluded from the cargo workspace** (root `Cargo.toml`, like
 `fuzz/`): it versions and locks independently (`clients/python/Cargo.lock`),
 so the workspace release gates (`--locked` checks, feature matrix, coverage

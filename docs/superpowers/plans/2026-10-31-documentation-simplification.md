@@ -113,6 +113,13 @@ Proposed destination layout: `rete-apps/apps/<app>/` owns that app's source, gui
 
 ## Implementation sequence
 
+**Development addition (2026-11-01):** Following the reader's review, the
+existing Contributing entry becomes Development without adding sidebar links.
+It introduces the repository/core walkthrough, a short benchmark guide and
+tests/coverage/CI guidance checked against current source and workflows.
+Coverage thresholds are distinguished from per-run measurements; historical
+benchmarks retain their provenance. The public-page registry now has 67 pages.
+
 **Delivery record (2026-11-01):** Tasks 1 and 2 are complete. Task 3 is implemented and its CLI quickstart, SBOM and card commands were exercised against the published image. Task 5 has targeted corrections and the editorial checklist; its broader consolidation remains open. Task 4 has not started. First-delivery validation covers generated-page reproducibility, local links, retained fragments, page reachability, desktop/mobile navigation and social previews; cross-site migration checks are not applicable until Task 4. Unchecked items below retain the remaining roadmap and broader verification requirements.
 
 ### 1. Make navigation independent of publication

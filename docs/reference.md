@@ -24,7 +24,7 @@ format detail. If you are still choosing a workflow, begin with
 ## How rete works
 
 The [format specification](SPEC.md) describes the bytes on disk.
-[Architecture](architecture.md) explains the implementation, while
+[Repository and core](architecture.md) explains the implementation, while
 [semantic zoom](semantic-zoom.md) explains the summaries used to explore a graph.
 
 [Large builds and tables](data-engineering.md) covers data preparation and
@@ -33,9 +33,11 @@ experimental threading paths and their requirements.
 
 ## Evidence and development
 
-[Benchmarks](BENCHMARK.md) records measurements and their conditions.
+[Benchmarks](benchmarks.md) explains how to run and interpret measurements;
+the [measurement record](BENCHMARK.md) retains the detailed results.
 [SPARQL conformance](conformance.md) records test coverage and limitations;
 neither is a promise about every workload.
 
-For building and changing the project, see [Contributing](contributing.md),
-[Client development](clients-dev.md) and the [Release guide](release.md).
+For building and changing the project, start with [Development](contributing.md)
+and [Tests, coverage and CI](testing.md). Language packaging and releases live
+in [Client development](clients-dev.md) and the [Release guide](release.md).
