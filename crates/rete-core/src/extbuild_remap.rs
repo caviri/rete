@@ -33,9 +33,16 @@
 //! subject-only, and a subject-only id is `n_shared + rank + 1`: `n_shared` is
 //! only known once the merge ends. Its segment file stores a shared term's
 //! final id (top bit clear) or [`ROLE_ONLY`]` | rank`, and [`RemapStore::load`]
-//! fixes it up; the object-only segment likewise. That allows 2³¹ terms per
-//! dictionary class, refused cleanly past it (the old in-RAM encoding put the
-//! class in the top two bits and silently wrapped at 2³⁰).
+//! fixes it up; the object-only segment likewise. A provisional id is a `u64`
+//! in the API (`ROLE_ONLY` is bit 32, the rank the low 32 bits), so the class
+//! never competes with the rank for a bit and a role-only rank may reach
+//! `u32::MAX - 1`: the limit is the file format's `u32::MAX` ids per position,
+//! checked on the final id ([`RemapWriter::finish`], [`RemapStore::load`]) with a
+//! clear error. (Up to 0.4.x the class was bit 31 of a `u32`, which capped each
+//! role-only class at 2³¹ terms; the OpenCitations Index has 2.56 B
+//! subject-only terms.) The write buffer keeps `u32` ranks and the class as a
+//! bitmap beside them (1 bit per id); the spill block, which carries the class
+//! in the delta's low bit, is unchanged.
 //!
 //! **On disk** each flush is one compressed block ([`crate::extbuild_spill`])
 //! of class-aware deltas: within a segment the final ids and the provisional
@@ -76,7 +83,7 @@ const SEG_FILE: [&str; SEGS] = ["map.shared", "map.subj", "map.obj", "map.pred",
 
 /// Marks a provisional role-only id (`ROLE_ONLY | rank`) in the subject-only
 /// and object-only segments; a shared term's final id there has it clear.
-pub(crate) const ROLE_ONLY: u32 = 1 << 31;
+pub(crate) const ROLE_ONLY: u64 = 1 << 32;
 
 /// Local-id counts of one chunk's segments, as [`Seg`] indexes them.
 pub(crate) type SegCounts = [u32; SEGS];
@@ -90,25 +97,26 @@ pub(crate) fn remap_buf_bytes(budget: u64, chunks: usize) -> usize {
 }
 
 /// The final id of the shared term of merge rank `rank` (0-based).
-pub(crate) fn shared_id(rank: u32) -> Result<u32, ExtBuildError> {
-    if rank >= ROLE_ONLY - 1 {
-        return Err(ExtBuildError::Internal(
-            "more than 2^31 shared terms: the dictionary is too large for one file",
+pub(crate) fn shared_id(rank: u32) -> Result<u64, ExtBuildError> {
+    if rank == u32::MAX {
+        return Err(ExtBuildError::Limit(
+            "more than 2^32-1 shared terms: the dictionary is too large for one file".into(),
         ));
     }
-    Ok(rank + 1)
+    Ok(rank as u64 + 1)
 }
 
 /// The provisional id of the subject- or object-only term of merge rank
 /// `rank` (0-based within its class).
-pub(crate) fn role_only_id(rank: u32) -> Result<u32, ExtBuildError> {
-    if rank >= ROLE_ONLY {
-        return Err(ExtBuildError::Internal(
-            "more than 2^31 subject-only or object-only terms: the dictionary is \
-             too large for one file",
+pub(crate) fn role_only_id(rank: u32) -> Result<u64, ExtBuildError> {
+    if rank == u32::MAX {
+        return Err(ExtBuildError::Limit(
+            "more than 2^32-1 subject-only or object-only terms: the dictionary is \
+             too large for one file"
+                .into(),
         ));
     }
-    Ok(ROLE_ONLY | rank)
+    Ok(ROLE_ONLY | rank as u64)
 }
 
 fn seg_path(dir: &Path, ci: usize, seg: usize) -> PathBuf {
@@ -125,8 +133,12 @@ fn table_bytes(c: &SegCounts) -> u64 {
 struct SegState {
     expected: u32,
     written: u32,
-    /// buffered ids, little-endian
+    /// buffered ids, little-endian: a final id, or the rank of a provisional one
     buf: Vec<u8>,
+    /// bit `i` set: buffered id `i` is provisional ([`ROLE_ONLY`])
+    role: Vec<u64>,
+    /// the largest provisional rank pushed, if any
+    max_rank: Option<u32>,
     /// the last id written of each class (final, provisional)
     prev: [u32; 2],
 }
@@ -134,23 +146,25 @@ struct SegState {
 /// Class-aware delta of one id: `(delta << 1) | class`, where class 1 is a
 /// provisional [`ROLE_ONLY`] rank and the delta is from the previous id of
 /// the same class.
-fn put_id(out: &mut Vec<u8>, prev: &mut [u32; 2], v: u32) {
-    let class = (v >> 31) as usize;
-    let x = v & !ROLE_ONLY;
-    let d = x.wrapping_sub(prev[class]) & !ROLE_ONLY;
-    prev[class] = x;
+fn put_id(out: &mut Vec<u8>, prev: &mut [u32; 2], rank: u32, class: usize) {
+    let d = rank.wrapping_sub(prev[class]);
+    prev[class] = rank;
     write_uvarint(out, ((d as u64) << 1) | class as u64);
 }
 
 /// The inverse of [`put_id`].
-fn get_id(raw: &[u8], pos: &mut usize, prev: &mut [u32; 2]) -> Result<u32, ExtBuildError> {
+fn get_id(raw: &[u8], pos: &mut usize, prev: &mut [u32; 2]) -> Result<u64, ExtBuildError> {
     let (w, n) = crate::varint::read_uvarint(&raw[*pos..])
         .ok_or(ExtBuildError::Internal("a remap spill block is truncated"))?;
     *pos += n;
     let class = (w & 1) as usize;
-    let x = prev[class].wrapping_add((w >> 1) as u32) & !ROLE_ONLY;
+    let x = prev[class].wrapping_add((w >> 1) as u32);
     prev[class] = x;
-    Ok(if class == 1 { x | ROLE_ONLY } else { x })
+    Ok(if class == 1 {
+        x as u64 | ROLE_ONLY
+    } else {
+        x as u64
+    })
 }
 
 /// The merge side: appends every chunk's global ids to its segment files.
@@ -187,7 +201,7 @@ impl RemapWriter {
         ci: usize,
         seg: Seg,
         local: u32,
-        id: u32,
+        id: u64,
     ) -> Result<(), ExtBuildError> {
         let st = self
             .chunks
@@ -204,7 +218,19 @@ impl RemapWriter {
             st.buf
                 .reserve_exact(self.buf_bytes.min(4 * st.expected as usize));
         }
-        st.buf.extend_from_slice(&id.to_le_bytes());
+        if id & !(ROLE_ONLY | 0xFFFF_FFFF) != 0 {
+            return Err(ExtBuildError::Internal("a remap id is out of range"));
+        }
+        let slot = st.buf.len() / 4;
+        if slot % 64 == 0 {
+            st.role.push(0);
+        }
+        if id & ROLE_ONLY != 0 {
+            st.role[slot / 64] |= 1 << (slot % 64);
+            let rank = id as u32;
+            st.max_rank = Some(st.max_rank.map_or(rank, |m| m.max(rank)));
+        }
+        st.buf.extend_from_slice(&(id as u32).to_le_bytes());
         if st.buf.len() >= self.buf_bytes {
             Self::append(&self.dir, ci, seg as usize, st)?;
         }
@@ -217,11 +243,13 @@ impl RemapWriter {
             return Ok(());
         }
         let mut raw = Vec::with_capacity(st.buf.len() / 2);
-        for w in st.buf.chunks_exact(4) {
+        for (i, w) in st.buf.chunks_exact(4).enumerate() {
+            let class = (st.role[i / 64] >> (i % 64)) as usize & 1;
             put_id(
                 &mut raw,
                 &mut st.prev,
                 u32::from_le_bytes([w[0], w[1], w[2], w[3]]),
+                class,
             );
         }
         let mut block = Vec::with_capacity(raw.len() / 4 + 16);
@@ -234,6 +262,7 @@ impl RemapWriter {
             .open(seg_path(dir, ci, seg))?;
         f.write_all(&block)?;
         st.buf.clear();
+        st.role.clear();
         Ok(())
     }
 
@@ -244,6 +273,7 @@ impl RemapWriter {
             let st = &mut c[seg as usize];
             Self::append(&self.dir, ci, seg as usize, st)?;
             st.buf = Vec::new();
+            st.role = Vec::new();
         }
         Ok(())
     }
@@ -266,6 +296,20 @@ impl RemapWriter {
                 return Err(ExtBuildError::Internal(
                     "dictionary merge left a chunk-local id without a global id",
                 ));
+            }
+            // A provisional id is `n_shared + rank + 1`: refuse now, with the
+            // numbers, not in phase 3 when a chunk's table is loaded.
+            for st in &c[1..=2] {
+                if let Some(rank) = st.max_rank {
+                    if n_shared as u64 + rank as u64 + 1 > u32::MAX as u64 {
+                        return Err(ExtBuildError::Limit(format!(
+                            "global term ids overflow 32 bits: {n_shared} shared terms and a \
+                             role-only term of rank {rank} need an id past {}, the most a \
+                             position can address: the dictionary is too large for one file",
+                            u32::MAX
+                        )));
+                    }
+                }
             }
             counts.push(std::array::from_fn(|s| c[s].expected));
         }
@@ -313,28 +357,31 @@ impl RemapStore {
             .get(ci)
             .ok_or(ExtBuildError::Internal("remap for an unknown chunk"))?;
         let n_shared = self.n_shared;
-        let fix = |v: u32| -> Result<u32, ExtBuildError> {
+        let fix = |v: u64| -> Result<u32, ExtBuildError> {
             if v & ROLE_ONLY == 0 {
-                return Ok(v);
+                return Ok(v as u32);
             }
             n_shared
-                .checked_add(v & !ROLE_ONLY)
+                .checked_add(v as u32)
                 .and_then(|x| x.checked_add(1))
-                .ok_or(ExtBuildError::Internal(
-                    "global term ids overflow 32 bits: the dictionary is too large for one file",
-                ))
+                .ok_or_else(|| {
+                    ExtBuildError::Limit(
+                        "global term ids overflow 32 bits: the dictionary is too large for one file"
+                            .into(),
+                    )
+                })
         };
         let (s, a, b) = (c[0] as usize, c[1] as usize, c[2] as usize);
         let mut subj = Vec::with_capacity(s + a);
-        self.read(ci, Seg::Shared, &mut subj, &Ok)?;
+        self.read(ci, Seg::Shared, &mut subj, &fix)?;
         let mut obj = Vec::with_capacity(s + b);
         obj.extend_from_slice(&subj);
         self.read(ci, Seg::SubjOnly, &mut subj, &fix)?;
         self.read(ci, Seg::ObjOnly, &mut obj, &fix)?;
         let mut pred = Vec::with_capacity(c[3] as usize);
-        self.read(ci, Seg::Pred, &mut pred, &Ok)?;
+        self.read(ci, Seg::Pred, &mut pred, &fix)?;
         let mut graph = Vec::with_capacity(c[4] as usize);
-        self.read(ci, Seg::Graph, &mut graph, &Ok)?;
+        self.read(ci, Seg::Graph, &mut graph, &fix)?;
         for seg in 0..SEGS {
             let _ = std::fs::remove_file(seg_path(&self.dir, ci, seg));
         }
@@ -353,7 +400,7 @@ impl RemapStore {
         ci: usize,
         seg: Seg,
         out: &mut Vec<u32>,
-        f: &dyn Fn(u32) -> Result<u32, ExtBuildError>,
+        f: &dyn Fn(u64) -> Result<u32, ExtBuildError>,
     ) -> Result<(), ExtBuildError> {
         let expected = self.counts[ci][seg as usize] as u64;
         if expected == 0 {
@@ -447,16 +494,68 @@ mod tests {
 
     #[test]
     fn class_limits_are_refused_not_wrapped() {
-        assert!(shared_id((1 << 31) - 2).is_ok());
-        assert!(shared_id((1 << 31) - 1).is_err());
-        assert!(role_only_id((1 << 31) - 1).is_ok());
-        assert!(role_only_id(1 << 31).is_err());
+        // Past 2^31 is fine now; the limit is u32::MAX ids per position.
+        assert_eq!(shared_id((1 << 31) + 7).unwrap(), (1 << 31) + 8);
+        assert_eq!(shared_id(u32::MAX - 1).unwrap(), u32::MAX as u64);
+        assert!(shared_id(u32::MAX).is_err());
+        assert!(role_only_id(1 << 31).is_ok());
+        assert!(role_only_id(u32::MAX - 1).is_ok());
+        assert!(role_only_id(u32::MAX).is_err());
         let dir = tmpdir("ovf");
         let mut w = RemapWriter::new(&dir, &[[0, 1, 0, 0, 0]], 64);
         w.push(0, Seg::SubjOnly, 1, role_only_id(10).unwrap())
             .unwrap();
-        let store = w.finish(u32::MAX - 5).unwrap();
-        assert!(store.load(0).is_err(), "id past u32::MAX");
+        assert!(w.finish(u32::MAX - 5).is_err(), "id past u32::MAX");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Provisional ranks past 2^31 (up to the last one that fits) survive the
+    /// buffer, the spill block and the fix-up, mixed with final ids of the
+    /// other class, across flushes; a rank too many is refused up front.
+    #[test]
+    fn ranks_past_two_pow_31_round_trip() {
+        let dir = tmpdir("big");
+        let big = [
+            (1u32 << 31) - 1,
+            1 << 31,
+            (1 << 31) + 1,
+            3_000_000_000,
+            4_000_000_000,
+        ];
+        let n = big.len() as u32;
+        let n_shared = 100u32;
+        for buf_bytes in [4usize, 1 << 20] {
+            let counts = [[2, n + 1, n, 0, 0]];
+            let mut w = RemapWriter::new(&dir, &counts, buf_bytes);
+            w.push(0, Seg::Shared, 1, shared_id(0).unwrap()).unwrap();
+            w.push(0, Seg::Shared, 2, shared_id(99).unwrap()).unwrap();
+            for (i, r) in big.iter().enumerate() {
+                let (l, id) = (i as u32 + 1, role_only_id(*r).unwrap());
+                w.push(0, Seg::SubjOnly, l, id).unwrap();
+                w.push(0, Seg::ObjOnly, l, id).unwrap();
+            }
+            // a term shared globally, subject-only in this chunk
+            w.push(0, Seg::SubjOnly, n + 1, shared_id(7).unwrap())
+                .unwrap();
+            let m = w.finish(n_shared).unwrap().load(0).unwrap();
+            let want: Vec<u32> = big.iter().map(|r| n_shared + r + 1).collect();
+            assert_eq!(&m.subj[..2], &[1, 100]);
+            assert_eq!(&m.subj[2..2 + big.len()], &want[..]);
+            assert_eq!(m.subj[2 + big.len()], 8);
+            assert_eq!(&m.obj[2..], &want[..]);
+        }
+        // the last rank that fits, and one past it
+        let mut w = RemapWriter::new(&dir, &[[0, 1, 0, 0, 0]], 64);
+        w.push(0, Seg::SubjOnly, 1, role_only_id(u32::MAX - 1).unwrap())
+            .unwrap();
+        assert_eq!(w.finish(0).unwrap().load(0).unwrap().subj, [u32::MAX]);
+        let mut w = RemapWriter::new(&dir, &[[0, 0, 1, 0, 0]], 64);
+        w.push(0, Seg::ObjOnly, 1, role_only_id(u32::MAX - 1).unwrap())
+            .unwrap();
+        let err = w.finish(1).err().unwrap().to_string();
+        assert!(err.contains("overflow 32 bits"), "{err}");
+        let mut w = RemapWriter::new(&dir, &[[0, 1, 0, 0, 0]], 64);
+        assert!(w.push(0, Seg::SubjOnly, 1, 1 << 40).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
