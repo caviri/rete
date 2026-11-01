@@ -103,7 +103,7 @@ rete build data.nt -o data.rete --no-pyramid --label-index   # labels + schema, 
 rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index
 ```
 
-**The memory-bounded build (`--memory-budget-mb N`).** It reads the input
+**The memory-bounded build (`--memory-budget-mb N`).** Until phase 2 of format `0x06` it writes `0x05` and then converts the file to `0x06`: one extra copy pass, and about double the temporary disk for a large build. It reads the input
 once and cuts it into chunks of about half the budget, or smaller where the
 chunk's dictionary would take its working set past 85% of the budget (0.4.2):
 a term-dense stretch, two new terms per statement like the OpenCitations Meta
@@ -569,6 +569,11 @@ Fold several `.rete` files into one without going back through text — the way 
 consolidate a sharded dataset when the original RDF is gone or expensive to
 re-emit. It reads the **shards** (dictionary-encoded and compressed, roughly a
 quarter of the RDF bytes), so it skips the conversion and the parse.
+
+Until phase 2 of format `0x06`, `merge` writes `0x05` and then converts it to
+`0x06`: one extra copy pass, and about double the temporary disk for a large
+merge (the `0x05` file and the `0x06` copy exist side by side before the first
+is removed).
 
 It does **not** skip the sorting. The dictionary is HDT-style (`shared` /
 subject-only / object-only) and IDs are assigned per section, so a term that is
