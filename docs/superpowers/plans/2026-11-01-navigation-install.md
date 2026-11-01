@@ -19,7 +19,7 @@ Implementation:
 - [x] Add the installation widget as a separate docgen module and concise page.
 - [x] Check commands against package metadata and verify the selection/copy
   behavior, mobile layout and JavaScript-disabled fallback.
-- [ ] Regenerate documentation and social cards, run docgen and documentation
+- [x] Regenerate documentation and social cards, run docgen and documentation
   release checks and independently review. Deliver as a follow-up PR.
 
 Work in the existing isolated worktree on `docs/navigation-install`, based on
