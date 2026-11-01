@@ -28,11 +28,11 @@ They refuse it by name (`unsupported .rete format 0x06; this Rete build reads
 
 Format byte `0x05` is stable format generation 1, frozen on **2026-07-14** and
 first released in Rete **0.3.0**. Files carrying the experimental generations
-`0x01`–`0x04` predate that freeze and must be rebuilt from RDF source. Every
-stable Rete reader from 0.3.0 onward reads format `0x05`. Newer readers may
-add optional sections and flags that preserve `0x05` semantics. A required layout
-change uses a new format byte. Older readers may reject a newer format cleanly;
-silent misinterpretation is never permitted.
+`0x01`–`0x04` predate that freeze and must be rebuilt from RDF source.
+Readers from 0.3.0 onward recognize `0x05`, but recognition does not guarantee
+support for every feature written by a newer release. The exceptions below
+include rejected layouts and an older split-group reader that returned
+incomplete results. Use a current reader and check the file's build features.
 
 > **No backwards-compatibility promise before 1.0.0.** rete reserves the right to
 > change the `.rete` format while it is pre-1.0, **including in ways that require
@@ -41,7 +41,7 @@ silent misinterpretation is never permitted.
 > source you built from; the durable compatibility promise starts at 1.0.0.
 
 **The generation number is not a release version.** There is no Rete 1.0.0: the
-workspace is 0.3.x, and the file format froze earlier and independently of any
+workspace remains 0.x, and the file format froze earlier and independently of any
 release version ([release.md](release.md)). Two consequences worth stating,
 because both have bitten:
 
@@ -423,8 +423,8 @@ are not implemented.
 
 ## Could it speak Cypher too?
 
-Short answer: **not today, and it's a different data model — but a useful subset
-could be translated to SPARQL.** Here's the honest picture.
+`rete cypher` provides a read-only prototype that translates a small Cypher
+subset to SPARQL. It is not full openCypher, and the data models differ.
 
 Cypher targets the **labeled property graph (LPG)** model (Neo4j): nodes and
 relationships both carry a label and arbitrary key/value *properties*. RDF is a

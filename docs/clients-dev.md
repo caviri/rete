@@ -2,7 +2,7 @@
 
 Maintainer documentation for the language clients under `clients/` — how they
 are laid out, built, tested, and released. **Users** should read the pages in
-the *Clients* nav section instead (e.g. [Python — rete-graph](python.md)).
+the [Language clients](clients.md) entry instead (e.g. [Python — rete-graph](python.md)).
 
 ## Monorepo layout
 
@@ -12,10 +12,18 @@ One directory per language client, each owning its toolchain:
 clients/
   python/        # PyO3 + maturin -> PyPI `rete-graph`
   r/             # extendr + rextendr -> CRAN/R-universe `rete`
-  go/            # (future)
+  js/            # npm library and CLI, built from the WASM engine
+  java/          # Java API and a separately built C-ABI WASM module
+  blender/       # Blender integration
+  mcpb/          # MCP bundle and stdio integration
+  relay/         # HTTP/SPARQL/MCP service
+  tauri/         # desktop application
 ```
 
-Clients consume `crates/rete-core` — never the other way around. The Python
+Clients consume the engine through native or WASM bindings — never the other
+way around. See [Repository and core](architecture.md) for the shared layers,
+and [Tests, coverage and CI](testing.md) for how client checks relate to the
+workspace checks. The Python
 crate is **excluded from the cargo workspace** (root `Cargo.toml`, like
 `fuzz/`): it versions and locks independently (`clients/python/Cargo.lock`),
 so the workspace release gates (`--locked` checks, feature matrix, coverage
@@ -401,19 +409,21 @@ The checklist that made Python work:
    incomplete-fetch guard before returning results.
 3. Parse the shared JSON envelopes; present clean IRIs/values, not `<tokens>`.
 4. Two workflows: `<lang>-test.yml` paths-filtered to the client + rete-core,
-   and `<lang>-client-publish.yml` gated on `<lang>-v*` tags with the
+   and `<lang>-client-publish.yml` gated on the unified `v*` release tags with the
    registry's trusted-publishing equivalent.
-5. A user page in the *Clients* nav section, dev notes in this page, and a
+5. A user page linked from [Language clients](clients.md), dev notes in this page, and a
    runnable example (notebook or equivalent) executed in CI or Docker.
 
 ## Docs maintenance
 
 Client pages are Markdown under `docs/`; the nav lives in
-`crates/docgen/src/main.rs` (`SECTIONS`). After editing either:
+`crates/docgen/src/main.rs`: register every public root page in `PAGES` and
+link it from the appropriate guide or reference directory. `SECTIONS` is only
+the compact sidebar. After editing:
 
 ```sh
-docker run --rm -v "$PWD":/work -w /work rust:1.92-bookworm cargo run -q -p docgen
-python scripts/check_docs_links.py
+docker compose run --rm dev cargo run -q -p docgen
+docker compose run --rm dev python3 scripts/check_docs_links.py
 ```
 
 CI re-renders and diff-checks `docs/`, so commit the regenerated HTML.

@@ -33,7 +33,8 @@
   base and publishes the merged state as a fresh `.rete` snapshot (see
   [cli](cli.md)); an in-file overlay section remains future work.
 - **Full SPARQL 1.1** on day one. We stage it (see §8).
-- **Inference / reasoning** at query time. Materialize before build if wanted.
+- **Unrestricted inference.** Query-time entailment supports a defined subset;
+  see [Reasoning](reasoning.md) for query rewriting and build-time materialization.
 
 ---
 
@@ -341,6 +342,8 @@ The writers are reproducible: the in-RAM build, the memory-bounded build,
   the root, presence bit1 for a predicate-restricted index.
 - The synopsis flag: synopses are always present.
 
+<span id="41-header-1024-bytes-little-endian"></span>
+
 ### 4.9 Generation 1 (`0x05`): legacy, read only
 
 Every reader reads generation 1, and no writer writes it. The rest of this
@@ -415,7 +418,7 @@ addressing — *how many* of those six a given file actually stores is its
 `0x01` through `0x04` are not readable and must be rebuilt from RDF source.
 
 > There is no Rete 1.0.0. The generation number counts *format* generations and
-> is independent of the release version (the workspace is 0.3.x); the Rust, CLI
+> is independent of the release version (the workspace remains 0.x); the Rust, CLI
 > and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
 > [Compatibility](compatibility.md#stable-rete-file-compatibility).
 
@@ -669,9 +672,10 @@ prefix compresses worse.*
   index** (kind 10, §6.5) — the graph as a fourth column of graph-leading
   permutations `G+SPO`, `G+POS`, … in tiles shared across graphs. The default
   graph is always the INDEX container's triples; there is no stored union.
-- Triples are **partitioned by pyramid tile** (see §7), and within a tile split
-  into fixed-size **blocks**. Every block is prefixed with a **zone map**
-  (min ID, max ID, count) so the query planner can skip blocks — Parquet-style.
+- Each sorted permutation is split into **tiles** targeting an encoded-byte
+  budget (see §6.2). Each tile is a self-contained **block** prefixed with a
+  **zone map** (per-column min/max IDs and triple count) so the query planner
+  can skip tiles whose ranges cannot match — Parquet-style.
 
 ### 6.1 Triple block encoding (grouped delta)
 
@@ -692,8 +696,8 @@ body:      varint num_a
 
 Deltas reset at each group boundary, so values stay small and varint-friendly.
 The **zone map** lets the planner skip a block whose `[min,max]` range cannot
-contain a bound constant before fetching the body — the §7 routing then bounds
-*which* blocks are fetched at all.
+contain a bound constant before decoding the body. The §6.2 directory and
+optional tile synopsis bound which tiles need fetching.
 
 ### 6.2 Tiled permutation sections (format `0x02`)
 
@@ -717,10 +721,11 @@ section payload:  varint num_tiles
                             varint min_c, varint max_c−min_c   # non-leading col C
 ```
 
-A bound leading component binary-searches the directory to exactly **one**
-tile (a-groups are never split across tiles); an unbound one visits every
-tile, zone-map-pruned. The directory is uncompressed so it is readable before
-any tile is fetched.
+A bound leading component searches the directory for every tile whose leading
+ID interval contains that value. Large a-groups can span consecutive tiles;
+reading only one would return incomplete results. An unbound component visits
+all candidate tiles, with zone-map pruning. The directory is uncompressed so
+it can be read before fetching tiles.
 
 The optional **tile-synopsis trailer** lifts each tile's two non-leading-column
 ranges out of its (compressed, must-be-fetched) zone map and into the section, so
@@ -1062,9 +1067,9 @@ graph at a time, which the graph-leading orders already route.
 
 The headline feature. "Zoom" = level of graph detail.
 
-<img src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
+<img src="img/pyramid.svg" alt="Intended refinement design: Level 0 at the top is the coarsest, with a handful of supernodes and aggregated edges. Middle levels split those into finer communities, with physical community tiles targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. Physical community tiles and this routed refinement are not implemented; current files store community summaries and exact queries use permutation tiles.">
 
-*Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.*
+*Intended refinement design, top to bottom: coarse community summary → communities → full triples. Current files store community summaries; physical community tiles and routed drill-down are not implemented. Exact queries use the permutation indexes in §6.*
 
 ### 7.1 Build time
 1. Run hierarchical community detection (**Louvain**; `--pyramid-algo types`
@@ -1090,7 +1095,9 @@ The headline feature. "Zoom" = level of graph detail.
 2. Cut the dendrogram into levels. **Level 0** = coarsest: each top-level
    community becomes a **supernode**. **Level N-1** = the full graph.
 
-   **Cut policy: size-targeted tiles (committed).** We do *not* fix `N` up front.
+   **Design target: physical size-targeted community tiles (not implemented).**
+   The following describes the intended refinement layout, not the current
+   permutation tiles. We do *not* fix `N` up front.
    Instead each tile targets a byte budget `T` (default ~64 KiB, configurable) so
    that **one zoom ≈ one block ≈ one range read**, exactly like PMTiles. We
    descend the dendrogram and emit a tile boundary whenever a community's encoded
@@ -1107,6 +1114,11 @@ The headline feature. "Zoom" = level of graph detail.
    expands into) so a client can drill down without re-clustering.
 
 ### 7.2 Query / browse time
+
+The summary levels and descriptors are available today. Physical per-community
+triple tiles and the routed descent described below remain a design target;
+current exact queries use the permutation indexes, not those community tiles.
+
 - Client loads **level 0** (small): a graph of supernodes + aggregated relations.
   Good for overview, "shape of the data," and routing.
 - To **zoom into** a supernode, the client follows its directory entry to fetch

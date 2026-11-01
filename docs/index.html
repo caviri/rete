@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Overview · rete docs</title>
-  <meta name="description" content="A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server." />
+  <meta name="description" content="Rete stores RDF data in one .rete file. Query it on your computer, or put it on a web host that supports byte-range requests." />
   <link rel="canonical" href="https://caviri.github.io/rete/index.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Overview · rete docs" />
-  <meta property="og:description" content="A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server." />
+  <meta property="og:description" content="Rete stores RDF data in one .rete file. Query it on your computer, or put it on a web host that supports byte-range requests." />
   <meta property="og:url" content="https://caviri.github.io/rete/index.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/index.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Overview · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Overview · rete docs" />
-  <meta name="twitter:description" content="A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server." />
+  <meta name="twitter:description" content="Rete stores RDF data in one .rete file. Query it on your computer, or put it on a web host that supports byte-range requests." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/index.png" />
   <meta name="rete:section" content="Start here" />
   <script>
@@ -540,66 +540,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html" class="active">Overview</a></li>
-        <li><a href="intro.html">Graph data 101</a></li>
-        <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
-        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
+        <li><a href="getting-started.html">Quickstart</a></li>
+        <li><a href="intro.html">Graph concepts</a></li>
+        <li><a href="playground-guide.html">Playground</a></li>
         <li class="nav-h">Guides</li>
-        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="build-and-publish.html">Build and publish</a></li>
+        <li><a href="query-and-analyze.html">Query and analyze</a></li>
+        <li><a href="clients.html">Language clients</a></li>
+        <li><a href="integrations.html">Tools and integrations</a></li>
+        <li><a href="recipes.html">Worked examples</a></li>
+        <li class="nav-h">Reference</li>
+        <li><a href="cli.html">CLI</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
-        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
-        <li class="nav-h">Clients</li>
-        <li><a href="python.html">Python — rete-graph</a></li>
-        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
-        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
-        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
-        <li><a href="r.html">R — rete</a></li>
-        <li><a href="blender.html">Blender — graphs as scenes</a></li>
-        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
-        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
-        <li class="nav-h">Publish & share</li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="hosting.html">Hosting your .rete</a></li>
-        <li><a href="interop.html">Triple-store interop</a></li>
-        <li><a href="media-companions.html">Media & SQL companions</a></li>
-        <li><a href="release.html">1.0 release candidate</a></li>
-        <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
-        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">Development</li>
-        <li><a href="architecture.html">Architecture</a></li>
-        <li><a href="SPEC.html">Format specification</a></li>
-        <li><a href="rust-api.html">Rust API</a></li>
-        <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html">Client development & releases</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
-        <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+        <li><a href="reference.html">API and technical reference</a></li>
+        <li><a href="compatibility.html">Compatibility and limits</a></li>
+        <li class="nav-h">Project</li>
+        <li><a href="apps.html">Apps and experiments</a></li>
+        <li><a href="contributing.html">Development</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -608,141 +565,51 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
+
 <h1 id="rete">rete</h1>
-<p><strong>A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.</strong></p>
-<p><a href="https://github.com/caviri/rete"><code>github.com/caviri/rete</code></a> · crates <strong>v0.3.0</strong> · stable file-format generation <strong>1</strong> (<code>0x05</code>)</p>
-<p><code>rete</code> packs an RDF graph (or a full dataset of named graphs) into one immutable
-<code>.rete</code> file with its own dictionary, permutation indexes, and a pyramidal
-community summary. Drop the file on S3, GitHub, or any HTTP host that honors
-<code>Range</code> requests, hand a client the URL, and query it in place — fetching only
-the bytes a query needs. The same engine compiles to WebAssembly, so the browser
-queries the file directly with no backend.</p>
-<p>Think <strong>Parquet / SQLite-over-HTTP / PMTiles</strong>, but for RDF + SPARQL.</p>
-<img class="img-sq" src="img/lazy-open.svg" alt="How lazy opening works. Any client — a browser, a notebook, the CLI, a server — sends HTTP byte-range reads to one .rete file that stays where it is, on a bucket or on local disk. Only the 1 KiB header, the few dictionary chunks and the few index tiles a query actually touches are fetched; the rest of the file is never transferred, and a block cache of at most 256 MiB keeps hot blocks resident. Measured on the 52 GB datacite.rete, 9.83 billion triples: a COUNT returns 779,399 rows in 4 seconds inside a 2 GiB container, because aggregation streams and nothing is ever read whole.">
-<p><em>Lazy opening: the file stays where it is — on a bucket or on disk — and a query fetches only the bytes it touches. Aggregation streams, so even a <code>COUNT</code> over 9.83 billion triples fits in 2 GiB.</em></p>
-<h2 id="why">Why</h2>
-<ul>
-<li><strong>No database server.</strong> The file <em>is</em> the database. Publish once to static
-hosting; clients query by URL.</li>
-<li><strong>Bounded, progressive reads.</strong> A query touches a handful of byte ranges, never
-a linear scan. The coarse "overview" graph can be fetched first (3 ranges —
-23.3 % of <code>davidrumsey.rete</code>, and the share tracks how big the dictionary is)
-before drilling into detail — PMTiles-style zoom, for graphs.</li>
-<li><strong>Real SPARQL.</strong> SELECT / ASK / CONSTRUCT / DESCRIBE over BGPs, joins, OPTIONAL,
-UNION, MINUS, FILTER, VALUES, property paths, GROUP BY / aggregates, and named
-graphs — evaluated against the file.</li>
-<li><strong>In the browser.</strong> <code>rete-wasm</code> runs the identical engine client-side; the demo
-page loads the overview over HTTP ranges and runs SPARQL with no server.</li>
-<li><strong>Safe on untrusted input.</strong> A truncated or corrupt file from an arbitrary URL
-yields an error, never a panic (fuzz-tested).</li>
-</ul>
-<img class="img-sq" src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
-<p><em>The pyramid: read a coarse summary first, then drill into detail only where a query needs it.</em></p>
-<h2 id="60-second-tour">60-second tour</h2>
-<pre><code class="language-sh"># Build a file from N-Triples (or .nq / .ttl; merge several; or read stdin):
-rete build examples/social.nt -o social.rete
-
-# Query a triple pattern, a BGP, or full SPARQL:
-rete query  social.rete --predicate '&lt;http://ex/knows&gt;'
-rete why    social.rete --predicate '&lt;http://ex/knows&gt;'   # result provenance
-rete sparql social.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p ?age WHERE { ?p e:age ?age . FILTER(?age &gt; 27) }"
-
-# Query straight from a URL — fetches only the byte ranges needed (http or https):
-rete query-url https://my-bucket.s3.amazonaws.com/social.rete --object '&lt;http://ex/Alice&gt;'
-
-# Look at the coarse graphs without reading the index:
-rete summary social.rete    # structural (Louvain communities)
-rete schema  social.rete    # semantic (by rdf:type)
-</code></pre>
-<h2 id="clients">Clients</h2>
-<p>The same engine, in your language of choice — every client opens local files
-<em>and</em> remote URLs (lazy HTTP range reads) and returns parsed SPARQL results:</p>
-<table><thead><tr><th>Client</th><th>Get it</th><th>Runs on</th><th>Docs</th></tr></thead><tbody>
-<tr><td><strong>Python</strong> — <a href="https://pypi.org/project/rete-graph/"><code>rete-graph</code> on PyPI</a></td><td><code>pip install rete-graph</code></td><td>CPython ≥ 3.9 everywhere, plus <strong>Pyodide</strong> (JupyterLite, marimo WASM)</td><td><a href="python.html">Python API</a> · <a href="python-build-tutorial.html">build tutorial</a></td></tr>
-<tr><td><strong>JavaScript</strong> — <a href="https://www.npmjs.com/package/rete-graph"><code>rete-graph</code> on npm</a></td><td><code>npm install rete-graph</code>, or one <a href="javascript.html"><code>&lt;script&gt;</code> tag via CDN</a></td><td>Node ≥ 18, browsers (bundlers or script-tag)</td><td><a href="javascript.html">JavaScript API</a></td></tr>
-<tr><td><strong>R</strong> — <code>rete</code> (from this repo; CRAN/R-universe pending)</td><td><code>remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)</code></td><td>R ≥ 4.2 + Rust toolchain; results as data frames</td><td><a href="r.html">R API</a></td></tr>
-<tr><td><strong>Rust</strong> — <code>rete-core</code> / <code>rete-cli</code> (in this repo; crates.io release pending)</td><td><code>cargo add rete-core --git https://github.com/caviri/rete</code></td><td>anywhere Rust runs — native + wasm</td><td><a href="rust-api.html">Rust API</a> · <a href="cli.html">CLI</a></td></tr>
-<tr><td><strong>Blender</strong> — add-on (engine bundled)</td><td>Install the <code>rete-*.zip</code> from <code>clients/blender</code></td><td>Blender ≥ 4.2; SPARQL results become 3D scenes</td><td><a href="blender.html">Blender add-on</a></td></tr>
-<tr><td><strong>Browser, zero install</strong></td><td>—</td><td>any modern browser</td><td><a href="playground-guide.html">Playground</a> · <a href="yasgui-guide.html">SPARQL IDE</a></td></tr>
-<tr><td><strong>Agents</strong> — MCP server + Claude Code plugin</td><td><code>/plugin marketplace add caviri/rete</code> — or point any MCP client at the <a href="https://katospiegel-rete.hf.space/mcp/">gateway</a></td><td>ChatGPT, Claude, pydantic-ai, any MCP host</td><td><a href="agents.html">Agentic interfaces</a></td></tr>
-<tr><td><strong>Agent frameworks</strong> — the graph as tools, in process</td><td><code>pip install rete-graph</code> + your framework</td><td>LangChain / LangGraph, Pydantic AI; local or remote graphs, no server</td><td><a href="agent-frameworks.html">LangChain &amp; Pydantic AI</a></td></tr>
+<p>Rete stores RDF data in one <code>.rete</code> file. Query it on your computer, or put it
+on a web host that supports byte-range requests. A client can then read the
+parts needed for a SPARQL query without downloading the file first.</p>
+<p><strong><a href="playground-guide.html">Try the Playground</a></strong> or <strong><a href="getting-started.html">build your first graph</a></strong>.
+If RDF is new to you, begin with <a href="intro.html">Graph concepts</a>.</p>
+<p><span id="why"></span></p>
+<h2 id="a-file-you-can-share-and-query">A file you can share and query</h2>
+<p>The file contains the data and indexes used to find it. Optional summaries
+and a Dataset Card help readers understand what is inside. The same engine
+runs natively and in WebAssembly, so a browser can query a hosted file without
+a dedicated database backend.</p>
+<img class="img-sq" src="img/lazy-open.svg" alt="A client reads selected byte ranges from a hosted .rete file to answer a query.">
+<p>This is useful for publishing snapshots, distributing graphs and embedding
+queryable data in an application. Selective queries can read little data;
+broad scans and large results can still require substantial I/O and memory.
+An immutable file also has different update trade-offs from a database service.</p>
+<p><span id="60-second-tour"></span>
+<span id="documentation"></span>
+<span id="start-here"></span>
+<span id="explore-in-the-browser"></span>
+<span id="guides"></span>
+<span id="publish--share"></span>
+<span id="graph-analysis"></span>
+<span id="clients"></span></p>
+<h2 id="choose-a-task">Choose a task</h2>
+<table><thead><tr><th>I want to…</th><th>Start here</th></tr></thead><tbody>
+<tr><td>Run a first query</td><td><a href="getting-started.html">Quickstart</a> or <a href="playground-guide.html">Playground</a></td></tr>
+<tr><td>Turn my data into a shareable graph</td><td><a href="build-and-publish.html">Build and publish</a></td></tr>
+<tr><td>Ask questions and analyze relationships</td><td><a href="query-and-analyze.html">Query and analyze</a></td></tr>
+<tr><td>Use rete in an application</td><td><a href="clients.html">Language clients</a> and <a href="integrations.html">integrations</a></td></tr>
+<tr><td>Learn from a complete example</td><td><a href="recipes.html">Worked examples</a></td></tr>
+<tr><td>Explore visual demonstrations</td><td><a href="apps.html">Apps and experiments</a></td></tr>
 </tbody></table>
-<h2 id="documentation">Documentation</h2>
-<h3 id="start-here">Start here</h3>
-<ul>
-<li><strong><a href="intro.html">Graph data 101</a></strong> — new to graphs/RDF? A beginner's tour, framed by the questions you can ask.</li>
-<li><strong><a href="getting-started.html">Getting started</a></strong> — install (Docker-only), build, query, deploy.</li>
-<li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL; curl examples.</li>
-</ul>
-<h3 id="explore-in-the-browser">Explore in the browser</h3>
-<ul>
-<li><strong><a href="playground-guide.html">Playground</a></strong> — the flagship demo: 65 real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. <a href="playground.html">Launch it →</a></li>
-<li><strong><a href="plaza-guide.html">Plaza — dataset gallery</a></strong> — browse published datasets as live cards. <a href="plaza/index.html">Open it →</a></li>
-<li><strong><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></strong> — a Yasgui-style IDE where the endpoint is a <code>.rete</code> file: paste a URL (read lazily over HTTP range) or drop a local file; tabs, autocomplete from the dataset's own labels, pivot/turtle views, share links. <a href="yasgui.html">Launch it →</a></li>
-<li><strong><a href="atlas.html">Historical atlas</a></strong> — SPARQL + GIS: border polygons, timeline, five projections.</li>
-<li><strong><a href="pitch.html">2D match replay</a></strong> — a football match replayed on a canvas pitch from a spatiotemporal <code>.rete</code> (player + ball positions, 5 fps; pick any match). <a href="pitch.html">Launch it →</a></li>
-<li><strong><a href="subtitles-guide.html">Subtitle timeline</a></strong> — one film subtitled in 20 languages; scrub the timeline and watch a line of dialogue appear in every language at once. <a href="subtitles.html">Launch it →</a></li>
-<li><strong><a href="wcfinal.html">World Cup 2022 final</a></strong> — Argentina 3–3 France replayed from real StatsBomb positional freeze-frames: every player's place at every moment, with a live scoreboard and goal jumps. <a href="wcfinal.html">Launch it →</a></li>
-<li><strong><a href="ask-the-graph.html">Ask the graph</a></strong> — graphRAG search over a <code>.rete</code>, entirely in the browser.</li>
-<li><strong><a href="webgpu-guide.html">WebGPU coherence (experimental)</a></strong> — several sources making causal claims, none of them certain: where do they contradict each other, which fallacies does the graph itself expose, and can a GPU find them faster than one CPU core? Circular reasoning, causes-vs-prevents, slippery slopes and confounders are all found by arithmetic — no language model reading anything — in an editable sandbox that draws your argument, traces belief spreading step by step, and exports it as RDF-star you can <code>rete build</code>. Write your own disagreement down, share it as a link, and see where it actually breaks; pairs with <a href="fallacies.html">the fallacy-annotation experiment</a>. Then a live benchmark: same-line checks cap at ~2×, chain checks reach 15–17×. <a href="webgpu.html">Try it →</a></li>
-<li><strong><a href="graph-map.html">Graph-map, topic-map &amp; 3D (experimental)</a></strong> — the community pyramid as a slippy map.</li>
-</ul>
-<p><strong>In 3D — a SPARQL answer becomes geometry</strong></p>
-<ul>
-<li><strong><a href="anatomy-guide.html">Human anatomy</a></strong> — pick any bone, muscle, organ or nerve in the <code>z-anatomy</code> graph and see its real 3D neighbours: what touches it, shares its tissue or is thermally coupled to it, plus the diseases located there. <a href="anatomy.html">Launch it →</a></li>
-<li><strong><a href="building-guide.html">A building, queried</a></strong> — the FZK-Haus IFC model as a graph: pick a wall, door, window, slab or room and see its floor, the rooms it encloses and everything within reach in 3D, with real SPARQL + <strong>geo3</strong> (GeoSPARQL in three dimensions). <a href="building.html">Launch it →</a></li>
-<li><strong><a href="bim-pair-guide.html">Architecture vs structure (BIM pair)</a></strong> — the same house modelled twice by one TUM <em>BIM Project</em> team: the architectural envelope (walls, curtain walls, doors, windows, furniture) and the structural skeleton. Diff them, or overlay the skeleton inside the translucent envelope. <a href="bim-pair.html">Launch it →</a></li>
-<li><strong><a href="neuro-showcase-guide.html">Neurons &amp; astrocytes</a></strong> — a WebGL viewer that streams electron-microscopy meshes out of the file and rebuilds each cell in your browser: rotate an astrocyte, or show the whole neuron cluster coloured by neurotransmitter. <a href="neuro-showcase.html">Launch it →</a></li>
-</ul>
-<p><strong>Drawing &amp; scripting</strong></p>
-<ul>
-<li><strong><a href="lombardi-guide.html">Mark Lombardi's networks</a></strong> — 51 of Lombardi's hand-drawn conspiracy diagrams (banks, shell companies, arms deals) read live out of one <code>.rete</code> over HTTP range and redrawn in the browser. <a href="lombardi.html">Launch it →</a></li>
-<li><strong><a href="jslab-guide.html">JS lab</a></strong> — an Observable-style notebook: a JavaScript editor beside a live visualization, the code querying a remote <code>.rete</code> as you type. <a href="jslab.html">Launch it →</a></li>
-<li><strong><a href="jupyterlite-guide.html">JupyterLite notebook</a></strong> — a full Jupyter notebook running the <code>rete-graph</code> Python client in your tab, on a Pyodide kernel: <code>pip install</code>-free, queries a remote <code>.rete</code> over HTTP range. <a href="jupyterlite/index.html">Launch it →</a></li>
-</ul>
-<h3 id="guides">Guides</h3>
-<ul>
-<li><strong><a href="cli.html">CLI reference</a></strong> — every <code>rete</code> subcommand.</li>
-<li><strong><a href="sparql.html">SPARQL support</a></strong> — exactly what the engine evaluates, including <code>SERVICE</code> federation.</li>
-<li><strong><a href="geosparql.html">GeoSPARQL</a></strong> — geometry filters + time: "which territory contained this point in year Y?"</li>
-<li><strong><a href="shacl.html">SHACL validation</a></strong> — validate <code>.rete</code> graphs against SHACL Core shapes, locally or over a URL.</li>
-<li><strong><a href="reasoning.html">Reasoning &amp; coherence</a></strong> — prototype OWL RL / RDFS reasoner; find incoherent points.</li>
-<li><strong><a href="federation.html">Federated queries</a></strong> — query several <code>.rete</code> files (local paths and/or URLs) as one.</li>
-<li><strong><a href="semantic-zoom.html">Semantic zoom</a></strong> — the schema pyramid: overview first, drill into detail.</li>
-<li><strong><a href="compatibility.html">Compatibility &amp; Cypher</a></strong> — RDF interop, validation paths, and the Cypher subset.</li>
-</ul>
-<h3 id="publish--share">Publish &amp; share</h3>
-<ul>
-<li><strong><a href="dataset-cards.html">Dataset Cards</a></strong> — self-describing metadata embedded in the file.</li>
-<li><strong><a href="hosting.html">Hosting your .rete</a></strong> — put the file on R2, Zenodo, GitHub Pages, or S3 and query it by URL.</li>
-<li><strong><a href="media-companions.html">Media &amp; SQL companions</a></strong> — images, IIIF, 3D and audio in query results; Parquet/SQLite companions.</li>
-</ul>
-<h3 id="graph-analysis">Graph analysis</h3>
-<ul>
-<li><strong><a href="topic-modeling.html">Topic modeling (LDA)</a></strong> — label each community's theme: <code>rete communities</code> + scikit-learn LDA.</li>
-<li><strong><a href="multi-criteria.html">Multi-criteria communities</a></strong> — partition the same graph by different relations/attributes; combine criteria.</li>
-</ul>
-<h3 id="development">Development</h3>
-<ul>
-<li><strong><a href="architecture.html">Architecture</a></strong> — workspace map, build/read/query pipelines, range model, and extension points.</li>
-<li><strong><a href="SPEC.html">Format specification</a></strong> — the on-disk byte layout, for implementers.</li>
-<li><strong><a href="rust-api.html">Rust API</a></strong> — the stable <code>rete-core</code> facade modules and embedding examples.</li>
-<li><strong><a href="browser.html">WASM &amp; JavaScript API</a></strong> — the browser bindings: query, remote reads, caching.</li>
-<li><strong><a href="parallel-browser.html">Parallel in the browser (experimental)</a></strong> — Web Worker reachability + shared-memory threads.</li>
-<li><strong><a href="data-engineering.html">Tables, VKG &amp; big builds</a></strong> — entity/property tables, virtual knowledge graphs, large ingestions.</li>
-<li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — sizing, the OpenCitations/Oxigraph comparison, and the LUBM-style suite.</li>
-<li><strong><a href="conformance.html">SPARQL 1.1 conformance</a></strong> — the W3C test-suite scorecard.</li>
-</ul>
-<h2 id="version--status">Version &amp; status</h2>
-<p>Developed in the open at <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>.
-The crates are <strong>v0.3.0</strong>, the first release on crates.io. Stable file-format
-generation 1 (header byte <code>0x05</code>) was frozen on 2026-07-14 and first released in
-0.3.0; the experimental generations <code>0x01</code>–<code>0x04</code> predate it and must be rebuilt
-from RDF source. <strong>No backwards-compatibility promise is made before 1.0.0</strong> —
-neither for the <code>.rete</code> format nor for the public Rust, CLI and WASM APIs. See
-<a href="compatibility.html#stable-rete-file-compatibility">compatibility</a>.
-Everything is built and tested in Docker — see
-<a href="getting-started.html">Getting started</a>.</p>
+<p><span id="development"></span>
+<span id="version--status"></span></p>
+<h2 id="know-the-boundaries">Know the boundaries</h2>
+<p>Check <a href="compatibility.html">compatibility and limits</a> when choosing a reader
+version or a build feature. Rete remains a 0.x project; format generation
+alone does not guarantee that an older reader supports every newer feature.</p>
+<p>The <a href="reference.html">technical reference</a> links exact command, API and format
+contracts. For implementation work, use <a href="contributing.html">Development</a>.
+Source and release history are available in the
+<a href="https://github.com/caviri/rete">repository</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -750,7 +617,7 @@ Everything is built and tested in Docker — see
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/index.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer><a href="https://github.com/caviri/rete/edit/main/docs/index.md">Edit this page</a> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <nav class="mnav" id="mnav" aria-label="Page navigation">
     <span class="mnav-side mnav-prev is-off"><span class="mnav-dir">Previous</span><span class="mnav-t">Start of the docs</span></span>
@@ -758,13 +625,13 @@ Everything is built and tested in Docker — see
       <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Contents</span>
     </button>
-    <a class="mnav-side mnav-next" id="navNext" rel="next" href="intro.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Graph data 101</span></a>
+    <a class="mnav-side mnav-next" id="navNext" rel="next" href="getting-started.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Quickstart</span></a>
   </nav>
   <div class="mscrim" id="mscrim" hidden></div>
   <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
     <div class="mdrawer-head">
       <div class="mdrawer-who">
-        <span class="mdrawer-eyebrow">Start here · 1 of 55</span>
+        <span class="mdrawer-eyebrow">Start here · 1 of 4</span>
         <span class="mdrawer-title" id="mdrawerTitle">Overview</span>
       </div>
       <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">

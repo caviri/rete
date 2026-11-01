@@ -43,9 +43,8 @@ cargo tauri dev                               # or: cargo tauri build
 
 ## Check it on Linux (Docker)
 
-Releases are macOS-only, and no CI job builds this crate on a pull request, so
-a change to `rete-core` can break it silently. This compiles, lints and runs
-the unit tests from any machine:
+The desktop release workflow builds macOS and Windows packages. This Linux
+check compiles, lints and runs the unit tests from a machine with Docker:
 
 ```sh
 docker build -t rete-tauri-check -f clients/tauri/Dockerfile.check clients/tauri
@@ -67,14 +66,14 @@ still shows it.
 
 ## Releases
 
-`.github/workflows/desktop-release.yml` builds on macOS runners and attaches the
-`.dmg`s to a GitHub Release. Trigger it from the Actions tab (**Run workflow**,
-on demand) or by pushing an `explorer-v*` tag. It produces two artifacts:
+`.github/workflows/desktop-release.yml` builds macOS and Windows installers
+and attaches them to a GitHub Release. It runs for workspace `v*` tags,
+app-only `explorer-v*` tags, or a manual Actions dispatch.
 
 | Runner | Target | For |
 |---|---|---|
-| `macos-14` | `aarch64-apple-darwin` | Apple Silicon (M1 and later) |
-| `macos-13` | `x86_64-apple-darwin` | Intel Macs |
+| `macos-15` | `universal-apple-darwin` | Apple Silicon and Intel Macs |
+| `windows-latest` | `x86_64-pc-windows-msvc` | Windows x64 |
 
 ### Why not Docker
 
@@ -120,5 +119,6 @@ picks them up and the workflow's shape does not change.
 - **The Turtle tab shows fully expanded triples.** The prefix-folding writer
   lives in the wasm crate; duplicating it here would be a second implementation
   to keep honest for a cosmetic gain. N-Triples is a valid subset of Turtle.
-- **No file-type association yet** — double-clicking a `.rete` does not open the
-  app. That is a `bundle.fileAssociations` entry plus an open-event handler.
+- **File association** — the bundle declares `.rete` files in
+  `bundle.fileAssociations`. Opening from the operating system depends on the
+  installed package and its open-event handling; test that path on each platform.

@@ -3,6 +3,9 @@
 Thanks for your interest in rete. This is an experimental project; the notes
 below keep changes reviewable and the build reproducible.
 
+For a guided introduction, start with [Development](docs/contributing.md):
+the repository and core map, tests and coverage, CI, and benchmark methodology.
+
 ## Everything builds in Docker
 
 Nothing builds on the host. Use the dev container (see the README "Develop"
@@ -40,13 +43,21 @@ fresh render (the **"Docs HTML in sync"** step): if you edit a `.md`, re-run
 `docgen` and commit the regenerated `.html` — ideally as its own commit
 (`docs: regenerate HTML`). Don't hand-edit the `.html`.
 
-A few nav entries (e.g. `playground.html`, `yasgui.html`, `atlas-app.html`) are
-*not* rendered by docgen — they are pre-built pages with inlined WASM (next
-section) and docgen only links to them.
+Application pages such as `playground.html`, `yasgui.html` and `atlas-app.html`
+have their own builders (next section); docgen renders their Markdown guides.
 
-A nav entry whose `.md` is missing is skipped *and* dropped from the sidebar, so
-listing a page in `SECTIONS` before committing it cannot leave 50 rendered pages
-linking to nothing. Watch for the warning docgen prints.
+Register every public root `docs/*.md` in `PAGES` in `crates/docgen/src/main.rs`.
+Docgen rejects unregistered root pages. `SECTIONS` controls only the small
+sidebar; a page need not be in it to render. Link specialist pages from a guide
+or the reference directory and give them a parent in `parent_for`.
+Missing registered sources produce warnings and are omitted from navigation.
+
+Write for one audience and task per guide. Explain what an example does and
+what its result means; link to canonical details rather than repeating them.
+Keep technical limits beside the action they affect. Preserve old heading IDs
+with explicit IDs or alias anchors when changing titles, then run
+`python3 scripts/check_docs_links.py`. Review desktop and mobile navigation
+when changing the layout.
 
 ### `docs/q`, `docs/d`, `docs/og` — link previews
 

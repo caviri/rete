@@ -881,6 +881,8 @@ opencitations-2026-06-small-full-labels.rete — 1073354201 bytes
 Before 0.4.0 the first line read `default-graph triples : 18869242`, which
 on this file is the whole dataset, 1.5 M provenance graphs included.
 
+<span id="rete-verify-file"></span>
+
 ### `rete verify <file> [--section <name>]`
 Check the file's integrity. On a format `0x06` file: the header's bounds, the
 root and card digests, every section against its digest in the root, and the

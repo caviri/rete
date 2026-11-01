@@ -20,7 +20,7 @@
   <meta name="twitter:title" content="Format specification · rete docs" />
   <meta name="twitter:description" content="Status: Format generation 2 (header byte 0x06), written by every writer; generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
-  <meta name="rete:section" content="Development" />
+  <meta name="rete:section" content="Reference" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -528,7 +528,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
     <span class="mbar-id">
-      <span class="mbar-sec"><a href="index.html">rete</a> · Development</span>
+      <span class="mbar-sec"><a href="index.html">rete</a> · Reference</span>
       <span class="mbar-title">Format specification</span>
     </span>
     <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
@@ -540,66 +540,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
-        <li><a href="intro.html">Graph data 101</a></li>
-        <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
-        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
+        <li><a href="getting-started.html">Quickstart</a></li>
+        <li><a href="intro.html">Graph concepts</a></li>
+        <li><a href="playground-guide.html">Playground</a></li>
         <li class="nav-h">Guides</li>
-        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="build-and-publish.html">Build and publish</a></li>
+        <li><a href="query-and-analyze.html">Query and analyze</a></li>
+        <li><a href="clients.html">Language clients</a></li>
+        <li><a href="integrations.html">Tools and integrations</a></li>
+        <li><a href="recipes.html">Worked examples</a></li>
+        <li class="nav-h">Reference</li>
+        <li><a href="cli.html">CLI</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
-        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
-        <li class="nav-h">Clients</li>
-        <li><a href="python.html">Python — rete-graph</a></li>
-        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
-        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
-        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
-        <li><a href="r.html">R — rete</a></li>
-        <li><a href="blender.html">Blender — graphs as scenes</a></li>
-        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
-        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
-        <li class="nav-h">Publish & share</li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="hosting.html">Hosting your .rete</a></li>
-        <li><a href="interop.html">Triple-store interop</a></li>
-        <li><a href="media-companions.html">Media & SQL companions</a></li>
-        <li><a href="release.html">1.0 release candidate</a></li>
-        <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
-        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">Development</li>
-        <li><a href="architecture.html">Architecture</a></li>
-        <li><a href="SPEC.html" class="active">Format specification</a></li>
-        <li><a href="rust-api.html">Rust API</a></li>
-        <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html">Client development & releases</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
-        <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+        <li><a href="reference.html" class="active">API and technical reference</a></li>
+        <li><a href="compatibility.html">Compatibility and limits</a></li>
+        <li class="nav-h">Project</li>
+        <li><a href="apps.html">Apps and experiments</a></li>
+        <li><a href="contributing.html">Development</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -608,6 +565,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
+<p class="parent-link"><a href="reference.html">Back to API and technical reference</a></p>
 <h1 id="rete--a-cloud-native-range-queryable-rdf-graph-file">Rete — a cloud-native, range-queryable RDF graph file</h1>
 <p><strong>Status:</strong> Format generation <strong>2</strong> (header byte <code>0x06</code>), written by every writer; generation <strong>1</strong> (<code>0x05</code>, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
 <blockquote>
@@ -641,7 +599,8 @@ compression and CDN caching. Updates happen <em>around</em> the file, not in it:
 base and publishes the merged state as a fresh <code>.rete</code> snapshot (see
 <a href="cli.html">cli</a>); an in-file overlay section remains future work.</li>
 <li><strong>Full SPARQL 1.1</strong> on day one. We stage it (see §8).</li>
-<li><strong>Inference / reasoning</strong> at query time. Materialize before build if wanted.</li>
+<li><strong>Unrestricted inference.</strong> Query-time entailment supports a defined subset;
+see <a href="reasoning.html">Reasoning</a> for query rewriting and build-time materialization.</li>
 </ul>
 <hr />
 <h2 id="2-prior-art-we-build-on">2. Prior art we build on</h2>
@@ -909,6 +868,7 @@ layout. <code>convert</code> re-encodes a per-graph file as a quad index.</li>
 the root, presence bit1 for a predicate-restricted index.</li>
 <li>The synopsis flag: synopses are always present.</li>
 </ul>
+<p><span id="41-header-1024-bytes-little-endian"></span></p>
 <h3 id="49-generation-1-0x05-legacy-read-only">4.9 Generation 1 (<code>0x05</code>): legacy, read only</h3>
 <p>Every reader reads generation 1, and no writer writes it. The rest of this
 section is its layout, unchanged; the section encodings of §5–§7 are shared by
@@ -971,7 +931,7 @@ addressing — <em>how many</em> of those six a given file actually stores is it
 <code>0x01</code> through <code>0x04</code> are not readable and must be rebuilt from RDF source.</p>
 <blockquote>
 <p>There is no Rete 1.0.0. The generation number counts <em>format</em> generations and
-is independent of the release version (the workspace is 0.3.x); the Rust, CLI
+is independent of the release version (the workspace remains 0.x); the Rust, CLI
 and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
 <a href="compatibility.html#stable-rete-file-compatibility">Compatibility</a>.</p>
 </blockquote>
@@ -1217,9 +1177,10 @@ container per graph in the NAMED_GRAPHS section (kind 5), or the <strong>quad
 index</strong> (kind 10, §6.5) — the graph as a fourth column of graph-leading
 permutations <code>G+SPO</code>, <code>G+POS</code>, … in tiles shared across graphs. The default
 graph is always the INDEX container's triples; there is no stored union.</li>
-<li>Triples are <strong>partitioned by pyramid tile</strong> (see §7), and within a tile split
-into fixed-size <strong>blocks</strong>. Every block is prefixed with a <strong>zone map</strong>
-(min ID, max ID, count) so the query planner can skip blocks — Parquet-style.</li>
+<li>Each sorted permutation is split into <strong>tiles</strong> targeting an encoded-byte
+budget (see §6.2). Each tile is a self-contained <strong>block</strong> prefixed with a
+<strong>zone map</strong> (per-column min/max IDs and triple count) so the query planner
+can skip tiles whose ranges cannot match — Parquet-style.</li>
 </ul>
 <h3 id="61-triple-block-encoding-grouped-delta">6.1 Triple block encoding (grouped delta)</h3>
 <p>Within a block, triples for a permutation are sorted ascending on <code>(a, b, c)</code>
@@ -1236,8 +1197,8 @@ body:      varint num_a
 </code></pre>
 <p>Deltas reset at each group boundary, so values stay small and varint-friendly.
 The <strong>zone map</strong> lets the planner skip a block whose <code>[min,max]</code> range cannot
-contain a bound constant before fetching the body — the §7 routing then bounds
-<em>which</em> blocks are fetched at all.</p>
+contain a bound constant before decoding the body. The §6.2 directory and
+optional tile synopsis bound which tiles need fetching.</p>
 <h3 id="62-tiled-permutation-sections-format-0x02">6.2 Tiled permutation sections (format <code>0x02</code>)</h3>
 <p>Each permutation section is <strong>tiled</strong>: consecutive runs of whole a-groups are
 packed to a byte budget (default 64 KiB of encoded triples, set at build time with
@@ -1256,10 +1217,11 @@ index sections is <code>none</code>; compression lives at tile granularity):</p>
                   per tile: varint min_b, varint max_b−min_b   # non-leading col B
                             varint min_c, varint max_c−min_c   # non-leading col C
 </code></pre>
-<p>A bound leading component binary-searches the directory to exactly <strong>one</strong>
-tile (a-groups are never split across tiles); an unbound one visits every
-tile, zone-map-pruned. The directory is uncompressed so it is readable before
-any tile is fetched.</p>
+<p>A bound leading component searches the directory for every tile whose leading
+ID interval contains that value. Large a-groups can span consecutive tiles;
+reading only one would return incomplete results. An unbound component visits
+all candidate tiles, with zone-map pruning. The directory is uncompressed so
+it can be read before fetching tiles.</p>
 <p>The optional <strong>tile-synopsis trailer</strong> lifts each tile's two non-leading-column
 ranges out of its (compressed, must-be-fetched) zone map and into the section, so
 a range reader can prune a routed tile by a bound <em>secondary</em> component <strong>without
@@ -1553,8 +1515,8 @@ graph at a time, which the graph-leading orders already route.</p>
 <hr />
 <h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>
-<img class="img-sq" src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
-<p><em>Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.</em></p>
+<img class="img-sq" src="img/pyramid.svg" alt="Intended refinement design: Level 0 at the top is the coarsest, with a handful of supernodes and aggregated edges. Middle levels split those into finer communities, with physical community tiles targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. Physical community tiles and this routed refinement are not implemented; current files store community summaries and exact queries use permutation tiles.">
+<p><em>Intended refinement design, top to bottom: coarse community summary → communities → full triples. Current files store community summaries; physical community tiles and routed drill-down are not implemented. Exact queries use the permutation indexes in §6.</em></p>
 <h3 id="71-build-time">7.1 Build time</h3>
 <ol>
 <li>
@@ -1581,7 +1543,9 @@ between native and wasm.</p>
 <li>
 <p>Cut the dendrogram into levels. <strong>Level 0</strong> = coarsest: each top-level
 community becomes a <strong>supernode</strong>. <strong>Level N-1</strong> = the full graph.</p>
-<p><strong>Cut policy: size-targeted tiles (committed).</strong> We do <em>not</em> fix <code>N</code> up front.
+<p><strong>Design target: physical size-targeted community tiles (not implemented).</strong>
+The following describes the intended refinement layout, not the current
+permutation tiles. We do <em>not</em> fix <code>N</code> up front.
 Instead each tile targets a byte budget <code>T</code> (default ~64 KiB, configurable) so
 that <strong>one zoom ≈ one block ≈ one range read</strong>, exactly like PMTiles. We
 descend the dendrogram and emit a tile boundary whenever a community's encoded
@@ -1605,6 +1569,9 @@ expands into) so a client can drill down without re-clustering.</p>
 </li>
 </ol>
 <h3 id="72-query--browse-time">7.2 Query / browse time</h3>
+<p>The summary levels and descriptors are available today. Physical per-community
+triple tiles and the routed descent described below remain a design target;
+current exact queries use the permutation indexes, not those community tiles.</p>
 <ul>
 <li>Client loads <strong>level 0</strong> (small): a graph of supernodes + aggregated relations.
 Good for overview, "shape of the data," and routing.</li>
@@ -1870,21 +1837,21 @@ aggregate the original edges crossing between them.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/SPEC.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer><a href="https://github.com/caviri/rete/edit/main/docs/SPEC.md">Edit this page</a> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <nav class="mnav" id="mnav" aria-label="Page navigation">
-    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="architecture.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Architecture</span></a>
+    <a class="mnav-side" href="reference.html"><span class="mnav-dir">Back to</span><span class="mnav-t">API and technical reference</span></a>
     <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
       <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Contents</span>
     </button>
-    <a class="mnav-side mnav-next" id="navNext" rel="next" href="rust-api.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Rust API</span></a>
+    <span class="mnav-side is-off"></span>
   </nav>
   <div class="mscrim" id="mscrim" hidden></div>
   <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
     <div class="mdrawer-head">
       <div class="mdrawer-who">
-        <span class="mdrawer-eyebrow">Development · 48 of 55</span>
+        <span class="mdrawer-eyebrow">Reference</span>
         <span class="mdrawer-title" id="mdrawerTitle">Format specification</span>
       </div>
       <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">

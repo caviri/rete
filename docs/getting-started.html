@@ -4,21 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
-  <title>Getting started · rete docs</title>
-  <meta name="description" content="You do not need a Rust toolchain, a clone of the repo, or its dev container to use rete. A prebuilt CLI image is published — ghcr.io/caviri/rete-cli, 30 MB on distroless, multi-arch (amd64 + arm64) —…" />
+  <title>Quickstart · rete docs</title>
+  <meta name="description" content="Build a small dependency graph, ask which packages depend on a library, and inspect the description carried inside the file." />
   <link rel="canonical" href="https://caviri.github.io/rete/getting-started.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
-  <meta property="og:title" content="Getting started · rete docs" />
-  <meta property="og:description" content="You do not need a Rust toolchain, a clone of the repo, or its dev container to use rete. A prebuilt CLI image is published — ghcr.io/caviri/rete-cli, 30 MB on distroless, multi-arch (amd64 + arm64) —…" />
+  <meta property="og:title" content="Quickstart · rete docs" />
+  <meta property="og:description" content="Build a small dependency graph, ask which packages depend on a library, and inspect the description carried inside the file." />
   <meta property="og:url" content="https://caviri.github.io/rete/getting-started.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/getting-started.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Getting started · rete docs" />
+  <meta property="og:image:alt" content="Quickstart · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Getting started · rete docs" />
-  <meta name="twitter:description" content="You do not need a Rust toolchain, a clone of the repo, or its dev container to use rete. A prebuilt CLI image is published — ghcr.io/caviri/rete-cli, 30 MB on distroless, multi-arch (amd64 + arm64) —…" />
+  <meta name="twitter:title" content="Quickstart · rete docs" />
+  <meta name="twitter:description" content="Build a small dependency graph, ask which packages depend on a library, and inspect the description carried inside the file." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/getting-started.png" />
   <meta name="rete:section" content="Start here" />
   <script>
@@ -529,7 +529,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     </button>
     <span class="mbar-id">
       <span class="mbar-sec"><a href="index.html">rete</a> · Start here</span>
-      <span class="mbar-title">Getting started</span>
+      <span class="mbar-title">Quickstart</span>
     </span>
     <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
   </header>
@@ -540,66 +540,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
-        <li><a href="intro.html">Graph data 101</a></li>
-        <li><a href="getting-started.html" class="active">Getting started</a></li>
-        <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
-        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
+        <li><a href="getting-started.html" class="active">Quickstart</a></li>
+        <li><a href="intro.html">Graph concepts</a></li>
+        <li><a href="playground-guide.html">Playground</a></li>
         <li class="nav-h">Guides</li>
-        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="build-and-publish.html">Build and publish</a></li>
+        <li><a href="query-and-analyze.html">Query and analyze</a></li>
+        <li><a href="clients.html">Language clients</a></li>
+        <li><a href="integrations.html">Tools and integrations</a></li>
+        <li><a href="recipes.html">Worked examples</a></li>
+        <li class="nav-h">Reference</li>
+        <li><a href="cli.html">CLI</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
-        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
-        <li class="nav-h">Clients</li>
-        <li><a href="python.html">Python — rete-graph</a></li>
-        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
-        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
-        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
-        <li><a href="r.html">R — rete</a></li>
-        <li><a href="blender.html">Blender — graphs as scenes</a></li>
-        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
-        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
-        <li class="nav-h">Publish & share</li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="hosting.html">Hosting your .rete</a></li>
-        <li><a href="interop.html">Triple-store interop</a></li>
-        <li><a href="media-companions.html">Media & SQL companions</a></li>
-        <li><a href="release.html">1.0 release candidate</a></li>
-        <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
-        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">Development</li>
-        <li><a href="architecture.html">Architecture</a></li>
-        <li><a href="SPEC.html">Format specification</a></li>
-        <li><a href="rust-api.html">Rust API</a></li>
-        <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html">Client development & releases</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
-        <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+        <li><a href="reference.html">API and technical reference</a></li>
+        <li><a href="compatibility.html">Compatibility and limits</a></li>
+        <li class="nav-h">Project</li>
+        <li><a href="apps.html">Apps and experiments</a></li>
+        <li><a href="contributing.html">Development</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -608,260 +565,127 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
+
 <h1 id="getting-started">Getting started</h1>
-<h2 id="getting-the-cli">Getting the CLI</h2>
-<p>You do not need a Rust toolchain, a clone of the repo, or its dev container to
-<em>use</em> rete. A prebuilt CLI image is published —
-<a href="https://github.com/caviri/rete/blob/main/docker/README.html"><code>ghcr.io/caviri/rete-cli</code></a>,
-~30 MB on distroless, multi-arch (amd64 + arm64) — so turning an RDF dump into a
-<code>.rete</code> is one command:</p>
-<pre><code class="language-sh"># run this in the directory that holds your dump
-docker run --rm -v "$PWD:/data" ghcr.io/caviri/rete-cli:latest \
-  build /data/dump.nt -o /data/out.rete --card --title "My graph"
+<p>Build a small dependency graph, ask which packages depend on a library, and
+inspect the description carried inside the file. You need Docker and an empty
+working directory; no source checkout or Rust installation is needed.</p>
+<h2 id="getting-the-cli">Set up the CLI</h2>
+<p>The published CLI container runs the same commands as a local <code>rete</code> binary.
+Define a wrapper in your current shell so that files in your working directory
+are available inside the container.</p>
+<p>This example pins the published 0.4.2 image, which writes format <code>0x05</code>.
+Current source builds write <code>0x06</code>; the 0.4.2 reader cannot open those newer
+files. See <a href="compatibility.html">Compatibility</a> before exchanging files between
+the released image and a source build.</p>
+<p>On a POSIX shell (Linux or macOS):</p>
+<pre><code class="language-sh">alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.4.2'
 </code></pre>
-<pre><code class="language-text">embedded dataset card (16240 bytes of metadata)
-wrote /data/out.rete: 5 triples, 8 terms, 1 pyramid level(s), 18061 bytes
+<p>On PowerShell:</p>
+<pre><code class="language-powershell">function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.4.2 @args }
 </code></pre>
-<p><code>-v "$PWD:/data"</code> maps the current directory onto <code>/data</code> inside the container,
-so <code>/data/out.rete</code> <strong>is</strong> <code>./out.rete</code> on your machine — the file is next to
-your dump when the command exits, with nothing to extract from a container.</p>
-<p>The rest of this page writes commands as a bare <code>rete …</code>. Define this alias once
-and they all run as written against the files in your current directory
-(<code>-w /data</code> makes the container's working directory <em>your</em> directory, so plain
-filenames resolve; <code>-i</code> lets you pipe into it):</p>
-<pre><code class="language-sh">alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:latest'
+<p><code>-v</code> shares your directory with <code>/data</code>, <code>-w</code> makes relative filenames work,
+and <code>-i</code> allows piped input. Without <code>-i</code>, a piped build can silently receive
+empty input and produce an empty graph. On Linux, add
+<code>--user "$(id -u):$(id -g)"</code> if output files should belong to your user.
+For Windows Git Bash, use PowerShell instead, or set <code>MSYS_NO_PATHCONV=1</code>
+and mount <code>"$(pwd -W):/data"</code> to avoid MSYS rewriting container paths.</p>
+<p>Prefer a language client? See <a href="python.html">Python</a> or
+<a href="javascript.html">JavaScript</a>. To build the CLI itself, follow
+<a href="contributing.html">Contributing</a>.</p>
+<h2 id="building-a-rete-file">Build a graph you can check</h2>
+<p>Our graph says that an application depends on a web library, which depends on
+a logging library. The logging library has a vulnerability. Save these three
+RDF statements as <code>data.nt</code>:</p>
+<pre><code class="language-nt">&lt;http://ex/app&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/web&gt; .
+&lt;http://ex/web&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/logging&gt; .
+&lt;http://ex/logging&gt; &lt;http://ex/hasVulnerability&gt; &lt;http://ex/CVE-2099-0001&gt; .
 </code></pre>
-<blockquote>
-<p><strong>Three container gotchas, all of them silent.</strong> Piping needs <code>docker run -i</code>
-— the alias sets it, but without <code>-i</code> stdin is empty and <code>rete build -</code> writes
-a valid, <strong>0-triple</strong> file and exits 0. On Linux the image runs as root, so add
-<code>--user "$(id -u):$(id -g)"</code> unless you want the output owned by root. On
-Windows Git Bash, MSYS rewrites both the mount and <code>/data/…</code> arguments
-(<code>/data/dump.nt</code> becomes <code>C:/Program Files/Git/data/dump.nt</code>, and a <code>$PWD</code>
-mount resolves to a directory that is not yours — the build reports success and
-no file appears); use
-<code>MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/data" …</code>.</p>
-</blockquote>
-<p>Other routes to the same engine, if a container is not what you want:
-<code>pip install rete-graph</code> (<a href="python.html">Python</a>),
-<code>npm install rete-graph</code> (<a href="javascript.html">JavaScript</a>), or a build from source
-(below). Remote graphs need no install beyond the image and no mount at all —
-see <em>Deploying &amp; querying over a URL</em> further down.</p>
-<h2 id="building-from-source">Building from source</h2>
-<p>Building <code>rete</code> <em>itself</em> — as opposed to using it — happens <strong>entirely inside a
-container</strong>; nothing runs on the host. The dev container
-(<a href="https://github.com/caviri/rete/tree/main/.devcontainer"><code>.devcontainer/</code></a>)
-carries the Rust 1.92 toolchain, rustfmt, clippy, Python, the
-<code>wasm32-unknown-unknown</code> target, and <code>wasm-pack</code>.</p>
-<p>Open the folder in a dev container (VS Code: <em>Reopen in Container</em>), or run the
-same image directly:</p>
-<pre><code class="language-sh">docker build -t rete-dev -f .devcontainer/Dockerfile .
-docker run --rm -it -v "${PWD}:/work" -w /work rete-dev bash
-# then, inside:
-cargo build --release -p rete-cli
+<p>For a copy-and-paste setup in a POSIX shell:</p>
+<pre><code class="language-sh">cat &gt; data.nt &lt;&lt;'EOF'
+&lt;http://ex/app&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/web&gt; .
+&lt;http://ex/web&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/logging&gt; .
+&lt;http://ex/logging&gt; &lt;http://ex/hasVulnerability&gt; &lt;http://ex/CVE-2099-0001&gt; .
+EOF
 </code></pre>
-<p>The compiled CLI is at <code>target/release/rete</code>; put it on your <code>PATH</code> and the
-examples below run without the alias (or substitute <code>cargo run -p rete-cli --</code>).</p>
-<h2 id="building-a-rete-file">Building a <code>.rete</code> file</h2>
-<figure class="fig-right fig-sq">
-  <img src="img/build-pipeline.svg" alt="Building a .rete file: source triples in N-Triples, Turtle, N-Quads, RDF/XML or OWL are compiled by rete build — which sorts, dedupes, front-codes the dictionary and writes the permutation indexes — into one immutable file holding a dictionary, permutation indexes and a dataset card, plus an optional community pyramid that many published files do not have. The result goes on any HTTP host that answers Range requests: a bucket, a static site, a CDN. There is no server and no database to run.">
-  <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
-</figure>
-<p><code>rete build</code> accepts N-Triples (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>), and
-RDF/XML (<code>.rdf</code> / <code>.owl</code> / <code>.rdfxml</code> — the usual OWL serialization), detected by
-extension. Multiple inputs are merged under one shared dictionary, and <code>-</code> reads
-standard input.</p>
-<pre><code class="language-sh">rete build data.nt -o data.rete                  # single file
-rete build part1.nt part2.nt -o merged.rete      # merge several inputs
-curl -s https://host/data.nt | rete build - -o data.rete   # from a pipe
-rete build dump.unknown --format nt -o out.rete  # force a format
+<p>Or in PowerShell:</p>
+<pre><code class="language-powershell">@'
+&lt;http://ex/app&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/web&gt; .
+&lt;http://ex/web&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/logging&gt; .
+&lt;http://ex/logging&gt; &lt;http://ex/hasVulnerability&gt; &lt;http://ex/CVE-2099-0001&gt; .
+'@ | Set-Content -Encoding ascii data.nt
 </code></pre>
-<p>N-Quads inputs build a <strong>dataset</strong>: one shared dictionary, a default-graph index,
-and one index per named graph.</p>
-<h3 id="a-full-ontology-rdfxml--an-optimized-rete">A full ontology: RDF/XML → an optimized <code>.rete</code></h3>
-<p>Most OBO/W3C ontologies ship as <strong>RDF/XML</strong> (<code>*.owl</code>), which <code>rete build</code> reads
-directly — no conversion step:</p>
-<pre><code class="language-sh"># assemble, with a self-describing Dataset Card (title/license/source/examples)
-rete build chebi.owl -o chebi.rete --card \
-  --title "ChEBI (full)" --license "CC BY 4.0" --source "https://www.ebi.ac.uk/chebi/"
-#   812 MB owl -&gt; 8.83 M triples, 3.15 M terms, 6 pyramid levels, 120 MB
+<p>Now pack the RDF and include a Dataset Card:</p>
+<pre><code class="language-sh">rete build data.nt -o data.rete --card --title "My dependency graph"
 </code></pre>
-<p>(The two <em>non-RDF</em> OWL serializations — OWL/XML and Functional Syntax — do need
-an external convert-to-RDF step first; see
-<a href="compatibility.html">Compatibility &amp; Cypher</a>.)</p>
-<p>The build is <strong>parallel and allocation-frugal</strong> by design (the CLI enables the
-<code>parallel</code> feature): the dictionary dedups terms with a <code>HashSet</code> and sorts once,
-and the permutation indexes (six by default: SPO/POS/OSP/SOP/PSO/OPS, or three
-with <a href="cli.html#rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml---quoted-triple-syntax-rdf12rdf-star"><code>build --permutations 3</code></a>)
-are built concurrently with parallel sorts. This is what lets it scale to millions of <em>unique</em> terms
-(definitions, synonyms, SMILES/InChI strings) without the build collapsing into
-allocation churn — and the output is <strong>byte-identical</strong> to a serial build, so the
-speedup is free. Turtle-native sources (e.g. a 239 MB <code>.ttl</code>) skip <code>rapper</code> and
-feed <code>rete build --format ttl</code> directly.</p>
-<p>The result is a single range-queryable file: drop it on any HTTP host and query
-it lazily (below — see <a href="hosting.html">Hosting your .rete</a> for host recipes), or
-register it in the <a href="playground-guide.html">playground</a> as a remote dataset. To go
-alongside it with a columnar/SQL view, generate
-<a href="data-engineering.html#lossless-entity-tables-the-best-of-both-worlds">lossless entity tables</a>
-straight from the same N-Triples.</p>
-<h2 id="querying-locally">Querying locally</h2>
-<pre><code class="language-sh"># Triple pattern — any of subject/predicate/object may be omitted (a wildcard):
-rete query data.rete --predicate '&lt;http://ex/knows&gt;'
-rete query data.rete --object   '&lt;http://ex/Alice&gt;'
-
-# Basic Graph Pattern (multi-pattern join); ?x is a variable, ' . ' separates:
-rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
-
-# Full SPARQL (SELECT / ASK / CONSTRUCT / DESCRIBE):
-rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?x ?z WHERE { ?x e:knows ?y . ?y e:knows ?z }"
-
-# Standard SPARQL Results JSON, for piping into other tools:
-rete sparql data.rete "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10" --json
+<p>The build reports <strong>3 triples</strong> and <strong>6 terms</strong>, and writes <code>data.rete</code> next to
+<code>data.nt</code>. It also reports embedding the card, measuring starter queries, and
+writing build information. Exact metadata sizes and timings can vary.</p>
+<p>The file contains a dictionary and query indexes, plus a community summary
+when built with a pyramid. It is an immutable snapshot: changing the RDF means
+building another file. Check <a href="compatibility.html">Compatibility</a> before exchanging files with older
+readers; the file-format generation and project release version are separate.</p>
+<p><a id="a-full-ontology-rdfxml--an-optimized-rete"></a>
+For your own data, the CLI also accepts N-Quads, Turtle, TriG and RDF/XML
+(including RDF/XML <code>.owl</code> files). N-Quads can preserve named graphs.
+OWL/XML and Functional Syntax require conversion to RDF first. See
+<a href="cli.html">CLI build options</a> for input formats, merged inputs, streaming,
+compression, memory limits and optional indexes.</p>
+<h2 id="querying-locally">Ask a question and inspect the file</h2>
+<p>Which packages depend on <code>logging</code>, directly or through another package?
+The <code>+</code> follows one or more <code>dependsOn</code> edges.</p>
+<pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
 </code></pre>
-<p>See the <a href="sparql.html">SPARQL support</a> page for the full feature list.</p>
-<h2 id="validating-shapes">Validating shapes</h2>
-<p>Use <code>rete shacl</code> when you need semantic data-quality checks, not just syntax or
-file integrity. Shapes are Turtle files; the command exits non-zero if the graph
-does not conform.</p>
-<pre><code class="language-sh">rete shacl data.rete --shapes shapes.ttl
-rete shacl data.rete --shapes shapes.ttl --format json
+<p>Expected output:</p>
+<pre><code class="language-text">2 solution(s)
+?package=&lt;http://ex/app&gt;
+?package=&lt;http://ex/web&gt;
 </code></pre>
-<p>See <a href="shacl.html">SHACL validation</a> for the supported SHACL Core surface.</p>
-<h2 id="inspecting-a-file">Inspecting a file</h2>
-<pre><code class="language-sh">rete info   data.rete          # raw header
-rete stats  data.rete          # size, counts, top predicates, planner stats, entity shapes
-rete verify data.rete          # check the blake3 content hash (detect corruption)
-rete graphs data.rete          # list named-graph IRIs
-rete search data.rete gluc     # prefix-search labels (autocomplete; no literal scan)
-rete export data.rete          # dump back to N-Quads (lossless)
+<p><code>logging</code> itself is absent: this query needs at least one dependency edge.
+For triple lookups, joins, JSON results and supported SPARQL features, see
+<a href="cli.html">CLI reference</a> and <a href="sparql.html">SPARQL support</a>. Consult the support page for execution-mode differences before moving a
+complex query between local files and URLs.</p>
+<p><a id="inspecting-a-file"></a>
+Inspect the description stored with the graph:</p>
+<pre><code class="language-sh">rete card data.rete
+rete verify data.rete
 </code></pre>
-<p>Two <strong>coarse-graph</strong> views answer questions without reading the triple index:</p>
-<pre><code class="language-sh">rete summary data.rete   # structural: Louvain community quotient graph
-rete schema  data.rete   # semantic: relations between rdf:type classes
-rete predicates data.rete  # exact per-predicate totals, from the summary alone
+<p>The card begins with <code>Dataset Card</code>, title <code>My dependency graph</code>, <strong>3 triples</strong>,
+<strong>6 terms</strong>, and the <code>http://ex/</code> vocabulary. Its predicate counts are <strong>2</strong> for
+<code>dependsOn</code> and <strong>1</strong> for <code>hasVulnerability</code>. It also includes starter queries
+and a separate build record. <code>verify</code> should report that the content hash
+matches. See <a href="dataset-cards.html">Dataset Cards</a> for curated metadata and build
+provenance.</p>
+<p><a id="validating-shapes"></a>
+Source syntax validation (<code>validate</code>), file integrity (<code>verify</code>) and
+<a href="shacl.html">SHACL shape validation</a> check different things.
+<a id="label-search-autocomplete"></a>
+<a id="full-text-search-word--contains"></a>
+For label autocomplete and word search, see <code>build --label-index</code>,
+<code>build --text-index</code> and <code>search</code> in the <a href="cli.html">CLI reference</a>.</p>
+<h2 id="deploying--querying-over-a-url">Put the file on a URL</h2>
+<p>Upload <code>data.rete</code> to a host that supports HTTP byte ranges. A remote query
+uses the same SPARQL but reads the file through its URL:</p>
+<pre><code class="language-sh">rete sparql-url https://your-host.example/data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
 </code></pre>
-<p><code>rete stats</code> also prints two index-free profiles read from the pyramid: the
-<strong>planner stats</strong> (per predicate: distinct subjects/objects, multiplicities, and
-functional / inverse-functional hints — the cardinality the cost-based join
-planner uses) and the <strong>entity shapes</strong> (the most common <em>characteristic sets</em> —
-which predicate-combinations subjects carry, e.g. <code>{type, name, age} ×N</code>).</p>
-<h3 id="label-search-autocomplete">Label search (autocomplete)</h3>
-<p><code>rete search data.rete &lt;prefix&gt;</code> resolves a case-insensitive label prefix
-<strong>without scanning the literals</strong>. Built with <code>rete build --label-index</code>, the file
-carries a LABEL_INDEX section: the display labels (<code>rdfs:label</code>,
-<code>skos:prefLabel</code>/<code>altLabel</code>, <code>foaf:name</code>, <code>dc(terms):title</code>, <code>schema:name</code>, and
-<code>"family, given"</code> for people with only given/family names) of <strong>every</strong> labelled
-subject, label-sorted; a prefix query walks a small directory to the matching
-block:</p>
-<pre><code class="language-sh">rete search data.rete "alan"          # label&lt;TAB&gt;&lt;iri&gt; rows, case-insensitive
-rete search data.rete "alan" --limit 5 --json   # [{"label":…,"subject":…}]
-rete search data.rete                 # empty prefix → the first --limit labels
-</code></pre>
-<p>This is the fast path for autocomplete: a binary search plus a short walk,
-versus a <code>FILTER(STRSTARTS(LCASE(?l), …))</code> scan over every label triple
-(measured <strong>~22× faster</strong> at 6k labeled subjects; the gap widens with size — the
-scan is linear in the label count, the index is <code>O(log n + matches)</code>). The
-section has no cap, does not need the pyramid (<code>--no-pyramid</code> and
-<code>--memory-budget-mb</code> builds can carry it), and over HTTP a search reads a few
-small ranges and no dictionary. Files built before it existed answer from a
-bounded block in their pyramid-meta (the 8,192 most-connected labelled subjects);
-a build without <code>--label-index</code> has no label index at all.</p>
-<h3 id="full-text-search-word--contains">Full-text search (word / CONTAINS)</h3>
-<p>Label prefix search finds an entity by the <em>start</em> of its label. To find entities
-by a <strong>word anywhere in any of their literals</strong>, build with <code>--text-index</code> and
-query with <code>rete search --contains</code>:</p>
-<pre><code class="language-sh">rete build data.nt -o data.rete --text-index   # opt-in TEXT_INDEX section
-
-rete search data.rete --contains glucose            # subjects whose literals say "glucose"
-rete search data.rete --contains glucose phosphate  # AND — both words (any literal)
-rete search data.rete --contains-prefix einst       # word starting with "einst…"
-rete search data.rete --contains glucose --json     # [{"subject":…}]
-</code></pre>
-<p>Matching is whole-word and case-insensitive (the same tokenizer builds and
-queries: Unicode-alphanumeric runs, lowercased, length ≥ 2). The index maps each
-word to its sorted subject ids as its own range-readable section (§6.3 of the
-<a href="SPEC.html">SPEC</a>): the token table is read once, then each queried word faults only
-<strong>its</strong> posting list — so a <code>--contains</code> over a remote multi-GB file fetches
-kilobytes, not the whole index. It is <strong>opt-in</strong> because it is sizable; a build
-without <code>--text-index</code> is byte-identical to one built before the feature, and
-<code>rete search --contains</code> on such a file reports that there is no text index.
-<code>rete stats</code> shows the section's size when present.</p>
-<h2 id="deploying--querying-over-a-url">Deploying &amp; querying over a URL</h2>
-<p>A <code>.rete</code> file is immutable and self-describing, so any static host that honors
-HTTP <code>Range</code> requests works — S3, GCS, GitHub, a CDN, or the bundled dev server:</p>
-<pre><code class="language-sh"># Local range-capable server for testing:
-python3 scripts/range_server.py 8000 .
-rete query-url http://127.0.0.1:8000/data.rete --object '&lt;http://ex/Dave&gt;'
-
-# Real https hosts (rustls; no http-only limitation):
-rete query-url   https://my-bucket.s3.amazonaws.com/data.rete --predicate '&lt;http://ex/knows&gt;'
-rete summary-url https://raw.githubusercontent.com/me/repo/main/data.rete
-</code></pre>
-<p><code>query-url</code> resolves bound terms from the dictionary, then fetches only the
-selected permutation payload (the best of the six) for the triple pattern. <code>summary-url</code>
-reads just the header, dictionary, and summary — <strong>the index is never
-downloaded</strong>. The host <strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code>
-request; a host that ignores <code>Range</code> (returns <code>200</code>) is rejected with a clear
-error rather than silently returning wrong bytes. (The browser reader, which
-has already received that whole body, keeps it when it is at most 256 MiB and
-counts the whole download; see <a href="hosting.html">Hosting</a>.)</p>
-<h2 id="generating-synthetic-test-data">Generating synthetic test data</h2>
-<p><code>scripts/synth_graph.py</code> generates a realistic scholarly knowledge graph —
-papers, authors, venues, institutions, grants, fields — with the statistics
-real graphs have (power-law citations via preferential attachment, field
-communities, Zipfian venue popularity, log-normal team sizes, typed literals,
-per-year temporal structure). Two orthogonal knobs control it on demand:</p>
-<pre><code class="language-sh"># 10k papers (~315k triples), clean:
-uv run python scripts/synth_graph.py --papers 10000 -o clean.nt
-
-# Same size, 20% deliberate mess (cross-field rewires, temporal violations,
-# missing attributes, mangled literals) — for robustness/quality testing:
-uv run python scripts/synth_graph.py --papers 10000 --noise 0.2 --seed 7 -o messy.nt
-
-# N-Quads with one named graph per publication year:
-uv run python scripts/synth_graph.py --papers 5000 --quads -o by-year.nq
-
-rete build clean.nt -o clean.rete
-</code></pre>
-<p>Identical arguments + seed reproduce the byte-identical graph; different seeds
-give natural variability at the same size/noise point. A per-kind breakdown of
-every noise event goes to stderr, so a test knows exactly what mess it got.
-(<code>scripts/gen_graph.py</code> is the older, simpler social-graph generator used by
-<code>scripts/bench.sh</code>.)</p>
-<h3 id="scaling-to-1-gb">Scaling to ~1 GB</h3>
-<p>The generator and <code>rete build</code> scale linearly, so a big stress-test graph is
-just a bigger <code>--papers</code>. Output is roughly <strong>85 bytes/triple</strong> as N-Triples
-and <strong>31 triples/paper</strong>, so ~1 GB is about 400k papers / 12.5M triples:</p>
-<pre><code class="language-sh">uv run python scripts/synth_graph.py --papers 400000 --seed 1 -o big.nt  # ~1.1 GB, ~22 s
-rete build big.nt -o big.rete                                            # ~56 s -&gt; ~100 MB
-</code></pre>
-<p>Measured on the dev container (12.5M triples, 2.0M terms, ~30k communities):
-build is ~56 s and the <code>.rete</code> is ~100 MB (zstd). The point of the size is what
-querying it then <em>doesn't</em> read: a selective pattern answers in under a second,
-<code>rete predicates</code> reads ~20 MB of summary rather than the 80 MB index, and a
-lazy query open (<code>rete cost big.rete "&lt;query&gt;"</code>) touches ~7 MB in ~50 range
-requests instead of the whole file — the range-query promise, at 1 GB.</p>
-<p>The playground's <code>scholar</code> / <code>scholar-noisy</code> demo datasets are built with this
-generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
-the <code>scripts/build_playground.py</code> docstring).</p>
-<h2 id="going-further">Going further</h2>
-<p>That's the whole loop: build a file, query it, put it on a URL. Where next:</p>
-<ul>
-<li><strong><a href="hosting.html">Hosting your .rete</a></strong> — R2, Zenodo, GitHub Pages, S3: what a
-host must support and how to check it.</li>
-<li><strong><a href="playground-guide.html">The playground</a></strong> — explore your file (or 40+
-published datasets) in the browser.</li>
-<li><strong><a href="data-engineering.html">Tables, VKG &amp; big builds</a></strong> — lossless entity/property
-tables next to the graph, the virtual-knowledge-graph comparison, and recipes
-for pulling real Wikidata at gigabyte scale.</li>
-</ul>
-<h2 id="testing">Testing</h2>
-<pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
-cargo clippy --workspace --all-targets -- -D warnings
-bash scripts/smoke.sh # end-to-end acceptance test of every CLI subcommand
-</code></pre>
-<p>CI runs all of this — plus the feature matrix and the wasm build — in containers,
-so nothing ever builds on the host.</p>
+<p>Replace the example URL with your uploaded file. The two packages should be
+the same; the command also reports fetched bytes and requests. A tiny graph
+may be read in full. Larger graphs can benefit from selective range reads,
+but the cost depends on the query and file layout.</p>
+<p>Use <a href="hosting.html">Hosting</a> to check range responses, caching and browser CORS.
+The shared CLI/Python/R HTTP reader can retain a bounded whole-file response
+from a host that ignores ranges; it refuses oversized responses. A range-capable
+host is the reliable choice for large files.</p>
+<p><a id="going-further"></a>
+Continue with the <a href="playground-guide.html">playground</a>, the
+<a href="scenario.html">dependency-impact scenario</a>, or
+<a href="data-engineering.html">tables and large builds</a>.
+<a id="building-from-source"></a>
+<a id="generating-synthetic-test-data"></a>
+<a id="scaling-to-1-gb"></a>
+<a id="testing"></a>
+Source builds, synthetic fixtures and test commands belong in
+<a href="contributing.html">Contributing</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -869,22 +693,22 @@ so nothing ever builds on the host.</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/getting-started.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer><a href="https://github.com/caviri/rete/edit/main/docs/getting-started.md">Edit this page</a> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <nav class="mnav" id="mnav" aria-label="Page navigation">
-    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="intro.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Graph data 101</span></a>
+    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="index.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Overview</span></a>
     <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
       <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Contents</span>
     </button>
-    <a class="mnav-side mnav-next" id="navNext" rel="next" href="scenario.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Real-world scenario</span></a>
+    <a class="mnav-side mnav-next" id="navNext" rel="next" href="intro.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Graph concepts</span></a>
   </nav>
   <div class="mscrim" id="mscrim" hidden></div>
   <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
     <div class="mdrawer-head">
       <div class="mdrawer-who">
-        <span class="mdrawer-eyebrow">Start here · 3 of 55</span>
-        <span class="mdrawer-title" id="mdrawerTitle">Getting started</span>
+        <span class="mdrawer-eyebrow">Start here · 2 of 4</span>
+        <span class="mdrawer-title" id="mdrawerTitle">Quickstart</span>
       </div>
       <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
         <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>

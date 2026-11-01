@@ -4,8 +4,13 @@
 cloud-native RDF graph file format.
 
 The same Rust engine the native CLI and the browser use is compiled to a small,
-**import-free WebAssembly module** and run *inside the JVM* by the
-[Chicory](https://chicory.dev) runtime. That means:
+**WebAssembly module** and run *inside the JVM* by the
+[Chicory](https://chicory.dev) runtime.
+
+Range-reader entry points use the host's `env.rete_host_read_range` import for file or
+HTTP reads; the byte-array entry points receive an image already in memory.
+
+This means:
 
 - **No native library.** No JNI, no `.so`/`.dll`/`.dylib`, no per-platform
   artifacts to ship. Just a JAR that runs anywhere a JVM (21+) does.
@@ -251,13 +256,14 @@ change to the `rete-client` artifact itself, and no new licence obligations —
 ### What this does *not* fix
 
 Compiling makes the same work faster; it does not change how much work there is.
-Local calls still copy the entire file into wasm linear memory **on every call**,
+Byte-array calls still copy the entire file into wasm linear memory **on every call**,
 and every scan is materialized twice (a wasm `Vec`, then a JVM `List`), so the
-local API is still bounded by `byte[]`/`Integer.MAX_VALUE` on one side and the
+byte-array API is still bounded by `byte[]`/`Integer.MAX_VALUE` on one side and the
 4 GiB `wasm32` linear memory on the other. `cordis.rete` (763.9 MiB) still dies
 in `info()` with `decompression failed: out of memory` — inside linear memory,
 with 8 GiB of heap unused — compiled exactly as it did interpreted, only sooner.
-See [issue #115](https://github.com/caviri/rete/issues/115), which stays open.
+The range APIs `openFile` and `openRemote` avoid that whole-image copy.
+See the historical measurements in [issue #115](https://github.com/caviri/rete/issues/115).
 
 ## `rete-rdf4j` usage
 

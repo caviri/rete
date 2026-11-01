@@ -64,9 +64,11 @@ Outputs land under `/work/dev/recard/` (git-ignored): `survey/`, `out/`,
   card first and hands it back in — `card_tools.py curated` does exactly that,
   so `--enrich` can lay new fields over it, and `verify` fails the run if any
   curated field went missing.
-* The card sits at byte 1024 and is **inside the blake3 content hash**, so there
-  is no in-place byte swap. Every re-card rewrites the file, which is why the
-  data has to be proven unchanged afterwards rather than assumed.
+* The header locates the card, which is **inside the blake3 content hash**.
+  A copying re-card writes a new file; `rete recard --in-place` appends the card
+  and build record and updates the header without copying the data sections.
+  Both change file identity. Keep a recovery copy and prove the data and
+  curated metadata survived the update.
 
 ## Carrying is the floor, not the ceiling — `--enrich`
 
@@ -263,15 +265,17 @@ ceiling is roughly `available RAM / 140 B` ≈ **330 M statements at 47 GiB**, a
 `gbif-birds` sits on it. Anything larger needs the `repyramid --stream` engine
 work described above, not a bigger machine.
 
-### What does NOT work
+### Earlier bounded-build limitations
 
-`rete build --memory-budget-mb N` is the genuinely bounded builder, but it is
-the wrong tool here on two counts, both hard:
+The following describes older builds, not the current bounded builder.
+Current `rete build --memory-budget-mb N` supports named graphs and full card
+profiles with starter queries. Prefer `rete recard` when only metadata needs
+changing; a complete rebuild is unnecessary for that task.
 
-1. **It rejects named graphs outright** — `external build supports the default
+1. **Older builds rejected named graphs** — `external build supports the default
    graph only (named graph … found)`. Named-graph files are precisely the
    population this pipeline exists for.
-2. **Its card has no profile and no starter queries.** The external path calls
+2. **Older cards lacked profiles and starter queries.** The external path called
    `curated_counts_card`, which writes curated fields plus top-line counts and
    nothing else (deriving the profile lists needs unbounded RAM). A re-card that
    produced that would be a downgrade.

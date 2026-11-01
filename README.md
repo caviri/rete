@@ -161,12 +161,10 @@ indexing, and aggregates stream: counting the 779,399 software records in the
 
 ## Documentation
 
-- Start: [Getting started](https://caviri.github.io/rete/getting-started.html) · [Graph data 101](https://caviri.github.io/rete/intro.html) (if RDF is new to you)
-- Querying: [CLI](https://caviri.github.io/rete/cli.html) · [SPARQL](https://caviri.github.io/rete/sparql.html) · [GeoSPARQL](https://caviri.github.io/rete/geosparql.html) · [SHACL](https://caviri.github.io/rete/shacl.html) · [Federation](https://caviri.github.io/rete/federation.html)
-- Publishing: [Dataset Cards](https://caviri.github.io/rete/dataset-cards.html) · [Hosting](https://caviri.github.io/rete/hosting.html) · [Browser / WASM](https://caviri.github.io/rete/browser.html)
-- Reference: [Format spec](https://caviri.github.io/rete/SPEC.html) · [Compatibility](https://caviri.github.io/rete/compatibility.html) · [Benchmarks](https://caviri.github.io/rete/BENCHMARK.html) · [W3C conformance](https://caviri.github.io/rete/conformance.html)
-- Demos: [playground](https://caviri.github.io/rete/playground.html) · [JS lab (D3)](https://caviri.github.io/rete/jslab.html) · [historical atlas](https://caviri.github.io/rete/atlas.html)
-- Notebooks: [JupyterLite](https://caviri.github.io/rete/jupyterlite/lab/index.html?path=graph-data-science.ipynb) (in the browser) · [Colab](https://colab.research.google.com/github/caviri/rete/blob/main/clients/python/examples/graph-data-science.ipynb) · [Binder](https://mybinder.org/v2/gh/caviri/rete/main?labpath=clients%2Fpython%2Fexamples%2Fgraph-data-science.ipynb)
+- [Quickstart](https://caviri.github.io/rete/getting-started.html): build a small graph and understand its first query.
+- [Build and publish](https://caviri.github.io/rete/build-and-publish.html) or [query and analyze](https://caviri.github.io/rete/query-and-analyze.html): choose a task and follow its guide.
+- [Technical reference](https://caviri.github.io/rete/reference.html): exact commands, APIs, format details and compatibility limits.
+- [Worked examples](https://caviri.github.io/rete/recipes.html) and [apps](https://caviri.github.io/rete/apps.html): complete workflows, notebooks and visual demonstrations.
 
 ## Status
 

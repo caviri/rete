@@ -40,7 +40,7 @@ caviri/rete`).
 
 `rete-publish/scripts/`
 - **`make_companions.py`** — NT → a `triples` table in Parquet/DuckDB/SQLite.
-- **`upload_bucket.sh`** — `hf buckets cp/sync` to the playground bucket.
+- **`upload_bucket.sh`** — upload to the public Cloudflare R2 serving bucket.
 
 The skills also point at the many **existing** converters in the private
 `caviri/rete-datasets` repo, cloned at `data/scripts/` (e.g.
@@ -81,5 +81,5 @@ by hand.
   committed (the `.rete` lives in the bucket).
 - Commit **without** the Claude co-author trailer.
 - Don't scrape robots-blocked sites — go to an official dump / endpoint / open API.
-- The bucket read token is shareable (it's already in `catalog.js`); bucket *writes*
-  use your `hf` CLI auth.
+- Public R2 reads use `https://data.graphplaza.com` without a token. R2 writes
+  use the configured S3 credentials; Hugging Face is a separate backup store.

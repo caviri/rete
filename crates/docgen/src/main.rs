@@ -35,104 +35,112 @@ const SITE_BASE: &str = "https://caviri.github.io/rete/";
 /// and keep the full column, which they need.
 const SQUARE_MAX_RATIO: f64 = 1.35;
 
-/// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
-/// rendered to the sibling `.html`; entries already ending in `.html` are
-/// pre-built pages (e.g. the WASM playground from `scripts/build_playground.py`)
-/// and are linked as-is, never rendered.
+/// Explicit publication registry, independent of sidebar visibility.
+const PAGES: &[(&str, &str)] = &[
+    ("index.md", "Overview"),
+    ("intro.md", "Graph concepts"),
+    ("getting-started.md", "Quickstart"),
+    ("scenario.md", "Real-world scenario"),
+    ("playground-guide.md", "Playground"),
+    ("plaza-guide.md", "Plaza — dataset gallery"),
+    ("file-explorer.md", "File explorer — browse like an archive"),
+    ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
+    ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
+    ("jslab-guide.md", "JS lab — rete × D3"),
+    ("atlas.md", "Historical atlas — SPARQL + GIS"),
+    ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
+    ("football.md", "Football — match replays"),
+    ("subtitles-guide.md", "Subtitle timeline"),
+    ("anatomy-guide.md", "Z-Anatomy — 3D human body"),
+    ("building-guide.md", "FZK-Haus — one building in 3D"),
+    ("bim-pair-guide.md", "Architecture vs structure (BIM)"),
+    ("lombardi-guide.md", "Lombardi — network drawings in ink"),
+    ("webgpu-guide.md", "WebGPU coherence (exp.)"),
+    ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
+    ("cli.md", "CLI reference"),
+    ("sparql.md", "SPARQL support"),
+    ("geosparql.md", "GeoSPARQL (geometry + time)"),
+    ("shacl.md", "SHACL validation"),
+    ("reasoning.md", "Reasoning & coherence"),
+    ("federation.md", "Federated queries"),
+    ("manifest.md", "Writable graphs — manifest & WAL"),
+    ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
+    ("compatibility.md", "Compatibility and limits"),
+    ("python.md", "Python — rete-graph"),
+    ("python-build-tutorial.md", "Python: build a .rete"),
+    ("javascript.md", "JavaScript — rete-graph"),
+    ("comunica.md", "Comunica — RDF/JS source"),
+    ("r.md", "R — rete"),
+    ("blender.md", "Blender — graphs as scenes"),
+    ("agents.md", "Agents — MCP, plugin & skills"),
+    ("agent-frameworks.md", "LangChain & Pydantic AI"),
+    ("fallacies.md", "Experiment: graphs from speech"),
+    ("dataset-cards.md", "Dataset Cards"),
+    ("hosting.md", "Hosting your .rete"),
+    ("interop.md", "Triple-store interop"),
+    ("media-companions.md", "Media & SQL companions"),
+    ("release.md", "Release guide"),
+    ("topic-modeling.md", "Topic modeling (LDA)"),
+    ("multi-criteria.md", "Multi-criteria communities"),
+    ("architecture.md", "Repository and core"),
+    ("SPEC.md", "Format specification"),
+    ("rust-api.md", "Rust API"),
+    ("browser.md", "WASM bindings reference"),
+    ("clients-dev.md", "Client development & releases"),
+    ("parallel-browser.md", "Parallel in browser (exp.)"),
+    ("data-engineering.md", "Tables, VKG & big builds"),
+    ("BENCHMARK.md", "Benchmark measurements"),
+    ("benchmarks.md", "Benchmarks"),
+    ("testing.md", "Tests, coverage and CI"),
+    ("conformance.md", "SPARQL 1.1 conformance"),
+    ("neuro-showcase-guide.md", "Neuromorphology"),
+    ("graph-algorithms.md", "Graph algorithms"),
+    ("build-and-publish.md", "Build and publish"),
+    ("query-and-analyze.md", "Query and analyze"),
+    ("clients.md", "Language clients"),
+    ("integrations.md", "Tools and integrations"),
+    ("recipes.md", "Worked examples"),
+    ("reference.md", "API and technical reference"),
+    ("apps.md", "Apps and experiments"),
+    ("contributing.md", "Development"),
+    ("dataset-card-reference.md", "Dataset Card reference"),
+];
+
+/// Deliberately small global navigation.
 const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
         "Start here",
         &[
             ("index.md", "Overview"),
-            ("intro.md", "Graph data 101"),
-            ("getting-started.md", "Getting started"),
-            ("scenario.md", "Real-world scenario"),
-        ],
-    ),
-    (
-        "Explore in the browser",
-        &[
+            ("getting-started.md", "Quickstart"),
+            ("intro.md", "Graph concepts"),
             ("playground-guide.md", "Playground"),
-            ("plaza-guide.md", "Plaza — dataset gallery"),
-            ("file-explorer.md", "File explorer — browse like an archive"),
-            ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
-            ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
-            ("jslab-guide.md", "JS lab — rete × D3"),
-            ("atlas.md", "Historical atlas — SPARQL + GIS"),
-            ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
-            ("football.md", "Football — match replays"),
-            ("subtitles-guide.md", "Subtitle timeline"),
-            ("anatomy-guide.md", "Z-Anatomy — 3D human body"),
-            ("building-guide.md", "FZK-Haus — one building in 3D"),
-            ("bim-pair-guide.md", "Architecture vs structure (BIM)"),
-            ("lombardi-guide.md", "Lombardi — network drawings in ink"),
-            ("webgpu-guide.md", "WebGPU coherence (exp.)"),
-            ("graph-map.md", "Graph-map, topic-map & 3D (exp.)"),
-            (
-                "neuro-showcase-guide.md",
-                "Neuromorphology — 3D neurons & astrocytes (exp.)",
-            ),
         ],
     ),
     (
         "Guides",
         &[
-            ("cli.md", "CLI reference"),
+            ("build-and-publish.md", "Build and publish"),
+            ("query-and-analyze.md", "Query and analyze"),
+            ("clients.md", "Language clients"),
+            ("integrations.md", "Tools and integrations"),
+            ("recipes.md", "Worked examples"),
+        ],
+    ),
+    (
+        "Reference",
+        &[
+            ("cli.md", "CLI"),
             ("sparql.md", "SPARQL support"),
-            ("geosparql.md", "GeoSPARQL (geometry + time)"),
-            ("shacl.md", "SHACL validation"),
-            ("reasoning.md", "Reasoning & coherence"),
-            ("federation.md", "Federated queries"),
-            ("manifest.md", "Writable graphs — manifest & WAL"),
-            ("semantic-zoom.md", "Semantic zoom (schema pyramid)"),
-            ("compatibility.md", "Compatibility & Cypher"),
-        ],
-    ),
-    // User-facing docs for the language clients (clients/<lang> in the repo).
-    // Maintainer docs live apart in Development → clients-dev.md.
-    (
-        "Clients",
-        &[
-            ("python.md", "Python — rete-graph"),
-            ("python-build-tutorial.md", "Python: build a .rete"),
-            ("javascript.md", "JavaScript — rete-graph"),
-            ("comunica.md", "Comunica — RDF/JS source"),
-            ("r.md", "R — rete"),
-            ("blender.md", "Blender — graphs as scenes"),
-            ("agents.md", "Agents — MCP, plugin & skills"),
-            ("agent-frameworks.md", "LangChain & Pydantic AI"),
-            ("fallacies.md", "Experiment: graphs from speech"),
+            ("reference.md", "API and technical reference"),
+            ("compatibility.md", "Compatibility and limits"),
         ],
     ),
     (
-        "Publish & share",
+        "Project",
         &[
-            ("dataset-cards.md", "Dataset Cards"),
-            ("hosting.md", "Hosting your .rete"),
-            ("interop.md", "Triple-store interop"),
-            ("media-companions.md", "Media & SQL companions"),
-            ("release.md", "1.0 release candidate"),
-        ],
-    ),
-    (
-        "Graph analysis",
-        &[
-            ("topic-modeling.md", "Topic modeling (LDA)"),
-            ("multi-criteria.md", "Multi-criteria communities"),
-        ],
-    ),
-    (
-        "Development",
-        &[
-            ("architecture.md", "Architecture"),
-            ("SPEC.md", "Format specification"),
-            ("rust-api.md", "Rust API"),
-            ("browser.md", "WASM & JavaScript API"),
-            ("clients-dev.md", "Client development & releases"),
-            ("parallel-browser.md", "Parallel in browser (exp.)"),
-            ("data-engineering.md", "Tables, VKG & big builds"),
-            ("BENCHMARK.md", "Benchmarks"),
-            ("conformance.md", "SPARQL 1.1 conformance"),
+            ("apps.md", "Apps and experiments"),
+            ("contributing.md", "Development"),
         ],
     ),
 ];
@@ -143,6 +151,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("docs"));
+    render_docs(&docs_dir)
+}
+
+fn render_docs(docs_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if !docs_dir.is_dir() {
         return Err(format!("docs dir not found: {}", docs_dir.display()).into());
     }
@@ -150,42 +162,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Nav entries whose source is absent, collected BEFORE rendering: every page
     // shares one nav, so a page that cannot be rendered must not be linked from
     // any of them.
-    let missing: Vec<&str> = SECTIONS
+    validate_registry(docs_dir)?;
+    let missing: Vec<&str> = PAGES
         .iter()
-        .flat_map(|(_, pages)| pages.iter())
         .filter(|(page, _)| page.ends_with(".md") && !docs_dir.join(page).exists())
         .map(|(page, _)| *page)
         .collect();
     for page in &missing {
-        eprintln!("warning: {page} is listed in nav but missing — skipping it and its nav entry");
+        eprintln!("warning: published source {page} is missing — skipping it and its nav entry");
     }
 
     let mut rendered = 0;
-    for (_, pages) in SECTIONS {
-        for (md, title) in *pages {
-            if !md.ends_with(".md") {
-                continue; // pre-built page (playground); linked, never rendered
-            }
-            let src = docs_dir.join(md);
-            if !src.exists() {
-                continue; // already reported above
-            }
-            let markdown = fs::read_to_string(&src)?;
-            // Figures are sized by their own measured shape — see
-            // `classify_images`. `src` is relative to the docs dir (`img/x.svg`),
-            // and a `docs/`-prefixed path is the form the README uses, so accept
-            // both; anything remote or unmeasurable is left as it is.
-            let body = classify_images(&render_markdown(&markdown), &|src| {
-                let rel = src.strip_prefix("docs/").unwrap_or(src);
-                aspect_ratio(&docs_dir.join(rel))
-            });
-            let html_name = md.replace(".md", ".html");
-            let page = template(title, &body, md, &summarize(&markdown), &missing);
-            let out = docs_dir.join(&html_name);
-            fs::write(&out, page)?;
-            println!("  {md:<22} -> {html_name}");
-            rendered += 1;
+    for (md, title) in PAGES {
+        if !md.ends_with(".md") {
+            continue; // pre-built page (playground); linked, never rendered
         }
+        let src = docs_dir.join(md);
+        if !src.exists() {
+            continue; // already reported above
+        }
+        let markdown = fs::read_to_string(&src)?;
+        // Figures are sized by their own measured shape — see
+        // `classify_images`. `src` is relative to the docs dir (`img/x.svg`),
+        // and a `docs/`-prefixed path is the form the README uses, so accept
+        // both; anything remote or unmeasurable is left as it is.
+        let body = classify_images(&render_markdown(&markdown), &|src| {
+            let rel = src.strip_prefix("docs/").unwrap_or(src);
+            aspect_ratio(&docs_dir.join(rel))
+        });
+        let html_name = md.replace(".md", ".html");
+        let page = template(title, &body, md, &summarize(&markdown), &missing);
+        let out = docs_dir.join(&html_name);
+        fs::write(&out, page)?;
+        println!("  {md:<22} -> {html_name}");
+        rendered += 1;
     }
     println!(
         "docgen: wrote {rendered} HTML page(s) to {}",
@@ -318,30 +328,79 @@ fn truncate_words(text: &str, max: usize) -> String {
     }
 }
 
-/// The site's linear reading order: `SECTIONS` flattened, minus the entries this
-/// run could not render.
-///
-/// This is the ONE sequence. The sidebar renders it, the drawer's "All pages"
-/// panel is a clone of the sidebar, the bottom bar's prev/next are computed from
-/// it, and the swipe gesture just follows those two links — so there is no
-/// second source of truth to drift out of step with the nav.
+/// Only the introductory learning path has sequential navigation.
 fn reading_order(missing: &[&str]) -> Vec<(&'static str, &'static str)> {
-    SECTIONS
+    SECTIONS[0]
+        .1
         .iter()
-        .flat_map(|(_, pages)| pages.iter())
-        .filter(|(md, _)| md.ends_with(".md") && !missing.contains(md))
-        .map(|(md, title)| (*md, *title))
+        .copied()
+        .filter(|(md, _)| !missing.contains(md))
         .collect()
 }
 
-/// The nav section a page belongs to — the card's category chip.
+fn parent_for(md: &str) -> Option<&'static str> {
+    if SECTIONS
+        .iter()
+        .any(|(_, pages)| pages.iter().any(|p| p.0 == md))
+    {
+        return None;
+    }
+    Some(match md {
+        "python.md" | "python-build-tutorial.md" | "javascript.md" | "r.md" => "clients.md",
+        "agents.md"
+        | "agent-frameworks.md"
+        | "blender.md"
+        | "comunica.md"
+        | "plaza-guide.md"
+        | "file-explorer.md"
+        | "yasgui-guide.md" => "integrations.md",
+        "dataset-cards.md"
+        | "dataset-card-reference.md"
+        | "hosting.md"
+        | "interop.md"
+        | "media-companions.md"
+        | "data-engineering.md" => "build-and-publish.md",
+        "scenario.md" => "recipes.md",
+        "geosparql.md"
+        | "shacl.md"
+        | "reasoning.md"
+        | "federation.md"
+        | "semantic-zoom.md"
+        | "topic-modeling.md"
+        | "multi-criteria.md"
+        | "graph-algorithms.md" => "query-and-analyze.md",
+        "SPEC.md"
+        | "rust-api.md"
+        | "browser.md"
+        | "manifest.md"
+        | "conformance.md"
+        | "parallel-browser.md" => "reference.md",
+        "architecture.md" | "benchmarks.md" | "BENCHMARK.md" | "testing.md" | "clients-dev.md"
+        | "release.md" => "contributing.md",
+        _ => "apps.md",
+    })
+}
+
 fn section_for(md: &str) -> &'static str {
-    for (section, pages) in SECTIONS {
-        if pages.iter().any(|(page, _)| *page == md) {
-            return section;
+    let context = parent_for(md).unwrap_or(md);
+    SECTIONS
+        .iter()
+        .find(|(_, pages)| pages.iter().any(|p| p.0 == context))
+        .map(|(section, _)| *section)
+        .unwrap_or("Documentation")
+}
+
+fn validate_registry(docs: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    for entry in fs::read_dir(docs)? {
+        let path = entry?.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            let name = path.file_name().unwrap().to_string_lossy();
+            if !PAGES.iter().any(|(md, _)| *md == name) {
+                return Err(format!("unclassified documentation page: {name}").into());
+            }
         }
     }
-    "Documentation"
+    Ok(())
 }
 
 /// HTML-escape for attribute values (social tags carry arbitrary prose).
@@ -627,97 +686,28 @@ fn with_class(tag: &str, class: &str) -> String {
 /// `*.md` href becomes the sibling `*.html`. Only touches `href="..."` targets,
 /// not code or text.
 fn rewrite_links(html: &str) -> String {
-    html.replace("href=\"docs/", "href=\"")
-        .replace(".md\"", ".html\"")
-        .replace(".md#", ".html#")
-}
-
-/// Overview `.md` pages that head a collapsible nav group of full-screen
-/// interactive apps. The **first** sub is the rendered overview (stays in-page);
-/// the rest are pre-built apps that open in a new tab.
-fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
-    match md {
-        "playground-guide.md" => Some(&[
-            ("playground-guide.html", "overview"),
-            ("playground.html", "launch the playground →"),
-        ]),
-        "graph-map.md" => Some(&[
-            ("graph-map.html", "overview"),
-            ("graph-map/viewer.html", "structural map"),
-            ("graph-map/viewer-topics.html", "topic map (LDA)"),
-            ("graph-map/viewer-3d.html", "3D — deck.gl"),
-            ("graph-map/viewer-3d-three.html", "3D — three.js + fog"),
-        ]),
-        "yasgui-guide.md" => Some(&[
-            ("yasgui-guide.html", "overview"),
-            ("yasgui.html", "launch the IDE →"),
-        ]),
-        "jupyterlite-guide.md" => Some(&[
-            ("jupyterlite-guide.html", "overview"),
-            (
-                "jupyterlite/lab/index.html?path=rete-graph.ipynb",
-                "tour: query graphs →",
-            ),
-            (
-                "jupyterlite/lab/index.html?path=build-a-rete.ipynb",
-                "build: anatomy of a .rete →",
-            ),
-        ]),
-        "jslab-guide.md" => Some(&[
-            ("jslab-guide.html", "overview"),
-            ("jslab.html", "launch the lab →"),
-        ]),
-        "atlas.md" => Some(&[
-            ("atlas.html", "overview"),
-            ("atlas-app.html", "launch the atlas →"),
-        ]),
-        "ask-the-graph.md" => Some(&[
-            ("ask-the-graph.html", "overview"),
-            ("ask-browser.html", "launch ask the graph →"),
-        ]),
-        "football.md" => Some(&[
-            ("football.html", "overview"),
-            ("pitch.html", "pick any match →"),
-            ("wcfinal.html", "the 2022 final →"),
-        ]),
-        "subtitles-guide.md" => Some(&[
-            ("subtitles-guide.html", "overview"),
-            ("subtitles.html", "play the timeline →"),
-        ]),
-        "anatomy-guide.md" => Some(&[
-            ("anatomy-guide.html", "overview"),
-            ("anatomy.html", "open the 3D body →"),
-        ]),
-        "building-guide.md" => Some(&[
-            ("building-guide.html", "overview"),
-            ("building.html", "open the 3D building →"),
-        ]),
-        "bim-pair-guide.md" => Some(&[
-            ("bim-pair-guide.html", "overview"),
-            ("bim-pair.html", "open the paired viewer →"),
-        ]),
-        "lombardi-guide.md" => Some(&[
-            ("lombardi-guide.html", "overview"),
-            ("lombardi.html", "open the drawings →"),
-        ]),
-        "webgpu-guide.md" => Some(&[
-            ("webgpu-guide.html", "overview"),
-            ("webgpu.html", "run the experiment →"),
-        ]),
-        "plaza-guide.md" => Some(&[
-            ("plaza-guide.html", "overview"),
-            ("plaza/index.html", "open the gallery →"),
-        ]),
-        "neuro-showcase-guide.md" => Some(&[
-            ("neuro-showcase-guide.html", "overview"),
-            ("neuro-showcase.html", "reconstruct in 3D →"),
-            (
-                "playground.html#dataset=neuro-showcase&load=lazy",
-                "query in the playground →",
-            ),
-        ]),
-        _ => None,
+    let mut output = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("href=\"") {
+        let end_prefix = start + 6;
+        output.push_str(&rest[..end_prefix]);
+        rest = &rest[end_prefix..];
+        let Some(end) = rest.find('"') else { break };
+        let target = &rest[..end];
+        let path_end = target.find(['?', '#']).unwrap_or(target.len());
+        let path = &target[..path_end];
+        if !path.starts_with('/') && !path.contains(':') && path.ends_with(".md") {
+            let path = path.strip_prefix("docs/").unwrap_or(path);
+            output.push_str(path.strip_suffix(".md").unwrap());
+            output.push_str(".html");
+            output.push_str(&target[path_end..]);
+        } else {
+            output.push_str(target);
+        }
+        rest = &rest[end..];
     }
+    output.push_str(rest);
+    output
 }
 
 fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &[&str]) -> String {
@@ -732,42 +722,8 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
             if missing.contains(md) {
                 continue;
             }
-            // An overview `.md` that owns a set of full-screen interactive pages
-            // renders as a collapsible group: the first sub is the rendered
-            // overview (in-page), the rest are the apps (each in a new tab).
-            if let Some(subs) = nav_group_subs(md) {
-                let open = if *md == current_md { " open" } else { "" };
-                let overview = subs[0].0;
-                let mut sub = String::new();
-                for (i, (h, l)) in subs.iter().enumerate() {
-                    let a = if i == 0 && *h == overview && *md == current_md {
-                        " class=\"active\""
-                    } else {
-                        ""
-                    };
-                    let tgt = if i == 0 {
-                        "" // the overview stays in-page
-                    } else {
-                        " target=\"_blank\" rel=\"noopener\""
-                    };
-                    sub.push_str(&format!("<li><a href=\"{h}\"{a}{tgt}>{l}</a></li>"));
-                }
-                // The summary title links to the overview: clicking a group in
-                // the sidebar opens its introduction AND (because that page
-                // renders with the group `open`) leaves the sidebar expanded.
-                // The disclosure triangle still toggles the sub-list in place.
-                let sumclass = if *md == current_md {
-                    " class=\"active\""
-                } else {
-                    ""
-                };
-                nav_items.push(format!(
-                    "<li class=\"nav-group\"><details{open}><summary><a href=\"{overview}\"{sumclass}>{t}</a></summary><ul class=\"nav-sub\">{sub}</ul></details></li>"
-                ));
-                continue;
-            }
             let href = md.replace(".md", ".html");
-            let class = if *md == current_md {
+            let class = if *md == parent_for(current_md).unwrap_or(current_md) {
                 " class=\"active\""
             } else {
                 ""
@@ -775,6 +731,22 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
             nav_items.push(format!("<li><a href=\"{href}\"{class}>{t}</a></li>"));
         }
     }
+    let parent = parent_for(current_md).filter(|md| !missing.contains(md));
+    let parent_link = parent
+        .map(|md| {
+            let title = SECTIONS
+                .iter()
+                .flat_map(|(_, pages)| pages.iter())
+                .find(|p| p.0 == md)
+                .unwrap()
+                .1;
+            format!(
+                "<p class=\"parent-link\"><a href=\"{}\">Back to {}</a></p>",
+                md.replace(".md", ".html"),
+                title
+            )
+        })
+        .unwrap_or_default();
     let nav = nav_items.join("\n        ");
 
     // Social preview. The card image is pre-rendered per page by
@@ -807,6 +779,14 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
     // they work with JavaScript off, they are the accessible equivalent of the
     // swipe gesture, and the swipe handler navigates by reading their `href`.
     let step = |offset: isize, dir: &str, arrow_first: bool| -> String {
+        if pos.is_none() {
+            return if let Some(md) = parent.filter(|_| offset < 0) {
+                let title = PAGES.iter().find(|p| p.0 == md).unwrap().1;
+                format!("<a class=\"mnav-side\" href=\"{}\"><span class=\"mnav-dir\">Back to</span><span class=\"mnav-t\">{}</span></a>", md.replace(".md", ".html"), attr(title))
+            } else {
+                "<span class=\"mnav-side is-off\"></span>".to_string()
+            };
+        }
         let target = pos.and_then(|i| {
             let j = i as isize + offset;
             if j < 0 {
@@ -841,7 +821,7 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
                 let edge = if offset < 0 {
                     "Start of the docs"
                 } else {
-                    "End of the docs"
+                    "End of the introduction"
                 };
                 format!("<span class=\"{class} is-off\"><span class=\"mnav-dir\">{dir}</span><span class=\"mnav-t\">{edge}</span></span>")
             }
@@ -972,6 +952,7 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
   <main>
     <div class="page">
       <article class="content">
+{parent_link}
 {body}
       </article>
       <aside class="rail" aria-label="On this page">
@@ -979,7 +960,7 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer><a href="{repo}/edit/main/docs/{current_md}">Edit this page</a> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   {bottombar}
   {drawer}
@@ -2053,6 +2034,122 @@ const MOBILE_JS: &str = r##"
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn registry_and_sidebar_are_complete_unique_and_classified() {
+        use std::collections::HashSet;
+        assert_eq!(super::PAGES.len(), 67);
+        let published: HashSet<_> = super::PAGES.iter().map(|p| p.0).collect();
+        assert_eq!(published.len(), super::PAGES.len());
+        assert_eq!(super::SECTIONS.len(), 4);
+        let visible: Vec<_> = super::SECTIONS
+            .iter()
+            .flat_map(|(_, pages)| pages.iter())
+            .map(|p| p.0)
+            .collect();
+        assert_eq!(visible.len(), 15);
+        assert_eq!(visible.iter().collect::<HashSet<_>>().len(), 15);
+        assert!(visible.iter().all(|md| published.contains(md)));
+        for (md, _) in super::PAGES {
+            if !visible.contains(md) {
+                assert!(visible.contains(&super::parent_for(md).expect("specialist parent")));
+            }
+        }
+        let docs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+        super::validate_registry(&docs).unwrap();
+    }
+
+    #[test]
+    fn hidden_sources_render_and_unknown_root_sources_are_rejected() {
+        let docs = std::env::temp_dir().join(format!("rete-docgen-{}", std::process::id()));
+        std::fs::create_dir_all(docs.join("archive")).unwrap();
+        std::fs::write(
+            docs.join("python.md"),
+            "# Python {#stable}\n\nHidden specialist.",
+        )
+        .unwrap();
+        std::fs::write(docs.join("clients.md"), "# Clients").unwrap();
+        std::fs::write(docs.join("archive/unlisted.md"), "# Archived").unwrap();
+        super::render_docs(&docs).unwrap();
+        let output = std::fs::read_to_string(docs.join("python.html")).unwrap();
+        assert!(output.contains("id=\"stable\""));
+        assert!(output.contains("Back to Language clients"));
+        assert!(output.contains("href=\"clients.html\" class=\"active\""));
+        std::fs::write(docs.join("unclassified.md"), "# New").unwrap();
+        assert!(super::validate_registry(&docs)
+            .unwrap_err()
+            .to_string()
+            .contains("unclassified.md"));
+        std::fs::remove_dir_all(docs).unwrap();
+    }
+
+    #[test]
+    fn relative_links_preserve_suffixes_and_other_urls_are_untouched() {
+        for (input, expected) in [
+            ("intro.md", "intro.html"),
+            ("./intro.md#graph", "./intro.html#graph"),
+            ("docs/intro.md?q=1#graph", "intro.html?q=1#graph"),
+            ("../docs/intro.md?x=1", "../docs/intro.html?x=1"),
+            ("https://example.org/page.md", "https://example.org/page.md"),
+            ("//example.org/page.md", "//example.org/page.md"),
+            ("/page.md", "/page.md"),
+            ("#page.md", "#page.md"),
+        ] {
+            assert_eq!(
+                super::rewrite_links(&format!("<a href=\"{input}\">")),
+                format!("<a href=\"{expected}\">")
+            );
+        }
+        assert_eq!(
+            super::rewrite_links("<img src=\"image.md\">"),
+            "<img src=\"image.md\">"
+        );
+    }
+    #[test]
+    fn simplified_navigation_and_local_urls() {
+        assert_eq!(super::reading_order(&[]).len(), 4);
+        let page = super::template("Python", "<h1>Python</h1>", "python.md", "", &[]);
+        assert!(page.contains("Back to Language clients"));
+        assert!(!page.contains("class=\"nav-group\""));
+        assert!(!page.contains("rel=\"next\""));
+        for (md, parent, title) in [
+            (
+                "parallel-browser.md",
+                "reference.html",
+                "API and technical reference",
+            ),
+            (
+                "plaza-guide.md",
+                "integrations.html",
+                "Tools and integrations",
+            ),
+            (
+                "file-explorer.md",
+                "integrations.html",
+                "Tools and integrations",
+            ),
+            (
+                "yasgui-guide.md",
+                "integrations.html",
+                "Tools and integrations",
+            ),
+        ] {
+            let page = super::template("Guide", "<h1>Guide</h1>", md, "", &[]);
+            assert!(
+                page.contains(&format!("href=\"{parent}\">Back to {title}</a>")),
+                "{md} must return to the hub that lists it"
+            );
+            assert!(
+                page.contains(&format!("href=\"{parent}\" class=\"active\"")),
+                "{md} must highlight its parent hub"
+            );
+        }
+        assert_eq!(
+            super::rewrite_links(r#"<a href="docs/intro.md?q=1#x">"#),
+            r#"<a href="intro.html?q=1#x">"#
+        );
+        let remote = r#"<a href="https://github.com/caviri/rete/blob/main/docs/intro.md#x">"#;
+        assert_eq!(super::rewrite_links(remote), remote);
+    }
     use super::{aspect_ratio, classify_images, render_markdown, SQUARE_MAX_RATIO};
     use std::path::PathBuf;
 
@@ -2238,45 +2335,21 @@ mod tests {
         );
     }
 
-    /// prev/next — and the swipe that follows them — mean nothing without a
-    /// defined sequence, and there must be exactly one. It is `SECTIONS`
-    /// flattened: the same order the sidebar and the drawer show.
     #[test]
-    fn reading_order_is_the_nav_flattened() {
-        let order = super::reading_order(&[]);
-        assert_eq!(order.first().map(|(md, _)| *md), Some("index.md"));
-        assert_eq!(order.last().map(|(md, _)| *md), Some("conformance.md"));
-        // Only rendered pages: the pre-built apps hang off nav groups and are
-        // not steps in the sequence.
-        assert!(order.iter().all(|(md, _)| md.ends_with(".md")), "{order:?}");
+    fn reading_order_is_only_the_learning_path() {
         assert_eq!(
-            order.len(),
-            super::SECTIONS.iter().map(|(_, p)| p.len()).sum::<usize>()
+            super::reading_order(&[])
+                .iter()
+                .map(|p| p.0)
+                .collect::<Vec<_>>(),
+            [
+                "index.md",
+                "getting-started.md",
+                "intro.md",
+                "playground-guide.md"
+            ]
         );
-        // Consecutive: every page's next is the entry after it, so no page can
-        // be reached twice or skipped.
-        let mut seen: Vec<&str> = order.iter().map(|(md, _)| *md).collect();
-        let count = seen.len();
-        seen.sort_unstable();
-        seen.dedup();
-        assert_eq!(
-            seen.len(),
-            count,
-            "a page appears twice in the reading order"
-        );
-    }
-
-    /// A page listed in the nav but not yet committed is dropped from the nav —
-    /// and has to be dropped from the sequence too, or its neighbours' prev/next
-    /// point at a file that does not exist.
-    #[test]
-    fn reading_order_skips_missing_pages() {
-        let order = super::reading_order(&["intro.md", "conformance.md"]);
-        assert!(!order.iter().any(|(md, _)| *md == "intro.md"), "{order:?}");
-        assert_eq!(order.last().map(|(md, _)| *md), Some("BENCHMARK.md"));
-        // index.md's next is now getting-started.md, not the missing intro.md.
-        let i = order.iter().position(|(md, _)| *md == "index.md").unwrap();
-        assert_eq!(order[i + 1].0, "getting-started.md");
+        assert_eq!(super::reading_order(&["intro.md"]).len(), 3);
     }
 
     /// Two headings that read alike still get one anchor each.

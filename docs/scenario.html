@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Real-world scenario · rete docs</title>
-  <meta name="description" content="A worked end-to-end example: publish a software dependency graph (an SBOM-style slice) as a single .rete file, then answer &quot;what is impacted by this CVE?&quot; — over HTTP, fetching only the bytes the…" />
+  <meta name="description" content="Publish a software dependency graph as a .rete file, then ask which packages are affected by a vulnerable dependency. The client runs the query; the host only serves the file." />
   <link rel="canonical" href="https://caviri.github.io/rete/scenario.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Real-world scenario · rete docs" />
-  <meta property="og:description" content="A worked end-to-end example: publish a software dependency graph (an SBOM-style slice) as a single .rete file, then answer &quot;what is impacted by this CVE?&quot; — over HTTP, fetching only the bytes the…" />
+  <meta property="og:description" content="Publish a software dependency graph as a .rete file, then ask which packages are affected by a vulnerable dependency. The client runs the query; the host only serves the file." />
   <meta property="og:url" content="https://caviri.github.io/rete/scenario.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/scenario.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,9 +18,9 @@
   <meta property="og:image:alt" content="Real-world scenario · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Real-world scenario · rete docs" />
-  <meta name="twitter:description" content="A worked end-to-end example: publish a software dependency graph (an SBOM-style slice) as a single .rete file, then answer &quot;what is impacted by this CVE?&quot; — over HTTP, fetching only the bytes the…" />
+  <meta name="twitter:description" content="Publish a software dependency graph as a .rete file, then ask which packages are affected by a vulnerable dependency. The client runs the query; the host only serves the file." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/scenario.png" />
-  <meta name="rete:section" content="Start here" />
+  <meta name="rete:section" content="Guides" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -528,7 +528,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
     <span class="mbar-id">
-      <span class="mbar-sec"><a href="index.html">rete</a> · Start here</span>
+      <span class="mbar-sec"><a href="index.html">rete</a> · Guides</span>
       <span class="mbar-title">Real-world scenario</span>
     </span>
     <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
@@ -540,66 +540,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
-        <li><a href="intro.html">Graph data 101</a></li>
-        <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="scenario.html" class="active">Real-world scenario</a></li>
-        <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
-        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
+        <li><a href="getting-started.html">Quickstart</a></li>
+        <li><a href="intro.html">Graph concepts</a></li>
+        <li><a href="playground-guide.html">Playground</a></li>
         <li class="nav-h">Guides</li>
-        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="build-and-publish.html">Build and publish</a></li>
+        <li><a href="query-and-analyze.html">Query and analyze</a></li>
+        <li><a href="clients.html">Language clients</a></li>
+        <li><a href="integrations.html">Tools and integrations</a></li>
+        <li><a href="recipes.html" class="active">Worked examples</a></li>
+        <li class="nav-h">Reference</li>
+        <li><a href="cli.html">CLI</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
-        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
-        <li class="nav-h">Clients</li>
-        <li><a href="python.html">Python — rete-graph</a></li>
-        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
-        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
-        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
-        <li><a href="r.html">R — rete</a></li>
-        <li><a href="blender.html">Blender — graphs as scenes</a></li>
-        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
-        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
-        <li class="nav-h">Publish & share</li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="hosting.html">Hosting your .rete</a></li>
-        <li><a href="interop.html">Triple-store interop</a></li>
-        <li><a href="media-companions.html">Media & SQL companions</a></li>
-        <li><a href="release.html">1.0 release candidate</a></li>
-        <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
-        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">Development</li>
-        <li><a href="architecture.html">Architecture</a></li>
-        <li><a href="SPEC.html">Format specification</a></li>
-        <li><a href="rust-api.html">Rust API</a></li>
-        <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html">Client development & releases</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
-        <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+        <li><a href="reference.html">API and technical reference</a></li>
+        <li><a href="compatibility.html">Compatibility and limits</a></li>
+        <li class="nav-h">Project</li>
+        <li><a href="apps.html">Apps and experiments</a></li>
+        <li><a href="contributing.html">Development</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -608,101 +565,106 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1 id="a-real-world-scenario-a-queryable-sbom-on-a-url">A real-world scenario: a queryable SBOM on a URL</h1>
-<p>A worked end-to-end example: publish a software <strong>dependency graph</strong> (an
-SBOM-style slice) as a single <code>.rete</code> file, then answer <em>"what is impacted by this
-CVE?"</em> — over HTTP, fetching only the bytes the query needs, with no database.</p>
-<p>The data (<a href="https://github.com/caviri/rete/blob/main/examples/deps.nt"><code>examples/deps.nt</code></a>) models packages, their kind
-(<code>rdf:type Application</code>/<code>Library</code>), <code>dependsOn</code> edges, and a vulnerable package:</p>
-<pre><code>&lt;http://ex/app&gt;     dependsOn  &lt;http://ex/web&gt;, &lt;http://ex/auth&gt;
-&lt;http://ex/web&gt;     dependsOn  &lt;http://ex/logging&gt;
-&lt;http://ex/auth&gt;    dependsOn  &lt;http://ex/logging&gt;, &lt;http://ex/safejson&gt;
-&lt;http://ex/logging&gt; dependsOn  &lt;http://ex/log4x&gt;
-&lt;http://ex/log4x&gt;   hasVulnerability  &lt;http://ex/CVE-2099-0001&gt;
+<p class="parent-link"><a href="recipes.html">Back to Worked examples</a></p>
+<h1 id="a-real-world-scenario-a-queryable-sbom-on-a-url">Trace a dependency vulnerability from a URL</h1>
+<p>Publish a software dependency graph as a <code>.rete</code> file, then ask which packages
+are affected by a vulnerable dependency. The client runs the query; the host
+only serves the file.</p>
+<p>This example uses the repository's
+<a href="https://github.com/caviri/rete/blob/main/examples/deps.nt"><code>examples/deps.nt</code></a>.
+It contains package types, these dependency edges, and one fictional CVE:</p>
+<pre><code class="language-text">app     -&gt; web, auth
+web     -&gt; logging
+auth    -&gt; logging, safejson
+logging -&gt; log4x
+log4x   -&gt; hasVulnerability -&gt; CVE-2099-0001
 </code></pre>
-<h2 id="1-validate-then-build">1. Validate, then build</h2>
-<p>Check the source is well-formed RDF first, then pack it:</p>
+<p>Commands below use <code>rete</code>; <a href="getting-started.html">Getting started</a> explains the
+published Docker wrapper for POSIX shells and PowerShell. Run them in a checkout
+containing <code>examples/deps.nt</code>, or download that file into an <code>examples</code> directory.</p>
+<h2 id="1-validate-then-build">Build and check the snapshot</h2>
+<p>Validate the RDF syntax, build a file, then check its content hash:</p>
 <pre><code class="language-sh">rete validate examples/deps.nt
-#  valid: 13 statement(s) — 13 in the default graph, 0 named graph(s)
-
 rete build examples/deps.nt -o deps.rete
-#  wrote deps.rete: 13 triples, 12 terms, 2 pyramid level(s), 2035 bytes
-
-rete verify deps.rete        # confirm the content hash
-#  OK — content hash matches
+rete verify deps.rete
 </code></pre>
-<h2 id="2-publish">2. Publish</h2>
-<p>It's one immutable file — upload it anywhere that serves HTTP <code>Range</code> requests:</p>
-<pre><code class="language-sh">aws s3 cp deps.rete s3://my-bucket/deps.rete          # S3
-# or commit it to a repo and use the raw URL, or any CDN / static host.
+<p>Validation reports <strong>13 statements</strong>, all in the default graph. The build
+reports <strong>13 triples</strong>, <strong>12 terms</strong> and <strong>2 pyramid levels</strong>; verification
+should say the content hash matches. File size can change between releases.
+These checks establish syntax and file integrity, rather than completeness of
+an SBOM or absence of vulnerabilities.</p>
+<p>Before publishing, check the impact query locally:</p>
+<pre><code class="language-sh">rete sparql deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x } ORDER BY ?d"
 </code></pre>
-<p>No server, no endpoint, no index to maintain. The file's blake3 content hash
-doubles as an ETag-like id, so clients can cache byte ranges forever.</p>
-<h2 id="3-query-it-from-the-url">3. Query it from the URL</h2>
-<h3 id="the-headline-question-what-does-the-cve-impact">The headline question: what does the CVE impact?</h3>
-<p>Everything that (transitively) depends on the vulnerable <code>log4x</code>:</p>
-<pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
-  "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
-#  4 solution(s)
-#  (fetched 2035 bytes in 1 range request(s); file is 2035 bytes)
-#  ?d=&lt;http://ex/auth&gt;
-#  ?d=&lt;http://ex/logging&gt;
-#  ?d=&lt;http://ex/web&gt;
-#  ?d=&lt;http://ex/app&gt;
+<p>It should return four packages, in order: <code>app</code>, <code>auth</code>, <code>logging</code>, <code>web</code>.
+<code>safejson</code> has no dependency path to <code>log4x</code>, and <code>log4x</code> itself has no outgoing
+dependency path to itself.</p>
+<h2 id="2-publish">Publish the file</h2>
+<p>Upload the snapshot to a static host with HTTP range support. For example,
+with a configured AWS CLI and your own bucket:</p>
+<pre><code class="language-sh">aws s3 cp deps.rete s3://my-bucket/deps.rete
 </code></pre>
-<p><code>safejson</code> is correctly excluded — it doesn't reach the vulnerable package. At
-this toy size the whole file fits in <strong>one bounded range request</strong>; on a real
-graph the same query pulls a handful of small ranges — dictionary chunks and
-index tiles — from a file thousands of times larger, never scanning linearly.</p>
-<h3 id="just-the-affected-libraries-with-the-cve-id">Just the affected <em>libraries</em>, with the CVE id</h3>
-<pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
-  "PREFIX e: &lt;http://ex/&gt;
-   SELECT ?lib ?cve WHERE {
-     ?lib e:dependsOn+ ?v . ?v e:hasVulnerability ?cve .
-     ?lib a e:Library
-   }"
+<p>The URL must be readable by your intended clients. Use <a href="hosting.html">Hosting</a>
+for permissions, range checks, CORS for browser access, and cache validators.
+Publish changed content at a new versioned URL or configure validation so
+clients do not reuse stale cached ranges. The file's content hash identifies
+its content; HTTP caching policy still belongs to the host.</p>
+<h2 id="3-query-it-from-the-url">Ask which packages are affected</h2>
+<p><a id="the-headline-question-what-does-the-cve-impact"></a>
+Replace the URL below with the location you published:</p>
+<pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x } ORDER BY ?d"
 </code></pre>
-<h3 id="a-simple-point-lookup-triple-pattern-no-sparql">A simple point lookup (triple pattern, no SPARQL)</h3>
-<pre><code class="language-sh">rete query-url https://my-bucket.s3.amazonaws.com/deps.rete \
-  --predicate '&lt;http://ex/hasVulnerability&gt;'
+<p>Expected bindings are the same as the local query:</p>
+<pre><code class="language-text">?d=&lt;http://ex/app&gt;
+?d=&lt;http://ex/auth&gt;
+?d=&lt;http://ex/logging&gt;
+?d=&lt;http://ex/web&gt;
 </code></pre>
-<h3 id="overview-first-without-downloading-the-index">Overview first, without downloading the index</h3>
-<img class="img-sq" src="img/progressive-fetch.svg" alt="The overview-first path: a client makes three byte-range reads — the 1024-byte header at bytes 0 to 1023, then the dictionary, then the pyramid summary — and computes the coarse community graph without ever fetching the permutation indexes. Drawn to scale on the published davidrumsey.rete, 74.8 MB: the three reads total 17.4 MB, 23.3 percent of the file, while the permutation indexes alone are 42.6 MB, 56.9 percent, and are never requested. The share depends on how large the dictionary is relative to the rest of the file.">
-<p><em>The overview path: header + dictionary + summary in three range reads — 23.3% of <code>davidrumsey.rete</code>; the triple index stays on the server.</em></p>
-<pre><code class="language-sh">rete summary-url https://my-bucket.s3.amazonaws.com/deps.rete   # community quotient graph
-rete schema      deps.rete                                       # classes &amp; relations (local)
+<p>The command also reports four solutions and its fetched bytes and requests.
+The <code>+</code> follows one or more dependency edges. This toy graph may fit in one
+bounded read. On larger graphs, selective queries can avoid much of the file,
+but long paths and broad queries may read substantial index data. See
+<a href="sparql.html">SPARQL support</a> for lazy-query support and limits.</p>
+<p><a id="just-the-affected-libraries-with-the-cve-id"></a>
+To restrict the answer to libraries and discover the vulnerability identifier
+from the graph, join the path with its vulnerability and type statements:</p>
+<pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?lib ?cve WHERE { ?lib e:dependsOn+ ?v . ?v e:hasVulnerability ?cve . ?lib a e:Library } ORDER BY ?lib"
 </code></pre>
-<h2 id="4-querying-with-plain-curl">4. Querying with plain <code>curl</code></h2>
-<p>There is <strong>no query endpoint</strong> — a <code>.rete</code> query is a set of HTTP <code>Range</code> reads
-that the <code>rete</code> client (or the WASM engine) performs. You can watch and even
-drive those reads with <code>curl</code>.</p>
-<p><strong>The whole file is tiny here; fetch it and query locally:</strong></p>
+<p>This returns <code>auth</code>, <code>logging</code> and <code>web</code>, each paired with
+<code>http://ex/CVE-2099-0001</code>. <code>app</code> is an Application, so the type constraint
+excludes it. This is dependency reachability in the supplied data, rather than
+an assessment of exploitability or version ranges.</p>
+<p><a id="a-simple-point-lookup-triple-pattern-no-sparql"></a>
+A direct fact lookup needs no SPARQL:</p>
+<pre><code class="language-sh">rete query-url https://my-bucket.s3.amazonaws.com/deps.rete --predicate '&lt;http://ex/hasVulnerability&gt;'
+</code></pre>
+<p>It returns the statement linking <code>log4x</code> to the CVE.
+<a id="overview-first-without-downloading-the-index"></a>
+For an overview, use <code>summary-url</code> on the URL, or <code>schema deps.rete</code> locally.
+These summarize community structure and typed relations; they do not replace
+the exact dependency-path answer. See <a href="semantic-zoom.html">Semantic zoom</a> and
+the <a href="cli.html">CLI reference</a>.</p>
+<h2 id="4-querying-with-plain-curl">Inspect the transport and open the browser</h2>
+<p>A <code>.rete</code> URL is not a SPARQL endpoint: <code>curl</code> can retrieve bytes, while a rete
+client interprets the file and runs queries. Check a published file's header
+range with this POSIX command (use <code>curl.exe</code> in PowerShell):</p>
+<pre><code class="language-sh">curl -sD - -o header.bin -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete
+</code></pre>
+<p>A range-capable host returns <strong>206 Partial Content</strong> and a <code>Content-Range</code>
+header beginning <code>bytes 0-1023/</code>. The saved header begins with <code>RETE</code>.
+A host returning <code>200</code> has sent a whole-file response. Current readers can
+retain such a response up to 256 MiB; larger responses are refused rather than
+silently downloading an unbounded file. Configure ranges for reliable large-file
+access; details are in <a href="hosting.html">Hosting</a>.</p>
+<p>For this small example you can also download the file and run the local query:</p>
 <pre><code class="language-sh">curl -s https://my-bucket.s3.amazonaws.com/deps.rete -o deps.rete
-rete sparql deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>
-<p><strong>See the range mechanics directly</strong> — the first 1024 bytes are the header, and a
-<code>Range</code> request returns <code>206 Partial Content</code>:</p>
-<pre><code class="language-sh"># Fetch just the header (bytes 0–1023); confirm the magic and partial response:
-curl -s -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; echo
-#  RETE
-curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
-#  HTTP/2 206
-#  content-range: bytes 0-1023/2035
-</code></pre>
-<p>That <code>206</code> is the contract: a host that ignores <code>Range</code> and returns <code>200</code> is
-rejected by the CLI (it would otherwise read the wrong bytes; the browser reader
-keeps such a body only up to 256 MiB, and counts the whole download). For large
-files, this is the whole point — a point query pulls a handful of kilobytes from a
-multi-megabyte file instead of the entire thing.</p>
-<h2 id="5-in-the-browser">5. In the browser</h2>
-<p>The same file serves a zero-backend web app: the <a href="browser.html">browser engine</a>
-range-fetches the overview first, then runs SPARQL client-side. A security
-dashboard could load <code>deps.rete</code> straight from S3 and let users explore impact
-with no API to build, deploy, or secure.</p>
-<hr />
-<p><strong>What just happened:</strong> one static file replaced a graph database + query API. The
-data is plain RDF, the queries are standard SPARQL, and the transport is ordinary
-HTTP range requests — so it works on infrastructure you already have.</p>
+<p><a id="5-in-the-browser"></a>
+In the <a href="playground.html">playground</a>, use <strong>+ Add source &gt; Connect (lazy)</strong>
+with the same URL and paste the impact query. With CORS enabled on the host,
+the browser runs it against the same snapshot and shows the bytes fetched.
+See the <a href="playground-guide.html">playground guide</a> for interpreting results and
+sharing the query. A custom dashboard can use the <a href="browser.html">Browser API</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -710,21 +672,21 @@ HTTP range requests — so it works on infrastructure you already have.</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/scenario.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer><a href="https://github.com/caviri/rete/edit/main/docs/scenario.md">Edit this page</a> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <nav class="mnav" id="mnav" aria-label="Page navigation">
-    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="getting-started.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Getting started</span></a>
+    <a class="mnav-side" href="recipes.html"><span class="mnav-dir">Back to</span><span class="mnav-t">Worked examples</span></a>
     <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
       <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Contents</span>
     </button>
-    <a class="mnav-side mnav-next" id="navNext" rel="next" href="playground-guide.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Playground</span></a>
+    <span class="mnav-side is-off"></span>
   </nav>
   <div class="mscrim" id="mscrim" hidden></div>
   <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
     <div class="mdrawer-head">
       <div class="mdrawer-who">
-        <span class="mdrawer-eyebrow">Start here · 4 of 55</span>
+        <span class="mdrawer-eyebrow">Guides</span>
         <span class="mdrawer-title" id="mdrawerTitle">Real-world scenario</span>
       </div>
       <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">

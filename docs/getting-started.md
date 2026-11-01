@@ -1,329 +1,168 @@
 # Getting started
 
-## Getting the CLI
+Build a small dependency graph, ask which packages depend on a library, and
+inspect the description carried inside the file. You need Docker and an empty
+working directory; no source checkout or Rust installation is needed.
 
-You do not need a Rust toolchain, a clone of the repo, or its dev container to
-*use* rete. A prebuilt CLI image is published —
-[`ghcr.io/caviri/rete-cli`](https://github.com/caviri/rete/blob/main/docker/README.md),
-~30 MB on distroless, multi-arch (amd64 + arm64) — so turning an RDF dump into a
-`.rete` is one command:
+## Set up the CLI {#getting-the-cli}
+
+The published CLI container runs the same commands as a local `rete` binary.
+Define a wrapper in your current shell so that files in your working directory
+are available inside the container.
+
+This example pins the published 0.4.2 image, which writes format `0x05`.
+Current source builds write `0x06`; the 0.4.2 reader cannot open those newer
+files. See [Compatibility](compatibility.md) before exchanging files between
+the released image and a source build.
+
+On a POSIX shell (Linux or macOS):
 
 ```sh
-# run this in the directory that holds your dump
-docker run --rm -v "$PWD:/data" ghcr.io/caviri/rete-cli:latest \
-  build /data/dump.nt -o /data/out.rete --card --title "My graph"
+alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.4.2'
 ```
+
+On PowerShell:
+
+```powershell
+function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.4.2 @args }
+```
+
+`-v` shares your directory with `/data`, `-w` makes relative filenames work,
+and `-i` allows piped input. Without `-i`, a piped build can silently receive
+empty input and produce an empty graph. On Linux, add
+`--user "$(id -u):$(id -g)"` if output files should belong to your user.
+For Windows Git Bash, use PowerShell instead, or set `MSYS_NO_PATHCONV=1`
+and mount `"$(pwd -W):/data"` to avoid MSYS rewriting container paths.
+
+Prefer a language client? See [Python](python.md) or
+[JavaScript](javascript.md). To build the CLI itself, follow
+[Contributing](contributing.md).
+
+## Build a graph you can check {#building-a-rete-file}
+
+Our graph says that an application depends on a web library, which depends on
+a logging library. The logging library has a vulnerability. Save these three
+RDF statements as `data.nt`:
+
+```nt
+<http://ex/app> <http://ex/dependsOn> <http://ex/web> .
+<http://ex/web> <http://ex/dependsOn> <http://ex/logging> .
+<http://ex/logging> <http://ex/hasVulnerability> <http://ex/CVE-2099-0001> .
+```
+
+For a copy-and-paste setup in a POSIX shell:
+
+```sh
+cat > data.nt <<'EOF'
+<http://ex/app> <http://ex/dependsOn> <http://ex/web> .
+<http://ex/web> <http://ex/dependsOn> <http://ex/logging> .
+<http://ex/logging> <http://ex/hasVulnerability> <http://ex/CVE-2099-0001> .
+EOF
+```
+
+Or in PowerShell:
+
+```powershell
+@'
+<http://ex/app> <http://ex/dependsOn> <http://ex/web> .
+<http://ex/web> <http://ex/dependsOn> <http://ex/logging> .
+<http://ex/logging> <http://ex/hasVulnerability> <http://ex/CVE-2099-0001> .
+'@ | Set-Content -Encoding ascii data.nt
+```
+
+Now pack the RDF and include a Dataset Card:
+
+```sh
+rete build data.nt -o data.rete --card --title "My dependency graph"
+```
+
+The build reports **3 triples** and **6 terms**, and writes `data.rete` next to
+`data.nt`. It also reports embedding the card, measuring starter queries, and
+writing build information. Exact metadata sizes and timings can vary.
+
+The file contains a dictionary and query indexes, plus a community summary
+when built with a pyramid. It is an immutable snapshot: changing the RDF means
+building another file. Check [Compatibility](compatibility.md) before exchanging files with older
+readers; the file-format generation and project release version are separate.
+
+<a id="a-full-ontology-rdfxml--an-optimized-rete"></a>
+For your own data, the CLI also accepts N-Quads, Turtle, TriG and RDF/XML
+(including RDF/XML `.owl` files). N-Quads can preserve named graphs.
+OWL/XML and Functional Syntax require conversion to RDF first. See
+[CLI build options](cli.md) for input formats, merged inputs, streaming,
+compression, memory limits and optional indexes.
+
+## Ask a question and inspect the file {#querying-locally}
+
+Which packages depend on `logging`, directly or through another package?
+The `+` follows one or more `dependsOn` edges.
+
+```sh
+rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
+```
+
+Expected output:
+
 ```text
-embedded dataset card (16240 bytes of metadata)
-wrote /data/out.rete: 5 triples, 8 terms, 1 pyramid level(s), 18061 bytes
+2 solution(s)
+?package=<http://ex/app>
+?package=<http://ex/web>
 ```
 
-`-v "$PWD:/data"` maps the current directory onto `/data` inside the container,
-so `/data/out.rete` **is** `./out.rete` on your machine — the file is next to
-your dump when the command exits, with nothing to extract from a container.
+`logging` itself is absent: this query needs at least one dependency edge.
+For triple lookups, joins, JSON results and supported SPARQL features, see
+[CLI reference](cli.md) and [SPARQL support](sparql.md). Consult the support page for execution-mode differences before moving a
+complex query between local files and URLs.
 
-The rest of this page writes commands as a bare `rete …`. Define this alias once
-and they all run as written against the files in your current directory
-(`-w /data` makes the container's working directory *your* directory, so plain
-filenames resolve; `-i` lets you pipe into it):
+<a id="inspecting-a-file"></a>
+Inspect the description stored with the graph:
 
 ```sh
-alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:latest'
+rete card data.rete
+rete verify data.rete
 ```
 
-> **Three container gotchas, all of them silent.** Piping needs `docker run -i`
-> — the alias sets it, but without `-i` stdin is empty and `rete build -` writes
-> a valid, **0-triple** file and exits 0. On Linux the image runs as root, so add
-> `--user "$(id -u):$(id -g)"` unless you want the output owned by root. On
-> Windows Git Bash, MSYS rewrites both the mount and `/data/…` arguments
-> (`/data/dump.nt` becomes `C:/Program Files/Git/data/dump.nt`, and a `$PWD`
-> mount resolves to a directory that is not yours — the build reports success and
-> no file appears); use
-> `MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/data" …`.
+The card begins with `Dataset Card`, title `My dependency graph`, **3 triples**,
+**6 terms**, and the `http://ex/` vocabulary. Its predicate counts are **2** for
+`dependsOn` and **1** for `hasVulnerability`. It also includes starter queries
+and a separate build record. `verify` should report that the content hash
+matches. See [Dataset Cards](dataset-cards.md) for curated metadata and build
+provenance.
 
-Other routes to the same engine, if a container is not what you want:
-`pip install rete-graph` ([Python](python.md)),
-`npm install rete-graph` ([JavaScript](javascript.md)), or a build from source
-(below). Remote graphs need no install beyond the image and no mount at all —
-see *Deploying & querying over a URL* further down.
+<a id="validating-shapes"></a>
+Source syntax validation (`validate`), file integrity (`verify`) and
+[SHACL shape validation](shacl.md) check different things.
+<a id="label-search-autocomplete"></a>
+<a id="full-text-search-word--contains"></a>
+For label autocomplete and word search, see `build --label-index`,
+`build --text-index` and `search` in the [CLI reference](cli.md).
 
-## Building from source
+## Put the file on a URL {#deploying--querying-over-a-url}
 
-Building `rete` *itself* — as opposed to using it — happens **entirely inside a
-container**; nothing runs on the host. The dev container
-([`.devcontainer/`](https://github.com/caviri/rete/tree/main/.devcontainer))
-carries the Rust 1.92 toolchain, rustfmt, clippy, Python, the
-`wasm32-unknown-unknown` target, and `wasm-pack`.
-
-Open the folder in a dev container (VS Code: *Reopen in Container*), or run the
-same image directly:
+Upload `data.rete` to a host that supports HTTP byte ranges. A remote query
+uses the same SPARQL but reads the file through its URL:
 
 ```sh
-docker build -t rete-dev -f .devcontainer/Dockerfile .
-docker run --rm -it -v "${PWD}:/work" -w /work rete-dev bash
-# then, inside:
-cargo build --release -p rete-cli
+rete sparql-url https://your-host.example/data.rete "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
 ```
 
-The compiled CLI is at `target/release/rete`; put it on your `PATH` and the
-examples below run without the alias (or substitute `cargo run -p rete-cli --`).
+Replace the example URL with your uploaded file. The two packages should be
+the same; the command also reports fetched bytes and requests. A tiny graph
+may be read in full. Larger graphs can benefit from selective range reads,
+but the cost depends on the query and file layout.
 
-## Building a `.rete` file
+Use [Hosting](hosting.md) to check range responses, caching and browser CORS.
+The shared CLI/Python/R HTTP reader can retain a bounded whole-file response
+from a host that ignores ranges; it refuses oversized responses. A range-capable
+host is the reliable choice for large files.
 
-<figure class="fig-right">
-  <img src="img/build-pipeline.svg" alt="Building a .rete file: source triples in N-Triples, Turtle, N-Quads, RDF/XML or OWL are compiled by rete build — which sorts, dedupes, front-codes the dictionary and writes the permutation indexes — into one immutable file holding a dictionary, permutation indexes and a dataset card, plus an optional community pyramid that many published files do not have. The result goes on any HTTP host that answers Range requests: a bucket, a static site, a CDN. There is no server and no database to run.">
-  <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
-</figure>
-
-`rete build` accepts N-Triples (`.nt`), N-Quads (`.nq`), Turtle (`.ttl`), and
-RDF/XML (`.rdf` / `.owl` / `.rdfxml` — the usual OWL serialization), detected by
-extension. Multiple inputs are merged under one shared dictionary, and `-` reads
-standard input.
-
-```sh
-rete build data.nt -o data.rete                  # single file
-rete build part1.nt part2.nt -o merged.rete      # merge several inputs
-curl -s https://host/data.nt | rete build - -o data.rete   # from a pipe
-rete build dump.unknown --format nt -o out.rete  # force a format
-```
-
-N-Quads inputs build a **dataset**: one shared dictionary, a default-graph index,
-and one index per named graph.
-
-### A full ontology: RDF/XML → an optimized `.rete`
-
-Most OBO/W3C ontologies ship as **RDF/XML** (`*.owl`), which `rete build` reads
-directly — no conversion step:
-
-```sh
-# assemble, with a self-describing Dataset Card (title/license/source/examples)
-rete build chebi.owl -o chebi.rete --card \
-  --title "ChEBI (full)" --license "CC BY 4.0" --source "https://www.ebi.ac.uk/chebi/"
-#   812 MB owl -> 8.83 M triples, 3.15 M terms, 6 pyramid levels, 120 MB
-```
-
-(The two *non-RDF* OWL serializations — OWL/XML and Functional Syntax — do need
-an external convert-to-RDF step first; see
-[Compatibility & Cypher](compatibility.md).)
-
-The build is **parallel and allocation-frugal** by design (the CLI enables the
-`parallel` feature): the dictionary dedups terms with a `HashSet` and sorts once,
-and the permutation indexes (six by default: SPO/POS/OSP/SOP/PSO/OPS, or three
-with [`build --permutations 3`](cli.md#rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml---quoted-triple-syntax-rdf12rdf-star))
-are built concurrently with parallel sorts. This is what lets it scale to millions of *unique* terms
-(definitions, synonyms, SMILES/InChI strings) without the build collapsing into
-allocation churn — and the output is **byte-identical** to a serial build, so the
-speedup is free. Turtle-native sources (e.g. a 239 MB `.ttl`) skip `rapper` and
-feed `rete build --format ttl` directly.
-
-The result is a single range-queryable file: drop it on any HTTP host and query
-it lazily (below — see [Hosting your .rete](hosting.md) for host recipes), or
-register it in the [playground](playground-guide.md) as a remote dataset. To go
-alongside it with a columnar/SQL view, generate
-[lossless entity tables](data-engineering.md#lossless-entity-tables-the-best-of-both-worlds)
-straight from the same N-Triples.
-
-## Querying locally
-
-```sh
-# Triple pattern — any of subject/predicate/object may be omitted (a wildcard):
-rete query data.rete --predicate '<http://ex/knows>'
-rete query data.rete --object   '<http://ex/Alice>'
-
-# Basic Graph Pattern (multi-pattern join); ?x is a variable, ' . ' separates:
-rete bgp data.rete "?x <http://ex/knows> ?y . ?y <http://ex/knows> ?z"
-
-# Full SPARQL (SELECT / ASK / CONSTRUCT / DESCRIBE):
-rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?x ?z WHERE { ?x e:knows ?y . ?y e:knows ?z }"
-
-# Standard SPARQL Results JSON, for piping into other tools:
-rete sparql data.rete "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10" --json
-```
-
-See the [SPARQL support](sparql.md) page for the full feature list.
-
-## Validating shapes
-
-Use `rete shacl` when you need semantic data-quality checks, not just syntax or
-file integrity. Shapes are Turtle files; the command exits non-zero if the graph
-does not conform.
-
-```sh
-rete shacl data.rete --shapes shapes.ttl
-rete shacl data.rete --shapes shapes.ttl --format json
-```
-
-See [SHACL validation](shacl.md) for the supported SHACL Core surface.
-
-## Inspecting a file
-
-```sh
-rete info   data.rete          # raw header
-rete stats  data.rete          # size, counts, top predicates, planner stats, entity shapes
-rete verify data.rete          # check the blake3 content hash (detect corruption)
-rete graphs data.rete          # list named-graph IRIs
-rete search data.rete gluc     # prefix-search labels (autocomplete; no literal scan)
-rete export data.rete          # dump back to N-Quads (lossless)
-```
-
-Two **coarse-graph** views answer questions without reading the triple index:
-
-```sh
-rete summary data.rete   # structural: Louvain community quotient graph
-rete schema  data.rete   # semantic: relations between rdf:type classes
-rete predicates data.rete  # exact per-predicate totals, from the summary alone
-```
-
-`rete stats` also prints two index-free profiles read from the pyramid: the
-**planner stats** (per predicate: distinct subjects/objects, multiplicities, and
-functional / inverse-functional hints — the cardinality the cost-based join
-planner uses) and the **entity shapes** (the most common *characteristic sets* —
-which predicate-combinations subjects carry, e.g. `{type, name, age} ×N`).
-
-### Label search (autocomplete)
-
-`rete search data.rete <prefix>` resolves a case-insensitive label prefix
-**without scanning the literals**. Built with `rete build --label-index`, the file
-carries a LABEL_INDEX section: the display labels (`rdfs:label`,
-`skos:prefLabel`/`altLabel`, `foaf:name`, `dc(terms):title`, `schema:name`, and
-`"family, given"` for people with only given/family names) of **every** labelled
-subject, label-sorted; a prefix query walks a small directory to the matching
-block:
-
-```sh
-rete search data.rete "alan"          # label<TAB><iri> rows, case-insensitive
-rete search data.rete "alan" --limit 5 --json   # [{"label":…,"subject":…}]
-rete search data.rete                 # empty prefix → the first --limit labels
-```
-
-This is the fast path for autocomplete: a binary search plus a short walk,
-versus a `FILTER(STRSTARTS(LCASE(?l), …))` scan over every label triple
-(measured **~22× faster** at 6k labeled subjects; the gap widens with size — the
-scan is linear in the label count, the index is `O(log n + matches)`). The
-section has no cap, does not need the pyramid (`--no-pyramid` and
-`--memory-budget-mb` builds can carry it), and over HTTP a search reads a few
-small ranges and no dictionary. Files built before it existed answer from a
-bounded block in their pyramid-meta (the 8,192 most-connected labelled subjects);
-a build without `--label-index` has no label index at all.
-
-### Full-text search (word / CONTAINS)
-
-Label prefix search finds an entity by the *start* of its label. To find entities
-by a **word anywhere in any of their literals**, build with `--text-index` and
-query with `rete search --contains`:
-
-```sh
-rete build data.nt -o data.rete --text-index   # opt-in TEXT_INDEX section
-
-rete search data.rete --contains glucose            # subjects whose literals say "glucose"
-rete search data.rete --contains glucose phosphate  # AND — both words (any literal)
-rete search data.rete --contains-prefix einst       # word starting with "einst…"
-rete search data.rete --contains glucose --json     # [{"subject":…}]
-```
-
-Matching is whole-word and case-insensitive (the same tokenizer builds and
-queries: Unicode-alphanumeric runs, lowercased, length ≥ 2). The index maps each
-word to its sorted subject ids as its own range-readable section (§6.3 of the
-[SPEC](SPEC.md)): the token table is read once, then each queried word faults only
-**its** posting list — so a `--contains` over a remote multi-GB file fetches
-kilobytes, not the whole index. It is **opt-in** because it is sizable; a build
-without `--text-index` is byte-identical to one built before the feature, and
-`rete search --contains` on such a file reports that there is no text index.
-`rete stats` shows the section's size when present.
-
-## Deploying & querying over a URL
-
-A `.rete` file is immutable and self-describing, so any static host that honors
-HTTP `Range` requests works — S3, GCS, GitHub, a CDN, or the bundled dev server:
-
-```sh
-# Local range-capable server for testing:
-python3 scripts/range_server.py 8000 .
-rete query-url http://127.0.0.1:8000/data.rete --object '<http://ex/Dave>'
-
-# Real https hosts (rustls; no http-only limitation):
-rete query-url   https://my-bucket.s3.amazonaws.com/data.rete --predicate '<http://ex/knows>'
-rete summary-url https://raw.githubusercontent.com/me/repo/main/data.rete
-```
-
-`query-url` resolves bound terms from the dictionary, then fetches only the
-selected permutation payload (the best of the six) for the triple pattern. `summary-url`
-reads just the header, dictionary, and summary — **the index is never
-downloaded**. The host **must** return `206 Partial Content` to a `Range`
-request; a host that ignores `Range` (returns `200`) is rejected with a clear
-error rather than silently returning wrong bytes. (The browser reader, which
-has already received that whole body, keeps it when it is at most 256 MiB and
-counts the whole download; see [Hosting](hosting.md).)
-
-## Generating synthetic test data
-
-`scripts/synth_graph.py` generates a realistic scholarly knowledge graph —
-papers, authors, venues, institutions, grants, fields — with the statistics
-real graphs have (power-law citations via preferential attachment, field
-communities, Zipfian venue popularity, log-normal team sizes, typed literals,
-per-year temporal structure). Two orthogonal knobs control it on demand:
-
-```sh
-# 10k papers (~315k triples), clean:
-uv run python scripts/synth_graph.py --papers 10000 -o clean.nt
-
-# Same size, 20% deliberate mess (cross-field rewires, temporal violations,
-# missing attributes, mangled literals) — for robustness/quality testing:
-uv run python scripts/synth_graph.py --papers 10000 --noise 0.2 --seed 7 -o messy.nt
-
-# N-Quads with one named graph per publication year:
-uv run python scripts/synth_graph.py --papers 5000 --quads -o by-year.nq
-
-rete build clean.nt -o clean.rete
-```
-
-Identical arguments + seed reproduce the byte-identical graph; different seeds
-give natural variability at the same size/noise point. A per-kind breakdown of
-every noise event goes to stderr, so a test knows exactly what mess it got.
-(`scripts/gen_graph.py` is the older, simpler social-graph generator used by
-`scripts/bench.sh`.)
-
-### Scaling to ~1 GB
-
-The generator and `rete build` scale linearly, so a big stress-test graph is
-just a bigger `--papers`. Output is roughly **85 bytes/triple** as N-Triples
-and **31 triples/paper**, so ~1 GB is about 400k papers / 12.5M triples:
-
-```sh
-uv run python scripts/synth_graph.py --papers 400000 --seed 1 -o big.nt  # ~1.1 GB, ~22 s
-rete build big.nt -o big.rete                                            # ~56 s -> ~100 MB
-```
-
-Measured on the dev container (12.5M triples, 2.0M terms, ~30k communities):
-build is ~56 s and the `.rete` is ~100 MB (zstd). The point of the size is what
-querying it then *doesn't* read: a selective pattern answers in under a second,
-`rete predicates` reads ~20 MB of summary rather than the 80 MB index, and a
-lazy query open (`rete cost big.rete "<query>"`) touches ~7 MB in ~50 range
-requests instead of the whole file — the range-query promise, at 1 GB.
-
-The playground's `scholar` / `scholar-noisy` demo datasets are built with this
-generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
-the `scripts/build_playground.py` docstring).
-
-## Going further
-
-That's the whole loop: build a file, query it, put it on a URL. Where next:
-
-- **[Hosting your .rete](hosting.md)** — R2, Zenodo, GitHub Pages, S3: what a
-  host must support and how to check it.
-- **[The playground](playground-guide.md)** — explore your file (or 40+
-  published datasets) in the browser.
-- **[Tables, VKG & big builds](data-engineering.md)** — lossless entity/property
-  tables next to the graph, the virtual-knowledge-graph comparison, and recipes
-  for pulling real Wikidata at gigabyte scale.
-
-## Testing
-
-```sh
-cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
-cargo clippy --workspace --all-targets -- -D warnings
-bash scripts/smoke.sh # end-to-end acceptance test of every CLI subcommand
-```
-
-CI runs all of this — plus the feature matrix and the wasm build — in containers,
-so nothing ever builds on the host.
+<a id="going-further"></a>
+Continue with the [playground](playground-guide.md), the
+[dependency-impact scenario](scenario.md), or
+[tables and large builds](data-engineering.md).
+<a id="building-from-source"></a>
+<a id="generating-synthetic-test-data"></a>
+<a id="scaling-to-1-gb"></a>
+<a id="testing"></a>
+Source builds, synthetic fixtures and test commands belong in
+[Contributing](contributing.md).

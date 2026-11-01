@@ -1,7 +1,7 @@
 # Hosting your `.rete`
 
-A `.rete` file needs **no special server** — the whole promise of the format is
-that any HTTP host can serve it queryably. This page says exactly what a host
+A `.rete` file needs **no database server**. A host with HTTP Range support
+can serve the byte ranges needed for queries. This page explains what a host
 must support, how to check it in ten seconds, and gives working recipes for the
 hosts this project uses in production.
 
@@ -9,11 +9,11 @@ hosts this project uses in production.
 
 1. **HTTP range requests.** A `Range: bytes=…` request must get back
    `206 Partial Content` with exactly those bytes. A host that ignores `Range`
-   and replies `200` with the whole file is never silently mis-read: the CLI
-   rejects it, and the browser reader treats that body as the whole file —
-   it keeps a body of up to 256 MiB and serves every read from it (so the
-   file is downloaded whole, once per open, and the result line counts it),
-   and refuses a larger one with a message that says the host ignores `Range`.
+   and replies `200` is a fallback case, not range-queryable hosting. Current
+   native and browser readers can retain a whole response up to 256 MiB;
+   larger responses are refused. This downloads the file rather than reading
+   selected ranges. Older readers can differ; use a host that returns `206`
+   for dependable remote querying.
 2. **CORS — for browser clients only.** The CLI (`rete query-url`,
    `sparql-url`, …) needs nothing else. But the playground / any web page
    fetches cross-origin, so the host must send
