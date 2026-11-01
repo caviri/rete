@@ -73,6 +73,12 @@ file only once the readers that fetch it run this release. See
 
 ### Fixed
 
+- **The memory-bounded build accepts more than 2³¹ subject-only or object-only terms.** The provisional
+  role-only ids no longer spend bit 31 of a `u32` on the class, so each position may hold up to
+  `u32::MAX` terms, the format's limit (the OpenCitations Index has 2.56 B subject-only terms). A final id
+  past `u32::MAX` is refused with the numbers when the dictionary merge ends. The build also stops during
+  chunking, from a HyperLogLog estimate of the distinct subject and object terms, as soon as one position
+  clearly exceeds `u32::MAX`, instead of after the merge.
 - A `206` whose `Content-Range` end or total is not the one asked for, or whose
   body is longer than the range, is refused instead of being cut to fit (a
   file replaced under the same URL could be read as two versions spliced
