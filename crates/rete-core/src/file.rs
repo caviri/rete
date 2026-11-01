@@ -2126,6 +2126,9 @@ fn decode_named_graphs(
         pos += u2;
         let cend = bound(pos, clen)?;
         let index = decode_index_container(&bytes[pos..cend], codec, perms)?;
+        // Resident, so the count is a pass over tile headers; the planner
+        // sizes this graph's patterns by it, not by the file's total.
+        index.set_size_hint(u64::from(index.triple_count()));
         out.push((iri, index));
         pos = cend;
     }
@@ -3850,7 +3853,12 @@ impl LazyNamedGraphs {
         if range.len <= NAMED_GRAPH_RESIDENT_MAX {
             let bytes = self.container_bytes(range)?;
             match decode_index_container(&bytes, self.codec, self.perms) {
-                Ok(g) => Some(g),
+                Ok(g) => {
+                    // Resident, so counting is a pass over tile headers: the
+                    // planner sizes this graph's patterns by it.
+                    g.set_size_hint(u64::from(g.triple_count()));
+                    Some(g)
+                }
                 Err(_) => {
                     self.fail();
                     None
@@ -5142,6 +5150,15 @@ impl Rete {
             NamedGraphsSlot::Quad(q) => Some(q.quad_count()),
             _ => None,
         }
+    }
+
+    /// How many triples `index` holds, for sizing a pattern's tile estimate:
+    /// a named graph's own count when it is known without a tile read (a
+    /// quad-index graph's directory count, a resident per-graph index), else
+    /// the header's total. The default graph keeps the total: its size is not
+    /// recorded in the header, and the planner's thresholds were tuned on it.
+    pub(crate) fn index_triples(&self, index: &GraphIndex) -> u64 {
+        index.size_hint().unwrap_or(self.header().quad_count)
     }
 
     /// The `i`-th named graph's IRI (stored order). On a lazy ranged open this

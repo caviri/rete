@@ -1036,6 +1036,11 @@ pub struct GraphIndex {
     /// scanned permutation stays resident exactly as it did in the old per-tile
     /// `OnceLock`s.
     cache: Arc<ChunkCache>,
+    /// The number of triples this index holds, when known without reading a
+    /// tile (0 = unknown). A named graph's view takes it from the quad
+    /// directory, so the planner sizes patterns inside `GRAPH <g>` against the
+    /// graph rather than the whole file — see [`Self::size_hint`].
+    size_hint: std::sync::atomic::AtomicU64,
 }
 
 impl GraphIndex {
@@ -1058,6 +1063,7 @@ impl GraphIndex {
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             cache,
+            size_hint: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1153,6 +1159,7 @@ impl GraphIndex {
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
+            size_hint: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1182,6 +1189,21 @@ impl GraphIndex {
     /// overlap instead of serializing.
     pub(crate) fn set_read_concurrency(&mut self, c: usize) {
         self.read_concurrency = c.max(1);
+    }
+
+    /// Record how many triples this index holds (see [`Self::size_hint`]).
+    pub(crate) fn set_size_hint(&self, triples: u64) {
+        self.size_hint
+            .store(triples, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The triples this index holds, when it was told without a tile read
+    /// (a quad-index view's graph count, a resident per-graph index).
+    pub(crate) fn size_hint(&self) -> Option<u64> {
+        match self.size_hint.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => None,
+            n => Some(n),
+        }
     }
 
     /// The reader's concurrent-range fan-out (1 = strictly sequential).
@@ -1275,6 +1297,7 @@ impl GraphIndex {
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
+            size_hint: std::sync::atomic::AtomicU64::new(0),
         }
     }
 

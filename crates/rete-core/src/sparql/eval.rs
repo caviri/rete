@@ -1362,6 +1362,11 @@ pub(crate) fn eval_plan_iter<'q>(
             if let Some(v) = values_pushdown(ctx, index, l, r) {
                 return Box::new(v.into_iter());
             }
+            // The bindings of one side pushed into each branch of a UNION on
+            // the other, instead of evaluating every branch whole.
+            if let Some(rows) = union_pushdown(ctx, index, named_filter, l, r) {
+                return rows;
+            }
             join_iter(ctx, index, named_filter, l, r, false, None)
         }
         Plan::LeftJoin(l, r, cond) => {
@@ -2176,6 +2181,94 @@ fn values_pushdown(ctx: &Ctx, index: &GraphIndex, l: &Plan, r: &Plan) -> Option<
     Some(out)
 }
 
+/// Most rows of the bound side a join with a UNION may hold in memory to be
+/// probed into every branch.
+const UNION_PUSH_MAX_ROWS: usize = 1 << 17;
+
+/// The BGP leaves of a UNION tree, or `None` if any branch is anything else.
+fn union_bgp_leaves<'p>(plan: &'p Plan, out: &mut Vec<&'p [TriplePattern]>) -> bool {
+    match plan {
+        Plan::Union(a, b) => union_bgp_leaves(a, out) && union_bgp_leaves(b, out),
+        Plan::Bgp(p) if !p.is_empty() => {
+            out.push(p);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// `other JOIN (A UNION B UNION ...)` with the other side's rows pushed into
+/// the branches: each row probes each branch's BGP through the index with its
+/// bindings substituted, so no branch is evaluated whole. Join distributes
+/// over UNION, so the rows are the same multiset as the hash join's.
+///
+/// `VALUES ?r { ... } { ?r ?p ?v } UNION { ?r :hasContributor ?n . ?n ?p ?v }`
+/// scanned the whole graph once per branch; this is thirty probes per branch.
+///
+/// Taken when every branch is a BGP that shares a certainly-bound variable
+/// with the other side, some branch is large enough that probing can win, and
+/// the other side holds no more rows than the cheapest such branch's probe
+/// budget ([`crate::bgp::probe_row_budget`], capped at [`UNION_PUSH_MAX_ROWS`]).
+/// Past that, `None`: the caller joins as before (the rows pulled to count
+/// them are dropped; the other side is evaluated again).
+fn union_pushdown<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    l: &'q Plan,
+    r: &'q Plan,
+) -> Option<RowIter<'q>> {
+    let (other, union) = match (l, r) {
+        (_, Plan::Union(..)) if !matches!(l, Plan::Union(..)) => (l, r),
+        (Plan::Union(..), _) if !matches!(r, Plan::Union(..)) => (r, l),
+        _ => return None,
+    };
+    let mut leaves = Vec::new();
+    if !union_bgp_leaves(union, &mut leaves) {
+        return None;
+    }
+    let n = ctx.slots.len();
+    let cert = certain_bound(ctx, other, n);
+    if !leaves.iter().all(|p| shares_certain_var(ctx, p, &cert)) {
+        return None;
+    }
+    // Probing wins against the cheapest leaf that is worth planning around;
+    // leaves under the probe floor are cheap to probe whatever the row count.
+    let mut budget = usize::MAX;
+    let mut fat = false;
+    for p in &leaves {
+        if let Some(est) = crate::bgp::bgp_total_estimate(ctx, index, p) {
+            if let Some(b) = crate::bgp::probe_row_budget(est) {
+                fat = true;
+                budget = budget.min(b);
+            }
+        }
+    }
+    if !fat {
+        return None;
+    }
+    let budget = budget.min(UNION_PUSH_MAX_ROWS);
+    let rows: Vec<Row> = eval_plan_iter(ctx, index, nf, other)
+        .take(budget + 1)
+        .collect();
+    if rows.len() > budget {
+        return None;
+    }
+    let mut branches: Vec<std::rc::Rc<crate::bgp::ProbePlan>> = Vec::new();
+    for p in &leaves {
+        // An unknown constant empties that branch.
+        if let Some(plan) = crate::bgp::ProbePlan::new(ctx, index, p, &cert) {
+            crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
+            branches.push(std::rc::Rc::new(plan));
+        }
+    }
+    Some(Box::new(branches.into_iter().flat_map(move |plan| {
+        rows.clone()
+            .into_iter()
+            .flat_map(move |seed| crate::bgp::ProbeJoin::from_plan(ctx, index, &plan, seed))
+    })))
+}
+
 /// Is a left row eliminated by a right row under `MINUS`? True iff they share at
 /// least one bound slot and agree on every shared slot (SPARQL `MINUS`:
 /// disjoint-domain rows never eliminate, and a disagreement keeps the left row).
@@ -2192,10 +2285,88 @@ fn minus_compatible(lb: &Row, rb: &Row) -> bool {
     shared
 }
 
+/// The materialized right side of a `MINUS`, indexed by the slots the left
+/// side always binds: right rows fully bound on the key are bucketed, the rest
+/// scanned per left row, each checked with [`minus_compatible`].
+struct MinusRight {
+    right: Vec<Row>,
+    jv: Vec<usize>,
+    buckets: std::collections::HashMap<Vec<Val>, Vec<usize>>,
+    partial: Vec<usize>,
+}
+
+impl MinusRight {
+    /// `None` when the right side cannot eliminate anything: it is empty, or
+    /// its domain is disjoint from everything the left side can bind.
+    fn build(ctx: &Ctx, l: &Plan, right: Vec<Row>) -> Option<Self> {
+        if right.is_empty() {
+            return None;
+        }
+        let n = ctx.slots.len();
+        let rmask = bound_mask(&right, n);
+        // Disjoint domains => MINUS eliminates nothing.
+        let lposs = possible_bound(ctx, l, n);
+        if !(0..n).any(|i| lposs[i] && rmask[i]) {
+            return None;
+        }
+        let lcert = certain_bound(ctx, l, n);
+        let jv: Vec<usize> = (0..n).filter(|&i| lcert[i] && rmask[i]).collect();
+        let mut buckets: std::collections::HashMap<Vec<Val>, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut partial: Vec<usize> = Vec::new();
+        for (i, row) in right.iter().enumerate() {
+            match jv
+                .iter()
+                .map(|&s| row[s].clone())
+                .collect::<Option<Vec<Val>>>()
+            {
+                Some(k) => buckets.entry(k).or_default().push(i),
+                None => partial.push(i),
+            }
+        }
+        Some(MinusRight {
+            right,
+            jv,
+            buckets,
+            partial,
+        })
+    }
+
+    fn eliminates(&self, lb: &Row) -> bool {
+        match self
+            .jv
+            .iter()
+            .map(|&s| lb[s].clone())
+            .collect::<Option<Vec<Val>>>()
+        {
+            Some(k) => {
+                let in_bucket = self
+                    .buckets
+                    .get(&k)
+                    .is_some_and(|c| c.iter().any(|&i| minus_compatible(lb, &self.right[i])));
+                in_bucket
+                    || self
+                        .partial
+                        .iter()
+                        .any(|&i| minus_compatible(lb, &self.right[i]))
+            }
+            // Missing a key slot (heterogeneous left): check every right row.
+            None => self.right.iter().any(|rb| minus_compatible(lb, rb)),
+        }
+    }
+}
+
 /// `MINUS` as a streaming anti-join: the right side is materialized and indexed
-/// by the slots the left side always binds; left rows then stream through a
-/// filter, each checked against its bucket's candidates (plus the right rows
-/// not fully bound on the key) with [`minus_compatible`].
+/// by the slots the left side always binds ([`MinusRight`]); left rows then
+/// stream through a filter.
+///
+/// A BGP right side that shares a certainly-bound variable with the left is
+/// instead **probed per left row** while that is cheaper than loading it
+/// ([`crate::bgp::CorrelatedProbe`]): a left row is eliminated iff the BGP,
+/// with the row's bindings substituted, has a solution, and a row binding none
+/// of the BGP's variables is kept (disjoint domains). Past the probe budget the
+/// right side is loaded and the rest of the left stream uses the index; the
+/// rows are the same either way.
 fn minus_iter<'q>(
     ctx: &'q Ctx<'q>,
     index: &'q GraphIndex,
@@ -2203,52 +2374,35 @@ fn minus_iter<'q>(
     l: &'q Plan,
     r: &'q Plan,
 ) -> RowIter<'q> {
-    use std::collections::HashMap;
-    let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
-    if right.is_empty() {
-        return eval_plan_iter(ctx, index, nf, l);
-    }
-    let n = ctx.slots.len();
-    let rmask = bound_mask(&right, n);
-    // Disjoint domains â‡’ MINUS eliminates nothing.
-    let lposs = possible_bound(ctx, l, n);
-    if !(0..n).any(|i| lposs[i] && rmask[i]) {
-        return eval_plan_iter(ctx, index, nf, l);
-    }
-    let lcert = certain_bound(ctx, l, n);
-    let jv: Vec<usize> = (0..n).filter(|&i| lcert[i] && rmask[i]).collect();
-    // Right rows fully bound on the key slots are bucketed; the rest are
-    // scanned per left row.
-    let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
-    let mut partial: Vec<usize> = Vec::new();
-    for (i, row) in right.iter().enumerate() {
-        match jv
-            .iter()
-            .map(|&s| row[s].clone())
-            .collect::<Option<Vec<Val>>>()
-        {
-            Some(k) => buckets.entry(k).or_default().push(i),
-            None => partial.push(i),
+    if let Plan::Bgp(patterns) = r {
+        let lcert = certain_bound(ctx, l, ctx.slots.len());
+        if let Some(mut corr) = crate::bgp::CorrelatedProbe::new(ctx, index, patterns, &lcert) {
+            let mut loaded: Option<Option<MinusRight>> = None;
+            return Box::new(eval_plan_iter(ctx, index, nf, l).filter(move |lb| {
+                if loaded.is_none() {
+                    if !corr.shares(lb) {
+                        return true;
+                    }
+                    match corr.probe(ctx, index, lb) {
+                        Some(hit) => return !hit,
+                        None => {
+                            let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
+                            loaded = Some(MinusRight::build(ctx, l, right));
+                        }
+                    }
+                }
+                !loaded
+                    .as_ref()
+                    .and_then(Option::as_ref)
+                    .is_some_and(|m| m.eliminates(lb))
+            }));
         }
     }
-    let left = eval_plan_iter(ctx, index, nf, l);
-    Box::new(left.filter(move |lb| {
-        let eliminated = match jv
-            .iter()
-            .map(|&s| lb[s].clone())
-            .collect::<Option<Vec<Val>>>()
-        {
-            Some(k) => {
-                let in_bucket = buckets
-                    .get(&k)
-                    .is_some_and(|c| c.iter().any(|&i| minus_compatible(lb, &right[i])));
-                in_bucket || partial.iter().any(|&i| minus_compatible(lb, &right[i]))
-            }
-            // Missing a key slot (heterogeneous left): check every right row.
-            None => right.iter().any(|rb| minus_compatible(lb, rb)),
-        };
-        !eliminated
-    }))
+    let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
+    match MinusRight::build(ctx, l, right) {
+        None => eval_plan_iter(ctx, index, nf, l),
+        Some(m) => Box::new(eval_plan_iter(ctx, index, nf, l).filter(move |lb| !m.eliminates(lb))),
+    }
 }
 
 /// A streaming hash join: the right side is materialized into buckets keyed by
@@ -2420,7 +2574,11 @@ fn join_iter<'q>(
                         .is_none_or(|n| n >= crate::bgp::FAT_SCAN_ROWS));
             let mut small_left: Option<Vec<Row>> = None;
             if !probe && shares {
-                let budget = crate::bgp::bgp_min_estimate(ctx, index, patterns)
+                // The budget is set by what evaluating the BGP whole would read:
+                // every pattern once (`bgp_total_estimate`), not just the
+                // cheapest one, so a BGP of several mid-sized patterns joined
+                // with a few rows (the journal query) probes.
+                let budget = crate::bgp::bgp_total_estimate(ctx, index, patterns)
                     .and_then(crate::bgp::probe_row_budget);
                 if let Some(budget) = budget {
                     let mut it = eval_plan_iter(ctx, index, nf, l);

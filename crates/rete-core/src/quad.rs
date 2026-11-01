@@ -1435,7 +1435,7 @@ impl QuadCore {
 
     /// A view of graph `g`: a remote-style [`GraphIndex`] over its slice of
     /// every order's tiles. Reads the tile directories it needs, no tile.
-    fn view(self: &Arc<Self>, g: u32, tile_cap: u64) -> Option<GraphIndex> {
+    fn view(self: &Arc<Self>, g: u32, quads: u64, tile_cap: u64) -> Option<GraphIndex> {
         #[allow(clippy::type_complexity)]
         let mut directories: [Vec<(u32, u32, Option<(u32, u32, u32, u32)>)>; NUM_PERMS] =
             Default::default();
@@ -1490,6 +1490,7 @@ impl QuadCore {
         let mut index = GraphIndex::from_remote_directories(directories, self.perms, loader)
             .with_bulk_loader(bulk);
         index.set_tile_lens(lens);
+        index.set_size_hint(quads);
         index.set_read_concurrency(self.read_concurrency);
         if tile_cap != u64::MAX {
             index.set_cache_cap(tile_cap);
@@ -1846,9 +1847,9 @@ impl QuadNamed {
         let name = self.name_at(dict, i, exhaustive)?;
         let e = self.entry(i)?;
         if e.view.get().is_none() {
-            let (g, _) = self.core.graph_at(i, exhaustive)?;
+            let (g, n) = self.core.graph_at(i, exhaustive)?;
             let cap = self.tile_cap.load(Ordering::Relaxed);
-            let view = self.core.view(g, cap)?;
+            let view = self.core.view(g, n, cap)?;
             let _ = e.view.set(Box::new(view));
         }
         Some((name, e.view.get()?.as_ref()))
@@ -1865,7 +1866,7 @@ impl QuadNamed {
         if n > max_quads {
             return None;
         }
-        self.core.view(g, self.tile_cap.load(Ordering::Relaxed))
+        self.core.view(g, n, self.tile_cap.load(Ordering::Relaxed))
     }
 
     /// The ordinals (ascending) of the graphs holding a quad whose subject is
@@ -2091,7 +2092,7 @@ mod tests {
         for g in [2u32, 4000, 10000] {
             let i = named.core.ordinal_of(g).unwrap();
             assert_eq!(named.core.graph_at(i, false).unwrap(), (g, 10));
-            let view = named.core.view(g, u64::MAX).unwrap();
+            let view = named.core.view(g, 0, u64::MAX).unwrap();
             let mut got = view.match_pattern((None, None, None));
             got.sort_unstable();
             let mut want: Vec<Triple> = q
@@ -2139,13 +2140,13 @@ mod tests {
         let enc = encode_quad_index(q.clone(), PermSet::ALL, writer_codec()).unwrap();
         check_section(&enc.bytes, PermSet::ALL, writer_codec()).unwrap();
         let named = QuadNamed::resident(enc.bytes, writer_codec(), PermSet::ALL);
-        let view = named.core.view(10, u64::MAX).unwrap();
+        let view = named.core.view(10, 0, u64::MAX).unwrap();
         let pos = crate::IndexPermutation::Pos.section_index();
         assert!(view.tile_sections()[pos].len() > 1, "the graph spans tiles");
         let hits = view.match_pattern((None, Some(7), None));
         assert_eq!(hits.len(), 60_000);
         assert_eq!(view.match_pattern((Some(1), None, None)).len(), 1);
-        let small = named.core.view(20, u64::MAX).unwrap();
+        let small = named.core.view(20, 0, u64::MAX).unwrap();
         assert_eq!(small.match_pattern((None, None, None)), vec![(2, 2, 2)]);
     }
 
@@ -2181,7 +2182,7 @@ mod tests {
         let named = QuadNamed::resident(enc.bytes, writer_codec(), PermSet::CORE);
         let dir = named.core.dir(0).unwrap();
         assert!(dir[0].raw, "a 10-byte tile is not worth a zstd frame");
-        let view = named.core.view(1, u64::MAX).unwrap();
+        let view = named.core.view(1, 0, u64::MAX).unwrap();
         assert_eq!(view.match_pattern((None, None, None)), vec![(2, 3, 4)]);
     }
 
@@ -2194,7 +2195,7 @@ mod tests {
             let _ = named.count();
             let _ = named
                 .core
-                .view(2, u64::MAX)
+                .view(2, 0, u64::MAX)
                 .map(|v| v.match_pattern((None, None, None)));
         }
         // Flip bytes everywhere: never a panic, and any failure is reported.
@@ -2204,7 +2205,7 @@ mod tests {
             let named = QuadNamed::resident(b, codec, PermSet::ALL);
             for k in 0..named.count().min(300) {
                 if let Some((g, _)) = named.core.graph_at(k, false) {
-                    if let Some(v) = named.core.view(g, u64::MAX) {
+                    if let Some(v) = named.core.view(g, 0, u64::MAX) {
                         let _ = v.match_pattern((None, None, None));
                     }
                 }

@@ -401,8 +401,13 @@ type ExistsCache = std::collections::HashMap<*const Plan, ExistsEntry>;
 /// probe, so repeated probes are O(1) instead of O(sols) — turning FILTER (NOT)
 /// EXISTS over a BGP from O(L×R) into O(L+R), like the MINUS anti-join.
 struct ExistsEntry {
+    /// The sub-plan's solutions; filled on first need (`loaded`).
     sols: Vec<crate::row::Row>,
+    loaded: bool,
     probe: Option<ExistsProbe>,
+    /// A BGP sub-plan probed per outer row instead of loaded (`None` once it
+    /// ran out of budget, or when loading it whole is the cheaper plan).
+    corr: Option<crate::bgp::CorrelatedProbe>,
 }
 
 /// The semi-join index: solution rows keyed by the slots they share with the
@@ -2444,5 +2449,244 @@ mod tests {
             assert!(!hashed.is_empty());
             assert_eq!(run(0.0), hashed, "{q}");
         }
+    }
+    /// 200 people: each `knows` the next, the even ones have an `age`, every
+    /// tenth is a `Manager`; two of them carry a second type.
+    fn people() -> Rete {
+        const TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let e = |n: String| format!("<http://ex/{n}>");
+        let mut t: Vec<(String, String, String)> = Vec::new();
+        for i in 0..200 {
+            t.push((
+                e(format!("p{i}")),
+                e("knows".into()),
+                e(format!("p{}", (i + 1) % 200)),
+            ));
+            t.push((e(format!("p{i}")), e("name".into()), format!("\"N{i}\"")));
+            if i % 2 == 0 {
+                t.push((e(format!("p{i}")), e("age".into()), format!("\"{i}\"")));
+            }
+            let class = if i % 10 == 0 { "Manager" } else { "Person" };
+            t.push((e(format!("p{i}")), TYPE.into(), e(class.into())));
+        }
+        for i in [3, 4] {
+            t.push((e(format!("p{i}")), TYPE.into(), e("Agent".into())));
+        }
+        let refs: Vec<(&str, &str, &str)> = t
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        Rete::open(&rete_from(&refs)).unwrap()
+    }
+
+    /// Rows of `q` as sorted strings, under the given probe floor
+    /// (`f64::MAX`: the hash and whole-evaluation plans; `0.0`: every probe
+    /// path a 2.9 B-triple file takes for real).
+    fn rows_at(rete: &Rete, q: &str, floor: f64) -> Vec<String> {
+        crate::bgp::with_probe_floor(floor, || {
+            let (_, sols) = eval_sparql(rete, q).unwrap();
+            let mut v: Vec<String> = sols.iter().map(|b| format!("{b:?}")).collect();
+            v.sort();
+            v
+        })
+    }
+
+    /// `FILTER (NOT) EXISTS` and `MINUS` over a BGP probe the BGP per outer
+    /// row (and fall back to one whole evaluation once the probe budget is
+    /// spent): the same rows as loading it, in every shape.
+    #[test]
+    fn correlated_exists_and_minus_match_whole_evaluation() {
+        let rete = people();
+        let pre = "PREFIX ex: <http://ex/> ";
+        let bodies = [
+            // NOT EXISTS / EXISTS on a shared subject
+            "SELECT ?s WHERE { ?s ex:knows ?o . FILTER NOT EXISTS { ?s ex:age ?a } }",
+            "SELECT ?s WHERE { ?s ex:knows ?o . FILTER EXISTS { ?s ex:age ?a } }",
+            // two inner patterns, joined through a variable the outer side lacks
+            "SELECT ?s WHERE { ?s ex:name ?n . FILTER NOT EXISTS { ?s ex:knows ?o . ?o ex:age ?a } }",
+            // shared object, an unrelated inner variable
+            "SELECT ?o WHERE { ?s ex:knows ?o . FILTER NOT EXISTS { ?x ex:knows ?o . ?x ex:age ?a } }",
+            // an inner constant the file does not hold: EXISTS is false for every row
+            "SELECT ?s WHERE { ?s ex:name ?n . FILTER NOT EXISTS { ?s ex:nothere ?a } }",
+            "SELECT ?s WHERE { ?s ex:name ?n . FILTER EXISTS { ?s ex:nothere ?a } }",
+            // no variable shared: the whole-evaluation answer
+            "SELECT ?s WHERE { ?s ex:name ?n . FILTER NOT EXISTS { ?z ex:age \"4\" } }",
+            // a ground inner pattern
+            "SELECT ?s WHERE { ?s ex:name ?n . FILTER EXISTS { ex:p4 ex:age \"4\" } }",
+            // an outer value the inner side can never hold
+            "SELECT ?s WHERE { ?s ex:name ?n . BIND(CONCAT(?n, \"!\") AS ?m) FILTER NOT EXISTS { ?m ex:age ?a } }",
+            // MINUS: shared subject, shared object, disjoint domain, unknown constant
+            "SELECT ?s WHERE { ?s ex:knows ?o . MINUS { ?s ex:age ?a } }",
+            "SELECT ?o WHERE { ?s ex:knows ?o . MINUS { ?x ex:knows ?o . ?x ex:age ?a } }",
+            "SELECT ?s WHERE { ?s ex:name ?n . MINUS { ?z ex:age ?a } }",
+            "SELECT ?s WHERE { ?s ex:name ?n . MINUS { ?s ex:nothere ?a } }",
+            // OPTIONAL on the left: MINUS keeps the rows that share no binding
+            "SELECT ?s ?a WHERE { ?s ex:name ?n . OPTIONAL { ?s ex:age ?a } MINUS { ?a ex:nothing ?z } }",
+            // under VALUES
+            "SELECT ?s WHERE { VALUES ?s { ex:p1 ex:p2 ex:p3 } FILTER NOT EXISTS { ?s ex:age ?a } }",
+        ];
+        for body in bodies {
+            let q = format!("{pre}{body}");
+            let whole = rows_at(&rete, &q, f64::MAX);
+            assert_eq!(rows_at(&rete, &q, 0.0), whole, "{body}");
+        }
+        // The answers themselves, so "same as before" is not "both empty".
+        let n = |body: &str| rows_at(&rete, &format!("{pre}{body}"), 0.0).len();
+        assert_eq!(n(bodies[0]), 100);
+        assert_eq!(n(bodies[9]), 100);
+        assert_eq!(n(bodies[11]), 200);
+    }
+
+    /// A UNION joined with a small bound side takes that side's bindings into
+    /// each branch (a `VALUES`, or a preceding pattern): the same rows as
+    /// evaluating every branch whole.
+    #[test]
+    fn a_union_receives_the_bindings_of_the_side_joined_with_it() {
+        let rete = people();
+        let pre = "PREFIX ex: <http://ex/> ";
+        let bodies = [
+            "SELECT ?r ?p ?v WHERE { VALUES ?r { ex:p1 ex:p2 ex:p3 ex:nobody } \
+             { ?r ?p ?v } UNION { ?r ex:knows ?n . ?n ?p ?v } }",
+            "SELECT ?r ?p ?v WHERE { { ?r ?p ?v } UNION { ?r ex:knows ?n . ?n ?p ?v } \
+             VALUES ?r { ex:p1 ex:p2 ex:p3 } }",
+            // three branches, one with an unknown constant
+            "SELECT ?r ?v WHERE { VALUES ?r { ex:p4 ex:p8 } { ?r ex:age ?v } UNION \
+             { ?r ex:nothere ?v } UNION { ?r ex:knows ?v } }",
+            // a preceding pattern is the bound side
+            "SELECT ?x ?v WHERE { ?x ex:age \"4\" . { ?x ex:knows ?v } UNION { ?x ex:name ?v } }",
+            // a variable only some branches bind
+            "SELECT ?r ?v ?w WHERE { VALUES ?r { ex:p3 ex:p6 } { ?r ex:knows ?v } UNION \
+             { ?r ex:age ?w } }",
+            // UNDEF in the VALUES block: no certain binding, the plain join
+            "SELECT ?r ?v WHERE { VALUES ?r { ex:p3 UNDEF } { ?r ex:age ?v } UNION { ?r ex:name ?v } }",
+        ];
+        for body in bodies {
+            let q = format!("{pre}{body}");
+            let whole = rows_at(&rete, &q, f64::MAX);
+            assert!(!whole.is_empty(), "{body}");
+            assert_eq!(rows_at(&rete, &q, 0.0), whole, "{body}");
+        }
+        // p1: knows, name, type; p2: knows, name, age, type; p3: those and a
+        // second type = 11 rows from the first branch; the second branch walks
+        // to p2 (4), p3 (4) and p4 (5: age, a second type).
+        let q = format!("{pre}{}", bodies[0]);
+        assert_eq!(rows_at(&rete, &q, 0.0).len(), 11 + 13);
+    }
+
+    /// An unbound class pattern whose subject an earlier pattern binds is
+    /// probed per subject; the same rows as scanning every type statement.
+    #[test]
+    fn an_unbound_class_joined_on_a_bound_subject_probes_per_subject() {
+        let rete = people();
+        let pre = "PREFIX ex: <http://ex/> ";
+        let bodies = [
+            "SELECT ?s ?c WHERE { ?s ex:age ?a . ?s a ?c }",
+            "SELECT ?s ?o ?c WHERE { ?s ex:knows ?o . ?o a ?c }",
+            "SELECT ?c (COUNT(*) AS ?n) WHERE { ?s ex:age ?a . ?s a ?c } GROUP BY ?c",
+            // a class variable bound on both sides
+            "SELECT ?s ?c WHERE { ?s ex:knows ?o . ?o a ?c . ?s a ?c }",
+            // nothing binds the subject: the scan stays
+            "SELECT ?s ?c WHERE { ?s ?p ?x . ?s a ?c . FILTER(?p = ex:age) }",
+        ];
+        for body in bodies {
+            let q = format!("{pre}{body}");
+            let whole = rows_at(&rete, &q, f64::MAX);
+            assert!(!whole.is_empty(), "{body}");
+            assert_eq!(rows_at(&rete, &q, 0.0), whole, "{body}");
+        }
+        // 100 even people; p4 has a second type.
+        let q = format!("{pre}{}", bodies[0]);
+        assert_eq!(rows_at(&rete, &q, 0.0).len(), 101);
+    }
+
+    /// A pattern inside `GRAPH <g>` is sized by the graph, not by the file.
+    #[test]
+    fn a_named_graph_is_sized_by_its_own_triples() {
+        use crate::write_dataset;
+        let mut db = DictionaryBuilder::new();
+        let big: Vec<(String, String, String)> = (0..300)
+            .map(|i| {
+                (
+                    format!("<http://ex/s{i}>"),
+                    "<http://ex/p>".to_string(),
+                    format!("<http://ex/o{i}>"),
+                )
+            })
+            .collect();
+        let tiny = (
+            "<http://ex/s0>".to_string(),
+            "<http://ex/q>".to_string(),
+            "<http://ex/o0>".to_string(),
+        );
+        for (s, p, o) in big.iter().chain(std::iter::once(&tiny)) {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut default = GraphIndexBuilder::new();
+        for (s, p, o) in &big {
+            default.push(dict.encode(s, p, o).unwrap());
+        }
+        let mut small = GraphIndexBuilder::new();
+        small.push(dict.encode(&tiny.0, &tiny.1, &tiny.2).unwrap());
+        let named = vec![("<http://ex/g>".to_string(), small.build())];
+        let bytes = write_dataset(&dict, &default.build(), &named, true, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        let g = rete.graph_index("<http://ex/g>").unwrap();
+        assert_eq!(rete.index_triples(g), 1, "the graph's own count");
+        assert_eq!(
+            rete.index_triples(rete.default_index()),
+            rete.header().quad_count,
+            "the default graph keeps the file's total"
+        );
+        let (_, sols) = eval_sparql(
+            &rete,
+            "SELECT ?o WHERE { GRAPH <http://ex/g> { <http://ex/s0> <http://ex/q> ?o } }",
+        )
+        .unwrap();
+        assert_eq!(sols.len(), 1);
+    }
+
+    /// The same, in the quad index: a graph's view takes its quad count from
+    /// the directory.
+    #[test]
+    fn a_quad_index_graph_is_sized_by_its_directory_count() {
+        use crate::ingest::{assemble_dataset_with_layout, GraphLayout};
+        let q = |s: &str, g: Option<&str>| -> crate::ingest::RawQuad {
+            (
+                format!("<http://ex/{s}>"),
+                "<http://ex/p>".to_string(),
+                "<http://ex/o>".to_string(),
+                g.map(|g| format!("<http://ex/{g}>")),
+            )
+        };
+        let mut quads: Vec<_> = (0..50).map(|i| q(&format!("d{i}"), None)).collect();
+        quads.extend((0..7).map(|i| q(&format!("a{i}"), Some("ga"))));
+        quads.extend((0..3).map(|i| q(&format!("b{i}"), Some("gb"))));
+        let (bytes, _) = assemble_dataset_with_layout(
+            quads,
+            false,
+            false,
+            None,
+            crate::pyramid::PyramidAlgo::Louvain,
+            crate::index::PermSet::ALL,
+            GraphLayout::Quad,
+            |_, _| Vec::<u8>::new(),
+        );
+        let rete = Rete::open(&bytes).unwrap();
+        assert_eq!(
+            rete.index_triples(rete.graph_index("<http://ex/ga>").unwrap()),
+            7
+        );
+        assert_eq!(
+            rete.index_triples(rete.graph_index("<http://ex/gb>").unwrap()),
+            3
+        );
+        let (_, sols) = eval_sparql(
+            &rete,
+            "SELECT ?s WHERE { GRAPH <http://ex/ga> { ?s <http://ex/p> <http://ex/o> . \
+             FILTER NOT EXISTS { ?s <http://ex/p> <http://ex/zz> } } }",
+        )
+        .unwrap();
+        assert_eq!(sols.len(), 7);
     }
 }
