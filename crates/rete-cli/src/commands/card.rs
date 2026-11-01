@@ -1236,13 +1236,17 @@ pub(crate) fn derive_full_card(
             let d = rete.dictionary();
             // ClassMap: one byte per subject id below 255 classes.
             let class_map = d.shared_count() as u64 + d.subject_only_count() as u64 + 1;
-            let caches = total.saturating_sub(class_map).max(64 << 20);
+            // Namespace tally: bounded at NS_TALLY_CAP entries.
+            let ns_tally =
+                rete_core::card::NS_TALLY_CAP as u64 * rete_core::card::NS_TALLY_ENTRY_BYTES;
+            let caches = total.saturating_sub(class_map + ns_tally).max(64 << 20);
             rete.set_memory_budget(Some(caches));
             eprintln!(
                 "{who}: deriving the full card: {} MiB of reader caches + about {} MiB of class \
-                 map, within the {} MiB budget",
+                 map + up to {} MiB of namespace tally, within the {} MiB budget",
                 caches >> 20,
                 class_map >> 20,
+                ns_tally >> 20,
                 total >> 20
             );
             rete
@@ -1258,12 +1262,18 @@ pub(crate) fn derive_full_card(
     }
     eprintln!(
         "{who}: derived the profile of {} statements ({} subjects, {} literal objects, {} \
-         classes; class map {} MiB) in {:.0} s",
+         classes; class map {} MiB; {} subject namespaces tallied{}) in {:.0} s",
         report.statements,
         report.subjects,
         report.literal_objects,
         report.classes,
         report.class_map_bytes >> 20,
+        report.namespaces_kept,
+        if report.namespaces_overflowed {
+            ", approximate: past the cap"
+        } else {
+            ""
+        },
         started.elapsed().as_secs_f64()
     );
     rec.lap_measured(Phase::CardDerive);

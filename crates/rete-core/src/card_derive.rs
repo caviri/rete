@@ -1259,7 +1259,7 @@ pub fn derive_card_from(
         *prof.pred_counts.entry(p.to_string()).or_default() += 1;
         *out_degree.entry(s.to_string()).or_default() += 1;
         if let Some(ns) = split_namespace(s) {
-            *prof.subject_ns.entry(ns).or_default() += 1;
+            prof.subject_ns.add(ns, 1);
         }
 
         // In-degree: every non-literal object referenced. Matches the
@@ -1353,7 +1353,7 @@ struct Profile {
     datatype_counts: BTreeMap<String, u64>,
     lang_counts: BTreeMap<String, u64>,
     link_rows: BTreeMap<(String, String, String), u64>,
-    subject_ns: BTreeMap<String, u64>,
+    subject_ns: NsTally,
     /// Per-predicate temporal evidence (statements whose object is a date).
     time_obj_hits: BTreeMap<String, u64>,
     /// Per-predicate numeric-object hits (for value-range queries).
@@ -1467,7 +1467,7 @@ fn finish(
         .map(|s| s.to_string())
         .collect();
 
-    let mut truncated = hubs.truncated;
+    let mut truncated = hubs.truncated || subject_ns.overflowed();
     let predicates = cap(sort_desc_owned(pred_counts), &mut truncated);
     let classes = cap(sort_desc_owned(class_counts), &mut truncated);
     let datatypes = cap(sort_desc_owned(datatype_counts), &mut truncated);
@@ -1642,26 +1642,13 @@ fn sort_links(rows: BTreeMap<(String, String, String), u64>) -> Vec<ClassLink> {
 /// subjects under `http://ex/person/`, `http://ex/place/`, … When the LCP is
 /// coarser than `scheme://host/` (subjects span unrelated hosts), fall back to
 /// the single most-frequent namespace so the value stays a usable prefix.
-fn derive_base_iri(ns: &BTreeMap<String, u64>) -> Option<String> {
-    if ns.is_empty() {
-        return None;
-    }
+fn derive_base_iri(ns: &NsTally) -> Option<String> {
     // Dominant namespace: highest count, ties broken by the smaller string.
-    let dominant = ns
-        .iter()
-        .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
-        .map(|(k, _)| k.clone())?;
-    // Longest common prefix across every subject namespace.
-    let mut lcp_len = dominant.len();
-    for k in ns.keys() {
-        let common = dominant
-            .bytes()
-            .zip(k.bytes())
-            .take_while(|(a, b)| a == b)
-            .count();
-        lcp_len = lcp_len.min(common);
-    }
-    let lcp = &dominant[..lcp_len];
+    let dominant = ns.dominant()?;
+    // Longest common prefix across every subject namespace, tracked
+    // incrementally over all of them (exact even past the tally cap).
+    let lcp = ns.common_prefix().unwrap_or("");
+    let lcp = &lcp[..lcp.len().min(dominant.len())];
     // Truncate to the last namespace delimiter so we never cut mid-segment.
     let base = match lcp.rfind(['/', '#']) {
         Some(i) => &lcp[..=i],
@@ -1673,6 +1660,117 @@ fn derive_base_iri(ns: &BTreeMap<String, u64>) -> Option<String> {
         Some(base.to_string())
     } else {
         Some(dominant)
+    }
+}
+
+/// How many distinct subject namespaces the tally keeps. A subject namespace is
+/// the IRI up to its last `/` or `#`, so on a graph whose identifiers contain
+/// slashes (DataCite's `https://doi.org/<prefix>/<suffix>`) the number of
+/// distinct namespaces grows with the record count; the tally must not.
+pub const NS_TALLY_CAP: usize = 65_536;
+
+/// Budgeted size of one tally entry (key string, map and order-set nodes), used
+/// for the memory accounting a build prints. Namespaces are short in practice.
+pub const NS_TALLY_ENTRY_BYTES: u64 = 256;
+
+/// Bounded subject-namespace counts: exact up to `cap` distinct namespaces, a
+/// deterministic space-saving summary past it (the entry with the lowest count,
+/// smaller string first, is replaced by the newcomer, which inherits its count).
+/// Counts are then upper bounds and the card is marked `truncated`.
+///
+/// The common prefix of every namespace seen is kept separately and stays exact,
+/// so `derive_base_iri` needs nothing else.
+pub(crate) struct NsTally {
+    cap: usize,
+    counts: BTreeMap<String, u64>,
+    /// `(count, namespace)` ascending; built on the first overflow only.
+    order: Option<BTreeSet<(u64, String)>>,
+    lcp: Option<String>,
+    overflowed: bool,
+}
+
+impl Default for NsTally {
+    fn default() -> Self {
+        Self::with_cap(NS_TALLY_CAP)
+    }
+}
+
+impl NsTally {
+    pub(crate) fn with_cap(cap: usize) -> Self {
+        NsTally {
+            cap: cap.max(1),
+            counts: BTreeMap::new(),
+            order: None,
+            lcp: None,
+            overflowed: false,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.counts.len()
+    }
+
+    /// True once a namespace had to be dropped: the counts are approximate.
+    pub(crate) fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    pub(crate) fn common_prefix(&self) -> Option<&str> {
+        self.lcp.as_deref()
+    }
+
+    pub(crate) fn dominant(&self) -> Option<String> {
+        self.counts
+            .iter()
+            .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+            .map(|(k, _)| k.clone())
+    }
+
+    pub(crate) fn add(&mut self, ns: String, n: u64) {
+        match &mut self.lcp {
+            None => self.lcp = Some(ns.clone()),
+            Some(l) if !ns.starts_with(l.as_str()) => {
+                let mut cut = l
+                    .bytes()
+                    .zip(ns.bytes())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                while !l.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                l.truncate(cut);
+            }
+            Some(_) => {}
+        }
+        if let Some(c) = self.counts.get_mut(&ns) {
+            let old = *c;
+            *c += n;
+            if let Some(order) = &mut self.order {
+                order.remove(&(old, ns.clone()));
+                order.insert((*c, ns));
+            }
+            return;
+        }
+        if self.counts.len() < self.cap {
+            if let Some(order) = &mut self.order {
+                order.insert((n, ns.clone()));
+            }
+            self.counts.insert(ns, n);
+            return;
+        }
+        // Full: replace the least-counted entry (smaller string on a tie).
+        self.overflowed = true;
+        let counts = &self.counts;
+        let order = self
+            .order
+            .get_or_insert_with(|| counts.iter().map(|(k, &v)| (v, k.clone())).collect());
+        let Some((min, victim)) = order.pop_first() else {
+            return;
+        };
+        self.counts.remove(&victim);
+        let c = min + n;
+        order.insert((c, ns.clone()));
+        self.counts.insert(ns, c);
     }
 }
 
@@ -1972,6 +2070,11 @@ pub struct StreamReport {
     pub literal_objects: u64,
     pub classes: u64,
     pub class_map_bytes: u64,
+    /// Distinct subject namespaces the bounded tally ended with, and whether it
+    /// overflowed its cap (the namespace counts, and so the card, are then
+    /// approximate and `truncated`).
+    pub namespaces_kept: u64,
+    pub namespaces_overflowed: bool,
 }
 
 /// One subject's class code, for every subject id: `0` = untyped, `1..` the
@@ -2274,8 +2377,8 @@ pub fn derive_card_streaming(
     let mut out_top = [TopN::new(), TopN::new()];
     let mut sample: Vec<(u32, u32)> = Vec::new();
     let mut window: Vec<(u32, u64)> = Vec::with_capacity(WINDOW);
-    let mut subject_ns: BTreeMap<String, u64> = BTreeMap::new();
-    let flush_ns = |window: &mut Vec<(u32, u64)>, subject_ns: &mut BTreeMap<String, u64>| {
+    let mut subject_ns = NsTally::default();
+    let flush_ns = |window: &mut Vec<(u32, u64)>, subject_ns: &mut NsTally| {
         let ids: Vec<u32> = window.iter().map(|&(s, _)| s).collect();
         let terms = dict.subject_terms(&ids);
         // Sorted subjects mostly share a namespace with their neighbour, so
@@ -2289,14 +2392,14 @@ pub fn derive_card_streaming(
                 Some((cur, total)) if *cur == ns => *total += n,
                 _ => {
                     if let Some((cur, total)) = run.take() {
-                        *subject_ns.entry(cur).or_default() += total;
+                        subject_ns.add(cur, total);
                     }
                     run = Some((ns, n));
                 }
             }
         }
         if let Some((cur, total)) = run {
-            *subject_ns.entry(cur).or_default() += total;
+            subject_ns.add(cur, total);
         }
         window.clear();
     };
@@ -2486,6 +2589,8 @@ pub fn derive_card_streaming(
             prof.quoting_hits.insert(pred_terms[p].clone(), n);
         }
     }
+    report.namespaces_kept = subject_ns.len() as u64;
+    report.namespaces_overflowed = subject_ns.overflowed();
     prof.subject_ns = subject_ns;
     if pred_counts
         .iter()
@@ -3604,15 +3709,15 @@ mod tests {
     #[test]
     fn base_iri_is_common_prefix_with_fallback() {
         // Subjects under several sibling namespaces → their common root.
-        let mut ns = BTreeMap::new();
-        ns.insert("http://ex/person/".to_string(), 2000u64);
-        ns.insert("http://ex/place/".to_string(), 600);
-        ns.insert("http://ex/org/".to_string(), 120);
+        let mut ns = NsTally::default();
+        ns.add("http://ex/person/".to_string(), 2000);
+        ns.add("http://ex/place/".to_string(), 600);
+        ns.add("http://ex/org/".to_string(), 120);
         assert_eq!(derive_base_iri(&ns).as_deref(), Some("http://ex/"));
 
         // A single namespace is its own base.
-        let mut one = BTreeMap::new();
-        one.insert("http://data.example.org/id/".to_string(), 10u64);
+        let mut one = NsTally::default();
+        one.add("http://data.example.org/id/".to_string(), 10);
         assert_eq!(
             derive_base_iri(&one).as_deref(),
             Some("http://data.example.org/id/")
@@ -3620,15 +3725,15 @@ mod tests {
 
         // Subjects across unrelated hosts: the LCP collapses to `http://`, so we
         // fall back to the dominant namespace rather than ship a useless prefix.
-        let mut multi = BTreeMap::new();
-        multi.insert("http://a.example/".to_string(), 100u64);
-        multi.insert("http://b.other/".to_string(), 5);
+        let mut multi = NsTally::default();
+        multi.add("http://a.example/".to_string(), 100);
+        multi.add("http://b.other/".to_string(), 5);
         assert_eq!(
             derive_base_iri(&multi).as_deref(),
             Some("http://a.example/")
         );
 
-        assert_eq!(derive_base_iri(&BTreeMap::new()), None);
+        assert_eq!(derive_base_iri(&NsTally::default()), None);
     }
 
     #[test]
@@ -3988,5 +4093,98 @@ mod tests {
             CardInput::default()
         ))
         .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ns_tally_tests {
+    use super::*;
+
+    fn feed(t: &mut NsTally, n: usize) {
+        for i in 0..n {
+            // Distinct namespaces, with a heavy dominant one every 7th record.
+            let ns = if i % 7 == 0 {
+                "https://doi.org/10.1/".to_string()
+            } else {
+                format!("https://doi.org/10.1/a{i}/")
+            };
+            t.add(ns, 1);
+        }
+    }
+
+    #[test]
+    fn under_the_cap_the_tally_is_exact() {
+        let mut t = NsTally::with_cap(100);
+        feed(&mut t, 50);
+        assert!(!t.overflowed());
+        assert_eq!(t.len(), 43);
+        assert_eq!(t.dominant().as_deref(), Some("https://doi.org/10.1/"));
+        assert_eq!(
+            derive_base_iri(&t).as_deref(),
+            Some("https://doi.org/10.1/")
+        );
+    }
+
+    #[test]
+    fn past_the_cap_the_tally_stays_bounded_and_deterministic() {
+        let run = || {
+            let mut t = NsTally::with_cap(64);
+            feed(&mut t, 5_000);
+            assert!(t.len() <= 64);
+            assert!(t.overflowed());
+            let snapshot: Vec<(String, u64)> =
+                t.counts.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            (snapshot, t.dominant(), derive_base_iri(&t))
+        };
+        let (a, b) = (run(), run());
+        assert_eq!(a, b);
+        // The heavy namespace survives eviction and the exact common prefix
+        // still gives the dataset's base IRI.
+        assert_eq!(a.1.as_deref(), Some("https://doi.org/10.1/"));
+        assert_eq!(a.2.as_deref(), Some("https://doi.org/10.1/"));
+    }
+
+    #[test]
+    fn common_prefix_spans_all_hosts_even_when_entries_were_evicted() {
+        let mut t = NsTally::with_cap(2);
+        t.add("http://a.org/x/".into(), 10);
+        t.add("http://a.org/y/".into(), 1);
+        t.add("http://b.org/z/".into(), 1);
+        assert!(t.overflowed());
+        assert_eq!(t.common_prefix(), Some("http://"));
+        // LCP collapsed across hosts: fall back to the dominant namespace.
+        assert_eq!(derive_base_iri(&t).as_deref(), Some("http://a.org/x/"));
+    }
+
+    /// End to end: more distinct namespaces than the cap. Both derivations
+    /// finish, mark the card `truncated`, and agree with themselves.
+    #[test]
+    fn card_is_truncated_and_reproducible_past_the_cap() {
+        let n = NS_TALLY_CAP + 2_000;
+        let quads: Vec<_> = (0..n)
+            .map(|i| {
+                (
+                    format!("<https://doi.org/10.1/{i}/x>"),
+                    "<http://ex/p>".to_string(),
+                    "\"v\"".to_string(),
+                    None,
+                )
+            })
+            .collect();
+        let (bytes, _) =
+            crate::ingest::assemble_dataset_with_opts(quads.clone(), true, false, None, |_, _| {
+                Vec::new()
+            });
+        let rete = crate::Rete::open(&bytes).unwrap();
+        let go = || derive_card_streaming(&rete, CardInput::default(), &mut |_| {}).unwrap();
+        let (c1, r1) = go();
+        let (c2, _) = go();
+        assert!(r1.namespaces_overflowed);
+        assert_eq!(r1.namespaces_kept as usize, NS_TALLY_CAP);
+        assert!(c1.truncated);
+        assert_eq!(c1.to_json_bytes(), c2.to_json_bytes());
+        let mem = derive_card(&quads, rete.header().term_count, 0, CardInput::default());
+        assert!(mem.truncated);
+        assert_eq!(c1.signals.base_iri, mem.signals.base_iri);
     }
 }
