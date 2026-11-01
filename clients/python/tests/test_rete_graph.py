@@ -228,7 +228,7 @@ def test_builder_end_to_end(tmp_path, nt_text):
     # Counts + format_version are stamped automatically at build time.
     assert card["quad_count"] == 6
     assert card["term_count"] == g.terms
-    assert card["format_version"] >= 1
+    assert card["format_version"] == 5  # the client writes the 0x05 layout
 
     # The opt-in text index was actually built and is queryable.
     assert "http://example.org/alice" in g.text_search("researcher")
