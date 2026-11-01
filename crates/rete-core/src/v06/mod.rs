@@ -16,7 +16,7 @@
 //! Payload blocks (dictionary chunks, index tiles, quad tiles, label blocks,
 //! postings) are byte-identical to `0x05`; only their framing and their
 //! directories move. [`parts`] lifts a `0x05` file into [`parts::Parts`],
-//! [`write`] assembles a `0x06` file from them, [`open`] reads one.
+//! [`write`](mod@write) assembles a `0x06` file from them, [`open`] reads one.
 
 pub mod open;
 pub mod parts;
