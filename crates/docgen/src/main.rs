@@ -345,7 +345,13 @@ fn parent_for(md: &str) -> Option<&'static str> {
     }
     Some(match md {
         "python.md" | "python-build-tutorial.md" | "javascript.md" | "r.md" => "clients.md",
-        "agents.md" | "agent-frameworks.md" | "blender.md" | "comunica.md" => "integrations.md",
+        "agents.md"
+        | "agent-frameworks.md"
+        | "blender.md"
+        | "comunica.md"
+        | "plaza-guide.md"
+        | "file-explorer.md"
+        | "yasgui-guide.md" => "integrations.md",
         "dataset-cards.md"
         | "dataset-card-reference.md"
         | "hosting.md"
@@ -361,8 +367,14 @@ fn parent_for(md: &str) -> Option<&'static str> {
         | "topic-modeling.md"
         | "multi-criteria.md"
         | "graph-algorithms.md" => "query-and-analyze.md",
-        "architecture.md" | "SPEC.md" | "rust-api.md" | "browser.md" | "manifest.md"
-        | "BENCHMARK.md" | "conformance.md" => "reference.md",
+        "architecture.md"
+        | "SPEC.md"
+        | "rust-api.md"
+        | "browser.md"
+        | "manifest.md"
+        | "BENCHMARK.md"
+        | "conformance.md"
+        | "parallel-browser.md" => "reference.md",
         "clients-dev.md" | "release.md" => "contributing.md",
         _ => "apps.md",
     })
@@ -2098,6 +2110,38 @@ mod tests {
         assert!(page.contains("Back to Language clients"));
         assert!(!page.contains("class=\"nav-group\""));
         assert!(!page.contains("rel=\"next\""));
+        for (md, parent, title) in [
+            (
+                "parallel-browser.md",
+                "reference.html",
+                "API and technical reference",
+            ),
+            (
+                "plaza-guide.md",
+                "integrations.html",
+                "Tools and integrations",
+            ),
+            (
+                "file-explorer.md",
+                "integrations.html",
+                "Tools and integrations",
+            ),
+            (
+                "yasgui-guide.md",
+                "integrations.html",
+                "Tools and integrations",
+            ),
+        ] {
+            let page = super::template("Guide", "<h1>Guide</h1>", md, "", &[]);
+            assert!(
+                page.contains(&format!("href=\"{parent}\">Back to {title}</a>")),
+                "{md} must return to the hub that lists it"
+            );
+            assert!(
+                page.contains(&format!("href=\"{parent}\" class=\"active\"")),
+                "{md} must highlight its parent hub"
+            );
+        }
         assert_eq!(
             super::rewrite_links(r#"<a href="docs/intro.md?q=1#x">"#),
             r#"<a href="intro.html?q=1#x">"#
