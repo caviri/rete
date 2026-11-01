@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Playground · rete docs</title>
-  <meta name="description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <meta name="description" content="Launch the playground to open a graph, run an example query, and see both its answer and the bytes needed to get it. The rete engine runs in your browser." />
   <link rel="canonical" href="https://caviri.github.io/rete/playground-guide.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Playground · rete docs" />
-  <meta property="og:description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <meta property="og:description" content="Launch the playground to open a graph, run an example query, and see both its answer and the bytes needed to get it. The rete engine runs in your browser." />
   <meta property="og:url" content="https://caviri.github.io/rete/playground-guide.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/playground-guide.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,9 +18,9 @@
   <meta property="og:image:alt" content="Playground · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Playground · rete docs" />
-  <meta name="twitter:description" content="Launch the playground — one static HTML page that runs the full rete engine in WebAssembly. No server, no account, no install: it works offline, even opened from file://." />
+  <meta name="twitter:description" content="Launch the playground to open a graph, run an example query, and see both its answer and the bytes needed to get it. The rete engine runs in your browser." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/playground-guide.png" />
-  <meta name="rete:section" content="Explore in the browser" />
+  <meta name="rete:section" content="Start here" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -528,7 +528,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
     <span class="mbar-id">
-      <span class="mbar-sec"><a href="index.html">rete</a> · Explore in the browser</span>
+      <span class="mbar-sec"><a href="index.html">rete</a> · Start here</span>
       <span class="mbar-title">Playground</span>
     </span>
     <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
@@ -540,66 +540,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
-        <li><a href="intro.html">Graph data 101</a></li>
-        <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details open><summary><a href="playground-guide.html" class="active">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html" class="active">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
-        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
+        <li><a href="getting-started.html">Quickstart</a></li>
+        <li><a href="intro.html">Graph concepts</a></li>
+        <li><a href="playground-guide.html" class="active">Playground</a></li>
         <li class="nav-h">Guides</li>
-        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="build-and-publish.html">Build and publish</a></li>
+        <li><a href="query-and-analyze.html">Query and analyze</a></li>
+        <li><a href="clients.html">Language clients</a></li>
+        <li><a href="integrations.html">Tools and integrations</a></li>
+        <li><a href="recipes.html">Worked examples</a></li>
+        <li class="nav-h">Reference</li>
+        <li><a href="cli.html">CLI</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
-        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
-        <li class="nav-h">Clients</li>
-        <li><a href="python.html">Python — rete-graph</a></li>
-        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
-        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
-        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
-        <li><a href="r.html">R — rete</a></li>
-        <li><a href="blender.html">Blender — graphs as scenes</a></li>
-        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
-        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
-        <li class="nav-h">Publish & share</li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="hosting.html">Hosting your .rete</a></li>
-        <li><a href="interop.html">Triple-store interop</a></li>
-        <li><a href="media-companions.html">Media & SQL companions</a></li>
-        <li><a href="release.html">1.0 release candidate</a></li>
-        <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
-        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">Development</li>
-        <li><a href="architecture.html">Architecture</a></li>
-        <li><a href="SPEC.html">Format specification</a></li>
-        <li><a href="rust-api.html">Rust API</a></li>
-        <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html">Client development & releases</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
-        <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+        <li><a href="reference.html">API and technical reference</a></li>
+        <li><a href="compatibility.html">Compatibility and limits</a></li>
+        <li class="nav-h">Project</li>
+        <li><a href="apps.html">Apps and experiments</a></li>
+        <li><a href="contributing.html">Contributing</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -608,149 +565,58 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
+
 <h1 id="the-playground">The playground</h1>
-<p><strong><a href="playground.html">▶ Launch the playground</a></strong> — one static HTML page that runs
-the full rete engine in WebAssembly. No server, no account, no install: it
-works offline, even opened from <code>file://</code>. Everything below happens in your
-browser.</p>
-<p>It is the fastest way to understand what rete <em>is</em>: pick one of the <strong>40+
-published datasets</strong> — library catalogues, citation networks, ontologies,
-historical maps, 3D museum collections — and query it live. The small ones are
-embedded in the page; the big ones (up to a <strong>117 M-triple library graph</strong> and
-a <strong>1 GB Wikidata slice</strong>) stay on their URL and are <strong>range-read lazily</strong>: a
-query fetches only the byte ranges it touches, and a counter shows exactly how
-few bytes crossed the wire.</p>
-<h2 id="what-it-looks-like">What it looks like</h2>
-<p>Five views of the same page. Every one is a live query against a file that stays
-on its URL — the links reproduce each shot.</p>
-<p><a href="playground.html#dataset=opencitations&amp;load=lazy&amp;ex=2"><img class="img-sq" src="img/playground-sparql.png" alt="The playground querying opencitations.rete: a ten-line SPARQL SELECT that pins a journal by title and walks oc:partOf to its papers, a counter reading 25 row(s), 161 range req, 189.4 MB of 33.39 GB fetched, and a results table of DOIs, titles and years." /></a></p>
-<p><strong>SPARQL against 5.18 billion triples.</strong> <code>opencitations.rete</code> is one 33.4 GB file
-on object storage; 25 rows cost <strong>161 range requests and 189 MB</strong>, opening the
-file included. The rest is never transferred.</p>
-<p><a href="playground.html#dataset=plantatlas&amp;load=lazy&amp;ex=0"><img class="img-sq" src="img/playground-media.png" alt="The playground querying plantatlas.rete: a results table whose third column renders each specimen&#39;s WebP photograph inline, captioned &#39;WEBP · 1448×1024&#39;, with the counter reading 40 row(s), 1 range req, 256.0 KB of 9.8 MB fetched, 157 ms." /></a></p>
-<p><strong>The pictures are in the graph.</strong> Those photographs are <code>xsd:base64Binary</code> WebP
-literals stored inside the <code>.rete</code> and rendered into the cell — 40 rows and
-their pictures for <strong>one range request and 256 KB</strong>. IIIF, PDF, audio, video and
-<code>.glb</code> cells work the same way; see
-<a href="media-companions.html">Media &amp; SQL companions</a>.</p>
-<p><a href="playground.html#dataset=davidrumsey&amp;load=lazy"><img src="img/playground-card.png" alt="The Dataset Card modal over davidrumsey.rete: title, licence CC BY-NC-SA 3.0, source link, stat tiles reading 5,001,984 triples and 1,906,259 terms, expandable vocabulary/predicate/class sections, and a footer reading &#39;58.5 KB, read in one header + one coalesced range&#39;." /></a></p>
-<p><strong>The file describes itself.</strong> The <a href="dataset-cards.html">Dataset Card</a> is read
-straight off the header — <strong>58.5 KB in one coalesced range request</strong>, index
-untouched. See <a href="#card">🏷 Card</a> below.</p>
-<p><a href="playground.html#dataset=gbif-birds&amp;load=lazy&amp;ex=10"><img class="img-sq" src="img/playground-map.png" alt="The Map output over gbif-birds.rete: 3,000 red sighting dots for the family Accipitridae over Iberia and the western Alps on a pale Carto Light basemap, with a Basemap picker above it." /></a></p>
-<p><strong>GeoSPARQL, drawn.</strong> 3,000 raptor sightings out of a 334 M-triple, 1.43 GB GBIF
-graph, put on a basemap — <code>geo:asWKT</code> detected in the result. See
-<a href="#output-views">Output views</a> and <a href="geosparql.html">GeoSPARQL</a>.</p>
-<p><a href="playground.html#dataset=davidrumsey&amp;load=lazy&amp;mode=explore"><img src="img/playground-explore.png" alt="The Explore view over davidrumsey.rete: chips per rdf:type class (AtlasMap 71311, TextPage 26340, View 15666 …) above an entity table whose columns are creator, date, description, isPartOf and publisher." /></a></p>
-<p><strong>Browse it like an archive.</strong> <a href="#beyond-sparql-the-other-modes">Explore</a> turns each <code>rdf:type</code> class
-into a table — entities as rows, properties as columns — so an unfamiliar graph
-is navigable before you know a predicate in it.</p>
-<h2 id="pick-a-dataset">Pick a dataset</h2>
-<p>The dataset picker groups the catalog by theme (heritage, science, reference,
-demos). Each entry shows its size, license, and a description; picking one
-loads its <strong>example queries</strong> as one-click chips, each with a short tip
-explaining what the query shows. A 🔗 on every chip copies a <strong>share link</strong> that
-reopens the playground on that dataset with that example loaded — see
-<a href="#sharing">Sharing a query</a> for what that link looks like and why.</p>
-<p>A dataset can also be <strong>sharded</strong>: one logical graph served as several files
-(a "⛓ N shards" chip appears). Every query fans out across the shards and the
-rows merge — you just query it as one dataset.</p>
-<p>For a catalog dataset, the picker offers three load choices when applicable:
-<strong>Embedded</strong> uses bytes already inside the page, <strong>Lazy</strong> range-reads only what
-each query touches, and <strong>Cache</strong> downloads the complete <code>.rete</code> once. Cache mode
-stores the file in IndexedDB, so a reload or later browser session opens it
-locally with zero network reads; remove it under <strong>Settings → Whole-file caches</strong>.</p>
-<p>Not in the catalog? <strong>+ Add source → Connect (lazy)</strong> opens any <code>.rete</code> URL
-whose host serves ranges + CORS (see <a href="hosting.html">Hosting your .rete</a>), and the
-<strong>Build</strong> mode (below) turns your own RDF into a queryable file without leaving
-the page.</p>
-<h3 id="card">🏷 Card — what this graph says it is</h3>
-<p>Next to the source pill, <strong>🏷 Card</strong> opens the <a href="dataset-cards.html">Dataset Card</a>
-that travels <em>inside</em> the <code>.rete</code>: title, licence, source, counts, vocabularies,
-predicates and classes with their frequencies, the class-link skeleton, and the
-example queries the builder shipped with the file — plus everything the card's
-curated half carries: <strong>keywords</strong> and <strong>themes</strong> as tags beside the
-description; <strong>version</strong>, <strong>creators</strong>, <strong>publisher</strong>, <strong>DOI</strong>, <strong>canonical
-copy</strong>, <strong>SPARQL endpoint</strong>, <strong>source date</strong> and <strong>derived from</strong> in an
-<em>Identity &amp; provenance</em> table; a <strong>citation</strong> with a copy button; and the
-publisher's own <strong><code>extra</code></strong> fields, shown last and clearly marked as theirs —
-rete carries those values and attaches no meaning to them.</p>
-<p>An ORCID, ROR or DOI renders as a <strong>link to the identifier</strong>, which is why the
-card asks for an IRI instead of a string. A theme's IRI is not resolved (that
-would be a network read); the viewer names the <strong>concept scheme</strong> it can read
-from the IRI and shows the concept's identifier, rather than inventing a label.</p>
-<p>Below the card, its own clearly separated part of the modal, is the <strong>build
-record</strong>: when the file was written and by which <code>rete</code> — the engine's
-version, commit (linked), target and features; the flags in force, as the
-command line that would reproduce them, and the writer's settings; each input
-by name, size and BLAKE3; the wall time, peak RAM, memory limit and CPUs, with
-the per-phase times folded underneath; the spill of a memory-bounded build; and,
-when the card was replaced by <code>rete recard</code>, when, by what, from which content
-hash and at what cost. Each starter query's measured cost is shown <em>with the
-query it describes</em>, since that is where you ask. A file that carries no build
-record says so plainly instead of showing blanks, and a field a record does not
-carry (an older writer) gets no row.</p>
-<p>It costs one <code>HEAD</code> and <strong>one header read plus one coalesced range</strong> — the card
-and the build record sit adjacent, so both arrive together. Never the
-dictionary, the index or the pyramid. That is the CARD tier: you learn what a
-17 GB graph <em>is</em> for a few KB, before deciding whether to query it at all.</p>
-<p>Two views: <strong>Rendered</strong>, and <strong>JSON</strong> — the card's own bytes, syntax-coloured,
-with <em>Copy</em> and <em>Download</em>. The JSON tab stays the <em>card</em> (what
-<code>rete build --card-file</code> would take); the build record lives in its own file
-section, outside the content hash, and is shown in the Rendered tab. Any
-example query the card carries has a <strong>Use</strong> button that loads it straight into
-the editor.</p>
-<p>The card's queries also feed the <strong>examples panel</strong>: when a loaded file ships
-its own starter queries (auto-derived or curated), they appear alongside the
-catalog's curated examples, labelled as coming from the file's card and
-deduplicated against them. So a <code>.rete</code> you open by URL — one that was never
-registered in the catalog — still offers its own first questions.</p>
-<p>Not every file has one. A card is written at build time
-(<code>rete build --card …</code>); the small bundled demo datasets are built without one,
-and the modal says so rather than showing an empty shell.</p>
-<h2 id="write-a-query">Write a query</h2>
-<p>The SPARQL editor comes with syntax highlighting and context autocomplete. When
-you don't know the graph's vocabulary yet:</p>
+<p><a href="playground.html">Launch the playground</a> to open a graph, run an example query,
+and see both its answer and the bytes needed to get it. The rete engine runs
+in your browser. Embedded datasets work offline; remote datasets and optional
+online resources still need a connection.</p>
+<h2 id="pick-a-dataset">Choose a dataset</h2>
+<p>The picker groups datasets by theme and shows a description, licence and size.
+Choose one whose example questions interest you. <strong>Embedded</strong> opens bytes
+already in the page. <strong>Lazy</strong> reads a remote file as queries need it. <strong>Cache</strong>
+downloads the whole file into IndexedDB for later local use; remove it under
+<strong>Settings &gt; Whole-file caches</strong>. A sharded dataset combines several files as
+one logical graph, with queries fanning out across its shards.</p>
+<p><a id="what-it-looks-like"></a>
+<a href="playground.html#dataset=opencitations&amp;load=lazy&amp;ex=2"><img class="img-sq" src="img/playground-sparql.png" alt="The playground with a SPARQL editor, fetched-byte counter and results table." /></a></p>
+<p><a id="card"></a>
+Before querying an unfamiliar graph, open <strong>Card</strong> beside the source. The
+<a href="dataset-cards.html">Dataset Card</a> can tell you its title, licence, provenance,
+counts, vocabulary and starter queries without reading the triple index.
+<strong>Use</strong> loads a card query into the editor; these also appear beside catalog
+examples. <strong>JSON</strong> lets you copy or download the card. The rendered view also
+shows any separate build record. Older or cardless files may lack these fields.</p>
+<p>To open your own file, use <strong>+ Add source &gt; Connect (lazy)</strong> with a <code>.rete</code> URL.
+Its host needs ranges and browser CORS; see <a href="hosting.html">Hosting</a>.</p>
+<p><a id="which-browser"></a>
+Chromium uses concurrent reads by default. Firefox and Safari default to
+sequential reads because their engines can trap in the concurrent reader;
+large remote queries may therefore take longer. Settings can force concurrent
+reads, with that risk. Mobile memory limits can prevent very large graphs
+from opening. The optional local AI and semantic-search models need WebGPU.</p>
+<h2 id="write-a-query">Run a question you can interpret</h2>
+<p>Click an example query, read its tip, then run it. Start with the default
+<strong>Whole index</strong> strategy so you are querying full data. The table columns
+correspond to the variables selected by the query. IRIs identify resources;
+labels help you read them, and media-aware cells can show pictures, documents,
+models or geometry.</p>
+<p>Change one part of the query and run it again. <strong>Find a term</strong> browses classes
+and predicates, searches entities by label, and inserts an IRI at the cursor.
+A predicate's <strong>values &gt;</strong> drill shows its distinct objects. <strong>Labels</strong> adds
+human-readable chips. <strong>SPARQL AI</strong> can draft a query locally on your GPU;
+check the draft and its results against the question you intended.</p>
+<p>Two controls change the meaning of a query:</p>
 <ul>
-<li><strong>🔎 Find a term</strong> browses the dataset's classes and predicates (instant,
-from the self-describing card) and searches <strong>entities by label</strong> — lazily
-over HTTP ranges on a remote graph. Click a result to drop its IRI at the
-cursor; each predicate offers a <strong>values ›</strong> drill listing the distinct
-objects it takes.</li>
-<li><strong>Labels chips</strong> decode the IRIs in your query to human labels inline, so
-<code>wd:Q937</code> reads as <em>Albert Einstein</em> while you type.</li>
-<li><strong>🧠 Reason</strong> (beside the Labels switch) runs the query with <strong>OWL 2 QL
-reasoning</strong> on — the answer then includes ontology-entailed solutions
-(<code>rdfs:subClassOf</code> / <code>subPropertyOf</code> / <code>domain</code> / <code>range</code> / <code>owl:inverseOf</code> /
-<code>someValuesFrom</code>), computed over the raw data with no materialization. So on
-gbif-birds, <code>?o a :Aves</code> returns real occurrences via the taxonomy with the
-toggle on, and nothing with it off. Opt-in and lazy — over a remote dataset it
-fetches only what the rewritten query touches. See
-<a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</li>
-<li><strong>⛁ All graphs</strong> (right beside 🧠 Reason) mounts the file so a pattern outside
-<code>GRAPH</code> matches the <strong>union of the default graph and every named graph</strong> —
-the mode Virtuoso, GraphDB and Jena TDB call the union default graph. It
-exists for files that keep all their data in named graphs (anything built
-from N-Quads), where <code>?s ?p ?o</code> <em>correctly</em> answers zero rows; when that
-happens the playground points at the file's own counts and suggests the
-toggle. Off by default because it is <strong>not standard SPARQL</strong>; flipping it is
-announced, and every run under it says so in the result line. Federated runs
-and live endpoints keep standard semantics, and on a many-graph <em>remote</em>
-file the merge has a real byte cost — details in
-<a href="sparql.html#union-default-graph">Union default graph</a>.</li>
-<li><strong>✨ SPARQL AI</strong> drafts a query from a plain-language request using a small
-language model that runs <strong>locally on your GPU</strong> (WebGPU) — nothing is sent
-to any API. It is grounded in the dataset's example queries, so its drafts
-use the right vocabulary.</li>
+<li><strong>Reason</strong> includes solutions entailed through supported OWL 2 QL query
+rewriting. See <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning</a>.</li>
+<li><strong>All graphs</strong> treats the default graph as the union of default and named
+graphs. It can help when all statements are in named graphs, but it is
+nonstandard and can add substantial reads. It does not apply to federated
+runs or live endpoints. See <a href="sparql.html#union-default-graph">Union default graph</a>.</li>
 </ul>
-<p>Results stream into the table with media-aware cells: images become
-thumbnails, IIIF manifests page through scans, <code>.glb</code> models rotate inline,
-WKT geometries plot on mini-maps — see
-<a href="media-companions.html">Media &amp; SQL companions</a> for the full matrix.</p>
-<h2 id="output-views">Output views</h2>
-<p>The <strong>Output</strong> menu renders one result several ways. Each view expects a
-particular query shape — write your <code>SELECT</code>/<code>CONSTRUCT</code> so the columns it
-needs are present.</p>
+<p><a id="output-views"></a>
+Choose an <strong>Output</strong> that fits the selected columns:</p>
 <table><thead><tr><th>Output</th><th>Needs</th><th>Query shape</th></tr></thead><tbody>
 <tr><td><strong>Table</strong></td><td>anything</td><td>any <code>SELECT</code>, <code>ASK</code>, or <code>CONSTRUCT</code></td></tr>
 <tr><td><strong>Cards</strong></td><td>anything</td><td>the same rows as Table, but <strong>one card per row</strong> with the fields stacked — media renders full-width, so it reads well on a phone; on a wide screen the cards flow as a <strong>masonry</strong>. The <strong>⚙ Fields</strong> button picks how each field renders (the same types as a table column's header dropdown).</td></tr>
@@ -759,151 +625,61 @@ needs are present.</p>
 <tr><td><strong>Time</strong></td><td>a year / date column</td><td>a <code>SELECT</code> that binds a variable to <code>xsd:gYear</code>, <code>xsd:date</code> / <code>xsd:dateTime</code>, or a plain <strong>year integer</strong> (e.g. <code>ex:year ?y</code>). The other selected column(s) become the items listed in each cell's tooltip.</td></tr>
 <tr><td><strong>TTL / JSON-LD</strong></td><td>triples</td><td>a <code>CONSTRUCT</code> query — these serialise the constructed graph. A <code>SELECT</code> has no triples to serialise.</td></tr>
 </tbody></table>
-<p>Rules of thumb:</p>
-<ul>
-<li><strong>Map, Time and Graph render the bindings of a <code>SELECT</code></strong>, so put the geometry /
-year / edge columns in your <code>SELECT</code> list. (<code>CONSTRUCT</code> also feeds Graph / TTL /
-JSON-LD directly.)</li>
-<li><strong>Map</strong> and <strong>Time</strong> are available on <strong>every</strong> query (no per-dataset gating):
-each detects its column in the actual result and renders, or shows a short note
-if it's absent — so geometry or dates a query surfaces unexpectedly (e.g. from a
-federated join) still plot.</li>
-<li>Run these views under the <strong>Whole index</strong> (or <strong>Split by community</strong>) strategy.
-<strong>Progressive</strong> answers only from the pyramid summary (counts and community
-structure), so it has no per-row geometry or dates to plot.</li>
-<li><strong>Time</strong> buckets years automatically to fit the span (per-year for short ranges,
-up to per-1000-year for very long ones); negative years are read as <strong>BCE</strong>. A
-cell's colour encodes the <strong>number of items</strong> in that bucket — hover for the list.</li>
-<li>The map is an <strong>offline equirectangular plot</strong> of the WKT coordinates (no tiles /
-network), auto-fit to the bounding box of the returned geometries. A dataset
-that ships a PMTiles basemap adds a true tiled <strong>Output → Tiles</strong> view.</li>
-</ul>
-<pre><code class="language-sparql"># MAP — labelled territories as polygons (history dataset)
-PREFIX geo:  &lt;http://www.opengis.net/ont/geosparql#&gt;
-PREFIX ex:   &lt;http://ex/&gt;
-PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
-SELECT ?territory ?w WHERE {
-  ?t ex:year 1914 ; rdfs:label ?territory ;
-     geo:hasGeometry/geo:asWKT ?w .
-}
-
-# TIME — how many territories exist per year, as a multi-year heatmap
-PREFIX ex:   &lt;http://ex/&gt;
-PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
-SELECT ?year ?territory WHERE { ?t ex:year ?year ; rdfs:label ?territory }
-
-# GRAPH — a 3-variable SELECT read as (subject, predicate, object)
-PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
-SELECT ?a ?p ?b WHERE { ?a ?p ?b . FILTER(?p = cito:cites) } LIMIT 50
-
-# TTL / JSON-LD — a CONSTRUCT produces serialisable triples
-PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
-CONSTRUCT { ?a cito:cites ?b } WHERE { ?a cito:cites ?b } LIMIT 50
-</code></pre>
-<h2 id="beyond-sparql-the-other-modes">Beyond SPARQL: the other modes</h2>
-<p>The mode strip turns the same open file around several ways:</p>
-<ul>
-<li><strong>Schema</strong> — the dataset's effective schema (classes and how they relate),
-read index-free from the schema pyramid; the entry point for
-<a href="semantic-zoom.html">semantic zoom</a>.</li>
-<li><strong>Explore</strong> — browse per-class entity tables, and (for datasets with
-companions) a <strong>SQL</strong> sub-tab that runs DuckDB-WASM / SQLite-WASM over the
-same triples as Parquet — the columnar engines and the graph engine, side by
-side, both lazy over HTTP.</li>
-<li><strong>Semantic</strong> — natural-language search over the dataset's <strong>meaning</strong>: a
-sentence-embedding model (running locally, multilingual) embeds your phrase
-and ranks entities by similarity — no keywords needed. <strong>↗ Query these in
-SPARQL</strong> turns the hits into a <code>VALUES</code> block; <strong>✨ Answer with AI</strong> drafts a
-grounded answer from them. Available on datasets that ship an embedding
-index.</li>
-<li><strong>SHACL</strong> — validate the graph against shapes in the editor; on a remote
-dataset only each shape's targets are range-read.</li>
-<li><strong>Reach</strong> — transitive reachability from seed entities along one predicate.</li>
-<li><strong>Provenance</strong> — "why is this triple in the result?": the physical
-dictionary/index/tile ranges behind a match.</li>
-<li><strong>Coherence</strong> — the tiered OWL coherence checks, from an index-free schema
-scan to full materialization (see <a href="reasoning.html">Reasoning</a>).</li>
-<li><strong>Build</strong> — paste or upload RDF (N-Triples / N-Quads / Turtle), build a real
-<code>.rete</code> <strong>in the browser</strong>, query it immediately, save it to the browser for
-next time, or download the file. Step 3 writes the
-<a href="dataset-cards.html">Dataset Card</a> the file will <em>carry</em> — see below. The full
-publish path (companions, hosting) is in
-<a href="media-companions.html">Media &amp; SQL companions</a> and
-<a href="hosting.html">Hosting your .rete</a>.</li>
-</ul>
-<h3 id="build">Writing the card in Build mode</h3>
-<p>Step 3 holds <strong>two different documents</strong>, kept apart because they are not the
-same thing:</p>
-<ul>
-<li>the <strong>catalog entry</strong> on the left — <em>key</em>, <em>icon</em>, <em>tags</em>, <em>provenance</em>: how
-the dataset is listed in this playground and in a downloadable manifest. It
-never enters the file, and the card schema rejects those keys outright.</li>
-<li>the <strong>Dataset Card</strong> on the right — exactly the document
-<code>rete build --card-file</code> takes, and the one that travels inside the <code>.rete</code>.</li>
-</ul>
-<p>The JSON editor is the <em>primary</em> surface for the card, not a mirror of the
-form. It is the documented interchange format, so it cannot drift from what
-the CLI accepts; and the curated fields include a list of objects (<code>creators</code>)
-and a free-form bag (<code>extra</code>) that a form would either mangle or forbid. Title,
-licence, source and description also appear on the form — the four a
-first-time author always fills — and <em>patch</em> the document rather than replacing
-it, so typing a title never eats the creators you wrote by hand. <strong>All fields</strong>
-inserts a skeleton of every curated field to edit.</p>
-<p>Validation is the <strong>engine's</strong>, not a re-statement in the page: the same code
-<code>rete build --card-file</code> runs checks what you type, with the same wording. A
-free-text <code>theme</code> is refused and pointed at <code>keywords</code>
-(<a href="dataset-cards.html#where-to-get-theme-iris">where theme IRIs come from</a>); a
-stray top-level key is pointed at <code>extra</code>; the bag's 8 KB / 64 keys / depth-2
-bounds are enforced. So a card you compose here is one the CLI would also
-accept.</p>
-<p>What a browser build writes, stated plainly because the difference matters to
-whoever reads the file later: <strong>the curated fields, and the four counts the
-build itself measured</strong>. It does <strong>not</strong> write the derived profile (predicates,
-classes, vocabularies, signals, the tiered starter-query library) or the build
-record. They are absent from the card rather than present-and-empty, and the
-🏷 Card viewer shows that absence for what it is. Rebuild with
-<code>rete build --card-file</code> to get them (and compressed sections, which the
-browser cannot write).</p>
-<p>The derived half is no longer beyond the engine's reach — the wasm build
-exports <code>build_with_derived_card</code>, which computes the whole profile in the
-browser from the same code the CLI runs. This page does not call it yet:
-derivation walks the graph twice more, and spending that on every build without
-asking would be the wrong default for a paste-and-see tool. The build record
-stays CLI-only for a different reason — its cost figures come from <em>running</em>
-the starter queries, which is a benchmark, not a build.</p>
-<p>Leave the card editor empty and the file carries no card at all.</p>
-<h2 id="federation-query-several-sources-as-one">Federation: query several sources as one</h2>
-<p><strong>+ Add source</strong> adds a second (third, …) <code>.rete</code> — from the catalog or any
-URL — and the query runs across all of them: union merge with predicate
-routing, and for flat BGPs a real <strong>cross-source join</strong> (a pattern's rows from
-one file joined against another's on the shared variables). See
-<a href="federation.html#in-the-playground">Federated queries</a>.</p>
-<p>A source can also be a <strong>SPARQL endpoint</strong>. With the 🔌 <strong>live</strong> checkbox the
-endpoint becomes the query target and <strong>SPARQL Update is enabled</strong> — pointed at
-a running <code>rete serve</code>, the playground becomes the <em>editing UI</em> over a live
-graph: <code>INSERT DATA</code>, watch the next SELECT reflect it, download the snapshot.
-(Deep-linkable as <code>#endpoint=&lt;url&gt;</code>.)</p>
-<h2 id="sharing">Sharing a query</h2>
-<p>The playground keeps its entire state in the URL <strong>fragment</strong> —
-<code>playground.html#dataset=&lt;key&gt;&amp;load=lazy&amp;mode=sparql&amp;ex=&lt;n&gt;</code> — so any view is
-reproducible from its address alone, with nothing stored server-side.</p>
-<p>A <code>&lt;key&gt;</code> names a dataset in the catalog. To open a <code>.rete</code> that isn't in it —
-one you published yourself — give the address instead:
-<code>playground.html#url=&lt;https://…/yours.rete&gt;&amp;mode=sparql</code>. It is read the same
-lazy way, over HTTP range requests, so the link works against a file of any size
-as long as its host answers range requests and permits cross-origin reads
-(<code>Access-Control-Allow-Origin</code>, and <code>Range</code> allowed in the preflight). The host
-does not have to expose <code>Content-Range</code>: the length is read from the file's own
-header, so a Zenodo file API URL (<code>…/api/records/&lt;id&gt;/files/&lt;name&gt;/content</code>)
-works as it is. Connecting by hand and pressing <strong>Share</strong> produces exactly this
-form of link.</p>
-<h3 id="sharing-view-state">What the link carries</h3>
-<p>Naming the graph and the query is not enough on its own. Several toolbar
-controls change <strong>what the query returns</strong>, and a link that dropped them would
-hand someone the same text under different semantics — the reader would see
-different results and have no way to tell. So the fragment also carries them,
-and only when they differ from the default (a plain view's link is exactly as
-short as it always was):</p>
+<p>Map and Time detect geometry and dates in the returned columns. Time buckets
+years to fit the span and recognizes negative years as BCE. The Map plot can
+work offline; a dataset with PMTiles can also offer <strong>Tiles</strong>. Use Whole index
+or Split by community for individual geometry and dates: <strong>Progressive</strong> uses
+summary data and returns approximate answers. See <a href="geosparql.html">GeoSPARQL</a>
+and <a href="media-companions.html">Media &amp; SQL companions</a> for examples and media types.</p>
+<h2 id="watching-the-bytes-and-the-caches">Read the cost, then explore further</h2>
+<p>On a remote graph the result line reports <code>N range requests / M KB fetched /  file is X MB</code>. These are bytes read, not a promise that every query reads a
+small fraction. Open <strong>requests</strong> for the actual ranges. Run the query again:
+<code>0 new bytes</code> means the session cache supplied its reads, even if query
+computation still took time.</p>
+<p><strong>Settings &gt; Persist fetched ranges across reloads</strong> keeps fetched blocks in
+IndexedDB; whole-file caches are separate. The optional isolated <strong>Parallel
+range reads</strong> worker pool reloads to enable isolation and disables CDN-loaded
+DuckDB/SQLite backends while active. The default Chromium concurrent reader
+does not require this setting.</p>
+<p><a id="beyond-sparql-the-other-modes"></a>
+The same source supports other ways to investigate it:</p>
+<table><thead><tr><th>Mode</th><th>What to do next</th></tr></thead><tbody>
+<tr><td>Schema</td><td>Browse classes and relations; see <a href="semantic-zoom.html">Semantic zoom</a>.</td></tr>
+<tr><td>Explore</td><td>Browse entity tables by class, or SQL companions where supplied; see <a href="media-companions.html">Media &amp; SQL companions</a>.</td></tr>
+<tr><td>Semantic</td><td>Search by meaning on files with embeddings, turn hits into a SPARQL <code>VALUES</code> block, or draft a grounded answer; see <a href="ask-the-graph.html">Ask the graph</a>.</td></tr>
+<tr><td>SHACL</td><td>Check shapes; see <a href="shacl.html">SHACL validation</a>.</td></tr>
+<tr><td>Reach</td><td>Follow one predicate transitively from seed entities; see <a href="cli.html">CLI reachability</a>.</td></tr>
+<tr><td>Provenance</td><td>Inspect the physical dictionary, index and tile ranges behind a match; see <a href="browser.html">Browser API</a>.</td></tr>
+<tr><td>Coherence</td><td>Run tiered checks, from schema scans to materialization; see <a href="reasoning.html">Reasoning</a>.</td></tr>
+</tbody></table>
+<p><a id="build"></a>
+<strong>Build</strong> turns pasted or uploaded N-Triples, N-Quads or Turtle into a file you
+can query, save in the browser or download. In step 3, the catalog entry controls
+how the playground lists the graph; the separate Dataset Card JSON travels
+inside the file. Form fields patch that JSON. The same engine validation as
+<code>rete build --card-file</code> checks it; unknown fields belong in <code>extra</code>, and themes
+must be IRIs. See <a href="dataset-cards.html">Dataset Cards</a> for the full schema.</p>
+<p>A browser build currently writes curated fields and measured counts, without
+the derived profile, starter-query library or build record. An empty card editor
+produces no card. Rebuild with the CLI for the full derived card and compressed
+sections. The WASM API offers derived-card building, but this UI does not call
+it. See <a href="getting-started.html">Getting started</a> and <a href="hosting.html">Hosting</a> to publish.</p>
+<p><a id="federation-query-several-sources-as-one"></a>
+<strong>+ Add source</strong> also lets you query several files together, including
+cross-source joins for flat basic graph patterns. Nested query shapes have
+limits; read <a href="federation.html#in-the-playground">Federation</a>. A SPARQL endpoint
+with <strong>live</strong> enabled becomes the query target and permits updates. Connected
+to <code>rete serve</code>, this lets you edit the live graph and download a snapshot;
+<code>#endpoint=&lt;url&gt;</code> opens an endpoint directly.</p>
+<h2 id="sharing">Share the answer and its settings</h2>
+<p>Press <strong>Share</strong>, or use an example chip's link button. Catalog examples and
+datasets have preview pages under <code>q/</code> and <code>d/</code> that open the corresponding
+playground view. Their cards show measured answers and costs; browse
+<a href="shared.html">Shareable queries</a>. Edited queries and views with extra settings
+use a playground deep link instead.</p>
+<p><a id="sharing-view-state"></a>
+The URL fragment records the dataset, query or example, and relevant controls.
+Settings that change the answer must travel with it:</p>
 <table><thead><tr><th>Parameter</th><th>Control</th><th>Values</th><th>Effect</th></tr></thead><tbody>
 <tr><td><code>union</code></td><td>⛁ <strong>All graphs</strong></td><td><code>1</code> / <code>0</code> (default off)</td><td><em>answer</em> — mounts the file as if the default graph were the union of the default graph and every named graph</td></tr>
 <tr><td><code>reason</code></td><td>🧠 <strong>Reason</strong></td><td><code>1</code> / <code>0</code> (default off)</td><td><em>answer</em> — OWL 2 QL entailment, so subclass/subproperty instances also match</td></tr>
@@ -913,97 +689,16 @@ short as it always was):</p>
 <tr><td><code>view</code></td><td><strong>Output</strong></td><td><code>table</code> (default) · <code>cards</code> · <code>graph</code> · <code>map</code> · <code>tiles</code> · <code>time</code> · <code>ttl</code> · <code>jsonld</code></td><td><em>presentation</em> — how the same rows are drawn</td></tr>
 <tr><td><code>labels</code></td><td>🏷 <strong>Labels</strong></td><td><code>1</code> (default on) / <code>0</code></td><td><em>presentation</em> — the human-label chips beside IRIs in the editor</td></tr>
 </tbody></table>
-<p>The first five change the <strong>answer</strong>; the last two change only how it is
-<strong>drawn</strong>. That distinction is the design: a presentation parameter that fails
-to apply costs you a nicer rendering, an answer parameter that fails to apply
-makes the link lie. The address bar re-stamps itself as you flip these, so
-copying it by hand gives the same link <strong>Share</strong> does.</p>
-<p>Federation is carried <strong>only as catalog keys</strong>. A key is a public entry in the
-shipped catalog, so it is short and the address is re-derived on the other side —
-nothing private can ride along. A source you added by <em>pasting an address</em> (a
-<code>.rete</code> link or a SPARQL endpoint) is deliberately left out: those are routinely
-intranet hosts, pre-release files, or URLs with a token in them, and a share
-button is not the place to forward one. When a view has such a source, <strong>Share</strong>
-says so instead of quietly handing out a narrower view:</p>
-<blockquote>
-<p>Link copied ✓ — WITHOUT the added source <em>staging</em>: a pasted address is not put
-into a shareable link, so the recipient queries without it.</p>
-</blockquote>
-<p>A fragment has one limitation: it is never sent to a server, and no link preview executes
-the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
-link would therefore unfurl as the same anonymous "rete playground" card, with
-no hint of which graph or which question it points at.</p>
-<p>So each catalog example and each dataset also has a small <strong>preview page</strong> of its
-own, and that is what <strong>🔗</strong> and <strong>Share</strong> copy:</p>
-<table><thead><tr><th>Copied link</th><th>Shows</th></tr></thead><tbody>
-<tr><td><code>q/&lt;dataset&gt;-&lt;n&gt;.html</code></td><td>one example query: the question, the dataset, and the answer it really returns</td></tr>
-<tr><td><code>d/&lt;dataset&gt;.html</code></td><td>one dataset: what it holds, how big it is, and its first example questions</td></tr>
-</tbody></table>
-<p>Opening either one forwards you straight to the playground deep link it
-describes — the preview page exists for the crawler, not to slow you down. Its
-card is not a mock-up: every number on it was measured by actually running that
-query in a browser against the published file (<code>scripts/preview/</code>), including
-the range-read cost — <em>"12 range requests · 3.5 MB of 28.7 MB read"</em>. Browse them
-all at <a href="shared.html">Shareable queries</a>.</p>
-<p>An ad-hoc query has no such page (there is nothing pre-rendered to preview), so
-editing the SPARQL — or connecting a live endpoint, or building your own graph
-in the page — goes back to sharing the deep link itself, exactly as before.</p>
-<p>So does any view carrying one of the parameters above. A preview page forwards to
-a link built from the catalog alone (dataset + load mode + tab + example index),
-which leaves it nowhere to put <code>union=1</code>; sharing it would silently drop exactly
-the setting the link exists to reproduce, so <strong>Share</strong> hands out the deep link
-instead.</p>
-<h2 id="watching-the-bytes-and-the-caches">Watching the bytes (and the caches)</h2>
-<p>For a remote dataset the result line reports what the query physically did —
-<code>N range requests · M KB fetched · file is X MB</code> — and <strong>⊞ requests</strong> opens the
-actual byte-range log. Re-running a query reports <em>"0 new bytes, all served
-from this session's cache"</em> (with the cache's size — so a long, purely
-CPU-bound run such as a ⛁ All graphs union merge on a warm session reads as
-the cache working, not as a stalled fetch): reads are cached per session and —
-on Chromium-family browsers —
-fetched <strong>concurrently by default</strong> (the engine overlaps each query's
-byte-range requests via Asyncify, no cross-origin isolation needed; see
-<a href="#which-browser">Which browser?</a> for why other browsers read sequentially).
-<strong>Settings</strong> adds further opt-in extras:</p>
-<ul>
-<li><strong>Persist fetched ranges across reloads</strong> — mirrors fetched blocks into
-IndexedDB (per-file usage bars + Clear), so tomorrow's session starts warm.</li>
-<li><strong>Whole-file caches</strong> — files downloaded through a dataset's <strong>Cache</strong> load
-mode survive reloads in IndexedDB and answer subsequent queries locally.</li>
-<li><strong>Parallel range reads</strong> — a cross-origin-isolated worker pool fetches
-ranges concurrently (reloads once to enable isolation; disables the
-CDN-loaded DuckDB/SQLite backends while on).</li>
-</ul>
-<h2 id="which-browser">Which browser?</h2>
-<p><strong>We recommend a Chromium-family browser (Chrome, Edge, Brave, …) for the
-playground</strong>, especially on the multi-gigabyte remote datasets. Everything
-works everywhere — the differences are speed and extras:</p>
-<ul>
-<li><strong>Chromium</strong> runs the <em>concurrent</em> reader by default: the asyncified engine
-fires each query's byte-range fetches in parallel, which on a big remote
-graph is the difference between seconds and minutes. It is the engine the
-playground's regression gate exercises on every change. The <strong>✨ SPARQL AI</strong>
-assistant and the <strong>Semantic</strong> search tab also need WebGPU, which today
-means desktop Chrome/Edge.</li>
-<li><strong>Firefox</strong> answers every query correctly, but defaults to the reliable
-<em>sequential</em> reader: its WebAssembly engine can trap inside the concurrent
-reader's suspend/resume machinery once a graph is large enough (small
-datasets are unaffected). Sequential reads fetch the same bytes one range
-at a time, so large remote queries are noticeably slower. You can force
-concurrent reads in <strong>Settings → Concurrent reads</strong> — at the risk of the
-crash the default avoids.</li>
-<li><strong>Safari / iOS</strong> likewise defaults to sequential reads (JavaScriptCore's
-smaller WebAssembly stack trips the same way), and on iPhone/iPad the
-browser's memory ceiling can stop the very largest datasets regardless of
-reader.</li>
-</ul>
-<h2 id="under-the-hood">Under the hood</h2>
-<p>The page is generated by <code>scripts/build_playground.py</code> from
-<code>web/playground.template.html</code> + <code>web/playground-src/</code>: the WASM engine, its
-JS glue, and the embedded datasets are inlined into one self-contained file.
-The JS API it drives is documented in <a href="browser.html">WASM &amp; JavaScript API</a>; how
-datasets get registered is <code>web/playground-src/catalog.js</code> (see the repo's
-<code>skills/rete-publish</code> for the full recipe).</p>
+<p>The first five controls change query results; <code>view</code> and <code>labels</code> change their
+presentation. The address bar updates as you change them.</p>
+<p>An external file uses <code>#url=&lt;https://your-host.example/file.rete&gt;&amp;mode=sparql</code>. Catalog sources
+added for federation can travel as <code>fed</code> keys, but <strong>additional sources pasted
+as URLs or endpoints are omitted</strong>. Share warns when it leaves one out, so
+check that warning before sending a link. A link cannot supply a recipient
+with browser-local built data or private access to a source.</p>
+<p><a id="under-the-hood"></a>
+For embedding the engine in your own page, see the <a href="browser.html">Browser API</a>.
+For source builds and playground generation, see <a href="contributing.html">Contributing</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -1011,21 +706,21 @@ datasets get registered is <code>web/playground-src/catalog.js</code> (see the r
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/playground-guide.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer><a href="https://github.com/caviri/rete/edit/main/docs/playground-guide.md">Edit this page</a> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <nav class="mnav" id="mnav" aria-label="Page navigation">
-    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="scenario.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Real-world scenario</span></a>
+    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="intro.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Graph concepts</span></a>
     <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
       <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Contents</span>
     </button>
-    <a class="mnav-side mnav-next" id="navNext" rel="next" href="plaza-guide.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Plaza — dataset gallery</span></a>
+    <span class="mnav-side mnav-next is-off"><span class="mnav-dir">Next</span><span class="mnav-t">End of the introduction</span></span>
   </nav>
   <div class="mscrim" id="mscrim" hidden></div>
   <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
     <div class="mdrawer-head">
       <div class="mdrawer-who">
-        <span class="mdrawer-eyebrow">Explore in the browser · 5 of 55</span>
+        <span class="mdrawer-eyebrow">Start here · 4 of 4</span>
         <span class="mdrawer-title" id="mdrawerTitle">Playground</span>
       </div>
       <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">

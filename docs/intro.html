@@ -4,21 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
-  <title>Graph data 101 · rete docs</title>
-  <meta name="description" content="A gentle, practical tour of graph/network data formats and standards — with one question running through every section: what kinds of questions does this let me ask? If you've never touched RDF,…" />
+  <title>Graph concepts · rete docs</title>
+  <meta name="description" content="A graph records things and the relationships between them. A software dependency graph is one example: an application uses a web library, which uses a logging library." />
   <link rel="canonical" href="https://caviri.github.io/rete/intro.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
-  <meta property="og:title" content="Graph data 101 · rete docs" />
-  <meta property="og:description" content="A gentle, practical tour of graph/network data formats and standards — with one question running through every section: what kinds of questions does this let me ask? If you've never touched RDF,…" />
+  <meta property="og:title" content="Graph concepts · rete docs" />
+  <meta property="og:description" content="A graph records things and the relationships between them. A software dependency graph is one example: an application uses a web library, which uses a logging library." />
   <meta property="og:url" content="https://caviri.github.io/rete/intro.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/intro.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Graph data 101 · rete docs" />
+  <meta property="og:image:alt" content="Graph concepts · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Graph data 101 · rete docs" />
-  <meta name="twitter:description" content="A gentle, practical tour of graph/network data formats and standards — with one question running through every section: what kinds of questions does this let me ask? If you've never touched RDF,…" />
+  <meta name="twitter:title" content="Graph concepts · rete docs" />
+  <meta name="twitter:description" content="A graph records things and the relationships between them. A software dependency graph is one example: an application uses a web library, which uses a logging library." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/intro.png" />
   <meta name="rete:section" content="Start here" />
   <script>
@@ -529,7 +529,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     </button>
     <span class="mbar-id">
       <span class="mbar-sec"><a href="index.html">rete</a> · Start here</span>
-      <span class="mbar-title">Graph data 101</span>
+      <span class="mbar-title">Graph concepts</span>
     </span>
     <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
   </header>
@@ -540,66 +540,23 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
-        <li><a href="intro.html" class="active">Graph data 101</a></li>
-        <li><a href="getting-started.html">Getting started</a></li>
-        <li><a href="scenario.html">Real-world scenario</a></li>
-        <li class="nav-h">Explore in the browser</li>
-        <li class="nav-group"><details><summary><a href="playground-guide.html">Playground</a></summary><ul class="nav-sub"><li><a href="playground-guide.html">overview</a></li><li><a href="playground.html" target="_blank" rel="noopener">launch the playground →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
-        <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
-        <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="webgpu-guide.html">WebGPU coherence (exp.)</a></summary><ul class="nav-sub"><li><a href="webgpu-guide.html">overview</a></li><li><a href="webgpu.html" target="_blank" rel="noopener">run the experiment →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="graph-map.html">Graph-map, topic-map & 3D (exp.)</a></summary><ul class="nav-sub"><li><a href="graph-map.html">overview</a></li><li><a href="graph-map/viewer.html" target="_blank" rel="noopener">structural map</a></li><li><a href="graph-map/viewer-topics.html" target="_blank" rel="noopener">topic map (LDA)</a></li><li><a href="graph-map/viewer-3d.html" target="_blank" rel="noopener">3D — deck.gl</a></li><li><a href="graph-map/viewer-3d-three.html" target="_blank" rel="noopener">3D — three.js + fog</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="neuro-showcase-guide.html">Neuromorphology — 3D neurons & astrocytes (exp.)</a></summary><ul class="nav-sub"><li><a href="neuro-showcase-guide.html">overview</a></li><li><a href="neuro-showcase.html" target="_blank" rel="noopener">reconstruct in 3D →</a></li><li><a href="playground.html#dataset=neuro-showcase&load=lazy" target="_blank" rel="noopener">query in the playground →</a></li></ul></details></li>
+        <li><a href="getting-started.html">Quickstart</a></li>
+        <li><a href="intro.html" class="active">Graph concepts</a></li>
+        <li><a href="playground-guide.html">Playground</a></li>
         <li class="nav-h">Guides</li>
-        <li><a href="cli.html">CLI reference</a></li>
+        <li><a href="build-and-publish.html">Build and publish</a></li>
+        <li><a href="query-and-analyze.html">Query and analyze</a></li>
+        <li><a href="clients.html">Language clients</a></li>
+        <li><a href="integrations.html">Tools and integrations</a></li>
+        <li><a href="recipes.html">Worked examples</a></li>
+        <li class="nav-h">Reference</li>
+        <li><a href="cli.html">CLI</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
-        <li><a href="shacl.html">SHACL validation</a></li>
-        <li><a href="reasoning.html">Reasoning & coherence</a></li>
-        <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
-        <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
-        <li><a href="compatibility.html">Compatibility & Cypher</a></li>
-        <li class="nav-h">Clients</li>
-        <li><a href="python.html">Python — rete-graph</a></li>
-        <li><a href="python-build-tutorial.html">Python: build a .rete</a></li>
-        <li><a href="javascript.html">JavaScript — rete-graph</a></li>
-        <li><a href="comunica.html">Comunica — RDF/JS source</a></li>
-        <li><a href="r.html">R — rete</a></li>
-        <li><a href="blender.html">Blender — graphs as scenes</a></li>
-        <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
-        <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
-        <li class="nav-h">Publish & share</li>
-        <li><a href="dataset-cards.html">Dataset Cards</a></li>
-        <li><a href="hosting.html">Hosting your .rete</a></li>
-        <li><a href="interop.html">Triple-store interop</a></li>
-        <li><a href="media-companions.html">Media & SQL companions</a></li>
-        <li><a href="release.html">1.0 release candidate</a></li>
-        <li class="nav-h">Graph analysis</li>
-        <li><a href="topic-modeling.html">Topic modeling (LDA)</a></li>
-        <li><a href="multi-criteria.html">Multi-criteria communities</a></li>
-        <li class="nav-h">Development</li>
-        <li><a href="architecture.html">Architecture</a></li>
-        <li><a href="SPEC.html">Format specification</a></li>
-        <li><a href="rust-api.html">Rust API</a></li>
-        <li><a href="browser.html">WASM & JavaScript API</a></li>
-        <li><a href="clients-dev.html">Client development & releases</a></li>
-        <li><a href="parallel-browser.html">Parallel in browser (exp.)</a></li>
-        <li><a href="data-engineering.html">Tables, VKG & big builds</a></li>
-        <li><a href="BENCHMARK.html">Benchmarks</a></li>
-        <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
+        <li><a href="reference.html">API and technical reference</a></li>
+        <li><a href="compatibility.html">Compatibility and limits</a></li>
+        <li class="nav-h">Project</li>
+        <li><a href="apps.html">Apps and experiments</a></li>
+        <li><a href="contributing.html">Contributing</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -608,152 +565,78 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1 id="graph-data-for-dummies">Graph data, for dummies</h1>
-<p>A gentle, practical tour of graph/network data formats and standards — with one
-question running through every section: <strong>what kinds of questions does this let
-me ask?</strong> If you've never touched RDF, SPARQL, or Neo4j, start here. By the end
-you'll know the landscape and exactly what you can ask a <code>.rete</code> file.</p>
-<h2 id="what-is-a-graph-aka-a-network">What is a graph (a.k.a. a network)?</h2>
-<figure class="fig-right">
-  <img src="img/graph-vs-table.svg" alt="The same three facts drawn twice. On the left a friendship table with a person and knows column and three rows: Alice knows Bob, Bob knows Carol, Carol knows Alice. On the right the identical facts as a graph — three nodes joined by three :knows arrows in a cycle. The table stores rows, so following a chain means a join per hop; the graph stores each relationship itself, so the same question is a traversal.">
-  <figcaption>The same facts as rows vs. as a graph. A graph stores the relationships directly, so "who is connected to whom" is a traversal, not a join.</figcaption>
-</figure>
-<p>A graph is just two ingredients:</p>
-<ul>
-<li><strong>Nodes</strong> — the <em>things</em> (a person, a software package, a disease, a web page).</li>
-<li><strong>Edges</strong> — the <em>relationships</em> between things (Alice <em>knows</em> Bob; <code>web</code>
-<em>dependsOn</em> <code>logging</code>; smoking <em>causes</em> cancer).</li>
-</ul>
-<p>That's it. A social network, a software dependency tree, a knowledge base
-(Wikipedia-as-data), an org chart, a causal model — all the same shape: dots and
-lines. The reason this shape is worth a whole family of tools is the <em>kind of
-question it answers naturally</em>, the kind that's painful in a spreadsheet or a
-table:</p>
-<ul>
-<li><strong>Connection:</strong> "Who/what is directly connected to X?" (Alice's friends; the
-direct dependencies of <code>app</code>.)</li>
-<li><strong>Reachability / paths:</strong> "Is there <em>any</em> path from A to B, however long?"
-(Does <code>app</code> transitively depend on the vulnerable <code>log4x</code>?)</li>
-<li><strong>Structure / clusters:</strong> "What groups or communities exist? What's the big
-picture before I zoom in?"</li>
-</ul>
-<p>Tables are great at "all rows where age &gt; 30". Graphs are great at "everything
-reachable from here by following relationships." Hold onto that distinction — it
-explains everything below.</p>
-<h2 id="two-big-families-rdf-vs-labeled-property-graphs">Two big families: RDF vs. Labeled Property Graphs</h2>
-<p>There are two dominant ways to <em>write down</em> a graph. They model the same dots and
-lines, but differently.</p>
-<figure class="fig-right">
-  <img src="img/triple.svg" alt="One RDF triple is one fact, written subject then predicate then object. The first example, Alice knows Bob, ends on a resource — another node in the graph, drawn as a rounded pill. The second, Alice age &quot;30&quot;, ends on a literal — a plain value that nothing points out of, drawn as a square box. The predicate is itself a resource with an IRI, so a graph is nothing but many triples sharing nodes.">
-  <figcaption>One triple = one fact: <code>subject —predicate→ object</code>. Resources are rounded nodes; literals are boxes. A graph is many triples sharing nodes.</figcaption>
-</figure>
-<p><strong>RDF (Resource Description Framework)</strong> breaks the world into <strong>triples</strong> —
-short statements of the form <code>(subject, predicate, object)</code>:</p>
-<pre><code>&lt;Alice&gt;  &lt;knows&gt;  &lt;Bob&gt;
-&lt;Alice&gt;  &lt;age&gt;    "30"
+
+<h1 id="graph-data-for-dummies">Understanding graph data</h1>
+<p>A graph records things and the relationships between them. A software dependency
+graph is one example: an application uses a web library, which uses a logging
+library. Following those relationships helps answer which packages a vulnerable
+library might affect.</p>
+<h2 id="what-is-a-graph-aka-a-network">Start with three facts</h2>
+<p>Here is the same small graph used in <a href="getting-started.html">Getting started</a>:</p>
+<pre><code class="language-text">app     --dependsOn-&gt; web
+web     --dependsOn-&gt; logging
+logging --hasVulnerability-&gt; CVE-2099-0001
 </code></pre>
-<p>Everything — including the relationship name (<code>knows</code>) — is a first-class
-<em>resource</em> with a global identifier (an IRI, essentially a URL). It's the W3C web
-standard for sharing data between systems.</p>
-<p><strong>Labeled Property Graphs (LPG)</strong>, the Neo4j model, instead give nodes and edges
-<strong>labels</strong> and bags of <strong>key/value properties</strong>:</p>
-<pre><code>(:Person {name:"Alice", age:30}) -[:KNOWS {since:2019}]-&gt; (:Person {name:"Bob"})
+<p>The packages and vulnerability are <strong>nodes</strong>. Each arrow is an <strong>edge</strong>, with a
+name describing the relationship. We can ask about one edge (what does <code>app</code>
+depend on?) or a path (what eventually depends on <code>logging</code>?). Tables can
+represent these facts too, and relational databases can follow paths with
+recursive queries. Graph notation makes the relationships explicit.</p>
+<h2 id="two-big-families-rdf-vs-labeled-property-graphs">Give each fact a shared meaning</h2>
+<p>RDF writes each fact as a <strong>triple</strong>: subject, predicate, object. The first edge
+above becomes this N-Triples statement:</p>
+<pre><code class="language-nt">&lt;http://ex/app&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/web&gt; .
 </code></pre>
-<p>Note that the <em>edge itself</em> carries a property (<code>since:2019</code>) — that's the LPG
-superpower and the main thing plain RDF can't do without extra modeling.</p>
-<table><thead><tr><th></th><th>RDF (triples)</th><th>Labeled Property Graph</th></tr></thead><tbody>
-<tr><td>Atom of data</td><td>A statement <code>(s, p, o)</code></td><td>A node or edge with properties</td></tr>
-<tr><td>Identity</td><td>Global IRIs (web-wide)</td><td>Local node/edge ids</td></tr>
-<tr><td>Edges carry data?</td><td>Not directly (needs reification / RDF-star)</td><td>Yes — properties on edges</td></tr>
-<tr><td>Schema &amp; meaning</td><td>RDFS/OWL (formal, inferable)</td><td>Conventions, mostly app-defined</td></tr>
-<tr><td>Query language</td><td>SPARQL (a W3C standard)</td><td>Cypher / GQL</td></tr>
-<tr><td>Best at</td><td>Sharing, merging, inference across sources</td><td>Rich edges, app-local traversal</td></tr>
-</tbody></table>
-<p><strong><code>rete</code> is RDF.</strong> It is a storage + query format <em>for</em> RDF — not a new model.
-It can also translate a small, read-only <strong>subset of Cypher</strong> into SPARQL so LPG
-folks can ask familiar <code>MATCH … RETURN</code> questions; see
-<a href="compatibility.html">Compatibility &amp; interop</a>.</p>
-<h2 id="the-standards-plainly">The standards, plainly</h2>
-<p>The RDF world is a stack of standards, each answering a different <em>kind</em> of
-question. Here's the whole map on one page — and what <code>rete</code> does with each.</p>
-<table><thead><tr><th>Standard</th><th>What it's for</th><th>A question it helps answer</th><th>In <code>rete</code>?</th></tr></thead><tbody>
-<tr><td><strong>RDF</strong></td><td>The data model: triples/quads</td><td>"What facts do I have?"</td><td>✅ core — it's RDF</td></tr>
-<tr><td><strong>RDFS</strong></td><td>Lightweight schema: class/property hierarchies</td><td>"If <code>Dog</code> is a <code>subClassOf Animal</code>, is Rex an Animal?"</td><td>✅ via <a href="reasoning.html"><code>rete reason</code></a></td></tr>
-<tr><td><strong>OWL</strong></td><td>Rich schema + meaning: disjointness, identity, transitivity</td><td>"Are these two facts logically <em>contradictory</em>?"</td><td>⚠️ prototype OWL <strong>RL</strong> subset, not full OWL DL — <a href="reasoning.html">reasoning</a></td></tr>
-<tr><td><strong>SPARQL</strong></td><td>The query language for RDF</td><td>"Find everyone Alice transitively knows."</td><td>✅ <a href="sparql.html">SPARQL support</a></td></tr>
-<tr><td><strong>SHACL / ShEx</strong></td><td>Shapes/validation: does data match a required shape?</td><td>"Does every <code>Person</code> have exactly one email?"</td><td>✅ SHACL Core via <a href="shacl.html"><code>rete shacl</code></a>; ShEx not implemented</td></tr>
-<tr><td><strong>N-Triples / N-Quads</strong></td><td>Plainest serialization (one statement per line)</td><td>"How do I hand my triples to a tool, losslessly?"</td><td>✅ build input + N-Quads export</td></tr>
-<tr><td><strong>Turtle</strong></td><td>Human-friendly RDF text format</td><td>"Can I read/write this by hand?"</td><td>✅ build input + export (default graph)</td></tr>
-<tr><td><strong>JSON-LD</strong></td><td>RDF as JSON, for web APIs</td><td>"Can I consume this in a JS app?"</td><td>✅ expanded JSON-LD export (default graph)</td></tr>
-<tr><td><strong>Cypher / GQL</strong></td><td>The property-graph query language(s)</td><td>"<code>MATCH (a)-[:KNOWS]-&gt;(b) RETURN b</code>"</td><td>⚠️ read-only Cypher <em>subset</em>, translated to SPARQL — <a href="compatibility.html">compatibility</a></td></tr>
-</tbody></table>
-<p>Two honest caveats up front: SHACL support targets <strong>SHACL Core</strong> rather than
-SHACL-SPARQL, SHACL-AF, or ShEx, and the reasoner is a <strong>documented OWL RL
-subset</strong>, not a full OWL DL engine. A <code>.rete</code> file itself is immutable by design
-— there is no in-place SPARQL Update; for a <em>living</em> graph, <a href="cli.html"><code>rete serve</code></a>
-runs a small live endpoint that accepts SPARQL Update into a journal while the
-base file stays untouched.</p>
-<h2 id="what-kinds-of-questions-can-you-actually-ask-rete">What kinds of questions can you actually ask <code>rete</code>?</h2>
-<p>This is the heart of it. Below: a plain-English question → the kind of query it
-is → the concrete <code>rete</code> command. (Examples use the bundled dependency graph,
-<code>examples/deps.nt</code>; build it once with <code>rete build examples/deps.nt -o deps.rete</code>.)</p>
-<table><thead><tr><th>You want to ask…</th><th>Kind of query</th><th>Command</th></tr></thead><tbody>
-<tr><td>"What facts have this predicate?" (a point lookup)</td><td>Triple pattern</td><td><code>rete query</code></td></tr>
-<tr><td>"Find a 2-hop chain / a join across edges"</td><td>Basic Graph Pattern (BGP)</td><td><code>rete bgp</code></td></tr>
-<tr><td>"What transitively depends on / reaches X?"</td><td>Property path (<code>+</code>/<code>*</code>)</td><td><code>rete sparql</code></td></tr>
-<tr><td>"How many edges per node? Top-N by count?"</td><td>Aggregation (<code>GROUP BY</code>)</td><td><code>rete sparql</code></td></tr>
-<tr><td>"What <em>kinds</em> of things exist and how do they relate?"</td><td>Schema / class summary</td><td><code>rete schema</code></td></tr>
-<tr><td>"Give me the big picture first, cheaply"</td><td>Pyramid overview</td><td><code>rete summary</code></td></tr>
-<tr><td>"Is my data logically <em>coherent</em>?"</td><td>Reasoning / coherence</td><td><code>rete reason</code></td></tr>
-</tbody></table>
-<p>A few of these spelled out:</p>
-<p><strong>Fact lookup</strong> — match a single triple pattern; omitted positions are wildcards:</p>
-<pre><code class="language-sh">rete query deps.rete --predicate '&lt;http://ex/hasVulnerability&gt;'
+<p>An <strong>IRI</strong> identifies a resource, including the relationship itself. Using
+<code>http://ex/dependsOn</code> rather than a bare <code>dependsOn</code> gives that name a namespace.
+These example IRIs are identifiers; a query need not visit them as web pages.
+An object can also be a <strong>literal</strong>, such as a package name <code>"Web library"</code>,
+a number, or a date. A named graph groups statements under another identifier;
+RDF datasets contain a default graph and may contain named graphs.</p>
+<p>Labeled Property Graphs, used by systems such as Neo4j, organize data as nodes
+and edges with properties. RDF uses shared IRIs and triples, with additional
+modeling for statements about edges. Rete stores RDF; its limited read-only
+Cypher translation is described in <a href="compatibility.html">Compatibility</a>.</p>
+<p><a id="the-standards-plainly"></a>
+The surrounding standards serve different purposes. <strong>RDFS/OWL</strong> express schema
+and logical relationships; <strong>SHACL</strong> checks required data shapes; <strong>SPARQL</strong> asks
+questions. N-Triples, Turtle and JSON-LD are ways to serialize RDF, rather than
+different graph models. Rete supports <a href="shacl.html">SHACL Core</a>, not SHACL-SPARQL,
+SHACL-AF or ShEx, and a documented <a href="reasoning.html">reasoning subset</a>, not full
+OWL DL.</p>
+<h2 id="what-kinds-of-questions-can-you-actually-ask-rete">Ask for a path</h2>
+<p>SPARQL matches patterns against RDF. A name beginning with <code>?</code> is a variable;
+<code>PREFIX</code> abbreviates an IRI. This query asks for every package that reaches
+<code>logging</code> by following <code>dependsOn</code> one or more times:</p>
+<pre><code class="language-sparql">PREFIX e: &lt;http://ex/&gt;
+SELECT ?package WHERE {
+  ?package e:dependsOn+ e:logging
+}
+ORDER BY ?package
 </code></pre>
-<p><strong>Join (BGP)</strong> — chain triple patterns sharing a variable (here, a 2-hop path):</p>
-<pre><code class="language-sh">rete bgp deps.rete "?x &lt;http://ex/dependsOn&gt; ?y . ?y &lt;http://ex/dependsOn&gt; ?z"
-</code></pre>
-<p><strong>Reachability / transitive</strong> — the question tables can't answer. The <code>+</code> is a
-<em>property path</em>: follow <code>dependsOn</code> one-or-more times.</p>
-<pre><code class="language-sh">rete sparql deps.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
-</code></pre>
-<p><strong>Aggregation / counting</strong> — group and count, e.g. each package's out-degree:</p>
-<pre><code class="language-sh">rete sparql deps.rete \
-  "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?d) AS ?deps) WHERE { ?p e:dependsOn ?d } GROUP BY ?p ORDER BY DESC(?deps)"
-</code></pre>
-<p><strong>"What kinds of things, and how do they relate?"</strong> — the dataset's effective
-schema (classes by <code>rdf:type</code>, plus the class→predicate→class relations), without
-reading the triple index:</p>
-<pre><code class="language-sh">rete schema deps.rete
-</code></pre>
-<p><strong>"Give me the big picture first."</strong> <code>rete</code> stores a <strong>pyramid</strong>: a coarse
-community summary at the top, drilling down to full triples at the base. You read
-the overview first (a few small byte ranges) and zoom in only where a query needs
-it — overview-first, like map tiles for graphs.</p>
-<img class="img-sq" src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
-<pre><code class="language-sh">rete summary deps.rete   # structural overview (Louvain community quotient graph)
-</code></pre>
-<p><strong>"Is my data coherent?"</strong> — not "is it well-formed" but "does it logically
-contradict itself?" The prototype OWL RL / RDFS reasoner materializes entailments
-(e.g. subclass and transitive-property closures) and flags <strong>incoherent points</strong>
-like an individual typed as two <code>owl:disjointWith</code> classes. It exits non-zero on
-incoherence, so it doubles as a CI gate.</p>
-<pre><code class="language-sh">rete reason deps.rete
-</code></pre>
-<p>(Want plain "is this file valid RDF / not corrupt?" instead? That's <code>rete validate</code> on the source and <code>rete verify</code> on the built file — see
-<a href="compatibility.html">compatibility</a>.)</p>
-<h2 id="where-rete-fits">Where <code>rete</code> fits</h2>
-<p><code>rete</code> is a <strong>format + query</strong> layer for RDF that you can drop on a plain URL: no
-database server, no query endpoint. Publish one immutable <code>.rete</code> file to S3, a
-CDN, or a GitHub raw URL, and clients answer the questions above by fetching only
-the byte ranges each query needs — overview (the pyramid) first, detail on
-demand. The model is standard RDF; the queries are standard SPARQL.</p>
-<p>Ready to ask your own questions?</p>
-<ul>
-<li><strong><a href="getting-started.html">Getting started</a></strong> — install, build a file, run a query.</li>
-<li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL and
-answer "what does this CVE impact?" over plain HTTP.</li>
-</ul>
+<p>The answer is <code>http://ex/app</code> and <code>http://ex/web</code>. The <code>+</code> includes both the
+direct edge from <code>web</code> and the two-edge path from <code>app</code>. Without <code>+</code>, only
+<code>web</code> matches. More patterns sharing a variable form a join; aggregates such
+as <code>COUNT</code> summarize the matches. <a href="getting-started.html">Getting started</a> builds
+this exact graph and runs the query.</p>
+<p>See <a href="sparql.html">SPARQL support</a> for query forms, property paths, named graphs,
+and execution-mode support for local files and remote URLs.</p>
+<h2 id="where-rete-fits">Read a graph from a file</h2>
+<p>Rete compiles RDF into one immutable <code>.rete</code> file with a dictionary and indexes.
+A client can open it locally or read byte ranges from a static HTTP URL and
+execute queries itself. The host serves bytes; it does not run SPARQL.</p>
+<p>For the dependency query, the client needs the identifiers and index data that
+match the path. That does not guarantee a small transfer: broad patterns and
+long traversals may read much more than a point lookup, and a tiny graph may
+arrive in full. An optional community pyramid supports coarse overviews;
+summary-based progressive answers are approximate, rather than full graph
+results. The playground reports fetched bytes so you can see the cost.</p>
+<p>The file is a snapshot. Check <a href="compatibility.html">Compatibility</a> when sharing it
+with older readers. For changes over time, rebuild the snapshot or use <a href="cli.html"><code>rete serve</code></a>, which keeps updates
+in a journal while the base file stays immutable.</p>
+<p>Try <a href="getting-started.html">Getting started</a>, explore the
+<a href="playground-guide.html">playground</a>, or follow the
+<a href="scenario.html">dependency-impact scenario</a> to publish a graph.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -761,22 +644,22 @@ answer "what does this CVE impact?" over plain HTTP.</li>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/intro.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer><a href="https://github.com/caviri/rete/edit/main/docs/intro.md">Edit this page</a> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <nav class="mnav" id="mnav" aria-label="Page navigation">
-    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="index.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Overview</span></a>
+    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="getting-started.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Quickstart</span></a>
     <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
       <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Contents</span>
     </button>
-    <a class="mnav-side mnav-next" id="navNext" rel="next" href="getting-started.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Getting started</span></a>
+    <a class="mnav-side mnav-next" id="navNext" rel="next" href="playground-guide.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Playground</span></a>
   </nav>
   <div class="mscrim" id="mscrim" hidden></div>
   <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
     <div class="mdrawer-head">
       <div class="mdrawer-who">
-        <span class="mdrawer-eyebrow">Start here · 2 of 55</span>
-        <span class="mdrawer-title" id="mdrawerTitle">Graph data 101</span>
+        <span class="mdrawer-eyebrow">Start here · 3 of 4</span>
+        <span class="mdrawer-title" id="mdrawerTitle">Graph concepts</span>
       </div>
       <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
         <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
