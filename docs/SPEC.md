@@ -32,7 +32,8 @@
   base and publishes the merged state as a fresh `.rete` snapshot (see
   [cli](cli.md)); an in-file overlay section remains future work.
 - **Full SPARQL 1.1** on day one. We stage it (see §8).
-- **Inference / reasoning** at query time. Materialize before build if wanted.
+- **Unrestricted inference.** Query-time entailment supports a defined subset;
+  see [Reasoning](reasoning.md) for query rewriting and build-time materialization.
 
 ---
 
@@ -137,7 +138,7 @@ addressing — *how many* of those six a given file actually stores is its
 `0x01` through `0x04` are not readable and must be rebuilt from RDF source.
 
 > There is no Rete 1.0.0. The generation number counts *format* generations and
-> is independent of the release version (the workspace is 0.3.x); the Rust, CLI
+> is independent of the release version (the workspace remains 0.x); the Rust, CLI
 > and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
 > [Compatibility](compatibility.md#stable-rete-file-compatibility).
 
@@ -438,10 +439,11 @@ section payload:  varint num_tiles
                             varint min_c, varint max_c−min_c   # non-leading col C
 ```
 
-A bound leading component binary-searches the directory to exactly **one**
-tile (a-groups are never split across tiles); an unbound one visits every
-tile, zone-map-pruned. The directory is uncompressed so it is readable before
-any tile is fetched.
+A bound leading component searches the directory for every tile whose leading
+ID interval contains that value. Large a-groups can span consecutive tiles;
+reading only one would return incomplete results. An unbound component visits
+all candidate tiles, with zone-map pruning. The directory is uncompressed so
+it can be read before fetching tiles.
 
 The optional **tile-synopsis trailer** lifts each tile's two non-leading-column
 ranges out of its (compressed, must-be-fetched) zone map and into the section, so
@@ -809,7 +811,9 @@ The headline feature. "Zoom" = level of graph detail.
 2. Cut the dendrogram into levels. **Level 0** = coarsest: each top-level
    community becomes a **supernode**. **Level N-1** = the full graph.
 
-   **Cut policy: size-targeted tiles (committed).** We do *not* fix `N` up front.
+   **Design target: physical size-targeted community tiles (not implemented).**
+   The following describes the intended refinement layout, not the current
+   permutation tiles. We do *not* fix `N` up front.
    Instead each tile targets a byte budget `T` (default ~64 KiB, configurable) so
    that **one zoom ≈ one block ≈ one range read**, exactly like PMTiles. We
    descend the dendrogram and emit a tile boundary whenever a community's encoded
@@ -826,6 +830,11 @@ The headline feature. "Zoom" = level of graph detail.
    expands into) so a client can drill down without re-clustering.
 
 ### 7.2 Query / browse time
+
+The summary levels and descriptors are available today. Physical per-community
+triple tiles and the routed descent described below remain a design target;
+current exact queries use the permutation indexes, not those community tiles.
+
 - Client loads **level 0** (small): a graph of supernodes + aggregated relations.
   Good for overview, "shape of the data," and routing.
 - To **zoom into** a supernode, the client follows its directory entry to fetch

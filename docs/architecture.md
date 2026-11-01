@@ -291,6 +291,6 @@ the bundled `.rete` datasets into `docs/playground.html`. Run it with
 |---|---|
 | Tile-routed query refinement | Add physical community-tile directories so exact routing can fetch relevant community ranges, not whole permutation payloads |
 | Result provenance | Extend tile-range provenance (done for permutation tiles) to pyramid/community tiles |
-| Query engine rows | Replace wide `BTreeMap<String, String>` bindings with integer slot rows |
+| Query engine rows | Preserve the integer-slot representation when extending evaluation; decode terms at the output boundary |
 | Benchmark docs | Refresh JSON snapshots with `rete-bench --json` and regenerate the benchmark section |
 | SHACL | Add SHACL-SPARQL constraints only if the CLI needs extension-level coverage |

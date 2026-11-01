@@ -215,10 +215,12 @@ Verbatim from that run — a graph the model had never seen, three tool calls in
 > | Ley del Notariado de 28 de mayo de 1862. | 1862‑05‑28 |
 > | Ley de 18 de junio de 1870 estableciendo reglas para el ejercicio de la gracia de indulto. | 1870‑06‑18 |
 
-## Your own graphs, offline
+## Your own graphs {#your-own-graphs-offline}
 
-Nothing above is specific to a published dataset. Point the same agent at a
-local file and no packet leaves the machine:
+Point the same graph tools at a local file to execute graph queries on your
+machine. The examples above still use hosted language models: prompts and
+tool results passed to those models leave the machine. Fully offline use
+also requires a local model and local dependencies.
 
 ```python
 tools = ReteGraphTools("data/my-graph.rete")

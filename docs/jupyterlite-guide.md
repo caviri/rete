@@ -8,11 +8,13 @@ PyPI as a PyEmscripten wheel; remote `.rete` graphs are queried over HTTP
 range requests from inside the tab. Nothing to install, no server anywhere in
 the stack — not even for Python itself.
 
-Two notebooks are bundled:
+Three notebooks are bundled:
 
 - **[Tour: query graphs →](jupyterlite/lab/index.html?path=rete-graph.ipynb)**
   — the client end to end: lazy remote graphs, SPARQL → pandas, embedded
   starter queries.
+- **[Graph data science →](jupyterlite/lab/index.html?path=graph-data-science.ipynb)**
+  — project an edge list, analyze it in Python, and save derived results.
 - **[Build: anatomy of a `.rete` →](jupyterlite/lab/index.html?path=build-a-rete.ipynb)**
   — author a small KG **with an ontology in rdflib**, build a `.rete` from
   it, and dissect every part of the file: the **dictionary** (terms stored

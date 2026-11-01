@@ -8,7 +8,7 @@ the CLI surface carries no semantic-versioning promise until 1.0.0. Pin the
 exact version while the crates are 0.x:
 
 ```sh
-cargo install rete-cli --version 0.3.0 --locked
+cargo install rete-cli --version 0.4.2 --locked
 ```
 
 ## Build and query
@@ -26,9 +26,10 @@ rete sparql-url https://example.net/graph.rete \
   "SELECT * WHERE { ?s ?p ?o } LIMIT 20"
 ```
 
-The remote commands use HTTP byte ranges. The host must return exact ranges and
-must expose `Content-Range` to browsers if the same file is used by
-`rete-wasm`.
+The remote commands use HTTP byte ranges. Serve exact ranges with `206` and
+configure CORS for browser consumers. Exposing `Content-Range` saves an extra
+length probe for ordinary `.rete` files; see the
+[hosting guide](https://caviri.github.io/rete/hosting.html) for fallback behavior.
 
 For source builds, use the repository's Docker Compose/devcontainer toolchain;
 it pins Rust, Clippy, rustfmt, the WASM target, wasm-pack, Python, and uv.

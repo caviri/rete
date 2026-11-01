@@ -2,7 +2,7 @@
 
 **[▸ Play the timeline →](subtitles.html)** — a browser app that replays one film's
 dialogue in 20 languages at once, every line lighting up the instant it's spoken,
-straight from a temporal `.rete` graph. No video file: what moves is the subtitle
+using a JSON snapshot of a temporal graph. No video file: what moves is the subtitle
 data itself, on the film's own clock.
 
 <figure class="fig-center">
@@ -44,6 +44,6 @@ questions with SPARQL instead of watching:
   whole film in one language, full-text search across dialogue, or a
   translation diff between two languages for the same line.
 
-A scrub and a query are the same range read over the same file — the app just
-asks for the line at the current second, exactly like a time-bounded SPARQL
-query would.
+Scrubbing the timeline selects a line from the downloaded JSON snapshot.
+Querying the dataset in the Playground instead executes SPARQL over the
+`.rete` file; it is a separate way to explore the same subject.

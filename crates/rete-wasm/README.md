@@ -7,8 +7,15 @@ can query either an in-memory `.rete` image or a remote range-readable file.
 ## Build
 
 ```sh
-wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
+docker compose run --rm wasm
 ```
+
+From a repository checkout this is the shared producer for the browser
+packages and tracked pages. See
+[Contributing](https://github.com/caviri/rete/blob/main/CONTRIBUTING.md)
+for worktree source-revision settings. Application authors can usually use
+the [JavaScript package](https://caviri.github.io/rete/javascript.html)
+without building WASM themselves.
 
 ## In-memory graph
 

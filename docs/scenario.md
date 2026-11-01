@@ -1,138 +1,143 @@
-# A real-world scenario: a queryable SBOM on a URL
+# Trace a dependency vulnerability from a URL {#a-real-world-scenario-a-queryable-sbom-on-a-url}
 
-A worked end-to-end example: publish a software **dependency graph** (an
-SBOM-style slice) as a single `.rete` file, then answer *"what is impacted by this
-CVE?"* — over HTTP, fetching only the bytes the query needs, with no database.
+Publish a software dependency graph as a `.rete` file, then ask which packages
+are affected by a vulnerable dependency. The client runs the query; the host
+only serves the file.
 
-The data ([`examples/deps.nt`](https://github.com/caviri/rete/blob/main/examples/deps.nt)) models packages, their kind
-(`rdf:type Application`/`Library`), `dependsOn` edges, and a vulnerable package:
+This example uses the repository's
+[`examples/deps.nt`](https://github.com/caviri/rete/blob/main/examples/deps.nt).
+It contains package types, these dependency edges, and one fictional CVE:
 
+```text
+app     -> web, auth
+web     -> logging
+auth    -> logging, safejson
+logging -> log4x
+log4x   -> hasVulnerability -> CVE-2099-0001
 ```
-<http://ex/app>     dependsOn  <http://ex/web>, <http://ex/auth>
-<http://ex/web>     dependsOn  <http://ex/logging>
-<http://ex/auth>    dependsOn  <http://ex/logging>, <http://ex/safejson>
-<http://ex/logging> dependsOn  <http://ex/log4x>
-<http://ex/log4x>   hasVulnerability  <http://ex/CVE-2099-0001>
-```
 
-## 1. Validate, then build
+Commands below use `rete`; [Getting started](getting-started.md) explains the
+published Docker wrapper for POSIX shells and PowerShell. Run them in a checkout
+containing `examples/deps.nt`, or download that file into an `examples` directory.
 
-Check the source is well-formed RDF first, then pack it:
+## Build and check the snapshot {#1-validate-then-build}
+
+Validate the RDF syntax, build a file, then check its content hash:
 
 ```sh
 rete validate examples/deps.nt
-#  valid: 13 statement(s) — 13 in the default graph, 0 named graph(s)
-
 rete build examples/deps.nt -o deps.rete
-#  wrote deps.rete: 13 triples, 12 terms, 2 pyramid level(s), 2035 bytes
-
-rete verify deps.rete        # confirm the content hash
-#  OK — content hash matches
+rete verify deps.rete
 ```
 
-## 2. Publish
+Validation reports **13 statements**, all in the default graph. The build
+reports **13 triples**, **12 terms** and **2 pyramid levels**; verification
+should say the content hash matches. File size can change between releases.
+These checks establish syntax and file integrity, rather than completeness of
+an SBOM or absence of vulnerabilities.
 
-It's one immutable file — upload it anywhere that serves HTTP `Range` requests:
+Before publishing, check the impact query locally:
 
 ```sh
-aws s3 cp deps.rete s3://my-bucket/deps.rete          # S3
-# or commit it to a repo and use the raw URL, or any CDN / static host.
+rete sparql deps.rete "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x } ORDER BY ?d"
 ```
 
-No server, no endpoint, no index to maintain. The file's blake3 content hash
-doubles as an ETag-like id, so clients can cache byte ranges forever.
+It should return four packages, in order: `app`, `auth`, `logging`, `web`.
+`safejson` has no dependency path to `log4x`, and `log4x` itself has no outgoing
+dependency path to itself.
 
-## 3. Query it from the URL
+## Publish the file {#2-publish}
 
-### The headline question: what does the CVE impact?
-
-Everything that (transitively) depends on the vulnerable `log4x`:
+Upload the snapshot to a static host with HTTP range support. For example,
+with a configured AWS CLI and your own bucket:
 
 ```sh
-rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
-  "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
-#  4 solution(s)
-#  (fetched 2035 bytes in 1 range request(s); file is 2035 bytes)
-#  ?d=<http://ex/auth>
-#  ?d=<http://ex/logging>
-#  ?d=<http://ex/web>
-#  ?d=<http://ex/app>
+aws s3 cp deps.rete s3://my-bucket/deps.rete
 ```
 
-`safejson` is correctly excluded — it doesn't reach the vulnerable package. At
-this toy size the whole file fits in **one bounded range request**; on a real
-graph the same query pulls a handful of small ranges — dictionary chunks and
-index tiles — from a file thousands of times larger, never scanning linearly.
+The URL must be readable by your intended clients. Use [Hosting](hosting.md)
+for permissions, range checks, CORS for browser access, and cache validators.
+Publish changed content at a new versioned URL or configure validation so
+clients do not reuse stale cached ranges. The file's content hash identifies
+its content; HTTP caching policy still belongs to the host.
 
-### Just the affected *libraries*, with the CVE id
+## Ask which packages are affected {#3-query-it-from-the-url}
+
+<a id="the-headline-question-what-does-the-cve-impact"></a>
+Replace the URL below with the location you published:
 
 ```sh
-rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
-  "PREFIX e: <http://ex/>
-   SELECT ?lib ?cve WHERE {
-     ?lib e:dependsOn+ ?v . ?v e:hasVulnerability ?cve .
-     ?lib a e:Library
-   }"
+rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x } ORDER BY ?d"
 ```
 
-### A simple point lookup (triple pattern, no SPARQL)
+Expected bindings are the same as the local query:
+
+```text
+?d=<http://ex/app>
+?d=<http://ex/auth>
+?d=<http://ex/logging>
+?d=<http://ex/web>
+```
+
+The command also reports four solutions and its fetched bytes and requests.
+The `+` follows one or more dependency edges. This toy graph may fit in one
+bounded read. On larger graphs, selective queries can avoid much of the file,
+but long paths and broad queries may read substantial index data. See
+[SPARQL support](sparql.md) for lazy-query support and limits.
+
+<a id="just-the-affected-libraries-with-the-cve-id"></a>
+To restrict the answer to libraries and discover the vulnerability identifier
+from the graph, join the path with its vulnerability and type statements:
 
 ```sh
-rete query-url https://my-bucket.s3.amazonaws.com/deps.rete \
-  --predicate '<http://ex/hasVulnerability>'
+rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete "PREFIX e: <http://ex/> SELECT ?lib ?cve WHERE { ?lib e:dependsOn+ ?v . ?v e:hasVulnerability ?cve . ?lib a e:Library } ORDER BY ?lib"
 ```
 
-### Overview first, without downloading the index
+This returns `auth`, `logging` and `web`, each paired with
+`http://ex/CVE-2099-0001`. `app` is an Application, so the type constraint
+excludes it. This is dependency reachability in the supplied data, rather than
+an assessment of exploitability or version ranges.
 
-<img src="img/progressive-fetch.svg" alt="The overview-first path: a client makes three byte-range reads — the 1024-byte header at bytes 0 to 1023, then the dictionary, then the pyramid summary — and computes the coarse community graph without ever fetching the permutation indexes. Drawn to scale on the published davidrumsey.rete, 74.8 MB: the three reads total 17.4 MB, 23.3 percent of the file, while the permutation indexes alone are 42.6 MB, 56.9 percent, and are never requested. The share depends on how large the dictionary is relative to the rest of the file.">
-
-*The overview path: header + dictionary + summary in three range reads — 23.3% of `davidrumsey.rete`; the triple index stays on the server.*
+<a id="a-simple-point-lookup-triple-pattern-no-sparql"></a>
+A direct fact lookup needs no SPARQL:
 
 ```sh
-rete summary-url https://my-bucket.s3.amazonaws.com/deps.rete   # community quotient graph
-rete schema      deps.rete                                       # classes & relations (local)
+rete query-url https://my-bucket.s3.amazonaws.com/deps.rete --predicate '<http://ex/hasVulnerability>'
 ```
 
-## 4. Querying with plain `curl`
+It returns the statement linking `log4x` to the CVE.
+<a id="overview-first-without-downloading-the-index"></a>
+For an overview, use `summary-url` on the URL, or `schema deps.rete` locally.
+These summarize community structure and typed relations; they do not replace
+the exact dependency-path answer. See [Semantic zoom](semantic-zoom.md) and
+the [CLI reference](cli.md).
 
-There is **no query endpoint** — a `.rete` query is a set of HTTP `Range` reads
-that the `rete` client (or the WASM engine) performs. You can watch and even
-drive those reads with `curl`.
+## Inspect the transport and open the browser {#4-querying-with-plain-curl}
 
-**The whole file is tiny here; fetch it and query locally:**
+A `.rete` URL is not a SPARQL endpoint: `curl` can retrieve bytes, while a rete
+client interprets the file and runs queries. Check a published file's header
+range with this POSIX command (use `curl.exe` in PowerShell):
+
+```sh
+curl -sD - -o header.bin -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete
+```
+
+A range-capable host returns **206 Partial Content** and a `Content-Range`
+header beginning `bytes 0-1023/`. The saved header begins with `RETE`.
+A host returning `200` has sent a whole-file response. Current readers can
+retain such a response up to 256 MiB; larger responses are refused rather than
+silently downloading an unbounded file. Configure ranges for reliable large-file
+access; details are in [Hosting](hosting.md).
+
+For this small example you can also download the file and run the local query:
 
 ```sh
 curl -s https://my-bucket.s3.amazonaws.com/deps.rete -o deps.rete
-rete sparql deps.rete "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 ```
 
-**See the range mechanics directly** — the first 1024 bytes are the header, and a
-`Range` request returns `206 Partial Content`:
-
-```sh
-# Fetch just the header (bytes 0–1023); confirm the magic and partial response:
-curl -s -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | head -c 4 ; echo
-#  RETE
-curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete | grep -i '206\|content-range'
-#  HTTP/2 206
-#  content-range: bytes 0-1023/2035
-```
-
-That `206` is the contract: a host that ignores `Range` and returns `200` is
-rejected by the CLI (it would otherwise read the wrong bytes; the browser reader
-keeps such a body only up to 256 MiB, and counts the whole download). For large
-files, this is the whole point — a point query pulls a handful of kilobytes from a
-multi-megabyte file instead of the entire thing.
-
-## 5. In the browser
-
-The same file serves a zero-backend web app: the [browser engine](browser.md)
-range-fetches the overview first, then runs SPARQL client-side. A security
-dashboard could load `deps.rete` straight from S3 and let users explore impact
-with no API to build, deploy, or secure.
-
----
-
-**What just happened:** one static file replaced a graph database + query API. The
-data is plain RDF, the queries are standard SPARQL, and the transport is ordinary
-HTTP range requests — so it works on infrastructure you already have.
+<a id="5-in-the-browser"></a>
+In the [playground](playground.html), use **+ Add source > Connect (lazy)**
+with the same URL and paste the impact query. With CORS enabled on the host,
+the browser runs it against the same snapshot and shows the bytes fetched.
+See the [playground guide](playground-guide.md) for interpreting results and
+sharing the query. A custom dashboard can use the [Browser API](browser.md).

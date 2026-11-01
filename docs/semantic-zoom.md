@@ -173,11 +173,12 @@ schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
 fetched 27337 of 161420 bytes in 3 range request(s) — index NOT fetched
 ```
 
-The bytes-on-the-wire are **bounded by the number of classes, not the size of the
-graph** — the same leveled legend costs roughly the same whether the file is a
-megabyte or a gigabyte. Put the `.rete` on any range-capable host (S3, a CDN,
-GitHub Pages) and a browser or CLI gets a zoomable type map for the cost of a few
-kilobytes. See [Dataset Cards → the three-tier model](dataset-cards.md#the-three-tier-exploration-model)
+Distinguish the schema payload from the command used to read it. The schema's
+own string table can be decoded without the dictionary, but the community
+summary path illustrated above also reads dictionary data. Its total cost is
+therefore not bounded only by the number of classes. Measure the actual reader
+and file rather than assuming every summary costs a few kilobytes.
+See [Dataset Cards → the three-tier model](dataset-cards.md#the-three-tier-exploration-model)
 for how this tier sits alongside the index-free `card-url` and the lazy
 `sparql-url` tiers.
 

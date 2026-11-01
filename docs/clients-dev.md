@@ -401,19 +401,21 @@ The checklist that made Python work:
    incomplete-fetch guard before returning results.
 3. Parse the shared JSON envelopes; present clean IRIs/values, not `<tokens>`.
 4. Two workflows: `<lang>-test.yml` paths-filtered to the client + rete-core,
-   and `<lang>-client-publish.yml` gated on `<lang>-v*` tags with the
+   and `<lang>-client-publish.yml` gated on the unified `v*` release tags with the
    registry's trusted-publishing equivalent.
-5. A user page in the *Clients* nav section, dev notes in this page, and a
+5. A user page linked from [Language clients](clients.md), dev notes in this page, and a
    runnable example (notebook or equivalent) executed in CI or Docker.
 
 ## Docs maintenance
 
 Client pages are Markdown under `docs/`; the nav lives in
-`crates/docgen/src/main.rs` (`SECTIONS`). After editing either:
+`crates/docgen/src/main.rs`: register every public root page in `PAGES` and
+link it from the appropriate guide or reference directory. `SECTIONS` is only
+the compact sidebar. After editing:
 
 ```sh
-docker run --rm -v "$PWD":/work -w /work rust:1.92-bookworm cargo run -q -p docgen
-python scripts/check_docs_links.py
+docker compose run --rm dev cargo run -q -p docgen
+docker compose run --rm dev python3 scripts/check_docs_links.py
 ```
 
 CI re-renders and diff-checks `docs/`, so commit the regenerated HTML.

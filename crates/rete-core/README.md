@@ -11,7 +11,7 @@ explicitly while the crates are 0.x:
 
 ```toml
 [dependencies]
-rete-core = "=0.3.0"
+rete-core = "=0.4.2"
 ```
 
 ## Open and query a file

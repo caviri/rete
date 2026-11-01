@@ -210,7 +210,11 @@ python3 data/scripts/standalone/geo_to_rete.py basemaps \
   --prec 3 --min-bbox 0.12 --max-per-year 130 -o dev/geo/history.nt
 rete build dev/geo/history.nt -o web/history.rete
 
-# 2. the browser engine, then the page
-wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-python3 scripts/build_atlas.py            # → docs/atlas-app.html
+# 2. regenerate the browser artifacts through the shared producer
+docker compose run --rm wasm
 ```
+
+The dataset converter above lives in the separate `rete-datasets` checkout;
+it is not included in a public rete clone. In a worktree, pass the source
+revision as described in [Contributing](contributing.md) and the repository's
+contributor guide.
