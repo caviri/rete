@@ -153,6 +153,9 @@ pub struct Header06 {
     pub block_codec: u8,
     pub internal_codec: u8,
     pub pyramid_levels: u16,
+    /// Per-position term-id widths, 2 bits each (subjects, objects, predicates,
+    /// graphs from the low bits): 0 = u32, 1 = u64 (refused by this reader).
+    pub id_widths: u8,
     pub presence: u16,
     pub card_off: u32,
     pub card_len: u32,
@@ -182,7 +185,8 @@ impl Header06 {
         b[73] = self.dict_codec;
         b[74] = self.block_codec;
         b[75] = self.internal_codec;
-        b[76..78].copy_from_slice(&self.pyramid_levels.to_le_bytes());
+        b[76] = self.pyramid_levels as u8;
+        b[77] = self.id_widths;
         b[78..80].copy_from_slice(&self.presence.to_le_bytes());
         b[80..84].copy_from_slice(&self.card_off.to_le_bytes());
         b[84..88].copy_from_slice(&self.card_len.to_le_bytes());
@@ -225,7 +229,8 @@ impl Header06 {
             dict_codec: b[73],
             block_codec: b[74],
             internal_codec: b[75],
-            pyramid_levels: u16::from_le_bytes([b[76], b[77]]),
+            pyramid_levels: b[76] as u16,
+            id_widths: b[77],
             presence: u16::from_le_bytes([b[78], b[79]]),
             card_off: u32_at(80),
             card_len: u32_at(84),
@@ -250,6 +255,7 @@ impl Header06 {
         }
         crate::index::PermSet::from_bits(h.perm_mask)
             .map_err(|_| FileError::Container("0x06 permutation mask invalid"))?;
+        check_id_widths_byte(h.id_widths)?;
         Ok(h)
     }
 
@@ -294,6 +300,52 @@ pub fn digest16(bytes: &[u8]) -> [u8; 16] {
     let mut out = [0u8; 16];
     out.copy_from_slice(&blake3::hash(bytes).as_bytes()[..16]);
     out
+}
+
+/// Term-id position names, in the order of the 2-bit fields of header byte 77.
+const ID_POSITIONS: [&str; 4] = ["subjects", "objects", "predicates", "graphs"];
+
+/// Refuse a width byte this reader cannot honour: a reserved value (2, 3) is a
+/// corrupt header, a `u64` field is a file from a later writer.
+fn check_id_widths_byte(w: u8) -> Result<(), FileError> {
+    for i in 0..4 {
+        match (w >> (2 * i)) & 3 {
+            0 => {}
+            1 => {
+                return Err(FileError::Container(match i {
+                    0 => "u64 term ids (subjects): not supported by this reader",
+                    1 => "u64 term ids (objects): not supported by this reader",
+                    2 => "u64 term ids (predicates): not supported by this reader",
+                    _ => "u64 term ids (graphs): not supported by this reader",
+                }))
+            }
+            _ => return Err(FileError::Container("0x06 header: reserved term id width")),
+        }
+    }
+    Ok(())
+}
+
+/// The width byte a writer stamps: every position `u32` (0), after checking
+/// that the largest id of each position (`[subjects, objects, predicates,
+/// graphs]`, SPEC §4.1) fits. It
+/// never truncates: an id that does not fit is an error.
+pub fn id_widths_for(max_ids: [u64; 4]) -> Result<u8, FileError> {
+    for (i, m) in max_ids.iter().enumerate() {
+        if *m > u32::MAX as u64 {
+            return Err(FileError::Container(match i {
+                0 => "this dataset needs u64 term ids in subjects, not supported yet",
+                1 => "this dataset needs u64 term ids in objects, not supported yet",
+                2 => "this dataset needs u64 term ids in predicates, not supported yet",
+                _ => "this dataset needs u64 term ids in graphs, not supported yet",
+            }));
+        }
+    }
+    Ok(0)
+}
+
+/// Names of the four id positions, in field order, for display.
+pub fn id_position_names() -> [&'static str; 4] {
+    ID_POSITIONS
 }
 
 /// The content hash of a header whose card and root digests are set (SPEC.md
@@ -1261,6 +1313,7 @@ pub fn logical_header(h: &Header06) -> crate::header::Header {
         dict_codec: h.dict_codec,
         block_codec: h.block_codec,
         pyramid_levels: h.pyramid_levels,
+        id_widths: h.id_widths,
         quad_count: h.quad_count,
         term_count: h.term_count,
         content_hash: h.content_hash,
@@ -1298,6 +1351,7 @@ mod tests {
             block_codec: 1,
             internal_codec: 1,
             pyramid_levels: 0,
+            id_widths: 0,
             presence: P_TEXT | P_QUAD,
             card_off: 0,
             card_len: 40,
@@ -1390,5 +1444,69 @@ mod tests {
         assert_eq!(cut(&[5, 5, 5, 5, 5], 10), vec![(0, 2), (2, 4), (4, 5)]);
         assert_eq!(cut(&[], 10), Vec::<(usize, usize)>::new());
         assert_eq!(cut(&[50], 10), vec![(0, 1)]);
+    }
+}
+
+#[cfg(test)]
+mod id_width_tests {
+    use super::*;
+
+    fn sample() -> Header06 {
+        Header06 {
+            file_len: 10_000,
+            root_len: 300,
+            card_region_len: 100,
+            data_offset: 2_000,
+            perm_mask: 0b11_1111,
+            pyramid_levels: 7,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn width_byte_round_trips_and_is_hashed() {
+        let h = sample();
+        assert_eq!(Header06::from_bytes(&h.to_bytes()).unwrap(), h);
+        assert_eq!(h.to_bytes()[76], 7);
+        assert_eq!(h.to_bytes()[77], 0);
+        // Hashing sees the byte: it is logical content.
+        let mut other = h.clone();
+        other.id_widths = 1;
+        assert_ne!(content_hash(&h), content_hash(&other));
+    }
+
+    #[test]
+    fn a_reader_refuses_every_nonzero_width() {
+        for (i, name) in id_position_names().iter().enumerate() {
+            let mut b = sample().to_bytes();
+            b[77] = 1 << (2 * i);
+            let e = Header06::from_bytes(&b).unwrap_err().to_string();
+            assert!(
+                e.contains(&format!(
+                    "u64 term ids ({name}): not supported by this reader"
+                )),
+                "{e}"
+            );
+            for reserved in [2u8, 3] {
+                let mut b = sample().to_bytes();
+                b[77] = reserved << (2 * i);
+                let e = Header06::from_bytes(&b).unwrap_err().to_string();
+                assert!(e.contains("reserved term id width"), "{e}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_writer_refuses_an_id_that_does_not_fit_u32() {
+        assert_eq!(id_widths_for([u32::MAX as u64; 4]).unwrap(), 0);
+        for (i, name) in id_position_names().iter().enumerate() {
+            let mut m = [1u64; 4];
+            m[i] = u32::MAX as u64 + 1;
+            let e = id_widths_for(m).unwrap_err().to_string();
+            assert!(
+                e.contains(&format!("needs u64 term ids in {name}, not supported yet")),
+                "{e}"
+            );
+        }
     }
 }

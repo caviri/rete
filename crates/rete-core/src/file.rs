@@ -2363,6 +2363,7 @@ pub(crate) fn write_dataset_from_parts(
         dict_codec: codec,
         block_codec: codec,
         pyramid_levels,
+        id_widths: 0,
         // Every container in the file — default graph and named graphs alike —
         // is written from an index built with the same set, so the mask is a
         // file-level fact and the default index is its source of truth.

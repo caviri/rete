@@ -3114,6 +3114,7 @@ fn write_final_file(
         dict_codec: codec,
         block_codec: codec,
         pyramid_levels: 0,
+        id_widths: 0,
         perms,
         quad_count,
         term_count: dict.term_count,

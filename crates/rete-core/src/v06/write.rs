@@ -599,6 +599,19 @@ pub fn assemble<W: Write + Seek>(
     opts: WriteOpts,
 ) -> Result<Written, FileError> {
     let codec = opts.internal_codec;
+    if parts.pyramid_levels > u8::MAX as u16 {
+        return Err(FileError::Container(
+            "0x06 stores at most 255 pyramid levels",
+        ));
+    }
+    // Ids are dense and 1-based, so no position holds an id above the term
+    // count (graphs: the graph count). Checked, never truncated.
+    let id_widths = super::id_widths_for([
+        parts.term_count,
+        parts.term_count,
+        parts.term_count,
+        parts.quad.as_ref().map_or(0, |q| q.graph_count),
+    ])?;
     // Quad clustering: graph-major when the mean graph is under a tile.
     let graph_major = match (&parts.quad, opts.quad) {
         (None, _) => false,
@@ -802,6 +815,7 @@ pub fn assemble<W: Write + Seek>(
         block_codec: parts.block_codec,
         internal_codec: codec,
         pyramid_levels: parts.pyramid_levels,
+        id_widths,
         presence: presence_of(parts),
         card_off: 0,
         card_len,

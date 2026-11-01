@@ -119,7 +119,8 @@ and on a small file every leaf directory as well.
 | 73 | 1 | dictionary codec id |
 | 74 | 1 | block codec id (tiles, quad tiles, label blocks, postings) |
 | 75 | 1 | internal codec id (root units, leaves, card, stats + schema) |
-| 76 | 2 | community pyramid levels |
+| 76 | 1 | community pyramid levels (at most 255) |
+| 77 | 1 | **term-id widths**, four 2-bit fields from the low bits: subjects, objects, predicates, graphs. `0` = `u32`, `1` = `u64`, `2`–`3` reserved (a corrupt header). Every writer stamps `0` today and errors rather than truncate an id; this reader refuses any non-zero field at open |
 | 78 | 2 | presence: bit0 text index; bit1 the text index leaves some predicates out (§6.3); bit2 label index; bit3 stats + schema; bit4 community pyramid; bit5 quad index |
 | 80 | 4 | card offset, within the card region |
 | 84 | 4 | card length (stored, compressed) |
@@ -127,6 +128,11 @@ and on a small file every leaf directory as well.
 | 104 | 4 | build record offset, within the card region |
 | 108 | 4 | build record length |
 | 112 | 16 | root digest: BLAKE3 of the root block, first 16 bytes |
+
+The format allows a width per position (a hybrid file, say `u64` objects over
+`u32` everything else) so readers can specialise later without another format
+change; today's reader supports `u32` only. The width byte is part of the
+hashed header fields (§4.7).
 
 Every field is untrusted. A reader checks the magic, the version, the header
 length, `128 + root length + card region length ≤ data offset ≤ file length`,

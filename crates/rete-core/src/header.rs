@@ -242,6 +242,8 @@ pub struct Header {
     pub dict_codec: u8,
     pub block_codec: u8,
     pub pyramid_levels: u16,
+    /// 0x06 only: per-position term-id widths (header byte 77); `0` = all u32.
+    pub id_widths: u8,
     pub quad_count: u64,
     pub term_count: u64,
     /// First 16 bytes of the blake3 content hash — an immutable validator.
@@ -435,6 +437,7 @@ impl Header {
             dict_codec: b[42],
             block_codec: b[43],
             pyramid_levels: u16_at(40),
+            id_widths: 0,
             quad_count: u64_at(24),
             term_count: u64_at(32),
             content_hash: b[8..24].try_into().unwrap(),
@@ -727,6 +730,7 @@ mod tests {
             dict_codec: 1,
             block_codec: 2,
             pyramid_levels: 3,
+            id_widths: 0,
             perms: crate::index::PermSet::ALL,
             quad_count: 5,
             term_count: 9,
@@ -762,6 +766,7 @@ mod tests {
             quad_count: 0x99,
             term_count: 0xAA,
             pyramid_levels: 0xABCD,
+            id_widths: 0,
             dict_codec: 0xA1,
             block_codec: 0xA2,
             schema_meta_len: 0xD00D,
