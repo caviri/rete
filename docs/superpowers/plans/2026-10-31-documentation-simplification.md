@@ -113,28 +113,30 @@ Proposed destination layout: `rete-apps/apps/<app>/` owns that app's source, gui
 
 ## Implementation sequence
 
+**Delivery record (2026-11-01):** Tasks 1 and 2 are complete. Task 3 is implemented and its CLI quickstart, SBOM and card commands were exercised against the published image. Task 5 has targeted corrections and the editorial checklist; its broader consolidation remains open. Task 4 has not started. First-delivery validation covers generated-page reproducibility, local links, retained fragments, page reachability, desktop/mobile navigation and social previews; cross-site migration checks are not applicable until Task 4. Unchecked items below retain the remaining roadmap and broader verification requirements.
+
 ### 1. Make navigation independent of publication
 
 **Files:** `crates/docgen/src/main.rs`, its existing test module, `scripts/check_docs_links.py`, `scripts/tests/test_check_docs_links.py` only if additional link handling is needed.
 
-- [ ] Introduce an explicit registry of published Markdown pages with title/category metadata. Render every registered page regardless of sidebar visibility; register `graph-algorithms.md` as well.
-- [ ] Check registry completeness against root `docs/*.md`: every file is registered or explicitly excluded with a reason. Keep nested historical plans outside public-page discovery.
-- [ ] Keep a small sidebar definition referencing that registry. Keep the mobile drawer derived from the sidebar. Use an explicit curated learning order for Overview → Quickstart → Graph concepts → Playground; specialist pages get a parent/back link rather than arbitrary next steps through every app.
-- [ ] Replace the tests asserting that reading order equals the entire sidebar. Add behavior tests: a registered hidden page renders; missing pages are not linked; sidebar/registry IDs are unique; learning links resolve; a technical page has a usable parent.
-- [ ] Preserve heading IDs during rewrites with the existing explicit-ID support or alias anchors. Record page/fragment moves before changing them.
-- [ ] Check `rewrite_links` against local documents, external GitHub Markdown URLs, query strings and fragments. Its current string replacements must not turn an external source link into an HTML destination that does not exist.
-- [ ] Run `docker compose run --rm dev cargo test -p docgen` and the link-checker unit tests. Deliver this as a focused renderer change before cutting navigation entries.
+- [x] Introduce an explicit registry of published Markdown pages with title/category metadata. Render every registered page regardless of sidebar visibility; register `graph-algorithms.md` as well.
+- [x] Check registry completeness against root `docs/*.md`: every file is registered or explicitly excluded with a reason. Keep nested historical plans outside public-page discovery.
+- [x] Keep a small sidebar definition referencing that registry. Keep the mobile drawer derived from the sidebar. Use an explicit curated learning order for Overview → Quickstart → Graph concepts → Playground; specialist pages get a parent/back link rather than arbitrary next steps through every app.
+- [x] Replace the tests asserting that reading order equals the entire sidebar. Add behavior tests: a registered hidden page renders; missing pages are not linked; sidebar/registry IDs are unique; learning links resolve; a technical page has a usable parent.
+- [x] Preserve heading IDs during rewrites with the existing explicit-ID support or alias anchors. Record page/fragment moves before changing them.
+- [x] Check `rewrite_links` against local documents, external GitHub Markdown URLs, query strings and fragments. Its current string replacements must not turn an external source link into an HTML destination that does not exist.
+- [x] Run `docker compose run --rm dev cargo test -p docgen` and the link-checker unit tests. Deliver this as a focused renderer change before cutting navigation entries.
 
 ### 2. Ship the smaller sidebar and useful entry pages
 
 **Files:** the eight new `docs/*.md` entry pages listed above; `docs/index.md`; `crates/docgen/src/main.rs`; generated HTML.
 
-- [ ] Implement the four groups and 15 primary entries shown above. Put release procedures under Contributing and language-specific details under Language clients.
-- [ ] Populate entry pages with task descriptions and links using the disposition table. Keep `apps.md` local and functional before any external gallery exists.
-- [ ] Remove the duplicate giant documentation directory from Overview. Give it a short explanation, a suitable-use/limits paragraph, and links to try, build or integrate rete.
-- [ ] Replace the reader-facing footer's generator command with a quiet source/edit link; document generation belongs in Contributing.
-- [ ] Verify all 56 existing pages are reachable from an entry/reference page or an intentional compatibility page. No app submenus should reconstruct the old 93-link tree.
-- [ ] Render the site and inspect desktop, narrow mobile, keyboard navigation and JavaScript-disabled navigation. Check visible labels, active-page context and the drawer's contents.
+- [x] Implement the four groups and 15 primary entries shown above. Put release procedures under Contributing and language-specific details under Language clients.
+- [x] Populate entry pages with task descriptions and links using the disposition table. Keep `apps.md` local and functional before any external gallery exists.
+- [x] Remove the duplicate giant documentation directory from Overview. Give it a short explanation, a suitable-use/limits paragraph, and links to try, build or integrate rete.
+- [x] Replace the reader-facing footer's generator command with a quiet source/edit link; document generation belongs in Contributing.
+- [x] Verify all 56 existing pages are reachable from an entry/reference page or an intentional compatibility page. No app submenus should reconstruct the old 93-link tree.
+- [x] Render the site and inspect desktop, narrow mobile, keyboard navigation and JavaScript-disabled navigation. Check visible labels, active-page context and the drawer's contents.
 
 ### 3. Rewrite the main learning path and fix misleading claims
 
