@@ -416,6 +416,120 @@ pub(crate) fn bgp_min_estimate(
         .reduce(f64::min)
 }
 
+/// The sum of the tile-directory estimates of a BGP's patterns: what evaluating
+/// it whole reads when each pattern is scanned once. [`bgp_min_estimate`] is
+/// only the cheapest pattern's share of that, so on a BGP of several mid-sized
+/// patterns (a journal's title, identifiers and their scheme: 38 k rows each
+/// under the probe floor, 5x that together) it stays under the floor and the
+/// BGP is materialized for a handful of left rows. `None` as for
+/// [`bgp_min_estimate`].
+pub(crate) fn bgp_total_estimate(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    patterns: &[TriplePattern],
+) -> Option<f64> {
+    let lowered = lower(patterns, ctx)?;
+    Some(
+        tile_estimates(ctx, index, &lowered, &std::collections::HashSet::new())
+            .into_iter()
+            .sum(),
+    )
+}
+
+/// Is `t` the pattern `?x rdf:type ?c` with `?x` among the slots `shared` with
+/// the rows probing it, and `?c` not?
+fn is_unbound_class(ctx: &Ctx, t: &(SlotTerm, SlotTerm, SlotTerm), shared: &[usize]) -> bool {
+    let type_pid = ctx.rete.dictionary().predicate_id(crate::file::RDF_TYPE);
+    matches!(
+        t,
+        (SlotTerm::Var(x), SlotTerm::Pred(p), SlotTerm::Var(c))
+            if Some(*p) == type_pid && shared.contains(x) && !shared.contains(c) && x != c
+    )
+}
+
+/// Is a BGP whose cheapest pattern is estimated at `est` rows fat enough that
+/// probing it per outer row beats loading it? [`FAT_SCAN_ROWS`]; tests set the
+/// probe floor instead, to drive the path over a graph small enough to check.
+fn fat_enough(est: f64) -> bool {
+    #[cfg(test)]
+    if TEST_LIMITS.with(|c| c.get()).is_some() {
+        return est >= limits().probe_floor;
+    }
+    est >= FAT_SCAN_ROWS
+}
+
+/// A BGP probed once per outer row instead of evaluated whole: the shape of a
+/// correlated `FILTER (NOT) EXISTS` or `MINUS` over a BGP. Each outer row's
+/// bound variables become constants of the probe ([`ProbeJoin`]), so a fat
+/// BGP is never loaded; a row costs a few index lookups and stops at its
+/// first solution. A BGP below [`FAT_SCAN_ROWS`] is cheap to load once and
+/// index, so it keeps that plan: probing it would only fault scattered tiles.
+pub(crate) struct CorrelatedProbe {
+    /// `None`: a constant is not in the file, so no row has a solution.
+    plan: Option<ProbePlan>,
+    /// The variable slots the BGP mentions.
+    slots: Vec<usize>,
+}
+
+impl CorrelatedProbe {
+    /// `seed` marks the slots the outer rows certainly bind. `None` = evaluate
+    /// whole: the BGP is empty, shares no variable with the outer side, or is
+    /// not fat.
+    pub(crate) fn new(
+        ctx: &Ctx,
+        index: &GraphIndex,
+        patterns: &[TriplePattern],
+        seed: &[bool],
+    ) -> Option<Self> {
+        if patterns.is_empty() {
+            return None;
+        }
+        let mut slots: Vec<usize> = Vec::new();
+        for p in patterns {
+            for t in [&p.s, &p.p, &p.o] {
+                if let PatternTerm::Var(v) = t {
+                    if let Some(i) = ctx.slots.slot(v) {
+                        if !slots.contains(&i) {
+                            slots.push(i);
+                        }
+                    }
+                }
+            }
+        }
+        if !slots.iter().any(|&i| seed[i]) {
+            return None;
+        }
+        // An unknown constant empties the BGP for every row.
+        let Some(est) = bgp_min_estimate(ctx, index, patterns) else {
+            return Some(CorrelatedProbe { plan: None, slots });
+        };
+        if !fat_enough(est) {
+            return None;
+        }
+        Some(CorrelatedProbe {
+            plan: ProbePlan::new(ctx, index, patterns, seed),
+            slots,
+        })
+    }
+
+    /// Does `row` bind a variable of the BGP?
+    pub(crate) fn shares(&self, row: &Row) -> bool {
+        self.slots.iter().any(|&i| row[i].is_some())
+    }
+
+    /// Does the BGP, with `row`'s bindings substituted, have a solution?
+    /// Callers check [`Self::shares`] first: a row that binds none of the
+    /// BGP's variables would re-evaluate all of it.
+    pub(crate) fn probe(&self, ctx: &Ctx, index: &GraphIndex, row: &Row) -> bool {
+        match &self.plan {
+            None => false,
+            Some(plan) => ProbeJoin::from_plan(ctx, index, plan, row.clone())
+                .next()
+                .is_some(),
+        }
+    }
+}
+
 /// Run `f` with the probe floor set to `floor` (tests only), so a join's
 /// probe paths can be driven over a graph small enough to check by hand.
 #[cfg(test)]
@@ -486,7 +600,7 @@ fn tile_estimates(
     const SEL_OBJECT: f64 = 0.02;
     const SEL_PREDICATE: f64 = 0.05;
     let dict = ctx.rete.dictionary();
-    let total = ctx.rete.header().quad_count;
+    let total = ctx.rete.index_triples(index);
     let seeded = |x: &SlotTerm| matches!(x, SlotTerm::Var(v) if seed.contains(v));
     // A seeded subject/object of a constant predicate takes that predicate's
     // MEASURED selectivity from `query_stats` (the SCHEMA section, kind 9, or
@@ -754,6 +868,7 @@ fn pattern_rows(
 /// heuristic.
 fn pattern_estimates(
     ctx: &Ctx,
+    index: &GraphIndex,
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
     seed: &std::collections::HashSet<usize>,
 ) -> Option<Vec<f64>> {
@@ -776,7 +891,10 @@ fn pattern_estimates(
         .iter()
         .map(|s| (s.predicate, s))
         .collect();
-    let total = ctx.rete.header().quad_count.max(1) as f64;
+    // The active graph's own size: a pattern inside `GRAPH <g>` cannot match more
+    // triples than `g` holds, whatever the file-wide predicate count says.
+    let graph_total = ctx.rete.index_triples(index).max(1) as f64;
+    let total = graph_total;
     let num_preds = pred.len().max(1) as f64;
     // Defaults used only when query_stats has no entry for the predicate.
     const SEL_SUBJECT: f64 = 0.001;
@@ -801,7 +919,7 @@ fn pattern_estimates(
                     SlotTerm::Var(v) if seed.contains(&v) => (total / num_preds, None),
                     _ => (total, None),
                 };
-                let mut est = base.max(1.0);
+                let mut est = base.min(graph_total).max(1.0);
                 if node_bound(&t.0) {
                     est *= match st {
                         Some(s) if s.distinct_subjects > 0 => 1.0 / s.distinct_subjects as f64,
@@ -944,7 +1062,7 @@ fn selectivity_order_seeded(
     // class-enumeration rule below, a stand-in for exactly that missing
     // number, applies only to the pyramid figures, whose `rdf:type`
     // selectivity is an average over classes.
-    let (estimates, per_class) = match pattern_estimates(ctx, lowered, seed) {
+    let (estimates, per_class) = match pattern_estimates(ctx, index, lowered, seed) {
         Some(e) => (Some(e), false),
         None => (Some(tile_estimates(ctx, index, lowered, seed)), true),
     };
@@ -1243,7 +1361,16 @@ impl<'q> BgpSolutions<'q> {
         // A few prefix rows against a big last pattern: look each one up
         // instead of scanning the pattern. `?r :relationSubject <doi> . ?r ?p
         // ?o` has four prefix rows and a last pattern that is the whole graph.
-        if !shared.is_empty() && probe_beats_scan(prefix.len(), scan_est[last_i]) {
+        // The last pattern is an unbound class (`?x rdf:type ?c`) whose subject
+        // the prefix binds: each row's types are one SPO lookup, and the prefix
+        // is already resident, so probing costs no memory the scan would not.
+        // It wins until the rows outnumber the statements the scan would read
+        // (the usual sixteenth gives way to one).
+        let class_probe = !shared.is_empty()
+            && scan_est[last_i] >= limits().probe_floor
+            && (prefix.len() as f64) <= scan_est[last_i]
+            && is_unbound_class(ctx, &lowered[last_i], &shared);
+        if !shared.is_empty() && (probe_beats_scan(prefix.len(), scan_est[last_i]) || class_probe) {
             let t = lowered[last_i];
             if index.is_remote() {
                 prefetch_rows_for(ctx, index, t, &prefix);

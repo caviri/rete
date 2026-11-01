@@ -161,10 +161,32 @@ impl FExpr {
             },
             FExpr::Exists(plan) => {
                 let key = plan.as_ref() as *const Plan;
-                let entry = cache.entry(key).or_insert_with(|| ExistsEntry {
-                    sols: eval_plan_in(ctx, index, None, plan),
-                    probe: None,
+                let entry = cache.entry(key).or_insert_with(|| {
+                    // A BGP that shares a variable with the outer row is probed
+                    // per row (bound variables become constants) rather than
+                    // loaded whole: `FILTER NOT EXISTS { ?s :p ?o }` over a fat
+                    // `:p` reads the few rows it is asked about.
+                    let corr = match plan.as_ref() {
+                        Plan::Bgp(patterns) => {
+                            let seed: Vec<bool> = b.iter().map(Option::is_some).collect();
+                            crate::bgp::CorrelatedProbe::new(ctx, index, patterns, &seed)
+                        }
+                        _ => None,
+                    };
+                    ExistsEntry {
+                        sols: Vec::new(),
+                        loaded: false,
+                        probe: None,
+                        corr,
+                    }
                 });
+                if let Some(c) = entry.corr.as_ref().filter(|c| c.shares(b)) {
+                    return Some(c.probe(ctx, index, b));
+                }
+                if !entry.loaded {
+                    entry.sols = eval_plan_in(ctx, index, None, plan);
+                    entry.loaded = true;
+                }
                 if entry.sols.is_empty() {
                     return Some(false);
                 }

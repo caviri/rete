@@ -226,7 +226,7 @@ fn component(t: Triple, col: usize) -> u32 {
 /// [`GraphIndex::estimate_matches`] uses.
 fn rows_per_tile(ctx: &Ctx, index: &GraphIndex, si: usize) -> f64 {
     let tiles = index.tile_sections()[si].len().max(1);
-    ctx.rete.header().quad_count as f64 / tiles as f64
+    ctx.rete.index_triples(index) as f64 / tiles as f64
 }
 
 /// The estimated rows of the UNION of the tiles that scanning each of
@@ -278,7 +278,7 @@ fn group_streams<'q>(
     if members.len() >= GROUP_SCAN_MIN {
         let whole: Pattern = (None, Some(p), None);
         let per_source = union_tile_rows(ctx, index, members.iter().map(|(l, _)| l.pattern));
-        let one_scan = index.estimate_matches(whole, ctx.rete.header().quad_count);
+        let one_scan = index.estimate_matches(whole, ctx.rete.index_triples(index));
         let slack = if ctx.limit_hint.get().is_some_and(|h| h <= 4096) {
             4.0
         } else {
@@ -433,7 +433,7 @@ pub(super) fn scan_rows(
     vars: &[String],
     sources: &[TriplePattern],
 ) -> f64 {
-    let total = ctx.rete.header().quad_count;
+    let total = ctx.rete.index_triples(index);
     sources
         .iter()
         .filter_map(|s| lower(ctx, vars, s))
