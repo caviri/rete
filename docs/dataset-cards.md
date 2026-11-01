@@ -109,7 +109,7 @@ newlines.
 | `signals.quoted_triples` | **measured** | Whether the dataset holds **quoted triples**, and which surfaces an export can write them in — `{present, export_surfaces, export_default}`. Derived from header flag bit 2, and also never written. See [The quoted-triple signal](#the-quoted-triple-signal-measured-not-stored). |
 | `signals.annotation_predicates`, `signals.quoting_predicates`, `signals.annotated_statement` | derived | The **vocabulary of the RDF-star layer**, when there is one: the predicates that annotate a statement, the predicates whose *value* is a statement, and the one `(quoted predicate, annotating predicate)` pair witnessed on a statement this graph both asserts and annotates. Empty and omitted on a graph with no quoted triples. See [Querying the star layer](#querying-the-star-layer). |
 | `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
-| `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). |
+| `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). Also set when the subject-namespace tally overflowed (see below). |
 | `top_n` | derived | The cap the profile lists were derived under — the number `truncated` was hinting at without stating. |
 | `format_version` | derived | The `.rete` **spec version** the card was written against — the format's version, not the dataset's. |
 
@@ -120,6 +120,12 @@ list is **capped** and **deterministically ordered** (count-descending, ties
 broken lexically), so building the same input twice yields a **byte-identical**
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching `rete progressive`.
+
+The subject-namespace tally (it only feeds `signals.base_iri`) is **bounded** at
+65,536 distinct namespaces, so a graph whose identifiers contain slashes (DataCite DOIs)
+cannot grow it with the record count. At or under the cap the card is byte-identical to an
+unbounded tally; past it the counts are a deterministic space-saving summary, the common prefix
+stays exact, and the card is marked `truncated`.
 
 ### The full-text signal: measured, not stored
 
