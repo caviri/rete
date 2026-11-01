@@ -1118,7 +1118,7 @@ pub fn curated_counts_card(statements: u64, term_count: u64, curated: CardInput)
         quad_count: statements,
         named_graph_count: 0,
         term_count,
-        format_version: crate::format::CURRENT_FORMAT_VERSION,
+        format_version: crate::format::LEGACY_FORMAT_VERSION,
         ..DatasetCard::default()
     };
     curated.fill(&mut card);
@@ -1589,7 +1589,7 @@ fn finish(
         // The cap the profile lists above were derived under (deterministic:
         // a compile-time constant of this builder, not a per-build fact).
         top_n: CARD_TOP_N as u32,
-        format_version: crate::CURRENT_FORMAT_VERSION,
+        format_version: crate::LEGACY_FORMAT_VERSION,
         ..DatasetCard::default()
     };
     curated.fill(&mut card);

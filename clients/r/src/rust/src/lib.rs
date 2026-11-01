@@ -233,7 +233,7 @@ fn card_bytes(curated: Option<serde_json::Value>, stats: &rete_core::ingest::Bui
     obj.insert("term_count".into(), stats.terms.into());
     obj.insert(
         "format_version".into(),
-        rete_core::CURRENT_FORMAT_VERSION.into(),
+        rete_core::LEGACY_FORMAT_VERSION.into(),
     );
     serde_json::to_vec(&value).unwrap_or_default()
 }

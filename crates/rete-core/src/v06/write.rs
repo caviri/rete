@@ -13,6 +13,7 @@ use std::io::{Seek, SeekFrom, Write};
 use super::parts::Parts;
 use super::*;
 use crate::file::{compress, FileError};
+use crate::header::CURRENT_FORMAT_VERSION;
 use crate::reader::RangeReader;
 
 /// How quad tiles are clustered in the data region.
@@ -727,7 +728,7 @@ pub fn assemble<W: Write + Seek>(
         .card
         .as_ref()
         .filter(|c| !c.is_empty())
-        .map(|c| compress(codec, c));
+        .map(|c| compress(codec, &stamp_card_version(c)));
     let build = parts.build.clone().filter(|b| !b.is_empty());
     let card_len = card.as_ref().map_or(0, |c| c.len()) as u32;
     let build_len = build.as_ref().map_or(0, |b| b.len()) as u32;
@@ -884,6 +885,31 @@ fn presence_of(p: &Parts) -> u16 {
     x
 }
 
+/// A card written into a `0x06` file says `"format_version":6`. The cards the
+/// core builders derive stamp the `0x05` layout they were produced for
+/// (`LEGACY_FORMAT_VERSION`); every card entering a `0x06` file passes here, so
+/// a build, a converted build and a re-card agree on the stamp. Only the first
+/// compact `"format_version":N` with N below 6 is rewritten; anything else is
+/// returned unchanged.
+pub fn stamp_card_version(card: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    const KEY: &[u8] = b"\"format_version\":";
+    let Some(at) = card.windows(KEY.len()).position(|w| w == KEY) else {
+        return std::borrow::Cow::Borrowed(card);
+    };
+    let s = at + KEY.len();
+    let digits = card[s..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let old = std::str::from_utf8(&card[s..s + digits]).unwrap_or("");
+    match old.parse::<u8>() {
+        Ok(v) if v < CURRENT_FORMAT_VERSION => {
+            let mut out = card[..s].to_vec();
+            out.extend_from_slice(CURRENT_FORMAT_VERSION.to_string().as_bytes());
+            out.extend_from_slice(&card[s + digits..]);
+            std::borrow::Cow::Owned(out)
+        }
+        _ => std::borrow::Cow::Borrowed(card),
+    }
+}
+
 /// Convert a whole `0x05` image held in memory to a `0x06` image.
 pub fn convert_image(image: &[u8], opts: WriteOpts) -> Result<Vec<u8>, FileError> {
     let r = crate::reader::SliceReader::new(image);
@@ -1007,7 +1033,7 @@ pub fn replace_card(
         .ok_or(FileError::Container("0x06 data overruns"))?;
     let stored = card
         .filter(|c| !c.is_empty())
-        .map(|c| compress(h.internal_codec, c));
+        .map(|c| compress(h.internal_codec, &stamp_card_version(c)));
     let (_, mut out) = recard_front(&h, front, stored.as_deref(), build)?;
     out.extend_from_slice(data);
     Ok(out)
@@ -1104,7 +1130,7 @@ pub fn rewrite_card_stream<W: Write>(
         }
         NewCard::Set(c) => c
             .filter(|c| !c.is_empty())
-            .map(|c| compress(h.internal_codec, c)),
+            .map(|c| compress(h.internal_codec, &stamp_card_version(c))),
     };
     let (nh, new_front) = recard_front(&h, &front, stored.as_deref(), build)?;
     out.write_all(&new_front)?;
@@ -1140,7 +1166,7 @@ pub fn recard_in_place<F: std::io::Read + Write + Seek>(
         NewCard::Keep => None,
         NewCard::Set(c) => c
             .filter(|c| !c.is_empty())
-            .map(|c| compress(h.internal_codec, c)),
+            .map(|c| compress(h.internal_codec, &stamp_card_version(c))),
     };
     let keep_card = match (card, &card_stored) {
         (NewCard::Keep, _) => true,
@@ -1215,4 +1241,25 @@ pub fn commit_header<F: Write + Seek>(file: &mut F, h: &Header06) -> Result<(), 
     file.write_all(&h.to_bytes())?;
     file.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use super::stamp_card_version;
+
+    #[test]
+    fn stamps_older_versions_only() {
+        let s = |b: &[u8]| stamp_card_version(b).into_owned();
+        assert_eq!(
+            s(br#"{"a":1,"format_version":5}"#),
+            br#"{"a":1,"format_version":6}"#
+        );
+        assert_eq!(
+            s(br#"{"format_version":5,"z":2}"#),
+            br#"{"format_version":6,"z":2}"#
+        );
+        assert_eq!(s(br#"{"format_version":6}"#), br#"{"format_version":6}"#);
+        assert_eq!(s(br#"{"format_version":7}"#), br#"{"format_version":7}"#);
+        assert_eq!(s(br#"{"title":"x"}"#), br#"{"title":"x"}"#);
+    }
 }

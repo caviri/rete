@@ -182,7 +182,7 @@ fn build_card_surface(
             stats.statements as u64,
             stats.named_graphs as u64,
             stats.terms as u64,
-            rete_core::CURRENT_FORMAT_VERSION,
+            rete_core::LEGACY_FORMAT_VERSION,
         );
         serde_json::to_vec(&card).expect("card serializes")
     });
