@@ -98,6 +98,11 @@ cp web/pkg/rete_wasm.js web/pkg/rete_wasm_bg.wasm docs/engine/
 bash scripts/build_playground_async.sh
 uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py
+# docs/yasgui.html inlines the same no-modules glue and engine. It had no place
+# in this script, so nothing rebuilt it: it shipped an engine from 2026-08-08,
+# without the quad index or partition_plan, stamped "from unknown". It is
+# guarded by CI's parity diff with the playground now.
+uv run python scripts/build_yasgui.py
 # The gate's .rete fixtures. This used to be five inline `cargo run` lines here,
 # five more in .github/workflows/ci.yml, and a curl in tests/gate/gate.sh — three
 # producers of the same five files, which is how they drifted. One producer now,

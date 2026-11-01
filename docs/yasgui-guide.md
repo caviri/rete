@@ -49,12 +49,14 @@ GitHub releases and Zenodo all qualify. Build the file with [`rete build`](cli.m
 
 ## How it's built
 
-`scripts/build_yasgui.py` inlines the CodeMirror bundle, the wasm-bindgen no-modules glue and the
-base64-encoded engine into `docs/yasgui.html` from `web/yasgui.template.html` +
-`web/yasgui-src/{app,worker}.js`. Queries run in a Blob-spawned Web Worker — the lazy remote reader
-uses synchronous XHR, which browsers only allow off the main thread. The end-to-end regression lives
-at `tests/gate/checks/check_yasgui.mjs` (run it manually after touching the sources; it is not part
-of the gate matrix).
+`scripts/build_wasm.sh` runs `scripts/build_yasgui.py`, which inlines the CodeMirror bundle, the
+wasm-bindgen no-modules glue and the base64-encoded engine into `docs/yasgui.html` from
+`web/yasgui.template.html` + `web/yasgui-src/{app,worker}.js`. CI rebuilds it with the playground
+and fails when the tracked page differs, and the gate checks that it embeds the glue of the engine
+it was built with. Queries run in a Blob-spawned Web Worker — the lazy remote reader uses
+synchronous XHR, which browsers only allow off the main thread. The end-to-end regression lives at
+`tests/gate/checks/check_yasgui.mjs` (run it manually after touching the sources; it needs the
+network and is not part of the gate matrix).
 
 UI after [Yasgui](https://yasgui.triply.cc/) by Triply — the tab model, the triangle query button, the
 YASR view plugins and the autocompleters are all loving imitations.

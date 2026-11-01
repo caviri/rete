@@ -1925,11 +1925,33 @@ self.onmessage = function (e) {
   // when no scheme is given. A scheme that IS given must be http(s): that is
   // what keeps javascript:/data: out, and why this cannot be a prefix check.
   // Returns null when the address cannot be used.
+  //
+  // `host:port/path` parses as a URI whose scheme is the host, so a typed
+  // `localhost:8090/x.rete` was refused as an unknown scheme. A port after
+  // localhost, an IP literal or a dotted name is an address, read as https
+  // like any scheme-less one (`javascript:80/` has no dot and stays a scheme);
+  // a local http server is typed with its scheme. A scheme with no host
+  // (`https:`, `https:///x`) used to pass and fail in the reader.
+  // tests/gate/checks/test_url_normalize.mjs runs this function as it is here.
   function normalizeReteUrl(raw) {
     const s = String(raw == null ? "" : raw).trim();
     if (!s) return null;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return /^https?:/i.test(s) ? s : null;
-    return "https://" + s.replace(/^\/+/, "");  // also covers //host/path
+    const hostPort = /^(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|\[[0-9a-f:.]+\]|(?:[a-z0-9-]+\.)+[a-z0-9-]+):\d+(?:[/?#]|$)/i;
+    let candidate;
+    if (s.startsWith("//")) candidate = "https:" + s;
+    else if (hostPort.test(s)) candidate = "https://" + s;
+    else if (/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+      if (!/^https?:\/\/[^/?#]/i.test(s)) return null;
+      candidate = s;
+    } else candidate = "https://" + s.replace(/^\/+/, "");  // also covers /host/path
+    // The URL parser has the last word: a port past 65535, an empty host.
+    try {
+      const u = new URL(candidate);
+      if ((u.protocol !== "http:" && u.protocol !== "https:") || !u.hostname) return null;
+    } catch (_e) {
+      return null;
+    }
+    return candidate;
   }
 
   // The file name a remote URL actually points at ("nkod.rete") — the honest
