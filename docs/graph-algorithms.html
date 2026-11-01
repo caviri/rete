@@ -114,36 +114,51 @@ code,pre,.mono { font-family:"Cascadia Mono","SF Mono",Consolas,ui-monospace,mon
 .sidebar .meta a:hover { background:none; text-decoration:underline; }
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .sidebar li { margin:.08rem 0; }
-.sidebar li.nav-h {
-  margin:1.15rem 0 .3rem; padding:0 .62rem; font-size:.66rem; font-weight:800;
-  letter-spacing:.09em; text-transform:uppercase; color:var(--side-fg);
-}
-.sidebar li.nav-h:first-child { margin-top:.2rem; }
 .sidebar a {
   color:var(--side-fg); text-decoration:none; display:block; padding:.42rem .62rem;
   border-left:3px solid transparent; border-radius:0 6px 6px 0; font-size:.93rem; line-height:1.25;
 }
 .sidebar a:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
 .sidebar a.active { background:var(--panel); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; box-shadow:0 6px 18px rgba(20,125,105,.10); }
-.sidebar .nav-group summary {
-  cursor:pointer; list-style:none; padding:.42rem .62rem; font-size:.93rem; line-height:1.25;
-  color:var(--side-fg); border-left:3px solid transparent; border-radius:0 6px 6px 0;
+/* Native disclosures also work without JavaScript. The mobile drawer clones
+   this same tree, including the open ancestors of the current page. */
+:is(.sidebar,.mdrawer) .nav-section > summary,
+:is(.sidebar,.mdrawer) .nav-group > details > summary {
+  display:flex; align-items:center; gap:.5rem; list-style:none; cursor:pointer;
+  padding:.42rem .62rem; color:var(--side-fg); font-size:.93rem; line-height:1.3;
+  border-left:3px solid transparent; border-radius:0 6px 6px 0;
 }
-.sidebar .nav-group summary::-webkit-details-marker { display:none; }
-.sidebar .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
-.sidebar .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
-.sidebar .nav-group summary:hover { background:rgba(20,125,105,.09); color:var(--accent-deep); }
-/* The summary title is a link to the overview; keep it inline (no second block
-   padding) so it reads as the group heading, not a nested item. */
-.sidebar .nav-group summary a { display:inline; padding:0; margin:0; border:0; border-radius:0; box-shadow:none; color:inherit; font-size:inherit; line-height:inherit; }
-.sidebar .nav-group summary a:hover { background:none; color:inherit; }
-.sidebar .nav-group summary a.active { background:none; box-shadow:none; color:var(--accent-deep); font-weight:700; }
-.sidebar .nav-sub { padding-left:.55rem; margin:.1rem 0 .35rem .55rem; border-left:1px solid var(--border); }
-.sidebar .nav-sub a { font-size:.85rem; padding:.3rem .6rem; color:var(--muted); }
-.sidebar .nav-sub a:hover { color:var(--accent-deep); }
-.sidebar .nav-sub a.active { font-weight:700; color:var(--accent-deep); }
+:is(.sidebar,.mdrawer) .nav-section > summary {
+  margin-top:.9rem; font-size:.76rem; font-weight:700;
+}
+:is(.sidebar,.mdrawer) li:first-child > .nav-section > summary { margin-top:0; }
+:is(.sidebar,.mdrawer) summary::-webkit-details-marker { display:none; }
+:is(.sidebar,.mdrawer) .nav-section > summary::after,
+:is(.sidebar,.mdrawer) .nav-group > details > summary::after {
+  content:""; flex:0 0 .4rem; width:.4rem; height:.4rem; margin-left:auto;
+  border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor;
+  transform:rotate(-45deg); opacity:.7;
+}
+:is(.sidebar,.mdrawer) .nav-section[open] > summary::after,
+:is(.sidebar,.mdrawer) .nav-group > details[open] > summary::after { transform:rotate(45deg); }
+:is(.sidebar,.mdrawer) summary:hover { background:var(--tint); }
+:is(.sidebar,.mdrawer) .nav-group > details > summary.nav-context {
+  color:var(--accent-deep); font-weight:700; border-left-color:var(--accent);
+}
+:is(.sidebar,.mdrawer) a:focus-visible,
+:is(.sidebar,.mdrawer) summary:focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px;
+}
+:is(.sidebar,.mdrawer) .nav-sub {
+  padding-left:.55rem; margin:.1rem 0 .35rem .75rem; border-left:1px solid var(--border);
+}
+:is(.sidebar,.mdrawer) .nav-sub a { font-size:.84rem; padding:.36rem .6rem; color:var(--muted); }
+:is(.sidebar,.mdrawer) .nav-sub a.nav-current {
+  color:var(--accent-deep); font-weight:700; background:var(--tint); border-left-color:var(--accent);
+}
 .sidebar .foot { margin-top:1.3rem; font-size:.85rem; }
 .sidebar .foot a { display:inline; padding:0; border:0; color:var(--muted); }
+#keyterms:empty { display:none; }
 
 main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 .page {
@@ -281,7 +296,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 @media (max-width:780px) {
   body { display:block; background:var(--bg); }
   .sidebar { width:100%; min-height:auto; position:static; border-right:0; border-bottom:1px solid var(--border); background:var(--side); }
-  .sidebar ul { columns:2; column-gap:.7rem; }
+  .sidebar > ul { columns:2; column-gap:.7rem; }
+  .sidebar ul ul { columns:1; }
   .sidebar li { break-inside:avoid; }
   .page { padding:0 1.15rem; }
   .content { padding-top:2rem; }
@@ -482,21 +498,9 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .mdrawer a:active { background:rgba(20,125,105,.1); }
   .mdrawer a.active { background:var(--tint); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; }
   .mdrawer .toc-sub a { padding-left:1.5rem; font-size:.84rem; color:var(--muted); }
-  .mdrawer li.nav-h {
-    margin:1rem 0 .2rem; padding:0 .6rem; font-size:.63rem; font-weight:800;
-    letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
-  }
-  .mdrawer li.nav-h:first-child { margin-top:.1rem; }
-  .mdrawer .nav-group summary {
-    display:flex; align-items:center; padding:.5rem .6rem; font-size:.9rem; line-height:1.3;
-    list-style:none; cursor:pointer;
-  }
-  .mdrawer .nav-group summary::-webkit-details-marker { display:none; }
-  .mdrawer .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
-  .mdrawer .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
-  .mdrawer .nav-group summary a { display:inline; padding:0; border:0; border-radius:0; background:none; font-size:inherit; }
-  .mdrawer .nav-sub { margin:.1rem 0 .3rem .6rem; padding-left:.5rem; border-left:1px solid var(--border); }
-  .mdrawer .nav-sub a { font-size:.82rem; padding:.36rem .6rem; color:var(--muted); }
+  .mdrawer .nav-section > summary,
+  .mdrawer .nav-group > details > summary,
+  .mdrawer .nav-sub a { min-height:44px; }
 
   /* The page turn: a short slide out before the browser fetches the next
      document. It is the only motion the gesture adds, and it does not run at
@@ -533,30 +537,64 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     </span>
     <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
   </header>
-  <nav class="sidebar">
+  <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
     <p class="meta"><span class="ver">v0.4.2</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
-        <li class="nav-h">Start here</li>
+        <li><details class="nav-section" open><summary class="nav-h">Start here</summary><ul>
         <li><a href="index.html">Overview</a></li>
-        <li><a href="getting-started.html">Quickstart</a></li>
+        <li class="nav-group"><details data-nav-page="getting-started.md"><summary>Quickstart</summary><ul class="nav-sub"><li><a href="getting-started.html">Overview</a></li>
+        <li><a href="install.html">Install rete</a></li>
+        </ul></details></li>
         <li><a href="intro.html">Graph concepts</a></li>
         <li><a href="playground-guide.html">Playground</a></li>
-        <li class="nav-h">Guides</li>
-        <li><a href="build-and-publish.html">Build and publish</a></li>
-        <li><a href="query-and-analyze.html" class="active">Query and analyze</a></li>
-        <li><a href="clients.html">Language clients</a></li>
-        <li><a href="integrations.html">Tools and integrations</a></li>
-        <li><a href="recipes.html">Worked examples</a></li>
-        <li class="nav-h">Reference</li>
+        </ul></details></li>
+        <li><details class="nav-section" open><summary class="nav-h">Guides</summary><ul>
+        <li class="nav-group"><details data-nav-page="build-and-publish.md"><summary>Build and publish</summary><ul class="nav-sub"><li><a href="build-and-publish.html">Overview</a></li>
+        <li><a href="dataset-cards.html">Dataset Cards</a></li>
+        <li><a href="hosting.html">Hosting</a></li>
+        <li><a href="data-engineering.html">Large builds and tables</a></li>
+        </ul></details></li>
+        <li class="nav-group"><details data-nav-page="query-and-analyze.md" open><summary class="nav-context">Query and analyze</summary><ul class="nav-sub"><li><a href="query-and-analyze.html">Overview</a></li>
+        <li><a href="graph-algorithms.html" class="nav-current" aria-current="page">Graph algorithms</a></li>
+        <li><a href="federation.html">Federation</a></li>
+        <li><a href="reasoning.html">Reasoning</a></li>
+        </ul></details></li>
+        <li class="nav-group"><details data-nav-page="clients.md"><summary>Language clients</summary><ul class="nav-sub"><li><a href="clients.html">Overview</a></li>
+        <li><a href="python.html">Python</a></li>
+        <li><a href="javascript.html">JavaScript</a></li>
+        <li><a href="r.html">R</a></li>
+        </ul></details></li>
+        <li class="nav-group"><details data-nav-page="integrations.md"><summary>Tools and integrations</summary><ul class="nav-sub"><li><a href="integrations.html">Overview</a></li>
+        <li><a href="plaza-guide.html">Plaza</a></li>
+        <li><a href="file-explorer.html">File Explorer</a></li>
+        <li><a href="yasgui-guide.html">SPARQL IDE</a></li>
+        </ul></details></li>
+        <li class="nav-group"><details data-nav-page="recipes.md"><summary>Worked examples</summary><ul class="nav-sub"><li><a href="recipes.html">Overview</a></li>
+        <li><a href="scenario.html">Dependency walkthrough</a></li>
+        </ul></details></li>
+        </ul></details></li>
+        <li><details class="nav-section" open><summary class="nav-h">Reference</summary><ul>
         <li><a href="cli.html">CLI</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
-        <li><a href="reference.html">API and technical reference</a></li>
+        <li class="nav-group"><details data-nav-page="reference.md"><summary>API and technical reference</summary><ul class="nav-sub"><li><a href="reference.html">Overview</a></li>
+        <li><a href="SPEC.html">File format</a></li>
+        <li><a href="rust-api.html">Rust API</a></li>
+        <li><a href="conformance.html">SPARQL conformance</a></li>
+        </ul></details></li>
         <li><a href="compatibility.html">Compatibility and limits</a></li>
-        <li class="nav-h">Project</li>
+        </ul></details></li>
+        <li><details class="nav-section" open><summary class="nav-h">Project</summary><ul>
         <li><a href="apps.html">Apps and experiments</a></li>
-        <li><a href="contributing.html">Development</a></li>
+        <li class="nav-group"><details data-nav-page="contributing.md"><summary>Development</summary><ul class="nav-sub"><li><a href="contributing.html">Overview</a></li>
+        <li><a href="architecture.html">Repository and core</a></li>
+        <li><a href="benchmarks.html">Benchmarks</a></li>
+        <li><a href="testing.html">Tests, coverage and CI</a></li>
+        <li><a href="clients-dev.html">Client development</a></li>
+        <li><a href="release.html">Releases</a></li>
+        </ul></details></li>
+        </ul></details></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
     <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
@@ -1151,7 +1189,7 @@ released under the
     /* ---- 2. open / close, with a focus trap -------------------------------- */
     var lastFocus = null, closeTimer = null;
     function focusable() {
-      return [].slice.call(drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+      return [].slice.call(drawer.querySelectorAll('a[href],summary,button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
         .filter(function (el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
     }
     function isOpen() { return document.documentElement.classList.contains("drawer-open"); }
