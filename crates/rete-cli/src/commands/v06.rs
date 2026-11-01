@@ -1,5 +1,7 @@
 //! Format `0x06` in the CLI: what the in-RAM writers finish with, and
-//! `rete convert` (a `0x05` file to `0x06`, reading sections only).
+//! `rete convert` (a `0x05` file to `0x06`, reading sections only). The
+//! memory-bounded writers (`build --memory-budget-mb`, `merge`) do not come
+//! through here: they write `0x06` themselves, once, from their spill.
 
 use rete_core::v06::write::{WriteOpts, MIN_FILE_LEN};
 
@@ -244,31 +246,4 @@ pub(crate) fn recard_file(
     };
     std::fs::rename(&tmp, path)?;
     Ok((h, true))
-}
-
-/// Phase 1 of `0x06`: the memory-bounded writers (`build --memory-budget-mb`,
-/// `merge`) still stream a `0x05` file; this rewrites it as `0x06` — one copy
-/// pass, sections lifted through ranges as `rete convert` does — so every
-/// writer emits `0x06` and a bounded build equals the in-RAM one byte for byte.
-/// (Phase 2 streams `0x06` directly.)
-pub(crate) fn finish_file(path: &str) -> anyhow::Result<()> {
-    if writes_legacy() || file_is_v06(std::path::Path::new(path))? {
-        return Ok(());
-    }
-    let tmp = std::path::PathBuf::from(format!("{path}.v06-tmp"));
-    {
-        let reader = super::range_source::LocalRangeReader::open(path)?;
-        let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
-        if let Err(e) = rete_core::v06::write::convert(&reader, &mut out, WriteOpts::default()) {
-            drop(out);
-            let _ = std::fs::remove_file(&tmp);
-            anyhow::bail!("writing {path} as 0x06: {e}");
-        }
-        std::io::Write::flush(&mut out)?;
-        out.into_inner()
-            .map_err(|e| anyhow::anyhow!("flushing {}: {e}", tmp.display()))?
-            .sync_all()?;
-    }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
 }

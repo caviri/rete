@@ -279,7 +279,7 @@ fn a_memory_bounded_build_writes_the_card_recard_writes() {
     assert_eq!(build["params"]["card_costs"], true);
     let phases = build["run"]["phases"].as_array().unwrap();
     let phase = |name: &str| phases.iter().find(|p| p["phase"] == name).cloned();
-    for name in ["card_derive", "starter_queries", "content_hash"] {
+    for name in ["card_derive", "starter_queries", "write"] {
         assert!(phase(name).is_some(), "{name} missing: {phases:?}");
     }
     if cfg!(target_os = "linux") {
@@ -524,7 +524,7 @@ fn a_merge_writes_the_card_recard_writes() {
     assert!(phases.contains(&"parse+chunk"), "{phases:?}");
     assert_eq!(
         &phases[phases.len() - 3..],
-        ["card_derive", "starter_queries", "content_hash"],
+        ["card_derive", "starter_queries", "write"],
         "{phases:?}"
     );
     assert!(build["query_costs"]["queries"].is_array(), "{build}");

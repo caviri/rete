@@ -396,7 +396,7 @@ pub enum FileError {
 
 /// The codec the writer uses: zstd when the `compression` feature is on, else
 /// none. Reading honors whatever codec the header records (when supported).
-pub(crate) fn writer_codec() -> u8 {
+pub fn writer_codec() -> u8 {
     if cfg!(feature = "compression") {
         CODEC_ZSTD
     } else {
@@ -3039,68 +3039,6 @@ fn plan_append(
         at += len;
     }
     Ok((header, body_end))
-}
-
-/// One piece of a section appended by [`append_sections_to_file`].
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) enum PayloadPart<'a> {
-    /// Bytes in memory.
-    Bytes(&'a [u8]),
-    /// A whole file, streamed.
-    File(&'a std::path::Path),
-}
-
-/// [`append_sections`] on a file on disk, in place: the sections overwrite the
-/// footer and are followed by a new one, then the header is rewritten. Each
-/// section is the concatenation of its parts, so a large one streams from a
-/// spill file. The memory-bounded build uses this after writing its output.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn append_sections_to_file(
-    path: &std::path::Path,
-    sections: &[(SectionKind, Vec<PayloadPart<'_>>)],
-) -> Result<(), FileError> {
-    use std::io::{Read, Seek, SeekFrom, Write};
-    let part_len = |p: &PayloadPart<'_>| -> std::io::Result<u64> {
-        match p {
-            PayloadPart::Bytes(b) => Ok(b.len() as u64),
-            PayloadPart::File(f) => Ok(std::fs::metadata(f)?.len()),
-        }
-    };
-    let mut lens = Vec::with_capacity(sections.len());
-    for (kind, parts) in sections {
-        let mut n = 0u64;
-        for p in parts {
-            n += part_len(p)?;
-        }
-        lens.push((*kind, n));
-    }
-    let mut f = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)?;
-    let len = f.metadata()?.len();
-    let mut head = vec![0u8; HEADER_LEN];
-    f.read_exact(&mut head)?;
-    let (header, body_end) = plan_append(&head, len, &lens)?;
-    f.seek(SeekFrom::Start(body_end))?;
-    let mut w = std::io::BufWriter::with_capacity(1 << 20, &mut f);
-    for (_, parts) in sections {
-        for p in parts {
-            match p {
-                PayloadPart::Bytes(b) => w.write_all(b)?,
-                PayloadPart::File(src) => {
-                    std::io::copy(&mut std::fs::File::open(src)?, &mut w)?;
-                }
-            }
-        }
-    }
-    w.write_all(&MAGIC)?;
-    w.flush()?;
-    drop(w);
-    f.seek(SeekFrom::Start(0))?;
-    f.write_all(&header.to_bytes())?;
-    f.flush()?;
-    Ok(())
 }
 
 /// Open a file's dictionary over a [`RangeReader`] with only its chunk
@@ -7273,6 +7211,30 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
 /// without any of this becoming public surface.
 #[cfg(test)]
 pub(crate) fn dict_chunk_keys_for_test(image: &[u8]) -> Vec<Vec<Vec<u8>>> {
+    if crate::v06::open::is_v06(image) {
+        // 0x06: the routing keys sit in the leaf directories of the dictionary.
+        use crate::v06::{decode_chunk_leaf, decode_dict_root, kind, open, tag};
+        let r = crate::reader::SliceReader::new(image);
+        let (h, root) = open::read_front(&r).unwrap();
+        let roots = decode_dict_root(root.unit(tag::DICT).unwrap()).unwrap();
+        let leaves = open::read_section(&r, &h, &root, kind::DICT_LEAVES)
+            .unwrap()
+            .unwrap();
+        return roots
+            .iter()
+            .map(|s| {
+                s.leaves
+                    .iter()
+                    .flat_map(|(l, _, _, _)| {
+                        let stored = &leaves[l.off as usize..(l.off + l.len) as usize];
+                        let raw = decompress(h.internal_codec, stored).unwrap();
+                        decode_chunk_leaf(&raw, l.n).unwrap()
+                    })
+                    .map(|c| c.key)
+                    .collect()
+            })
+            .collect();
+    }
     let header = Header::from_bytes(&image[..HEADER_LEN]).unwrap();
     let s = header.dictionary_offset as usize;
     let e = s + header.dictionary_len as usize;

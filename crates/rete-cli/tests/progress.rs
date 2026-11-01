@@ -170,9 +170,19 @@ fn json_progress_parses_and_keeps_its_promises() {
         evs[0]["phases"]
             .as_array()
             .unwrap()
-            .contains(&"content_hash".into()),
+            .contains(&"card_derive".into()),
         "the full card's steps are planned: {}",
         evs[0]
+    );
+    let planned = evs[0]["phases"].as_array().unwrap();
+    assert_eq!(
+        planned.last().unwrap(),
+        "write",
+        "the file is written last, with the card in it: {planned:?}"
+    );
+    assert!(
+        !planned.contains(&"content_hash".into()),
+        "the write hashes as it copies, so no separate pass: {planned:?}"
     );
 
     // Merge, of the two.

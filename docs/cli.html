@@ -656,7 +656,7 @@ leaves it out. Both flags work with <code>--no-pyramid</code>, any <code>--pyram
 <pre><code class="language-sh">rete build data.nt -o data.rete --no-pyramid --label-index   # labels + schema, no pyramid
 rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index
 </code></pre>
-<p><strong>The memory-bounded build (<code>--memory-budget-mb N</code>).</strong> Until phase 2 of format <code>0x06</code> it writes <code>0x05</code> and then converts the file to <code>0x06</code>: one extra copy pass, and about double the temporary disk for a large build. It reads the input
+<p><strong>The memory-bounded build (<code>--memory-budget-mb N</code>).</strong> It writes format <code>0x06</code> directly: the sections stay in the spill, and the one write copies each of them to its final place in the output and deletes it, so the disk holds the spill plus one output, with the two trading places as the write goes (no intermediate file, no convert pass). It reads the input
 once and cuts it into chunks of about half the budget, or smaller where the
 chunk's dictionary would take its working set past 85% of the budget (0.4.2):
 a term-dense stretch, two new terms per statement like the OpenCitations Meta
@@ -708,10 +708,9 @@ every starter query against the file, exactly as
 <a href="#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard</code></a>
 does (one derivation, so the two write the same card for the same file), inside
 the same <code>--memory-budget-mb</code> (one byte per subject for the class map, the rest
-for the reader's caches). <code>--no-card-costs</code> skips the queries. The stream is
-written as <code>0x05</code> and then converted to <code>0x06</code> (one copy pass; the next release
-streams <code>0x06</code> directly), and the card and the build record go into the card
-region by one more copy, after which the starter queries' costs are measured
+for the reader's caches). <code>--no-card-costs</code> skips the queries. The card is derived from
+the finished sections before the output exists, so it goes into the card region
+of the one file the build writes; the starter queries' costs are then measured
 again on the file as written (they are a property of its layout). On input
 with no duplicate statements and no multi-typed subjects the card, and so the
 hash, is the in-RAM build's. The
@@ -1065,10 +1064,9 @@ rete verify davidrumsey-06.rete
 consolidate a sharded dataset when the original RDF is gone or expensive to
 re-emit. It reads the <strong>shards</strong> (dictionary-encoded and compressed, roughly a
 quarter of the RDF bytes), so it skips the conversion and the parse.</p>
-<p>Until phase 2 of format <code>0x06</code>, <code>merge</code> writes <code>0x05</code> and then converts it to
-<code>0x06</code>: one extra copy pass, and about double the temporary disk for a large
-merge (the <code>0x05</code> file and the <code>0x06</code> copy exist side by side before the first
-is removed).</p>
+<p><code>merge</code> writes format <code>0x06</code> directly, the way the memory-bounded build does: the
+spill plus one output on disk, no intermediate file. Its output is the direct
+build of the union of the inputs, byte for byte.</p>
 <p>It does <strong>not</strong> skip the sorting. The dictionary is HDT-style (<code>shared</code> /
 subject-only / object-only) and IDs are assigned per section, so a term that is
 subject-only in one shard and object-only in another becomes <em>shared</em> in the

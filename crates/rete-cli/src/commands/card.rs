@@ -1202,9 +1202,43 @@ pub(crate) struct FullCard {
 /// own peak RSS. `who` prefixes the progress lines. `default_triples`, when
 /// the caller knows it, bounds `--progress` through the derivation's two
 /// passes over the default graph.
+/// Where [`derive_full_card_from`] reads the data.
+pub(crate) enum CardSource<'a> {
+    /// A finished file on local disk.
+    Path(&'a str),
+    /// The finished sections of a build that has not written its output yet
+    /// (the `0x05`-shaped view over its spill): local in cost, and the same
+    /// bytes the file will hold.
+    Image(std::sync::Arc<dyn rete_core::RangeReader + Send + Sync>),
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_full_card(
     path: &str,
+    curated: CardInput,
+    coherence: Option<Coherence>,
+    measure_costs: bool,
+    memory: DeriveMemory,
+    default_triples: Option<u64>,
+    rec: &super::buildinfo::Recorder,
+    who: &str,
+) -> anyhow::Result<FullCard> {
+    derive_full_card_from(
+        CardSource::Path(path),
+        curated,
+        coherence,
+        measure_costs,
+        memory,
+        default_triples,
+        rec,
+        who,
+    )
+}
+
+/// [`derive_full_card`] over a [`CardSource`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_full_card_from(
+    src: CardSource<'_>,
     curated: CardInput,
     coherence: Option<Coherence>,
     measure_costs: bool,
@@ -1227,12 +1261,26 @@ pub(crate) fn derive_full_card(
     );
     rec.begin_measured();
     let started = std::time::Instant::now();
-    let rete = match memory {
-        DeriveMemory::Caches(b) => {
-            crate::commands::range_source::open_local_ranged(path, Some(b.max(64 << 20)))?
+    let open = |budget: u64| -> anyhow::Result<rete_core::Rete> {
+        match &src {
+            CardSource::Path(p) => {
+                crate::commands::range_source::open_local_ranged(p, Some(budget))
+            }
+            CardSource::Image(r) => crate::commands::range_source::open_reader_lazy(
+                r.clone(),
+                rete_core::RangeReader::len(&**r),
+                Some(budget),
+            ),
         }
+    };
+    let path = match &src {
+        CardSource::Path(p) => p.to_string(),
+        CardSource::Image(_) => "the finished sections".to_string(),
+    };
+    let rete = match memory {
+        DeriveMemory::Caches(b) => open(b.max(64 << 20))?,
         DeriveMemory::Total(total) => {
-            let rete = crate::commands::range_source::open_local_ranged(path, Some(total))?;
+            let rete = open(total)?;
             let d = rete.dictionary();
             // ClassMap: one byte per subject id below 255 classes.
             let class_map = d.shared_count() as u64 + d.subject_only_count() as u64 + 1;
@@ -1281,14 +1329,16 @@ pub(crate) fn derive_full_card(
     let mut query_costs = None;
     let mut dropped = Vec::new();
     if measure_costs && !card.queries.is_empty() {
-        let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
-            std::sync::Arc::new(LocalRangeReader::open(path)?);
+        let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> = match &src {
+            CardSource::Path(p) => std::sync::Arc::new(LocalRangeReader::open(p)?),
+            CardSource::Image(r) => r.clone(),
+        };
         // The file NAME, not its path: this string is stored in the file. A
         // build or a merge measures the file it is writing, whose name says
         // nothing (and would make two runs to different paths differ).
         let which = match who {
             "build" | "merge" => format!("the file this {who} wrote, on local disk"),
-            _ => format!("local file {}", file_name(path)),
+            _ => format!("local file {}", file_name(&path)),
         };
         let transport = format!(
             "{which}; cold lazy open per query; logical range reads, no block cache; \
@@ -1441,7 +1491,11 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     if opts.measure_costs {
         phases.push(Phase::StarterQueries);
     }
-    phases.push(if opts.in_place {
+    // A 0x06 file's content hash is its section digests: a re-card never reads
+    // the data to hash it, so in place it is the write of the pair (or, when
+    // the card region has no room, of one copy) like the rewrite is.
+    let input_is_v06 = super::v06::file_is_v06(std::path::Path::new(input)).unwrap_or(false);
+    phases.push(if opts.in_place && !input_is_v06 {
         Phase::ContentHash
     } else {
         Phase::Write
@@ -1539,12 +1593,17 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
             r.run = rec.run();
         }
         let reserve = crate::commands::buildinfo::with_widest_costs(&info).to_json_bytes();
+        rete_core::build_progress::begin(
+            Phase::Write,
+            Some(file_len),
+            rete_core::build_progress::Unit::Bytes,
+        );
         let (header, copied) = super::v06::recard_file(
             input,
             rete_core::v06::write::NewCard::Set(Some(&meta)),
             Some(&reserve),
         )?;
-        rec.lap(Phase::ContentHash);
+        rec.lap(Phase::Write);
         crate::commands::buildinfo::remeasure_on_file(input, &mut info, &rec)?;
         if opts.verify {
             let check = LocalRangeReader::open(input)?;

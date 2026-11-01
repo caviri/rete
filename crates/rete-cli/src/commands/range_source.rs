@@ -294,6 +294,17 @@ pub(crate) fn open_local_eager(path: &str) -> anyhow::Result<Rete> {
 /// block-aligned cache, then `Rete::open_ranged_lazy`.
 fn open_local_lazy(path: &str, len: u64, budget: Option<u64>) -> anyhow::Result<Rete> {
     let reader = std::sync::Arc::new(LocalRangeReader::open(path)?);
+    open_reader_lazy(reader, len, budget)
+}
+
+/// [`open_local_ranged`] over any reader that is local in cost (a file, or the
+/// memory-bounded build's spill before the output exists): the same block cache
+/// and memory split.
+pub(crate) fn open_reader_lazy(
+    reader: std::sync::Arc<dyn RangeReader + Send + Sync>,
+    len: u64,
+    budget: Option<u64>,
+) -> anyhow::Result<Rete> {
     // `RETE_BLOCK_KB` wins (0 disables), else auto-tune by length — same knob
     // and heuristic as the URL commands, so local and remote behave alike.
     let block: u64 = match std::env::var("RETE_BLOCK_KB")

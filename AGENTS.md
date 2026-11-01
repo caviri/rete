@@ -393,9 +393,9 @@ Before touching a `.rete` that is already published. Full lifecycle in
   9–15× the `.rete` in scratch disk. Exceeding a ceiling is an OOM kill
   mid-rebuild, not an error message.
 - **`rete build --memory-budget-mb` writes the full card** (profile and
-  starter queries): it streams the finished file's sections exactly as
-  `rete recard` does, inside the same budget, and appends the card after the
-  data — no `recard` step, no second copy of the file. Files built before it
+  starter queries): it streams the finished sections exactly as `rete recard`
+  streams a file's, inside the same budget, and writes the card into the card
+  region of the one `0x06` file — no `recard` step, no second copy. Files built before it
   (every release up to 0.4.0) carry a counts-only card; `rete recard`
   (`--in-place` for a big one) gives them a full one. It *does* build named
   graphs (#139) —

@@ -40,6 +40,7 @@ pub mod extbuild;
 mod extbuild_remap;
 mod extbuild_sections;
 mod extbuild_spill;
+mod extbuild_v06;
 mod extsort;
 #[doc(hidden)]
 pub mod file;

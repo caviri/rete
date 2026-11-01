@@ -1,7 +1,8 @@
 //! The `0x06` assembler: [`super::parts::Parts`] in, a `0x06` file out. Every
 //! writer goes through here — the in-RAM build (via `0x05` section images),
-//! `rete convert`, and in phase 2 the memory-bounded build, `merge` and
-//! `recard`.
+//! `rete convert`, and the memory-bounded build and `merge` (which hand it their
+//! spill as an address space, see `extbuild_v06`). `recard` only re-lays the
+//! front.
 //!
 //! The front (root, card region, stats, leaf directories) is built in memory;
 //! the data region is streamed from the input reader, hashed on the way. The
@@ -599,6 +600,21 @@ pub fn assemble<W: Write + Seek>(
     out: &mut W,
     opts: WriteOpts,
 ) -> Result<Written, FileError> {
+    assemble_with(parts, input, out, opts, &mut |_| {})
+}
+
+/// [`assemble`], calling `copied(kind)` once each data section (a [`kind`] of
+/// `DICT_DATA`, `INDEX_DATA`, `QUAD_DATA`, `LABEL_DATA`, `TEXT_DATA` or
+/// `PYRAMID`) is in the output: the input bytes it came from are not read
+/// again. The memory-bounded build deletes the spill files behind it there, so
+/// the output grows as the spill shrinks.
+pub fn assemble_with<W: Write + Seek>(
+    parts: &Parts,
+    input: &dyn RangeReader,
+    out: &mut W,
+    opts: WriteOpts,
+    copied: &mut dyn FnMut(u8),
+) -> Result<Written, FileError> {
     let codec = opts.internal_codec;
     if parts.pyramid_levels > u8::MAX as u16 {
         return Err(FileError::Container(
@@ -784,6 +800,7 @@ pub fn assemble<W: Write + Seek>(
     for (i, d) in data.iter().enumerate() {
         let mut h = blake3::Hasher::new();
         let measured = copy_segs(input, &d.segs, d.measure, out, &mut h)?;
+        copied(d.kind);
         let sec = &mut root.sections[n_front + i];
         sec.digest.copy_from_slice(&h.finalize().as_bytes()[..16]);
         if d.measure.is_some() {

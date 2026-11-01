@@ -599,11 +599,8 @@ pub(crate) fn build(
 ) -> anyhow::Result<()> {
     let text_index = text_index.into_text_index();
     // Format 0x06 stores named graphs in the quad index only.
-    let graphs = if super::v06::writes_legacy() {
-        graphs
-    } else {
-        rete_core::GraphLayout::Quad
-    };
+    let _ = graphs;
+    let graphs = rete_core::GraphLayout::Quad;
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
         .iter()
         .map(|i| (i.as_str(), input_format(i, format)))
@@ -984,7 +981,9 @@ pub(crate) fn external_plan(
     if named_graphs {
         phases.push(Phase::NamedGraphs);
     }
-    phases.push(Phase::Write);
+    // The label and schema passes and the card read the finished sections, so
+    // they come before the one write of the `0x06` file, which hashes as it
+    // copies.
     if sections.label_index || sections.schema {
         phases.push(Phase::LabelsSchema);
     }
@@ -993,8 +992,8 @@ pub(crate) fn external_plan(
         if measure_costs {
             phases.push(Phase::StarterQueries);
         }
-        phases.push(Phase::ContentHash);
     }
+    phases.push(Phase::Write);
     progress::Plan {
         kind,
         phases,
@@ -1092,11 +1091,11 @@ pub(crate) fn build_external_cmd(
         );
     }
 
-    let rec = buildinfo::Recorder::start(if card_args.requested() {
+    let rec = std::rc::Rc::new(buildinfo::Recorder::start(if card_args.requested() {
         &inputs_fmt[..]
     } else {
         &[]
-    });
+    }));
     let curated = if card_args.requested() {
         Some(card::load_curated(&card_args)?)
     } else {
@@ -1125,10 +1124,10 @@ pub(crate) fn build_external_cmd(
         memory_budget_mb: Some(memory_budget_mb),
         card_args: &card_args,
     };
-    let mut info = curated.is_some().then(|| {
+    let info = curated.is_some().then(|| {
         let mut info = buildinfo::new_build_info(flags.params(None));
         rec.begin(&mut info);
-        info
+        std::rc::Rc::new(std::cell::RefCell::new(info))
     });
     let out_path = std::path::Path::new(output).to_path_buf();
     // Named graphs come from N-Quads and TriG unless they are folded away.
@@ -1145,8 +1144,27 @@ pub(crate) fn build_external_cmd(
     ));
     // The external build reads its input exactly once, so — unlike the two-pass
     // streaming assembler — the audit needs no pass guard.
-    let audit = std::cell::RefCell::new(iri_audit(strict));
+    let audit = std::rc::Rc::new(std::cell::RefCell::new(iri_audit(strict)));
     let read = rec.statements_read.clone();
+    // The card, derived from the finished sections before the file is written
+    // (see `full_card_hook`).
+    let outcome = std::rc::Rc::new(CardOutcome::default());
+    let card_from_image = match (&info, curated) {
+        (Some(info), Some(curated)) => {
+            let report = audit.clone();
+            Some(full_card_hook(
+                info.clone(),
+                curated,
+                measure_costs,
+                memory_budget_mb,
+                rec.clone(),
+                move || report.borrow().report.clone(),
+                outcome.clone(),
+                "build",
+            ))
+        }
+        _ => None,
+    };
     let stats = rete_core::extbuild::build_external(
         |visit| {
             live::set_total(progress::input_bytes(inputs), Unit::Bytes);
@@ -1192,8 +1210,8 @@ pub(crate) fn build_external_cmd(
         rete_core::extbuild::ExternalBuildOptions {
             memory_budget: memory_budget_mb.saturating_mul(1 << 20),
             tmp_dir: tmp_dir.map(std::path::PathBuf::from),
-            // The card is derived from the finished file and appended after
-            // it (below), so the stream writes neither a card nor a record.
+            // The card, when asked for, comes from `card_from_image`: derived
+            // from the finished sections, into the one file the build writes.
             metadata: Box::new(|_| Vec::new()),
             build_info: Vec::new(),
             perms,
@@ -1204,132 +1222,130 @@ pub(crate) fn build_external_cmd(
             graphs,
             // A parser's buffers are small: the chunks get the whole budget.
             input_memory: 0,
+            card_from_image,
         },
     )
     .map_err(|e| match e {
         rete_core::extbuild::ExtBuildError::Ingest(inner) => ingest_error(None, inner),
         other => anyhow::anyhow!("{other}"),
     })?;
-    super::v06::finish_file(output)?;
-    let audit = audit.into_inner();
-    if let (Some(info), Some(curated)) = (info.as_mut(), curated) {
-        append_full_card(
-            output,
-            info,
-            curated,
-            measure_costs,
-            memory_budget_mb,
-            &stats,
-            &audit.report,
-            &rec,
-            "build",
-        )?;
+    let report = audit.borrow().report.clone();
+    if let Some(info) = &info {
+        finish_full_card(output, info, &rec, &outcome)?;
     }
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
     progress::finish(stats.statements as u64, output);
     print_build_summary(output, &stats, byte_len);
-    crate::commands::iri_report::warn_after_build(&audit.report);
+    crate::commands::iri_report::warn_after_build(&report);
     Ok(())
 }
 
-/// Give the file the memory-bounded external builder has just written at
-/// `output` its **full** card, and its build record: what `rete build
-/// --memory-budget-mb` and `rete merge` both do once their stream is on disk.
+/// What the card hook of a memory-bounded build leaves for the caller.
+#[derive(Default)]
+pub(crate) struct CardOutcome {
+    /// Bytes of the card handed to the writer.
+    meta_len: std::cell::Cell<usize>,
+    /// Why the card could not be derived, when it could not: the file is then
+    /// written without one.
+    failed: std::cell::RefCell<Option<String>>,
+}
+
+/// The card step of `rete build --memory-budget-mb` and `rete merge`, as the
+/// hook [`rete_core::extbuild::ExternalBuildOptions::card_from_image`] runs
+/// once the sections are done and before the output exists.
 ///
 /// `info` is the record begun before the stream ([`buildinfo::Recorder::begin`]);
-/// this adds what only the finished file knows — its codec, the counts
+/// this adds what only the finished sections know — its codec, the counts
 /// (`stats`, the statements the stream read, the IRI audit), the spill — then
-/// derives the card from the file exactly as `rete recard` does
-/// ([`card::derive_full_card`], inside `memory_budget_mb` all told), runs and
-/// records its starter queries unless `!measure_costs`, and writes the card
-/// and the sealed record after the data ([`card::append_card`]). `who`
-/// prefixes the progress lines.
+/// derives the card from the sections exactly as `rete recard` derives it from
+/// a file ([`card::derive_full_card_from`], inside `memory_budget_mb` all
+/// told), runs and records its starter queries unless `!measure_costs`, and
+/// returns the card and the record, reserved at its widest, for the card
+/// region of the one file the build writes. `who` prefixes the progress lines.
 ///
-/// A failure past the stream leaves a complete, cardless file; the error says
-/// how to card it without a second build.
+/// A failure of the derivation does not lose the build: the file is written
+/// without a card and [`finish_full_card`] reports why.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn append_full_card(
-    output: &str,
-    info: &mut buildinfo::BuildInfo,
+pub(crate) fn full_card_hook(
+    info: std::rc::Rc<std::cell::RefCell<buildinfo::BuildInfo>>,
     curated: card::CardInput,
     measure_costs: bool,
     memory_budget_mb: u64,
-    stats: &ingest::BuildStats,
-    iri: &rete_core::IriReport,
+    rec: std::rc::Rc<buildinfo::Recorder>,
+    iri: impl Fn() -> rete_core::IriReport + 'static,
+    outcome: std::rc::Rc<CardOutcome>,
+    who: &'static str,
+) -> rete_core::extbuild::CardFromImage {
+    Box::new(move |image, stats| {
+        let mut info = info.borrow_mut();
+        info.params.codec =
+            Some(buildinfo::codec_name(rete_core::file::writer_codec()).to_string());
+        info.counts = Some(buildinfo::counts(
+            stats,
+            rec.statements_read.get(),
+            None,
+            &iri(),
+        ));
+        info.spill = Some(rec.spill());
+        let full = card::derive_full_card_from(
+            card::CardSource::Image(image),
+            curated,
+            None,
+            measure_costs,
+            card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
+            Some(stats.default_triples as u64),
+            &rec,
+            who,
+        );
+        let full = match full {
+            Ok(f) => f,
+            Err(e) => {
+                *outcome.failed.borrow_mut() = Some(format!("{e:#}"));
+                return Ok((Vec::new(), Vec::new()));
+            }
+        };
+        info.query_costs = full.query_costs;
+        info.dropped_queries = full.dropped;
+        let meta = full.card.to_json_bytes();
+        outcome.meta_len.set(meta.len());
+        // The costs are a property of the final layout, card region included:
+        // reserve the record with every cost at its widest and measure again
+        // on the file as written ([`finish_full_card`]).
+        let reserve =
+            buildinfo::with_widest_costs(&info).reserve_bytes(buildinfo::Pending::Write, &rec);
+        Ok((meta, reserve))
+    })
+}
+
+/// The last step of a bounded build that derived a card: seal the build
+/// record with the write's own timing and put it in place (the starter queries
+/// measured again on the file as written, when they were measured at all). The
+/// record is outside the content hash and fits its reservation, so no byte of
+/// the file moves.
+pub(crate) fn finish_full_card(
+    output: &str,
+    info: &std::rc::Rc<std::cell::RefCell<buildinfo::BuildInfo>>,
     rec: &buildinfo::Recorder,
-    who: &str,
+    outcome: &CardOutcome,
 ) -> anyhow::Result<()> {
-    let codec = {
-        use std::io::Read;
-        let mut head = vec![0u8; rete_core::format::HEADER_LEN];
-        std::fs::File::open(output)?.read_exact(&mut head)?;
-        rete_core::Header::from_bytes(&head)?.dict_codec
-    };
-    info.params.codec = Some(buildinfo::codec_name(codec).to_string());
-    info.counts = Some(buildinfo::counts(
-        stats,
-        rec.statements_read.get(),
-        None,
-        iri,
-    ));
-    info.spill = Some(rec.spill());
-    let unfinished = |e: anyhow::Error| {
-        anyhow::anyhow!(
+    if let Some(e) = outcome.failed.borrow().as_ref() {
+        anyhow::bail!(
             "{e}\n{output} is complete but has no card; `rete recard {output} --in-place \
              --card-file …` gives it one without rebuilding"
-        )
-    };
-    let full = card::derive_full_card(
-        output,
-        curated,
-        None,
-        measure_costs,
-        card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
-        Some(stats.default_triples as u64),
-        rec,
-        who,
-    )
-    .map_err(unfinished)?;
-    info.query_costs = full.query_costs;
-    info.dropped_queries = full.dropped;
-    let meta = full.card.to_json_bytes();
-    if super::v06::file_is_v06(std::path::Path::new(output))? {
-        // 0x06: the card region sits in front of the data, and a cardless
-        // file has none — the pair goes in by one copy (phase 2 streams the
-        // data once, after the card).
-        rete_core::build_progress::begin(
-            rete_core::build_trace::Phase::ContentHash,
-            None,
-            rete_core::build_progress::Unit::Bytes,
         );
-        rec.lap(rete_core::build_trace::Phase::ContentHash);
-        rec.seal(info);
-        let reserve = buildinfo::with_widest_costs(info).to_json_bytes();
-        super::v06::recard_file(
-            output,
-            rete_core::v06::write::NewCard::Set(Some(&meta)),
-            Some(&reserve),
-        )
-        .map_err(unfinished)?;
-        buildinfo::remeasure_on_file(output, info, rec).map_err(unfinished)?;
-        let record = info.to_json_bytes();
-        eprintln!(
-            "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside the \
-             content hash) in the card region",
-            meta.len(),
-            record.len()
-        );
-        return Ok(());
     }
-    let (_, _) = card::append_card(output, &meta, false, rec, who, || {
-        rec.seal(info);
-        info.to_json_bytes()
-    })
-    .map_err(unfinished)?;
+    let mut info = info.borrow_mut();
+    rec.seal(&mut info);
+    info.spill = Some(rec.spill());
+    if info.query_costs.is_some() {
+        buildinfo::remeasure_on_file(output, &mut info, rec)?;
+    } else {
+        buildinfo::patch_build_info(std::path::Path::new(output), &info.to_json_bytes())?;
+    }
     eprintln!(
         "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside the \
-         content hash) after the data",
-        meta.len(),
+         content hash) in the card region",
+        outcome.meta_len.get(),
         info.to_json_bytes().len()
     );
     Ok(())

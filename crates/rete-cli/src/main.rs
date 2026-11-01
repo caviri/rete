@@ -254,9 +254,9 @@ enum Command {
         /// external-sort run sizes). For graphs too large for the in-RAM build.
         /// Its sections are byte-identical to a standard `--no-pyramid`
         /// build's, the SCHEMA section and `--label-index` included. A card is
-        /// the full one: derived from the finished file by streaming its
-        /// sorted sections (what `rete recard` runs, inside this budget) and
-        /// written after the data, with the build record.
+        /// the full one: derived from the finished sections by streaming them
+        /// (what `rete recard` runs, inside this budget) and written, with the
+        /// build record, into the card region of the one `0x06` file.
         /// Named graphs are carried through the same spill (the graph leads the
         /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
         /// `--text-index` (any scope) is a second external sort over the
@@ -401,10 +401,10 @@ enum Command {
     /// the builder spills under `--memory-budget-mb`.
     ///
     /// A card (`--card`, `--card-file`, a curated flag) is the full one, as
-    /// `rete build --memory-budget-mb` writes it: derived from the merged file
-    /// by streaming its sorted sections (what `rete recard` runs, inside this
-    /// budget), its starter queries run against it, and written after the data
-    /// with the build record, which names each input by file name, size and
+    /// `rete build --memory-budget-mb` writes it: derived from the merged
+    /// sections by streaming them (what `rete recard` runs, inside this
+    /// budget), its starter queries run against them, and written into the
+    /// card region with the build record, which names each input by file name, size and
     /// BLAKE3. The inputs' own cards are not carried: the curated fields come
     /// from `--card-file` and the curated flags only.
     Merge {
