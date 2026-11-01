@@ -212,6 +212,9 @@ rete build dev/geo/history.nt -o web/history.rete
 
 # 2. regenerate the browser artifacts through the shared producer
 docker compose run --rm wasm
+
+# 3. assemble the Atlas page from the engine and dataset
+docker compose run --rm dev python3 scripts/build_atlas.py
 ```
 
 The dataset converter above lives in the separate `rete-datasets` checkout;

@@ -391,9 +391,10 @@ prefix compresses worse.*
   index** (kind 10, §6.5) — the graph as a fourth column of graph-leading
   permutations `G+SPO`, `G+POS`, … in tiles shared across graphs. The default
   graph is always the INDEX container's triples; there is no stored union.
-- Triples are **partitioned by pyramid tile** (see §7), and within a tile split
-  into fixed-size **blocks**. Every block is prefixed with a **zone map**
-  (min ID, max ID, count) so the query planner can skip blocks — Parquet-style.
+- Each sorted permutation is split into **tiles** targeting an encoded-byte
+  budget (see §6.2). Each tile is a self-contained **block** prefixed with a
+  **zone map** (per-column min/max IDs and triple count) so the query planner
+  can skip tiles whose ranges cannot match — Parquet-style.
 
 ### 6.1 Triple block encoding (grouped delta)
 
@@ -414,8 +415,8 @@ body:      varint num_a
 
 Deltas reset at each group boundary, so values stay small and varint-friendly.
 The **zone map** lets the planner skip a block whose `[min,max]` range cannot
-contain a bound constant before fetching the body — the §7 routing then bounds
-*which* blocks are fetched at all.
+contain a bound constant before decoding the body. The §6.2 directory and
+optional tile synopsis bound which tiles need fetching.
 
 ### 6.2 Tiled permutation sections (format `0x02`)
 
@@ -783,9 +784,9 @@ graph at a time, which the graph-leading orders already route.
 
 The headline feature. "Zoom" = level of graph detail.
 
-<img src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
+<img src="img/pyramid.svg" alt="Intended refinement design: Level 0 at the top is the coarsest, with a handful of supernodes and aggregated edges. Middle levels split those into finer communities, with physical community tiles targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. Physical community tiles and this routed refinement are not implemented; current files store community summaries and exact queries use permutation tiles.">
 
-*Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.*
+*Intended refinement design, top to bottom: coarse community summary → communities → full triples. Current files store community summaries; physical community tiles and routed drill-down are not implemented. Exact queries use the permutation indexes in §6.*
 
 ### 7.1 Build time
 1. Run hierarchical community detection (**Louvain**; `--pyramid-algo types`
