@@ -244,7 +244,12 @@ fn lazy_named_graph_short_tile_read_sets_incomplete() {
     let image = dataset(&[30_000]);
     let reader = FlakyReader::new(image);
     let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
-    let s = rete.dictionary().subject_id(&node(100)).unwrap();
+    // A subject near the end of the graph: its tile is far from the 64 KiB the
+    // open fetched and cached, so the scan has to read it.
+    let s = rete
+        .dictionary()
+        .subject_id(&node(100 + 2 * 29_990))
+        .unwrap();
     let p = rete.dictionary().predicate_id("<http://ex/p>").unwrap();
     let graph = rete.graph_index("<http://ex/g000>").unwrap();
     assert!(graph.is_lazy(), "the fixture must exercise the tile loader");
@@ -349,12 +354,19 @@ fn short_read_on_the_named_graph_walk_is_a_failed_load_not_a_panic() {
     let image = small_named_image();
     let reader = FlakyReader::new(image.clone());
     let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
-    // Two bytes: the count is already read, so these hold the first IRI's
-    // length varint and the IRI's first byte.
+    // On 0x06 the graph names sit in the root block the open already holds, so
+    // the walk makes no read for a transport to cut short: it must answer, with
+    // nothing flagged incomplete, and not touch the reader at all.
+    let reads = reader.reads.lock().unwrap().len();
     reader.truncate_to(2);
     let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rete.graph_names().len()));
     assert!(got.is_ok(), "a short walk read panicked");
-    assert!(rete.index_incomplete());
+    assert_eq!(
+        reader.reads.lock().unwrap().len(),
+        reads,
+        "the walk read the file"
+    );
+    assert!(!rete.index_incomplete());
 
     reader.recover();
     rete.reset_load_failures();
