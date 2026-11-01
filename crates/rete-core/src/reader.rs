@@ -81,14 +81,16 @@ impl RangeReader for SliceReader<'_> {
     }
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
-        let start = offset as usize;
-        let end = start
-            .checked_add(len as usize)
-            .filter(|&e| e <= self.data.len())
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "range out of bounds")
-            })?;
-        Ok(self.data[start..end].to_vec())
+        // `try_from`, not `as`: on wasm32 an offset of 2^32 + k would wrap to
+        // k and return the wrong bytes instead of an out-of-bounds error.
+        let range = usize::try_from(offset).ok().and_then(|start| {
+            let end = start.checked_add(usize::try_from(len).ok()?)?;
+            (end <= self.data.len()).then_some(start..end)
+        });
+        let range = range.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "range out of bounds")
+        })?;
+        Ok(self.data[range].to_vec())
     }
 }
 
