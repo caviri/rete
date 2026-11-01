@@ -1433,7 +1433,8 @@ impl GraphIndex {
                     .ok()
                     .map(|b| b.zone().count)
             })
-            .sum()
+            // A hostile tile can claim any count: saturate, never overflow.
+            .fold(0u32, u32::saturating_add)
     }
 
     /// Stream **every** triple of one stored permutation in that section's own
