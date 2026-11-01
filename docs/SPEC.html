@@ -713,7 +713,8 @@ and on a small file every leaf directory as well.</p>
 <tr><td>73</td><td>1</td><td>dictionary codec id</td></tr>
 <tr><td>74</td><td>1</td><td>block codec id (tiles, quad tiles, label blocks, postings)</td></tr>
 <tr><td>75</td><td>1</td><td>internal codec id (root units, leaves, card, stats + schema)</td></tr>
-<tr><td>76</td><td>2</td><td>community pyramid levels</td></tr>
+<tr><td>76</td><td>1</td><td>community pyramid levels (at most 255)</td></tr>
+<tr><td>77</td><td>1</td><td><strong>term-id widths</strong>, four 2-bit fields from the low bits: subjects, objects, predicates, graphs. <code>0</code> = <code>u32</code>, <code>1</code> = <code>u64</code>, <code>2</code>–<code>3</code> reserved (a corrupt header). Every writer stamps <code>0</code> today and errors rather than truncate an id; this reader refuses any non-zero field at open</td></tr>
 <tr><td>78</td><td>2</td><td>presence: bit0 text index; bit1 the text index leaves some predicates out (§6.3); bit2 label index; bit3 stats + schema; bit4 community pyramid; bit5 quad index</td></tr>
 <tr><td>80</td><td>4</td><td>card offset, within the card region</td></tr>
 <tr><td>84</td><td>4</td><td>card length (stored, compressed)</td></tr>
@@ -722,6 +723,10 @@ and on a small file every leaf directory as well.</p>
 <tr><td>108</td><td>4</td><td>build record length</td></tr>
 <tr><td>112</td><td>16</td><td>root digest: BLAKE3 of the root block, first 16 bytes</td></tr>
 </tbody></table>
+<p>The format allows a width per position (a hybrid file, say <code>u64</code> objects over
+<code>u32</code> everything else) so readers can specialise later without another format
+change; today's reader supports <code>u32</code> only. The width byte is part of the
+hashed header fields (§4.7).</p>
 <p>Every field is untrusted. A reader checks the magic, the version, the header
 length, <code>128 + root length + card region length ≤ data offset ≤ file length</code>,
 that the card and the record lie inside their region, that the mask is legal,
