@@ -559,6 +559,8 @@ pub struct LabelIndex {
     codec: u8,
     source: Source,
     nodes: Mutex<HashMap<u64, Arc<Vec<DirEntry>>>>,
+    /// Decompression bound on a node or block (`u64::MAX` = none: `0x05`).
+    max_block: u64,
 }
 
 impl std::fmt::Debug for LabelIndex {
@@ -577,6 +579,13 @@ enum Walk {
 }
 
 impl LabelIndex {
+    /// Bound every node and block decompression at `max` bytes (format
+    /// `0x06`, from its root).
+    pub(crate) fn with_max_block(mut self, max: u64) -> Self {
+        self.max_block = max;
+        self
+    }
+
     /// Parse a whole section held in memory, checking its digest.
     pub fn from_section(section: &[u8], codec: u8) -> Result<Self, FileError> {
         if !digest_ok(section) {
@@ -630,7 +639,25 @@ impl LabelIndex {
             codec,
             source,
             nodes: Mutex::new(HashMap::new()),
+            max_block: u64::MAX,
         })
+    }
+
+    /// Where the data blocks end in the body (the directory nodes follow
+    /// them, lowest level first): the offset of the leftmost level-1 node, or
+    /// the whole body on a one-level index. `fetch` reads `(offset, len)`
+    /// relative to the **section** start. What the `0x06` writer splits on.
+    pub(crate) fn v05_data_len(&self, fetch: &dyn Fn(u64, u64) -> Option<Vec<u8>>) -> Option<u64> {
+        if self.preamble.levels == 0 {
+            return Some(self.section_len - self.body_base);
+        }
+        let mut e = self.root.first()?.clone();
+        for _ in 1..self.preamble.levels {
+            let raw = fetch(self.body_base + e.off, e.len)?;
+            let node = decode_node(&decompress(self.codec, &raw).ok()?).ok()?;
+            e = node.first()?.clone();
+        }
+        Some(e.off)
     }
 
     /// Number of entries in the index.
@@ -659,7 +686,9 @@ impl LabelIndex {
         if let Some(n) = self.nodes.lock().ok()?.get(&e.off) {
             return Some(n.clone());
         }
-        let raw = decompress(self.codec, &self.fetch(e.off, e.len)?).ok()?;
+        let raw =
+            crate::file::decompress_bounded(self.codec, &self.fetch(e.off, e.len)?, self.max_block)
+                .ok()?;
         let node = Arc::new(decode_node(&raw).ok()?);
         if let Ok(mut cache) = self.nodes.lock() {
             if cache.len() >= NODE_CACHE_CAP {
@@ -738,7 +767,7 @@ impl LabelIndex {
     ) -> Walk {
         let Some(raw) = self
             .fetch(e.off, e.len)
-            .and_then(|b| decompress(self.codec, &b).ok())
+            .and_then(|b| crate::file::decompress_bounded(self.codec, &b, self.max_block).ok())
         else {
             return Walk::Stop;
         };
@@ -846,6 +875,9 @@ pub fn read_label_index_entries_ranged<R: crate::RangeReader + ?Sized>(
     header: &crate::Header,
 ) -> Option<u64> {
     let s = header.label_index_section()?;
+    if header.version == crate::v06::VERSION {
+        return crate::v06::open::read_signals(reader).ok()?.1?.1;
+    }
     let head = reader
         .read_at(s.offset, (PREAMBLE_LEN as u64).min(s.length))
         .ok()?;

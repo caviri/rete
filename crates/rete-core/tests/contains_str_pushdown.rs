@@ -142,7 +142,8 @@ fn str_over_an_iri_object_keeps_its_row() {
             want,
             "{layout:?} resident"
         );
-        let lazy = Rete::open_ranged_lazy(Recorded::new(bytes)).unwrap();
+        let lazy = Rete::open_ranged_lazy_with(Recorded::new(bytes), rete_core::HEADER_LEN as u64)
+            .unwrap();
         assert_eq!(rows(&lazy, q), want, "{layout:?} lazy");
     }
 }
@@ -211,7 +212,11 @@ fn every_str_shape_answers_like_a_file_without_an_index() {
         for (name, sc) in scopes() {
             let bytes = build(layout, Some(sc));
             let resident = Rete::open(&bytes).unwrap();
-            let lazy = Rete::open_ranged_lazy(Recorded::new(bytes.clone())).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(
+                Recorded::new(bytes.clone()),
+                rete_core::HEADER_LEN as u64,
+            )
+            .unwrap();
             for (q, want) in queries.iter().zip(&expected) {
                 assert_eq!(&rows(&resident, q), want, "{layout:?} {name} resident: {q}");
                 assert_eq!(&rows(&lazy, q), want, "{layout:?} {name} lazy: {q}");
@@ -255,7 +260,7 @@ fn the_index_is_used_exactly_where_the_object_is_proven_literal() {
             ("SELECT ?s WHERE { ?s ?p ?o FILTER(CONTAINS(STR(?o), \"glucose\") && (isLiteral(?o) || isBlank(?o))) }", false),
         ] {
             let rec = Recorded::new(bytes.clone());
-            let rete = Rete::open_ranged_lazy(rec.clone()).unwrap();
+            let rete = Rete::open_ranged_lazy_with(rec.clone(), rete_core::HEADER_LEN as u64).unwrap();
             rec.take();
             let got = rows(&rete, q);
             assert_eq!(got, rows(&plain, q), "{layout:?}: {q}");
@@ -365,7 +370,11 @@ fn pushdown_and_scan_agree_on_random_needles() {
         ] {
             let bytes = build_quads(q.clone(), layout, Some(sc));
             let resident = Rete::open(&bytes).unwrap();
-            let lazy = Rete::open_ranged_lazy(Recorded::new(bytes.clone())).unwrap();
+            let lazy = Rete::open_ranged_lazy_with(
+                Recorded::new(bytes.clone()),
+                rete_core::HEADER_LEN as u64,
+            )
+            .unwrap();
             for n in &needles {
                 for query in shapes(n) {
                     let want = rows(&plain, &query);
@@ -410,7 +419,9 @@ fn literal_object_ranges_match_every_term() {
         ));
     }
     let bytes = build_quads(q, GraphLayout::PerGraph, None);
-    let lazy = Rete::open_ranged_lazy(Recorded::new(bytes.clone())).unwrap();
+    let lazy =
+        Rete::open_ranged_lazy_with(Recorded::new(bytes.clone()), rete_core::HEADER_LEN as u64)
+            .unwrap();
     let dict = lazy.dictionary();
     let lits = dict.literal_objects().expect("readable");
     let n_objects = dict.shared_count() + dict.object_only_count();

@@ -606,11 +606,14 @@ it is not an exact process-RSS ceiling, and tile directories still grow with
 the dataset. This path has different feature limits from an in-memory build;
 check the <a href="cli.html">CLI reference</a> before adding an option to it.</p>
 <p><span id="file-layout"></span>
-<code>header.rs</code> describes the section directory; <code>file.rs</code> assembles and opens the
-file. Besides dictionaries and indexes, files can contain community summaries,
+Current writers use format <code>0x06</code>: <code>v06/</code> owns its 128-byte header, root block,
+front directories and card region. <code>file.rs</code> dispatches reads for both <code>0x05</code>
+and <code>0x06</code>; <code>header.rs</code> describes the older layout. Besides dictionaries and
+indexes, files can contain community summaries,
 schema, label/text indexes and a Dataset Card. Their presence and placement
 depend on build options and file features. The <a href="SPEC.html">format specification</a>
-owns their byte-level contracts.</p>
+owns their byte-level contracts. Published readers through 0.4.2 cannot read
+<code>0x06</code>; check <a href="compatibility.html">Compatibility</a> before publishing a new file.</p>
 <p>A snapshot stays immutable. Changes to a logical graph can instead use
 <a href="https://github.com/caviri/rete/blob/main/crates/rete-core/src/manifest.rs"><code>manifest.rs</code></a>,
 which combines immutable addition/deletion segments. <code>rete serve</code> can also keep

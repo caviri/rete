@@ -579,6 +579,9 @@ rete card-url https://example.org/data.rete
 <p>The first command prints a readable summary; <code>--json</code> returns the structured
 metadata. Replace the example URL with a published graph. A remote card read
 uses the header and metadata ranges rather than downloading the graph's indexes.
+Current source builds write format <code>0x06</code>, with the card region at the front;
+older <code>0x05</code> files locate metadata through their section directory. Published
+readers through 0.4.2 cannot read <code>0x06</code>; see <a href="compatibility.html">Compatibility</a>.
 In the <a href="playground-guide.html">Playground</a>, open <strong>Card</strong> to inspect the same
 metadata.</p>
 <p>A file may have no card. A profile may also be partial: capped lists and
@@ -613,7 +616,9 @@ before running the operation.</p>
 identity. Keep a recovery copy before replacing a published file, verify the
 result and its metadata, then update the published copy and any recorded hash.
 <code>--in-place</code> avoids copying the data sections but still changes the original
-file; it is not a backup or an unchanged identity.</p>
+file; it is not a backup or an unchanged identity.
+In <code>0x06</code>, the update uses free space in the front card region. If the new
+card and record do not fit, the operation falls back to copying the file.</p>
 <h2 id="look-up-the-details">Look up the details</h2>
 <p>The <a href="dataset-card-reference.html">Dataset Card reference</a> covers every field,
 starter queries, named-graph profiles, build records and JSON-LD/Croissant

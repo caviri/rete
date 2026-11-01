@@ -574,6 +574,10 @@ working directory; no source checkout or Rust installation is needed.</p>
 <p>The published CLI container runs the same commands as a local <code>rete</code> binary.
 Define a wrapper in your current shell so that files in your working directory
 are available inside the container.</p>
+<p>This example pins the published 0.4.2 image, which writes format <code>0x05</code>.
+Current source builds write <code>0x06</code>; the 0.4.2 reader cannot open those newer
+files. See <a href="compatibility.html">Compatibility</a> before exchanging files between
+the released image and a source build.</p>
 <p>On a POSIX shell (Linux or macOS):</p>
 <pre><code class="language-sh">alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.4.2'
 </code></pre>

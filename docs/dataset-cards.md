@@ -16,6 +16,9 @@ rete card-url https://example.org/data.rete
 The first command prints a readable summary; `--json` returns the structured
 metadata. Replace the example URL with a published graph. A remote card read
 uses the header and metadata ranges rather than downloading the graph's indexes.
+Current source builds write format `0x06`, with the card region at the front;
+older `0x05` files locate metadata through their section directory. Published
+readers through 0.4.2 cannot read `0x06`; see [Compatibility](compatibility.md).
 In the [Playground](playground-guide.md), open **Card** to inspect the same
 metadata.
 
@@ -61,6 +64,8 @@ identity. Keep a recovery copy before replacing a published file, verify the
 result and its metadata, then update the published copy and any recorded hash.
 `--in-place` avoids copying the data sections but still changes the original
 file; it is not a backup or an unchanged identity.
+In `0x06`, the update uses free space in the front card region. If the new
+card and record do not fit, the operation falls back to copying the file.
 
 ## Look up the details
 

@@ -10,12 +10,14 @@ profile of what's in it (counts, the predicates and classes actually used, the
 vocabularies they belong to). One `rete card` (or `rete info`) reads it back, so a
 `.rete` file doubles as its own mini data catalog.
 
-The card lives in the file's **metadata section**, located by the offset and
-length in the 1 KB header. In-memory builds can place it before the data;
-bounded builds and in-place updates can place it after the data. Adding a card is **not a format change**: a file
-without one is byte-for-byte identical to a pre-card build, and an older reader
-simply ignores the section. The card is folded into the file's `blake3` content
-hash, so `rete verify` covers it and it is **tamper-evident**.
+In format `0x06`, the card lives in a **card region at the front of the file**,
+after the 128-byte header and root block. The region holds the card, build
+record and free space for updates. In legacy `0x05`, the 1 KiB header instead
+locates a metadata section, which can sit before or after the data. The card
+is covered by the file's `blake3` content hash in both generations, so
+`rete verify` detects changes. Adding a card does not itself require a new
+format generation, but readers released through 0.4.2 cannot open `0x06`;
+see [Compatibility](compatibility.md).
 
 ## Building a card
 
@@ -110,7 +112,7 @@ newlines.
 | `signals.text_index` | **measured** | Whether the file carries a **full-text (TEXT_INDEX) section** — `{present, bytes, token_table_bytes}`. Derived from the file's *sections* rather than its triples, and never written into the file. See [The full-text signal](#the-full-text-signal-measured-not-stored). |
 | `signals.label_index` | **measured** | Whether the file carries a **label index (LABEL_INDEX section, kind 8)** — `{present, bytes, entries}`. Presence and size from the section directory, `entries` from the section's 32-byte preamble (one small range read); never written into the file, exactly like `signals.text_index`. A file without the section may still answer a prefix search from its pyramid's legacy label block, which this signal does not measure. |
 | `signals.permutations` | **measured** | Which **index permutations** the file stores — `{count, names, merge_join}`. Also derived, from the header's permutation mask, and also never written. See [The permutation signal](#the-permutation-signal-measured-not-stored). |
-| `signals.quoted_triples` | **measured** | Whether the dataset holds **quoted triples**, and which surfaces an export can write them in — `{present, export_surfaces, export_default}`. Derived from header flag bit 2, and also never written. See [The quoted-triple signal](#the-quoted-triple-signal-measured-not-stored). |
+| `signals.quoted_triples` | **measured** | Whether the dataset holds **quoted triples**, and which surfaces an export can write them in — `{present, export_surfaces, export_default}`. Derived from the header's quoted-triples flag (bit 1 in `0x06`, bit 2 in `0x05`), and also never written. See [The quoted-triple signal](#the-quoted-triple-signal-measured-not-stored). |
 | `signals.annotation_predicates`, `signals.quoting_predicates`, `signals.annotated_statement` | derived | The **vocabulary of the RDF-star layer**, when there is one: the predicates that annotate a statement, the predicates whose *value* is a statement, and the one `(quoted predicate, annotating predicate)` pair witnessed on a statement this graph both asserts and annotates. Empty and omitted on a graph with no quoted triples. See [Querying the star layer](#querying-the-star-layer). |
 | `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
 | `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). Also set when the subject-namespace tally overflowed (see below). |
@@ -275,8 +277,8 @@ missing key. In the JSON-LD projection it is `rete:quotedTriples`, with
 when there is a choice to make.
 
 **Measured, never stored**, for the same reasons as the two signals above — and
-one that matters more here than anywhere else: header flag bit 2
-(`FLAG_HAS_QUOTED_TRIPLES`, [SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)) has been
+one that matters more here than anywhere else: the header's quoted-triples flag
+(bit 1 in format `0x06`, bit 2 in `0x05`, [SPEC §4.1](SPEC.md#41-header-128-bytes-little-endian)) has been
 written by every build since quoted triples were supported, so this is an honest
 answer for **every file that already exists**. The 44 published scholar datasets
 report it today, with no re-card and no rebuild. A stored field would have read
@@ -647,9 +649,9 @@ author-supplied JSON-LD mapping (see the projection below). Everything else in
 
 ### What custom fields actually cost — and the limits
 
-Custom fields never touch the header: the header is a **fixed 1 KiB of
-offsets**, and no card content of any size can disturb it. What they grow is
-the **metadata section** — and that section is fetched by every CARD-tier
+Custom fields do not enlarge the fixed-size header (128 bytes in `0x06`,
+1 KiB in `0x05`). They enlarge the card stored in the **card region**
+(`0x06`) or **metadata section** (`0x05`) — and the card is fetched by every CARD-tier
 reader on **every open**, across the whole catalog, forever. That is the real
 constraint, and it is tighter than "don't disturb the header". So the bag is
 bounded, and the bounds are checked at build time:
@@ -831,9 +833,10 @@ feeds), `parse+chunk`, `frequent_objects` (its `--frequent-objects` pass,
 0.4.2), `dictionary`, `encode` and `named_graphs` (the memory-bounded build
 and `merge`), `card_derive`, `pyramid`, `text_index`,
 `labels+schema`, `dictionary_section`, `index_permutations`, `serialize`,
-`starter_queries`, `write` and `content_hash` (the read of every hashed section
-that places a card after the data needs: the memory-bounded build, `merge` and
-`recard --in-place`). In the memory-bounded build the SCHEMA pass is
+`starter_queries`, `write` and `content_hash` (in `0x05`, the read of every
+hashed section that placing a card after the data needs: the memory-bounded
+build, `merge` and `recard --in-place`; in `0x06`, the write of the card
+region). In the memory-bounded build the SCHEMA pass is
 fed from the remap and permutation merges, so part of its cost sits in
 `encode` and `index_permutations`; `labels+schema` is only its finish.
 
@@ -882,11 +885,13 @@ trailing whitespace, and every reader of the section (serde, `JSON.parse`,
 Python's `json`) accepts it. Nothing else in the file moves; the wall time and
 peak RSS cover the final write. The padding is a few hundred bytes.
 
-The memory-bounded build reserves nothing, and neither does `rete merge`: the
-card and record are written
-together **after the data**, once everything they describe is on disk, and the
-record is sealed just before that write — its run covers every phase, the
-content hash included, but not the last few KB written.
+The memory-bounded build and `rete merge` write the card and the record once
+everything they describe is on disk: into the card region of the `0x06` file,
+with the record reserved at its widest form (every starter-query cost at
+`u64::MAX`), then the costs are measured again on the file as written and the
+sealed record patched into its reservation. In `0x06` a starter query's bytes
+depend on the layout, card region included, since the open reads the first
+64 KiB.
 
 ### Reproducible records
 
@@ -1301,7 +1306,8 @@ bucket keeps the card its builder could write on the day it was built —
 starter queries, profile caps, missing build record and all — until somebody
 deliberately re-cards it. And because the card is inside the `blake3` content
 hash, a new card is a new file identity: the local file is rewritten (or, with
-`rete recard --in-place`, appended to and its header rewritten), and the
+`rete recard --in-place`, its card region updated and header rewritten, or
+legacy `0x05` metadata appended), and the
 published copy replaced — or nothing changes.
 
 So the work splits in two: **find out which files need it** (cheap, and there
@@ -1396,15 +1402,19 @@ section copied byte for byte, the offsets fixed, the content hash recomputed.
 Nothing is rebuilt, so nothing about the data can change, and the proof of that
 is byte identity of every data section (`card_tools.py sections-equal`), not a
 comparison of N-Quads exports. **`--in-place`** does the same without the copy:
-the new card and build record are appended after the data and the header is
+on a `0x06` file the new card and build record go into the card region's free
+space beside the old ones (on `0x05`, after the data) and the header is
 rewritten last, so a crash leaves either the old file or the new one, and the
-only writes are a few KB ([cli.md](cli.md#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)).
+only writes are a few KB when they fit. If the new pair does not fit the
+`0x06` region's free space, the command copies the file with a larger region
+and renames it over the input; its summary reports which path ran
+([cli.md](cli.md#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)).
 
 | the file's problem | command | ceiling |
 |---|---|---|
 | only the build record is missing; the queries answer | `rete card-audit <file> --measure --write-costs` | none from the rewrite — but an old card's *queries* need the RAM (below) |
 | the card is stale or its queries are broken | `rete recard <in> -o <out> --keep-curated` (or `--card-file <curated>`) | **none from the statement count**: memory is ~1 B per subject + `--memory-budget-mb` (1 GiB) |
-| same, on a file too big to copy | `rete recard <file> --in-place --keep-curated` | the same memory; disk: a few KB, plus the old card left behind as dead bytes |
+| same, preferring an in-place update | `rete recard <file> --in-place --keep-curated` | the same memory; `0x06` uses free card-region space, but falls back to a file copy if it does not fit; `0x05` appends a few KB and leaves the old card as dead bytes |
 | the card *and* the pyramid or text index must change | `rete repyramid <in> -o <out> --card --card-file <curated>` | **~80 M statements** (~70–100 M; ≈ 2 GB of a typically dense `.rete`) |
 | same, but past that | `rete export <in> --format nq` → `rete build … --card-file <curated>` | **~150 M statements**, at ~2.5× the wall clock and 9–15× the `.rete` in staged text on disk |
 
@@ -1709,7 +1719,7 @@ their own Croissant documents beside the bucket.)
 One Croissant requirement is structurally unsatisfiable from inside the file:
 every `FileObject` must carry an `md5`/`sha256`, and **a file cannot contain
 its own whole-file sha256** (the hash would change the bytes being hashed).
-The format's own integrity hash (blake3-16 over the payload sections) is
+The format's own integrity hash (blake3-16 covering the card and data sections) is
 published as `rete:contentHash`; the sha256 — knowable only outside the file —
 can be supplied by the publisher with `--sha256 <hex>`, which makes the
 document fully validator-clean: `mlcroissant` reports **zero errors** with it,
@@ -1721,6 +1731,11 @@ rete card data.rete --format croissant --sha256 $(sha256sum data.rete | cut -d' 
 ```
 
 ## Back-compatibility
+
+Card-schema compatibility and file-format compatibility are separate.
+The observations below concern the additive JSON schema and legacy `0x05`
+artifacts; they do not mean an older binary can read `0x06`. Readers through
+0.4.2 reject that generation, even when its card uses familiar fields.
 
 All enriched fields are additive with serde defaults, so a card written by an
 older `rete` (plain `example_queries`, none of the new fields) still
@@ -1762,11 +1777,11 @@ rete card data.rete --json     # the embedded JSON, pretty-printed
 
 ### In the browser
 
-The [playground](playground.html)'s **🏷 Card** button renders the same card,
-and the build record with it. Both come from **one** engine call — the header
-plus the single coalesced range that covers the card and the adjacent
-build-info section — so showing the build conditions costs a reader nothing
-over showing the card alone.
+The [playground](playground.html)'s **🏷 Card** button renders the same card
+and its build record through one engine call. The physical reads depend on
+the format and metadata size: `0x06` places both in the front card region;
+legacy `0x05` uses the header's metadata/build-info offsets. A single API call
+does not necessarily mean a single HTTP request.
 
 What the rendered view does with each field is chosen to keep the card's own
 distinctions visible:
@@ -1815,10 +1830,28 @@ The `checksum` line is the file's `blake3` content hash (the same value
 
 ## How it sits in the file
 
-The card is stored as compact **JSON** in the metadata section. Readers use
-its header offset and length rather than assuming a position. This diagram
-shows the layout with metadata before the dictionary; bounded builds and
-in-place recarding can append metadata after the data instead:
+The card is compact **JSON**, compressed with the internal codec in `0x06`;
+the build record is raw JSON. Current writers produce `0x06`, whose header
+locates the root and card region at the front of the file:
+
+```text
+[0..128)       header: counts, lengths, digests and content hash
+[root block]   section table and directory roots
+[card region]  Dataset Card JSON | build record | free space
+[front data]   statistics and directory leaves
+[payload]      dictionary chunks, index tiles and other data sections
+[footer]       trailing version and magic
+```
+
+The initial ranged read is up to 64 KiB, so it includes card bytes that lie
+in that front range. Larger front metadata may require further reads. A
+card therefore participates in the opening cost; it is not universally free
+for queries. `rete card-url` reads the card without scanning the graph.
+See [SPEC §4](SPEC.md#4-file-layout) for the current framing and read policy.
+
+Legacy `0x05` uses the following layout when metadata precedes the dictionary.
+Its bounded builds and in-place recarding can instead put metadata after the
+data; readers follow the header's offsets:
 
 ```text
 [0..1024)     header              (metadata_offset = 1024, metadata_len = card bytes)
@@ -1833,19 +1866,16 @@ in-place recarding can append metadata after the data instead:
 
 A few properties worth knowing:
 
-- **No format break.** Without a card, `metadata_len` is `0` and the dictionary
+- **Legacy cardless files.** In `0x05`, without a card, `metadata_len` is `0` and the dictionary
   starts right after the 1 KB header exactly as before — the output is
   byte-identical to a cardless build, and existing files keep verifying unchanged.
 - **Integrity-covered.** The card bytes are part of the `blake3` content hash, so
   `rete verify` validates the card too and any edit to it is detected.
-- **Off the query path.** Range-reading opens (`rete query-url`, `sparql-url`,
-  `summary-url`, federation routing) fetch sections by offset and **never read
-  the card**, so embedding one adds nothing to query-time bytes-on-the-wire. To
-  read the card remotely without downloading the file, `rete card-url` fetches
-  just the header + metadata range (two ranges, index untouched).
-- **Opaque to the writer's *layout*, not to the card.** The metadata section is
-  raw bytes as far as the file format is concerned — a general extension point,
-  of which a card is just the first use. The card *itself*, both halves, lives
+- **Generation-specific reads.** `0x05` sections remain independently
+  addressable, but the current opener's initial read may include card bytes.
+  In `0x06`, card data deliberately lives at the front. Use measured bytes and
+  requests rather than assuming every remote card read takes two requests.
+- **Shared card implementation.** The card *itself*, both halves, lives
   in `rete_core::card`: the write-time rules for the curated half (the reserved
   top level, the `theme` IRI requirement, the `extra` bounds), and the
   derivation of the profile and the starter-query library. It used to live in

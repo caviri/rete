@@ -288,7 +288,7 @@ impl TextIndexScope {
     /// A block of a version this reader does not know decodes as a scope that
     /// covers **no** predicate: the index still answers `rete search`, and the
     /// SPARQL pushdown never prunes with coverage it cannot read.
-    fn decode(bytes: &[u8]) -> Result<Self, FileError> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, FileError> {
         let Some((&version, rest)) = bytes.split_first() else {
             return Ok(TextIndexScope::default());
         };
@@ -625,10 +625,129 @@ enum Postings {
     Remote(Box<dyn Fn(u64, u64) -> Option<Vec<u8>> + Send + Sync>),
 }
 
-/// A parsed text index: the token table (always resident) plus a posting source.
+/// One leaf of a `0x06` token table, as the root describes it.
+#[derive(Debug, Clone)]
+pub struct TokenLeaf {
+    /// Index of the leaf's first token.
+    pub first: usize,
+    /// Tokens in the leaf.
+    pub n: usize,
+    /// The leaf's first token.
+    pub first_token: String,
+    /// Absolute range of the stored leaf block.
+    pub leaf: (u64, u64),
+}
+
+/// A token table whose entries live in leaf blocks faulted on demand (format
+/// `0x06`): a word lookup faults one leaf, a prefix the leaves of its run, and
+/// only a substring search (`CONTAINS` pushdown) needs them all.
+/// A faulted token-table leaf: each token and its posting range.
+type TokenCell = std::sync::OnceLock<Box<[(String, u64, u64)]>>;
+
+pub struct LeafedTokens {
+    leaves: Vec<TokenLeaf>,
+    cells: Vec<TokenCell>,
+    total: usize,
+    fetch: crate::index::LeafFetch,
+    codec: u8,
+    /// Decompression bound on a leaf.
+    max_block: u64,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl LeafedTokens {
+    /// Bound every leaf decompression at `max` bytes (from the `0x06` root).
+    pub fn with_max_block(mut self, max: u64) -> Self {
+        self.max_block = max;
+        self
+    }
+
+    /// A leafed token table of `total` tokens.
+    pub fn new(
+        leaves: Vec<TokenLeaf>,
+        total: usize,
+        fetch: crate::index::LeafFetch,
+        codec: u8,
+    ) -> Self {
+        let cells = leaves.iter().map(|_| std::sync::OnceLock::new()).collect();
+        LeafedTokens {
+            leaves,
+            cells,
+            total,
+            fetch,
+            codec,
+            max_block: u64::MAX,
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn decode(&self, li: usize, stored: &[u8]) -> Option<Box<[(String, u64, u64)]>> {
+        let raw = crate::file::decompress_bounded(self.codec, stored, self.max_block).ok()?;
+        let ents = crate::v06::decode_token_leaf(&raw, self.leaves[li].n).ok()?;
+        ents.into_iter()
+            .map(|e| Some((String::from_utf8(e.token).ok()?, e.off, e.len)))
+            .collect::<Option<Vec<_>>>()
+            .map(Vec::into_boxed_slice)
+    }
+
+    fn ensure(&self, lis: &[usize]) {
+        // Callers pass one leaf per pattern or term, so the same leaf can come
+        // many times over (a join probing 460 k subjects of one leaf): fetch
+        // each leaf once.
+        let mut missing: Vec<usize> = lis
+            .iter()
+            .copied()
+            .filter(|&li| li < self.cells.len() && self.cells[li].get().is_none())
+            .collect();
+        missing.sort_unstable();
+        missing.dedup();
+        if missing.is_empty() {
+            return;
+        }
+        let ranges: Vec<(u64, u64)> = missing.iter().map(|&li| self.leaves[li].leaf).collect();
+        match (self.fetch)(&ranges) {
+            Some(blobs) if blobs.len() == missing.len() => {
+                for (&li, b) in missing.iter().zip(blobs) {
+                    match self.decode(li, &b) {
+                        Some(v) => {
+                            let _ = self.cells[li].set(v);
+                        }
+                        None => self
+                            .failed
+                            .store(true, std::sync::atomic::Ordering::Relaxed),
+                    }
+                }
+            }
+            _ => self
+                .failed
+                .store(true, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    fn leaf(&self, li: usize) -> &[(String, u64, u64)] {
+        self.ensure(&[li]);
+        self.cells[li].get().map_or(&[], |b| &b[..])
+    }
+
+    /// The leaf a token routes to (by first token).
+    fn leaf_for(&self, token: &str) -> usize {
+        self.leaves
+            .partition_point(|l| l.first_token.as_str() <= token)
+            .saturating_sub(1)
+    }
+}
+
+/// A token table: resident (`0x05`, local opens) or leafed (`0x06`).
+enum Tokens {
+    Full(Vec<(String, u64, u64)>),
+    Leafed(std::sync::Arc<LeafedTokens>),
+}
+
+/// A parsed text index: the token table (resident, or leafed and faulted by
+/// leaf) plus a posting source.
 pub struct TextIndex {
     /// `(token, posting_offset, posting_len)`, sorted by token.
-    tokens: Vec<(String, u64, u64)>,
+    tokens: Tokens,
     postings: Postings,
     scope: TextIndexScope,
 }
@@ -642,7 +761,7 @@ impl TextIndex {
             .ok_or(FileError::Container("text-index postings overrun"))?
             .to_vec();
         Ok(TextIndex {
-            tokens,
+            tokens: Tokens::Full(tokens),
             postings: Postings::Resident(postings),
             scope,
         })
@@ -657,10 +776,29 @@ impl TextIndex {
     ) -> Result<Self, FileError> {
         let (tokens, scope, _postings_start) = parse_token_table(prefix, codec)?;
         Ok(TextIndex {
-            tokens,
+            tokens: Tokens::Full(tokens),
             postings: Postings::Remote(loader),
             scope,
         })
+    }
+
+    /// A `0x06` text index: a leafed token table and a posting loader
+    /// (offsets within the postings blob).
+    pub fn leafed(
+        tokens: std::sync::Arc<LeafedTokens>,
+        scope_block: &[u8],
+        loader: Box<dyn Fn(u64, u64) -> Option<Vec<u8>> + Send + Sync>,
+    ) -> Result<Self, FileError> {
+        Ok(TextIndex {
+            tokens: Tokens::Leafed(tokens),
+            postings: Postings::Remote(loader),
+            scope: TextIndexScope::decode(scope_block)?,
+        })
+    }
+
+    /// Did a token-table leaf fault fail?
+    pub fn load_failed(&self) -> bool {
+        matches!(&self.tokens, Tokens::Leafed(l) if l.failed.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     /// Byte offset of the postings blob within the section (token-table end).
@@ -672,7 +810,10 @@ impl TextIndex {
 
     /// Number of distinct tokens.
     pub fn token_count(&self) -> usize {
-        self.tokens.len()
+        match &self.tokens {
+            Tokens::Full(t) => t.len(),
+            Tokens::Leafed(l) => l.total,
+        }
     }
 
     /// What this index covers (the default scope for every pre-0.4.0 file).
@@ -692,13 +833,38 @@ impl TextIndex {
     /// Subjects whose literals contain the exact `token` (case-insensitive — the
     /// caller passes a [`tokenize`]d word), sorted ascending.
     pub fn lookup(&self, token: &str) -> Vec<u32> {
-        let i = self.tokens.partition_point(|(t, _, _)| t.as_str() < token);
-        match self.tokens.get(i) {
+        let found = match &self.tokens {
+            Tokens::Full(tokens) => {
+                let i = tokens.partition_point(|(t, _, _)| t.as_str() < token);
+                tokens.get(i).cloned()
+            }
+            Tokens::Leafed(l) => {
+                let leaf = l.leaf(l.leaf_for(token));
+                let i = leaf.partition_point(|(t, _, _)| t.as_str() < token);
+                leaf.get(i).cloned()
+            }
+        };
+        match found {
             Some((t, off, len)) if t == token => self
-                .posting_for(*off, *len)
+                .posting_for(off, len)
                 .map(|b| decode_postings(&b))
                 .unwrap_or_default(),
             _ => Vec::new(),
+        }
+    }
+
+    /// Every token, in order (a leafed table faults all its leaves at once).
+    fn all_tokens(&self) -> Vec<&(String, u64, u64)> {
+        match &self.tokens {
+            Tokens::Full(t) => t.iter().collect(),
+            Tokens::Leafed(l) => {
+                l.ensure(&(0..l.leaves.len()).collect::<Vec<_>>());
+                l.cells
+                    .iter()
+                    .filter_map(|c| c.get())
+                    .flat_map(|b| b.iter())
+                    .collect()
+            }
         }
     }
 
@@ -710,8 +876,8 @@ impl TextIndex {
     /// and the caller falls back to its non-indexed path.
     pub fn substring(&self, piece: &str) -> Option<Vec<u32>> {
         let matching: Vec<&(String, u64, u64)> = self
-            .tokens
-            .iter()
+            .all_tokens()
+            .into_iter()
             .filter(|(t, _, _)| t.contains(piece))
             .collect();
         if matching.len() > SUBSTRING_TOKEN_CAP {
@@ -729,18 +895,61 @@ impl TextIndex {
     /// Subjects whose literals contain a word **starting with** `prefix` — the
     /// union over every token in the `prefix…` range. Sorted, deduped.
     pub fn prefix(&self, prefix: &str) -> Vec<u32> {
-        let start = self.tokens.partition_point(|(t, _, _)| t.as_str() < prefix);
-        let mut out = BTreeSet::new();
-        for (t, off, len) in &self.tokens[start..] {
-            if !t.starts_with(prefix) {
-                break;
+        let mut hits: Vec<(u64, u64)> = Vec::new();
+        match &self.tokens {
+            Tokens::Full(tokens) => {
+                let start = tokens.partition_point(|(t, _, _)| t.as_str() < prefix);
+                for (t, off, len) in &tokens[start..] {
+                    if !t.starts_with(prefix) {
+                        break;
+                    }
+                    hits.push((*off, *len));
+                }
             }
-            if let Some(b) = self.posting_for(*off, *len) {
+            Tokens::Leafed(l) => {
+                let mut li = l.leaf_for(prefix);
+                'leaves: while li < l.leaves.len() {
+                    let leaf = l.leaf(li);
+                    let start = leaf.partition_point(|(t, _, _)| t.as_str() < prefix);
+                    for (t, off, len) in &leaf[start..] {
+                        if !t.starts_with(prefix) {
+                            break 'leaves;
+                        }
+                        hits.push((*off, *len));
+                    }
+                    li += 1;
+                    if li < l.leaves.len()
+                        && !l.leaves[li].first_token.starts_with(prefix)
+                        && l.leaves[li].first_token.as_str() > prefix
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        let mut out = BTreeSet::new();
+        for (off, len) in hits {
+            if let Some(b) = self.posting_for(off, len) {
                 out.extend(decode_postings(&b));
             }
         }
         out.into_iter().collect()
     }
+}
+
+/// [`parse_token_table`] that also returns the raw scope block (empty for
+/// the default scope) — what a `0x06` root stores.
+#[allow(clippy::type_complexity)]
+pub(crate) fn parse_token_table_raw(
+    bytes: &[u8],
+    codec: u8,
+) -> Result<(Vec<(String, u64, u64)>, TextIndexScope, Vec<u8>, usize), FileError> {
+    let (tokens, scope, end) = parse_token_table(bytes, codec)?;
+    let mut raw = Vec::new();
+    if !scope.is_default() {
+        scope.encode(&mut raw);
+    }
+    Ok((tokens, scope, raw, end))
 }
 
 /// Parse the token table from a section (or a prefix covering it). Returns the

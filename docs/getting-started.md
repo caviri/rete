@@ -10,6 +10,11 @@ The published CLI container runs the same commands as a local `rete` binary.
 Define a wrapper in your current shell so that files in your working directory
 are available inside the container.
 
+This example pins the published 0.4.2 image, which writes format `0x05`.
+Current source builds write `0x06`; the 0.4.2 reader cannot open those newer
+files. See [Compatibility](compatibility.md) before exchanging files between
+the released image and a source build.
+
 On a POSIX shell (Linux or macOS):
 
 ```sh

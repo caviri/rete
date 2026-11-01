@@ -186,9 +186,12 @@ fn every_open_path_answers_the_same_prefix_search() {
     assert!(want.iter().all(|(l, _)| l.ends_with(", Jana")));
     let ranged = Rete::open_ranged(&SliceReader::new(&bytes)).unwrap();
     assert_eq!(ranged.prefix_search("svobodová2", 500), want);
-    let lazy = Rete::open_ranged_lazy(Counted::new(bytes.clone())).unwrap();
+    let lazy =
+        Rete::open_ranged_lazy_with(Counted::new(bytes.clone()), rete_core::HEADER_LEN as u64)
+            .unwrap();
     assert_eq!(lazy.prefix_search("SVOBODOVÁ2", 500), want);
-    let view = SearchView::open_ranged(Counted::new(bytes)).unwrap();
+    let view =
+        SearchView::open_ranged_with(Counted::new(bytes), rete_core::HEADER_LEN as u64).unwrap();
     assert!(view.has_label_index() && view.has_labels());
     assert_eq!(view.prefix_search("svobodová2", 500), want);
 }
@@ -196,7 +199,7 @@ fn every_open_path_answers_the_same_prefix_search() {
 #[test]
 fn a_remote_prefix_search_reads_the_header_the_section_head_and_one_block() {
     let reader = Counted::new(build(quads(2_000), &sectioned(false)));
-    let view = SearchView::open_ranged(reader.clone()).unwrap();
+    let view = SearchView::open_ranged_with(reader.clone(), rete_core::HEADER_LEN as u64).unwrap();
     assert_eq!(reader.requests(), 1, "the open reads the header only");
     reader.reset();
     let hits = view.prefix_search("acta universitatis 1999", 5);
@@ -236,7 +239,7 @@ fn a_file_without_a_pyramid_has_schema_planner_stats_and_tier0_reads() {
     assert!(schema_only.level_count() > 0);
     // Lazy: the schema is faulted on first use, one range.
     let c = Counted::new(bytes);
-    let lazy = Rete::open_ranged_lazy(c.clone()).unwrap();
+    let lazy = Rete::open_ranged_lazy_with(c.clone(), rete_core::HEADER_LEN as u64).unwrap();
     c.reset();
     assert!(!lazy.predicate_stats().is_empty());
     assert_eq!(c.requests(), 1);

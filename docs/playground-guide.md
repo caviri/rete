@@ -80,8 +80,9 @@ and [Media & SQL companions](media-companions.md) for examples and media types.
 
 ## Read the cost, then explore further {#watching-the-bytes-and-the-caches}
 
-On a remote graph the result line reports `N range requests / M KB fetched /
-file is X MB`. These are bytes read, not a promise that every query reads a
+On a remote graph the result line reports
+`N range requests / M KB fetched / file is X MB`.
+These are bytes read, not a promise that every query reads a
 small fraction. Open **requests** for the actual ranges. Run the query again:
 `0 new bytes` means the session cache supplied its reads, even if query
 computation still took time.

@@ -632,7 +632,9 @@ or Split by community for individual geometry and dates: <strong>Progressive</st
 summary data and returns approximate answers. See <a href="geosparql.html">GeoSPARQL</a>
 and <a href="media-companions.html">Media &amp; SQL companions</a> for examples and media types.</p>
 <h2 id="watching-the-bytes-and-the-caches">Read the cost, then explore further</h2>
-<p>On a remote graph the result line reports <code>N range requests / M KB fetched /  file is X MB</code>. These are bytes read, not a promise that every query reads a
+<p>On a remote graph the result line reports
+<code>N range requests / M KB fetched / file is X MB</code>.
+These are bytes read, not a promise that every query reads a
 small fraction. Open <strong>requests</strong> for the actual ranges. Run the query again:
 <code>0 new bytes</code> means the session cache supplied its reads, even if query
 computation still took time.</p>

@@ -47,11 +47,14 @@ the dataset. This path has different feature limits from an in-memory build;
 check the [CLI reference](cli.md) before adding an option to it.
 
 <span id="file-layout"></span>
-`header.rs` describes the section directory; `file.rs` assembles and opens the
-file. Besides dictionaries and indexes, files can contain community summaries,
+Current writers use format `0x06`: `v06/` owns its 128-byte header, root block,
+front directories and card region. `file.rs` dispatches reads for both `0x05`
+and `0x06`; `header.rs` describes the older layout. Besides dictionaries and
+indexes, files can contain community summaries,
 schema, label/text indexes and a Dataset Card. Their presence and placement
 depend on build options and file features. The [format specification](SPEC.md)
-owns their byte-level contracts.
+owns their byte-level contracts. Published readers through 0.4.2 cannot read
+`0x06`; check [Compatibility](compatibility.md) before publishing a new file.
 
 A snapshot stays immutable. Changes to a logical graph can instead use
 [`manifest.rs`](https://github.com/caviri/rete/blob/main/crates/rete-core/src/manifest.rs),
