@@ -278,6 +278,31 @@ pub enum ExtBuildError {
     Io(#[from] std::io::Error),
     #[error("internal: {0}")]
     Internal(&'static str),
+    /// The dataset does not fit the format: a position (subject or object) has
+    /// more than `u32::MAX` distinct terms.
+    #[error("{0}")]
+    Limit(String),
+}
+
+/// Slack on the HyperLogLog estimate (relative error about 0.8 %, so 3 % is
+/// nearly four standard errors) before [`check_position_estimate`] refuses.
+const POSITION_ESTIMATE_SLACK: u64 = u32::MAX as u64 / 32;
+
+/// Refuse a build early when the distinct subject or object terms seen so far
+/// clearly exceed what the format addresses (`u32::MAX` ids per position),
+/// instead of after hours of merging. The counts are HyperLogLog estimates,
+/// updated as each chunk seals; only a count past the limit by the estimator's
+/// margin refuses, and the exact check (on final ids) still runs after the merge.
+pub(crate) fn check_position_estimate(subjects: u64, objects: u64) -> Result<(), ExtBuildError> {
+    for (name, n) in [("subject", subjects), ("object", objects)] {
+        if n > u32::MAX as u64 + POSITION_ESTIMATE_SLACK {
+            return Err(ExtBuildError::Limit(format!(
+                "about {n} distinct {name} terms so far (HyperLogLog estimate), and a .rete file                  addresses at most {} per position: this build cannot succeed, so it stops                  now rather than after the merge",
+                u32::MAX
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Bytes charged against the budget per triple of a named graph held resident
@@ -874,6 +899,10 @@ struct Chunker<'a> {
     has_quoted: bool,
     /// `--text-index`: each sealed chunk spills its literal words here.
     text: Option<&'a mut crate::text_index_spill::TextSpill>,
+    /// Distinct terms of the subject and the object space over the sealed
+    /// chunks, for the early size refusal ([`check_position_estimate`]).
+    subj_hll: crate::hll::Hll,
+    obj_hll: crate::hll::Hll,
     /// Quad index: graph names are subject terms of the chunk dictionary and
     /// a named quad's graph id is the name's local subject id.
     quad: bool,
@@ -895,6 +924,8 @@ impl<'a> Chunker<'a> {
             chunks: Vec::new(),
             has_quoted: false,
             text: None,
+            subj_hll: crate::hll::Hll::new(),
+            obj_hll: crate::hll::Hll::new(),
             quad: graphs == GraphLayout::Quad,
         }
     }
@@ -1084,24 +1115,48 @@ impl<'a> Chunker<'a> {
         };
         let write_terms = |name: &str,
                            count: u32,
-                           term_of: &dyn Fn(u32) -> Option<String>|
+                           term_of: &dyn Fn(u32) -> Option<String>,
+                           seen: &mut dyn FnMut(&str)|
          -> Result<(), ExtBuildError> {
             let mut w = TermWriter::create(&self.tmp.path(name))?;
             for i in 1..=count {
                 let t = term_of(i).ok_or(ExtBuildError::Internal("dict id out of range"))?;
+                seen(&t);
                 w.push(&t)?;
             }
             w.finish()?;
             Ok(())
         };
-        write_terms(&format!("c{ci}.shared"), shared, &|i| dict.subject_term(i))?;
-        write_terms(&format!("c{ci}.subj"), subj_only, &|i| {
-            dict.subject_term(shared + i)
-        })?;
-        write_terms(&format!("c{ci}.obj"), obj_only, &|i| {
-            dict.object_term(shared + i)
-        })?;
-        write_terms(&format!("c{ci}.pred"), preds, &|i| dict.predicate_term(i))?;
+        let (subj_hll, obj_hll) = (&mut self.subj_hll, &mut self.obj_hll);
+        write_terms(
+            &format!("c{ci}.shared"),
+            shared,
+            &|i| dict.subject_term(i),
+            &mut |t| {
+                subj_hll.add(t);
+                obj_hll.add(t);
+            },
+        )?;
+        write_terms(
+            &format!("c{ci}.subj"),
+            subj_only,
+            &|i| dict.subject_term(shared + i),
+            &mut |t| subj_hll.add(t),
+        )?;
+        write_terms(
+            &format!("c{ci}.obj"),
+            obj_only,
+            &|i| dict.object_term(shared + i),
+            &mut |t| obj_hll.add(t),
+        )?;
+        write_terms(
+            &format!("c{ci}.pred"),
+            preds,
+            &|i| dict.predicate_term(i),
+            &mut |_| {},
+        )?;
+        // Refuse a dataset that cannot fit as soon as it is clear, not after the merge.
+        check_position_estimate(self.subj_hll.count(), self.obj_hll.count())?;
 
         progress::set_stat(Stat::Chunks, ci as u64 + 1);
         eprintln!(
@@ -1706,7 +1761,7 @@ fn merge_dictionaries_with(
         let mut rank = 0u32;
         while let Some((term, carriers)) = kway.next()? {
             for (ci, lid) in carriers {
-                remaps.push(ci, Seg::Pred, lid, rank + 1)?; // pred ids are final now
+                remaps.push(ci, Seg::Pred, lid, rank as u64 + 1)?; // pred ids are final now
             }
             if let Some(i) = schema_preds.iter().position(|w| *w == term) {
                 schema_facts.pred_ids[i] = Some(rank + 1);
@@ -1744,7 +1799,7 @@ fn merge_dictionaries_with(
         while let Some((name, carriers)) = kway.next()? {
             graph_count += 1;
             for (ci, lid) in carriers {
-                remaps.push(ci, Seg::Graph, lid, graph_count)?;
+                remaps.push(ci, Seg::Graph, lid, graph_count as u64)?;
             }
             w.push(&name)?;
         }
@@ -3176,6 +3231,25 @@ fn copy_hashed(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_dataset_clearly_past_u32_per_position_is_refused_early() {
+        use super::check_position_estimate as check;
+        assert!(check(0, 0).is_ok());
+        assert!(check(u32::MAX as u64, u32::MAX as u64).is_ok());
+        // within the estimator's margin: the exact check after the merge decides
+        assert!(check(u32::MAX as u64 + 1_000_000, 5).is_ok());
+        let e = check(5_000_000_000, 10).unwrap_err().to_string();
+        assert!(e.contains("subject") && e.contains("4294967295"), "{e}");
+        let e = check(10, 5_000_000_000).unwrap_err().to_string();
+        assert!(e.contains("object"), "{e}");
+        // the estimator the build feeds is accurate to well within that margin
+        let mut h = crate::hll::Hll::new();
+        for i in 0..300_000u32 {
+            h.add(&format!("<http://ex/{i}>"));
+        }
+        assert!((h.count() as f64 - 300_000.0).abs() / 300_000.0 < 0.03);
+    }
+
     use super::*;
     use crate::ingest;
 

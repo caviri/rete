@@ -48,6 +48,7 @@ pub mod geo;
 pub mod geo3;
 #[doc(hidden)]
 pub mod header;
+pub mod hll;
 #[doc(hidden)]
 pub mod index;
 
