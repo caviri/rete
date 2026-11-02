@@ -39,7 +39,8 @@ file only once the readers that fetch it run this release. See
   with a card): the region is in the first 64 KiB the open reads, where slack would push the leaf directories
   out, so `rete recard --in-place` of a cardless file copies it once. **One layout for every writer:** the
   clients and the browser assemble through the same options `rete build` uses (named graphs as a quad index,
-  the community-only pyramid block, a SCHEMA section), so one input and one set of options is one content
+  the community-only pyramid block, a SCHEMA section, and the label index, which is what label prefix search
+  needs; that is `rete build --label-index`), so one input and one set of options is one content
   hash whichever front end built it (the browser and the Java client write uncompressed sections, having no
   zstd encoder, so their bytes differ). The public `rete_core::write_file`, `write_dataset` and
   `write_dataset_with_metadata` now return `0x06` (per-graph named graphs become the quad index); the `0x05`

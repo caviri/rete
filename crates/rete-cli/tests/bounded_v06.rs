@@ -636,9 +636,9 @@ fn plain(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// What a binding does (`assemble_dataset_quad`, then the shared
-/// `finish_in_ram` with a record) is `rete build` of the same input: the same
+/// `finish_in_ram` with a record) is `rete build --label-index` of the same input: the same
 /// sections and content hash (one layout for every writer: quad index,
-/// community-only pyramid block, SCHEMA section), the same bytes build record
+/// community-only pyramid block, SCHEMA section, label index), the same bytes build record
 /// apart, which names the front end; and it is the CLI's conversion of the same
 /// in-RAM image.
 #[test]
@@ -672,7 +672,7 @@ fn a_binding_style_build_equals_rete_build_and_the_conversion_of_its_image() {
         let src = dir.path().join(format!("in.{format}"));
         std::fs::write(&src, &text).unwrap();
         let cli = dir.path().join("cli.rete");
-        run(&["build", s(&src), "-o", s(&cli)], false);
+        run(&["build", s(&src), "-o", s(&cli), "--label-index"], false);
         let cli = std::fs::read(&cli).unwrap();
         assert_eq!(
             content_hash(&binding),

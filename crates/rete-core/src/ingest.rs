@@ -1104,12 +1104,15 @@ pub fn assemble_dataset_with_quad<M: IntoMetadata>(
 }
 
 /// [`assemble_dataset_with_opts_algo`] for the `0x06` writers, with **the layout
-/// `rete build` writes**: the named graphs in the quad index, the pyramid block
-/// carrying only the community material, and the SCHEMA section. The CLI, the
-/// browser engine and the Python, R and Java clients all assemble through this,
-/// so one input and one set of options is one content hash whichever front end
-/// built it (the browser and Java, having no zstd encoder, write their sections
-/// uncompressed and so differ in bytes).
+/// `rete build --label-index` writes**: the named graphs in the quad index, the
+/// pyramid block carrying only the community material, the SCHEMA section and
+/// the label index. The browser engine and the Python, R and Java clients all
+/// assemble through this, so one input and one set of options is one content
+/// hash whichever front end built it (the browser and Java, having no zstd
+/// encoder, write their sections uncompressed and so differ in bytes). The label
+/// index is on because label prefix search is what a graph built in memory is
+/// opened to do (the playground, the MCP server), and the legacy label block it
+/// replaces is gone from the community-only pyramid block.
 pub fn assemble_dataset_with_opts_algo_quad<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
@@ -1126,6 +1129,7 @@ pub fn assemble_dataset_with_opts_algo_quad<M: IntoMetadata>(
         type_override,
         algo,
         graph_layout: GraphLayout::Quad,
+        label_index: true,
         ..AssembleOptions::sectioned()
     };
     assemble_dataset_opts(quads, &opts, metadata)
