@@ -93,6 +93,7 @@ check "knobs answer" "ex/Bob"           -- "$B" query "$T/knobs.rete" --object "
 # memory budget, the clock), which is outside the content hash. "Same" below is
 # the content hash in the header (bytes 8..24): every section digest and the
 # card, which is the identity a build owes.
+# shellcheck disable=SC2317  # called from the `bash -c` strings below, through `export -f`
 same_content() {
   if cmp -s <(dd if="$1" bs=1 skip=8 count=16 2>/dev/null) <(dd if="$2" bs=1 skip=8 count=16 2>/dev/null); then echo same; else echo differ; fi
 }

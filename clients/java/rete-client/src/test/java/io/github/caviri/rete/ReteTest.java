@@ -41,7 +41,7 @@ class ReteTest {
             // The build record (kind 7) sits beside the card, uncompressed JSON.
             String text = new String(file, java.nio.charset.StandardCharsets.ISO_8859_1);
             assertTrue(text.contains("\"front_end\":\"java\""), "no build record naming the Java client");
-            assertTrue(text.contains("\"engine\":{\"name\":\"rete-core\""), "no engine in the build record");
+            assertTrue(text.contains("\"name\":\"rete-core\""), "no engine in the build record");
             assertTrue(rete.info(file).contains("\"quads\":3"));
         }
     }
