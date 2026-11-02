@@ -162,8 +162,9 @@ host is the reliable choice for large files.
 
 <a id="going-further"></a>
 Continue with the [playground](playground-guide.md), the
-[dependency-impact scenario](scenario.md), or
-[tables and large builds](data-engineering.md).
+[dependency-impact scenario](scenario.md), the
+[build tutorial](build-tutorial.md) (Python and CLI, the card, the file layout,
+time and memory), or [tables and large builds](data-engineering.md).
 <a id="building-from-source"></a>
 <a id="generating-synthetic-test-data"></a>
 <a id="scaling-to-1-gb"></a>

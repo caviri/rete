@@ -1,5 +1,8 @@
 # Python: build a `.rete`, step by step
 
+For one graph built from Python and from the CLI, with the card, the layout and
+measured build times, see [Build a .rete, step by step](build-tutorial.md).
+
 This tutorial walks through preparing a `.rete` file from Python with the
 `rete_graph.Builder` — a **lazy** builder: every step just records
 configuration and returns the builder, so calls chain freely; nothing parses

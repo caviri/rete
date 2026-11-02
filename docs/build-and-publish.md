@@ -10,6 +10,9 @@ The [Quickstart](getting-started.md) walks through a small build and query.
 For your own data, include a [Dataset Card](dataset-cards.md) with its title,
 licence and source. Readers can inspect the card before choosing what to query.
 
+- [Build a .rete, step by step](build-tutorial.md) follows one synthetic graph
+  through Python and the CLI, then the card, the schema, the file layout, time
+  and memory.
 - [Build from Python](python-build-tutorial.md) when the graph comes from your code.
 - [Import, export and interoperability](interop.md) covers RDF syntaxes, named
   graphs and exchanging data with other stores.

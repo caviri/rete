@@ -79,6 +79,7 @@ const PAGES: &[(&str, &str)] = &[
     ("agent-frameworks.md", "LangChain & Pydantic AI"),
     ("fallacies.md", "Experiment: graphs from speech"),
     ("dataset-cards.md", "Dataset Cards"),
+    ("build-tutorial.md", "Build a .rete: Python and CLI"),
     ("hosting.md", "Hosting your .rete"),
     ("interop.md", "Triple-store interop"),
     ("media-companions.md", "Media & SQL companions"),
@@ -419,7 +420,8 @@ fn parent_for(md: &str) -> Option<&'static str> {
         | "plaza-guide.md"
         | "file-explorer.md"
         | "yasgui-guide.md" => "integrations.md",
-        "dataset-cards.md"
+        "build-tutorial.md"
+        | "dataset-cards.md"
         | "dataset-card-reference.md"
         | "hosting.md"
         | "interop.md"
