@@ -2215,7 +2215,7 @@ mod tests {
     #[test]
     fn registry_and_sidebar_are_complete_unique_and_classified() {
         use std::collections::HashSet;
-        assert_eq!(super::PAGES.len(), 68);
+        assert_eq!(super::PAGES.len(), 69);
         let published: HashSet<_> = super::PAGES.iter().map(|p| p.0).collect();
         assert_eq!(published.len(), super::PAGES.len());
         assert_eq!(super::SECTIONS.len(), 4);
