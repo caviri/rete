@@ -158,3 +158,93 @@ fn a_file_without_a_record_gets_one_that_holds_the_conversion() {
     );
     rete().arg("verify").arg(&out).assert().success();
 }
+
+fn raw_record(file: &Path) -> String {
+    let raw = rete_core::read_build_info(&std::fs::read(file).unwrap())
+        .unwrap()
+        .expect("a record");
+    String::from_utf8(raw).unwrap().trim_end().to_string()
+}
+
+/// "Kept as it was" is literal: the source's record text, up to its closing
+/// brace, is the start of the converted record.
+#[test]
+fn the_source_record_is_kept_byte_for_byte() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = legacy(dir.path(), true);
+    let out = dir.path().join("out.rete");
+    convert(&old, &out);
+    let (before, after) = (raw_record(&old), raw_record(&out));
+    let prefix = before.strip_suffix('}').expect("a JSON object");
+    assert!(
+        after.starts_with(prefix),
+        "{before}
+{after}"
+    );
+    assert!(after.ends_with("]}"), "{after}");
+}
+
+/// A per-graph (kind 5) source is re-encoded rather than copied, and still
+/// keeps its own record: engine, inputs, counts, start time.
+#[test]
+fn a_per_graph_source_keeps_its_record_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("in.nq");
+    let mut nq = nt().replace(
+        " .
+", " .
+",
+    );
+    nq.push_str("<http://example.test/e1> <http://example.test/in> <http://example.test/e2> <http://example.test/g1> .
+");
+    std::fs::write(&src, nq).unwrap();
+    let old = dir.path().join("pg.rete");
+    let o = rete()
+        .env("RETE_WRITE_FORMAT", "5")
+        .env("RETE_BUILD_RECORD", "reproducible")
+        .env("SOURCE_DATE_EPOCH", "1700000000")
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&old)
+        .args([
+            "--no-pyramid",
+            "--named-graphs",
+            "per-graph",
+            "--card",
+            "--no-card-costs",
+        ])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let out = dir.path().join("out.rete");
+    let o = rete()
+        .env("RETE_BUILD_RECORD", "reproducible")
+        .env("SOURCE_DATE_EPOCH", "1700000100")
+        .arg("convert")
+        .arg(&old)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("kind 5"),
+        "the re-encode path ran"
+    );
+    let (before, after) = (raw_record(&old), raw_record(&out));
+    let prefix = before.strip_suffix('}').unwrap();
+    assert!(
+        after.starts_with(prefix),
+        "{before}
+{after}"
+    );
+    let b = card_json(&out)["build"].clone();
+    assert!(b["inputs"].is_array() && !b["started_at"].is_null(), "{b}");
+    assert_eq!(b["conversions"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        b["conversions"][0]["source_content_hash"],
+        hash_of(&old).as_str()
+    );
+    rete().arg("verify").arg(&out).assert().success();
+}

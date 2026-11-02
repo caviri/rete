@@ -98,7 +98,7 @@ pub(crate) fn convert(
         let w = match rete_core::v06::write::convert_with_record(
             &reader,
             labels.as_deref(),
-            Some(record),
+            Some(record.clone()),
             &mut out,
             opts,
         ) {
@@ -106,7 +106,7 @@ pub(crate) fn convert(
             Err(rete_core::format::FileError::Container(m)) if m.contains("kind 5") => {
                 drop(out);
                 let _ = std::fs::remove_file(&tmp);
-                return convert_per_graph(input, output, label_index, &conversion);
+                return convert_per_graph(input, output, label_index, &record);
             }
             Err(e) => {
                 drop(out);
@@ -194,7 +194,7 @@ fn convert_per_graph(
     input: &str,
     output: &str,
     label_index: bool,
-    conversion: &super::buildinfo::Conversion,
+    record: &[u8],
 ) -> anyhow::Result<()> {
     eprintln!(
         "convert: {input} stores its named graphs per graph (kind 5); re-encoding them as a quad index"
@@ -226,10 +226,9 @@ fn convert_per_graph(
         card.clone().unwrap_or_default()
     });
     let image = finish_recorded(image, "convert", &stats)?;
-    // The re-encoded file's lean record, plus the conversion.
-    let lean = rete_core::read_build_info(&image)?;
-    let record = super::buildinfo::with_conversion(lean.as_deref(), conversion)?;
-    let image = rete_core::attach_build_info(&image, &record)?;
+    // The source's own record with the conversion appended, as for every other
+    // source: not the lean record of the re-encode, which describes this run.
+    let image = rete_core::attach_build_info(&image, record)?;
     std::fs::write(output, &image)?;
     eprintln!(
         "convert: wrote {output} — format 0x06, {} bytes",

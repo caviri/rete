@@ -97,6 +97,90 @@ pub(crate) struct BuildInfo {
     /// to the new card and were measured by the re-card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recarded: Option<Recarded>,
+    /// Set by `rete convert`: one entry per conversion this file went through
+    /// (oldest first). Every other field is the record of the file that was
+    /// converted, kept as it was; a file converted without a record has only
+    /// this. Absent before 0.5.1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conversions: Vec<Conversion>,
+}
+
+/// One `rete convert`: when, by what, with which flags, and from which file.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Conversion {
+    /// RFC 3339 UTC; absent in a reproducible record without `SOURCE_DATE_EPOCH`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    /// The binary that converted, in full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Engine>,
+    /// The command and its flags, e.g. `rete convert --quad-clustering auto`.
+    #[serde(default)]
+    pub command: String,
+    /// Format version of the converted file, e.g. `0x05`.
+    #[serde(default)]
+    pub source_format: String,
+    /// Its content hash (hex): the identity the data had before conversion.
+    #[serde(default)]
+    pub source_content_hash: String,
+    /// Its size in bytes.
+    #[serde(default)]
+    pub source_bytes: u64,
+    /// Its file name (no directory).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+}
+
+/// `record` (a stored build record, raw JSON, possibly space-padded; `None`
+/// for a file without one) with `conversion` appended to its `conversions`.
+///
+/// The entry is **spliced into the text**: the source's record is kept byte for
+/// byte, up to its closing brace, so a converted file's record starts with the
+/// record it was converted from (key order included, and fields this binary
+/// does not know, written by another front end). A `conversions` list a
+/// previous convert left, as the last key where this writer puts it, is
+/// appended to. A file without a record gets one that holds just the
+/// conversion.
+pub(crate) fn with_conversion(
+    record: Option<&[u8]>,
+    conversion: &Conversion,
+) -> anyhow::Result<Vec<u8>> {
+    let entry = serde_json::to_string(conversion)?;
+    let text = record
+        .map(String::from_utf8_lossy)
+        .map(|t| {
+            t.trim_matches(|c: char| c.is_ascii_whitespace() || c == '\0')
+                .to_string()
+        })
+        .filter(|t| !t.is_empty());
+    let Some(text) = text else {
+        return Ok(
+            format!("{{\"schema\":{BUILD_INFO_SCHEMA},\"conversions\":[{entry}]}}").into_bytes(),
+        );
+    };
+    let doc: serde_json::Value = serde_json::from_str(&text)?;
+    let obj = doc
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("the build record is not a JSON object"))?;
+    let body = text
+        .strip_suffix('}')
+        .ok_or_else(|| anyhow::anyhow!("the build record does not end with `}}`"))?;
+    match obj.get("conversions") {
+        Some(serde_json::Value::Array(list)) => {
+            // Our own writer leaves the list as the last key: `…,"conversions":[…]}`.
+            let inner = body.trim_end().strip_suffix(']').ok_or_else(|| {
+                anyhow::anyhow!("`conversions` is not the last key of the build record")
+            })?;
+            let comma = if list.is_empty() { "" } else { "," };
+            Ok(format!("{inner}{comma}{entry}]}}").into_bytes())
+        }
+        Some(_) => anyhow::bail!("`conversions` in the build record is not a list"),
+        None => {
+            let body = body.trim_end();
+            let comma = if body.ends_with('{') { "" } else { "," };
+            Ok(format!("{body}{comma}\"conversions\":[{entry}]}}").into_bytes())
+        }
+    }
 }
 
 /// When, by what, and from which file a card was replaced in place of a
@@ -2329,6 +2413,31 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
         if let Some(run) = &r.run {
             format_run(&mut out, run, &format!("{I}  "));
         }
+    }
+    for c in &info.conversions {
+        let _ = writeln!(
+            out,
+            "{I}{:<12}: {} by {} ({})",
+            "converted",
+            c.at.as_deref().unwrap_or("?"),
+            c.engine
+                .as_ref()
+                .map(|e| format!("{} {}, commit {}", e.name, e.version, short_hash(&e.commit)))
+                .unwrap_or_else(|| "?".into()),
+            c.command
+        );
+        let _ = writeln!(
+            out,
+            "{I}  {:<10}: {}format {}, {} B, content hash {}",
+            "from",
+            c.source_name
+                .as_deref()
+                .map(|n| format!("{n}, "))
+                .unwrap_or_default(),
+            c.source_format,
+            thousands(c.source_bytes),
+            c.source_content_hash
+        );
     }
     if let Some(costs) = &info.query_costs {
         let _ = writeln!(

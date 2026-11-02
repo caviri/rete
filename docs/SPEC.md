@@ -508,8 +508,8 @@ timings and peak memory, and measured starter-query costs (see
 [Dataset Cards](dataset-cards.md#build-conditions-the-build-info-section)).
 A file converted from `0x05` carries a `conversions` list: one entry per
 `rete convert` (the engine, the time, the command and flags, and the source's
-format version, content hash and size), appended to the source's own record,
-which is kept as it was; a source without a record gets one that holds only the
+format version, content hash, size and file name), spliced into the source's
+own record, which is kept byte for byte up to its closing brace; a source without a record gets one that holds only the
 conversion.
 Since 0.4.0 the JSON may be followed by **ASCII spaces** up to the section's
 length: the writer reserves the record's widest form before the build has
