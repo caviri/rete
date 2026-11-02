@@ -85,7 +85,10 @@ fn build_mem(quads: &[RawQuad]) -> Vec<u8> {
         |_, _, _| Vec::new(),
     )
     .unwrap();
-    bytes
+    // The external build writes 0x06 (named graphs, if any, in the quad index);
+    // the in-memory image goes through the same assembler.
+    rete_core::v06::write::convert_image(&bytes, rete_core::v06::write::WriteOpts::default())
+        .unwrap()
 }
 
 fn build_ext(quads: &[RawQuad], tag: &str) -> Vec<u8> {

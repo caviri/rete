@@ -371,9 +371,12 @@ Before touching a `.rete` that is already published. Full lifecycle in
   *next* build, never a published file. The card is inside the content hash, so
   a new card is a new file identity. `rete recard` is the cheapest way there:
   only the card and the build record change, every other section is copied
-  byte for byte — or, with `--in-place`, not copied at all: the new card and
-  record are appended after the data and the header is rewritten last (the old
-  card stays behind as dead bytes; a later copying re-card drops them). In
+  byte for byte — or, with `--in-place`, not copied at all: in `0x06` the new
+  card and record go into the card region's free space beside the old pair (one
+  copy of the file when they do not fit, and a file built without a card has no
+  region) and the header is rewritten last; in `0x05` they are appended after
+  the data (the old card stays behind as dead bytes; a later copying re-card
+  drops them). In
   place still changes the file under its name, so the recovery-copy rule below
   applies to it too, unless the old file is not needed back.
 - **Survey before you re-card.** `bash scripts/recard/survey.sh` reads the CARD
@@ -393,9 +396,9 @@ Before touching a `.rete` that is already published. Full lifecycle in
   9–15× the `.rete` in scratch disk. Exceeding a ceiling is an OOM kill
   mid-rebuild, not an error message.
 - **`rete build --memory-budget-mb` writes the full card** (profile and
-  starter queries): it streams the finished file's sections exactly as
-  `rete recard` does, inside the same budget, and appends the card after the
-  data — no `recard` step, no second copy of the file. Files built before it
+  starter queries): it streams the finished sections exactly as `rete recard`
+  streams a file's, inside the same budget, and writes the card into the card
+  region of the one `0x06` file — no `recard` step, no second copy. Files built before it
   (every release up to 0.4.0) carry a counts-only card; `rete recard`
   (`--in-place` for a big one) gives them a full one. It *does* build named
   graphs (#139) —

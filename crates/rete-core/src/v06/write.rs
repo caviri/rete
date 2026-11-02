@@ -1,7 +1,8 @@
 //! The `0x06` assembler: [`super::parts::Parts`] in, a `0x06` file out. Every
 //! writer goes through here — the in-RAM build (via `0x05` section images),
-//! `rete convert`, and in phase 2 the memory-bounded build, `merge` and
-//! `recard`.
+//! `rete convert`, and the memory-bounded build and `merge` (which hand it their
+//! spill as an address space, see `extbuild_v06`). `recard` only re-lays the
+//! front.
 //!
 //! The front (root, card region, stats, leaf directories) is built in memory;
 //! the data region is streamed from the input reader, hashed on the way. The
@@ -518,18 +519,23 @@ fn build_front(
 
 /// Copy `segs` from `input` to `out`, coalescing input-adjacent segments into
 /// reads of at most 8 MiB, hashing everything written into `h`.
+#[allow(clippy::too_many_arguments)]
 fn copy_segs(
     input: &dyn RangeReader,
     segs: &[Seg],
     measure: Option<u8>,
     out: &mut dyn Write,
     h: &mut blake3::Hasher,
+    progress: &mut dyn FnMut(u64),
+    consumed: &mut dyn FnMut(u64, u64),
+    settle: &mut dyn FnMut(&mut dyn Write) -> std::io::Result<()>,
 ) -> Result<u64, FileError> {
     const SPAN: u64 = 8 << 20;
     // The ceiling for measuring a block whose frame does not state its size:
     // generous, since this only bounds the writer's own check.
     const MEASURE_CEILING: u64 = 1 << 30;
     let mut max_raw = 0u64;
+    let mut done = 0u64;
     let mut i = 0;
     while i < segs.len() {
         let start = segs[i].input;
@@ -554,6 +560,8 @@ fn copy_segs(
             }
             h.update(&b);
             out.write_all(&b)?;
+            done += b.len() as u64;
+            progress(done);
         } else {
             let mut at = start;
             while at < end {
@@ -562,8 +570,14 @@ fn copy_segs(
                 h.update(&b);
                 out.write_all(&b)?;
                 at += n;
+                done += n;
+                progress(done);
             }
         }
+        for sg in &segs[i..j] {
+            consumed(sg.input, sg.len);
+        }
+        settle(out)?;
         i = j;
     }
     Ok(max_raw)
@@ -599,6 +613,55 @@ pub fn assemble<W: Write + Seek>(
     out: &mut W,
     opts: WriteOpts,
 ) -> Result<Written, FileError> {
+    assemble_with(
+        parts,
+        input,
+        out,
+        opts,
+        &mut Hooks {
+            copied: &mut |_| {},
+            progress: &mut |_, _| {},
+            needed: &mut |_, _| {},
+            consumed: &mut |_, _| {},
+            settle: &mut |_| Ok(()),
+        },
+    )
+}
+
+/// What [`assemble_with`] reports while it writes.
+pub struct Hooks<'a> {
+    /// Called once each data section (a [`kind`] of `DICT_DATA`, `INDEX_DATA`,
+    /// `QUAD_DATA`, `LABEL_DATA`, `TEXT_DATA` or `PYRAMID`) is in the output:
+    /// the input bytes it came from are not read again.
+    pub copied: &'a mut dyn FnMut(u8),
+    /// `(data bytes written so far, data bytes in all)`, after each write.
+    pub progress: &'a mut dyn FnMut(u64, u64),
+    /// `(input offset, length)` of every payload range the copy will read,
+    /// announced once before the first byte is written.
+    pub needed: &'a mut dyn FnMut(u64, u64),
+    /// `(input offset, length)` of a payload range now in the output, whatever
+    /// order the ranges come in. Once every announced range of a spill file
+    /// has been consumed, nothing reads that file again.
+    pub consumed: &'a mut dyn FnMut(u64, u64),
+    /// Called with the output after every copied run and every finished data
+    /// section, once `consumed` / `copied` may have made spill files ready to
+    /// go. The implementation flushes `out`, makes the bytes durable, and only
+    /// then deletes: a file must never be removed while its bytes are still in
+    /// a buffer or an unsynced page.
+    pub settle: &'a mut dyn FnMut(&mut dyn Write) -> std::io::Result<()>,
+}
+
+/// [`assemble`], reporting through `hooks`. The memory-bounded build deletes
+/// each spill file as soon as every range it feeds is in the output, so the
+/// output grows as the spill shrinks, and drives `--progress` from the byte
+/// count.
+pub fn assemble_with<W: Write + Seek>(
+    parts: &Parts,
+    input: &dyn RangeReader,
+    out: &mut W,
+    opts: WriteOpts,
+    hooks: &mut Hooks<'_>,
+) -> Result<Written, FileError> {
     let codec = opts.internal_codec;
     if parts.pyramid_levels > u8::MAX as u16 {
         return Err(FileError::Container(
@@ -624,6 +687,11 @@ pub fn assemble<W: Write + Seek>(
         }
     };
     let (data, dict_off, perm_off, quad_off) = layout_data(parts, graph_major);
+    for d in &data {
+        for sg in &d.segs {
+            (hooks.needed)(sg.input, sg.len);
+        }
+    }
     let quad_gdir = match &parts.quad {
         Some(q) if q.gdir.len > 0 => input.read_at(q.gdir.offset, q.gdir.len)?,
         _ => Vec::new(),
@@ -781,9 +849,25 @@ pub fn assemble<W: Write + Seek>(
     // Data first, at its final offset, hashed per section.
     out.seek(SeekFrom::Start(data_offset))?;
     let n_front = fronts.len();
+    let mut written_before = 0u64;
     for (i, d) in data.iter().enumerate() {
         let mut h = blake3::Hasher::new();
-        let measured = copy_segs(input, &d.segs, d.measure, out, &mut h)?;
+        let progress = &mut hooks.progress;
+        let consumed = &mut hooks.consumed;
+        let settle = &mut hooks.settle;
+        let measured = copy_segs(
+            input,
+            &d.segs,
+            d.measure,
+            out,
+            &mut h,
+            &mut |n| progress(written_before + n, data_len),
+            &mut **consumed,
+            &mut **settle,
+        )?;
+        written_before += d.len();
+        (hooks.copied)(d.kind);
+        (hooks.settle)(out)?;
         let sec = &mut root.sections[n_front + i];
         sec.digest.copy_from_slice(&h.finalize().as_bytes()[..16]);
         if d.measure.is_some() {

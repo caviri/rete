@@ -46,9 +46,9 @@
 //!
 //! With a card, the merged file gets the **full** one, exactly as
 //! `rete build --memory-budget-mb` writes it: derived from the merged file's
-//! own sorted sections once they are on disk, its starter queries run against
-//! it, the card and the build record appended after the data
-//! ([`crate::commands::build::append_full_card`]). The inputs' own cards are not
+//! own sorted sections once they are done, its starter queries run against
+//! them, the card and the build record going into the card region of the one
+//! file the merge writes ([`crate::commands::build::full_card_hook`]). The inputs' own cards are not
 //! read into it: a shard's title, description or coherence verdict describes
 //! the shard, so the curated half comes from `--card-file` and the curated
 //! flags alone, and the build record names the shards it folded (file name,
@@ -195,11 +195,11 @@ pub(crate) fn merge_cmd(
     // once the merged file is on disk — the counts, the spill, the card's
     // costs and every phase's time. Timed from here.
     let tapped: Vec<(&str, &'static str)> = inputs.iter().map(|i| (i.as_str(), "rete")).collect();
-    let rec = buildinfo::Recorder::start(if card_args.requested() {
+    let rec = std::rc::Rc::new(buildinfo::Recorder::start(if card_args.requested() {
         &tapped[..]
     } else {
         &[]
-    });
+    }));
 
     // The merged file carries the UNION of its inputs' permutation sets: an
     // all-lean merge stays lean, and one full input is enough to keep the
@@ -214,11 +214,7 @@ pub(crate) fn merge_cmd(
     // named-graph layout: a quad-index input makes a quad-index merge.
     let mut label_index = false;
     // Format 0x06 stores named graphs in the quad index only.
-    let mut graphs = if super::v06::writes_legacy() {
-        rete_core::GraphLayout::PerGraph
-    } else {
-        rete_core::GraphLayout::Quad
-    };
+    let graphs = rete_core::GraphLayout::Quad;
     let budget = memory_budget_mb.saturating_mul(1 << 20);
     let share = reader_share(budget);
     // What the walk will read, for `--progress`: every input's statements.
@@ -230,9 +226,6 @@ pub(crate) fn merge_cmd(
         named |= rete.header().has_quads();
         perms_bits |= rete.header().perms.bits();
         label_index |= rete.has_label_index();
-        if rete.header().has_quad_index() {
-            graphs = rete_core::GraphLayout::Quad;
-        }
     }
 
     // The inputs' own cards are not carried (see the module docs): say so when
@@ -279,18 +272,33 @@ pub(crate) fn merge_cmd(
         memory_budget_mb: Some(memory_budget_mb),
         card_args: &card_args,
     };
-    let mut info = curated.is_some().then(|| {
+    let wants_card = curated.is_some();
+    let info = wants_card.then(|| {
         let mut info = buildinfo::new_build_info(flags.params(None));
         rec.begin(&mut info);
-        info
+        std::rc::Rc::new(std::cell::RefCell::new(info))
     });
+    let outcome = std::rc::Rc::new(crate::commands::build::CardOutcome::default());
+    let card_from_image = match (&info, curated) {
+        (Some(info), Some(curated)) => Some(crate::commands::build::full_card_hook(
+            info.clone(),
+            curated,
+            measure_costs,
+            memory_budget_mb,
+            rec.clone(),
+            rete_core::IriReport::default,
+            outcome.clone(),
+            "merge",
+        )),
+        _ => None,
+    };
     progress::plan(crate::commands::build::external_plan(
         progress::Kind::Merge,
         !rec.taps.is_empty(),
         named,
         false,
         flags.sections,
-        curated.is_some(),
+        wants_card,
         measure_costs,
         perms,
     ));
@@ -363,8 +371,8 @@ pub(crate) fn merge_cmd(
         rete_core::extbuild::ExternalBuildOptions {
             memory_budget: budget,
             tmp_dir: tmp_dir.map(std::path::PathBuf::from),
-            // The card is derived from the merged file and appended after it
-            // (below), so the stream writes neither a card nor a record.
+            // The card, when asked for, is derived from the merged sections
+            // (`card_from_image`) into the one file the merge writes.
             metadata: Box::new(|_| Vec::new()),
             build_info: Vec::new(),
             perms,
@@ -375,22 +383,12 @@ pub(crate) fn merge_cmd(
             graphs,
             // The open shard's capped caches, out of the chunk phase's share.
             input_memory: share,
+            card_from_image,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
-    super::v06::finish_file(output)?;
-    if let (Some(info), Some(curated)) = (info.as_mut(), curated) {
-        crate::commands::build::append_full_card(
-            output,
-            info,
-            curated,
-            measure_costs,
-            memory_budget_mb,
-            &stats,
-            &rete_core::IriReport::default(),
-            &rec,
-            "merge",
-        )?;
+    if let Some(info) = &info {
+        crate::commands::build::finish_full_card(output, info, &rec, &outcome)?;
     }
 
     let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);

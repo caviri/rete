@@ -44,29 +44,6 @@ use crate::schema_section::{
     RDFS_SUBCLASS_OF, UNTYPED,
 };
 
-/// A local file as a [`crate::RangeReader`], for reading back the output.
-struct FileReader {
-    f: std::sync::Mutex<File>,
-    len: u64,
-}
-
-impl crate::RangeReader for FileReader {
-    fn len(&self) -> u64 {
-        self.len
-    }
-    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
-        use std::io::{Seek, SeekFrom};
-        let mut f = self
-            .f
-            .lock()
-            .map_err(|_| std::io::Error::other("poisoned"))?;
-        f.seek(SeekFrom::Start(offset))?;
-        let mut buf = vec![0u8; len as usize];
-        f.read_exact(&mut buf)?;
-        Ok(buf)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------------
@@ -74,8 +51,8 @@ impl crate::RangeReader for FileReader {
 /// The label pass of the memory-bounded build, on global ids.
 ///
 /// The remap tees `(object, slot, subject)` for every default-graph statement
-/// whose predicate is a label predicate (12 B each). Only after the file is
-/// written are the strings looked up — through the file's own dictionary, in
+/// whose predicate is a label predicate (12 B each). Only once the sections are
+/// sorted are the strings looked up — through the finished dictionary, in
 /// id order, behind a bounded chunk cache — and the rules run, exactly as
 /// the in-memory build's `entries_from_sorted_triples` does. So nothing of
 /// this pass is on disk while the chunk files are, and its sorts run once
@@ -118,13 +95,13 @@ impl ExtLabels {
         Ok(())
     }
 
-    /// Run the rules over the finished file `output` and write the section's
+    /// Run the rules over the finished sections `image` (the spill) and write the section's
     /// blocks to a spill file. `run_bytes` bounds each sort run and
     /// `cache_bytes` the dictionary chunks held while terms are looked up.
     /// `None` when the graph has no label.
     pub(crate) fn finish(
         self,
-        output: &Path,
+        image: crate::extbuild_v06::SharedImage,
         run_bytes: usize,
         cache_bytes: u64,
         codec: u8,
@@ -132,12 +109,7 @@ impl ExtLabels {
         if self.ids.pushed() == 0 {
             return Ok(None);
         }
-        let f = File::open(output)?;
-        let len = f.metadata()?.len();
-        let dict = crate::file::open_dictionary_lazy(FileReader {
-            f: std::sync::Mutex::new(f),
-            len,
-        })?;
+        let dict = crate::file::open_dictionary_lazy(image)?;
         // Lookups come in id order, so a small cache decodes every chunk once.
         dict.set_cache_cap(cache_bytes);
 
@@ -409,16 +381,14 @@ impl ExtSchema {
 
     /// Resolve the ids through the finished file's dictionary and encode the
     /// section. Empty when there is nothing to say.
-    pub(crate) fn finish(mut self, output: &Path) -> Result<Vec<u8>, crate::file::FileError> {
+    pub(crate) fn finish(
+        mut self,
+        image: crate::extbuild_v06::SharedImage,
+    ) -> Result<Vec<u8>, crate::file::FileError> {
         let Some(acc) = self.acc.take() else {
             return Ok(Vec::new());
         };
-        let f = File::open(output)?;
-        let len = f.metadata()?.len();
-        let dict = crate::file::open_dictionary_lazy(FileReader {
-            f: std::sync::Mutex::new(f),
-            len,
-        })?;
+        let dict = crate::file::open_dictionary_lazy(image)?;
         let meta = acc.finalize(&|space, id| match space {
             Space::Subject => dict.subject_term(id),
             Space::Object => dict.object_term(id),
@@ -431,7 +401,6 @@ impl ExtSchema {
 #[cfg(test)]
 mod tests {
     use crate::extbuild::{build_external, ExternalBuildOptions};
-    use crate::header::Header;
     use crate::ingest::{self, AssembleOptions, RawQuad};
 
     const T: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
@@ -510,9 +479,10 @@ mod tests {
             with_pyramid: false,
             label_index,
             schema,
+            graph_layout: crate::GraphLayout::Quad,
             ..AssembleOptions::sectioned()
         };
-        ingest::assemble_dataset_streaming_opts(
+        let image = ingest::assemble_dataset_streaming_opts(
             |visit: &mut dyn FnMut(RawQuad)| {
                 for q in quads.iter().cloned() {
                     visit(q);
@@ -523,7 +493,8 @@ mod tests {
             |_, _, _| Vec::new(),
         )
         .unwrap()
-        .0
+        .0;
+        crate::v06::write::convert_image(&image, crate::v06::write::WriteOpts::default()).unwrap()
     }
 
     fn external(quads: &[RawQuad], label_index: bool, schema: bool, tag: &str) -> Vec<u8> {
@@ -576,15 +547,19 @@ mod tests {
                 "the external build writes the in-memory bytes, split {split:?}"
             );
         }
-        let h = Header::from_bytes(&ext).unwrap();
-        assert!(h.label_index_section().is_some() && h.schema_section().is_some());
-
-        // And the sections stay outside the content hash.
-        let plain = external(&quads, false, false, "plain");
-        assert_eq!(
-            Header::from_bytes(&plain).unwrap().content_hash,
-            h.content_hash
+        let front =
+            |b: &[u8]| crate::v06::open::read_front(&crate::reader::SliceReader::new(b)).unwrap();
+        let (h, root) = front(&ext);
+        assert!(
+            root.section(crate::v06::kind::LABEL_DATA).is_some()
+                && root.section(crate::v06::kind::SCHEMA).is_some()
         );
+
+        // In 0x06 every section is under the content hash through its digest in
+        // the root, so the two extra sections change it.
+        let plain = external(&quads, false, false, "plain");
+        assert_ne!(front(&plain).0.content_hash, h.content_hash);
+        assert!(crate::verify(&plain).unwrap());
         assert!(crate::verify(&ext).unwrap());
     }
 
