@@ -140,8 +140,13 @@ try {
   for (const derived of ["predicates", "classes", "vocabularies", "queries", "signals", "top_n"]) {
     t.ok(`browserCardOmits:${derived}`, !(derived in writtenCard), "a browser build claimed a derived field");
   }
-  // Likewise the build record: null, never an empty object.
-  t.equal("browserBuildRecord", envelope.build, null, "a browser build must not write a build record");
+  // The build record: every writer leaves one. The browser's names itself and
+  // has no run block and no measured costs (absent, never an empty object).
+  const browserRecord = envelope.build ? JSON.parse(envelope.build) : null;
+  t.ok("browserBuildRecord", browserRecord !== null, "a browser build must write a build record");
+  t.equal("browserBuildRecord.front_end", browserRecord && browserRecord.front_end, "wasm");
+  t.equal("browserBuildRecord.run", browserRecord && browserRecord.run, undefined,
+    "a browser build has no run block to report");
 
   // --- the opt-in derived card (#152) ---------------------------------------
   // The other half of the same contract: ask for derivation and the browser
