@@ -11,7 +11,7 @@ open the [Playground](playground-guide.md).
 
 Docker is a convenient way to try the CLI without a Rust toolchain. Cargo
 builds the native CLI on your machine. If you prefer a ready-made executable,
-the [0.4.2 release](https://github.com/caviri/rete/releases/tag/v0.4.2) has
+the [0.5.0 release](https://github.com/caviri/rete/releases/tag/v0.5.0) has
 Linux, macOS and Windows archives for x86-64 and ARM64, plus checksums.
 Choose the archive matching your operating system and processor.
 
@@ -23,13 +23,13 @@ integrations, see [R](r.md), [Java and other clients](clients.md) or
 
 ## Match the reader to your files
 
-These commands pin the published **0.4.2** packages, verified against GitHub,
-[PyPI](https://pypi.org/project/rete-graph/0.4.2/),
-[npm](https://www.npmjs.com/package/rete-graph/v/0.4.2) and
-[crates.io](https://crates.io/crates/rete-cli/0.4.2) on 2026-11-01.
-They read and write format `0x05`. Current source builds write `0x06`, which
-0.4.2 readers cannot open. Check [Compatibility](compatibility.md) before
-sharing files between a release and a source build.
+These commands pin the published **0.5.0** packages, verified against GitHub,
+[PyPI](https://pypi.org/project/rete-graph/0.5.0/),
+[npm](https://www.npmjs.com/package/rete-graph/v/0.5.0) and
+[crates.io](https://crates.io/crates/rete-cli/0.5.0) on 2026-11-02.
+They write format `0x06` and read `0x05` and `0x06`. Readers up to 0.4.x
+cannot open `0x06` files. Check [Compatibility](compatibility.md) before
+sharing files with older readers.
 
 For the current source toolchain, follow [Development](contributing.md).
 For a complete first task with the published CLI, continue to the

@@ -14,21 +14,20 @@ The published CLI container runs the same commands as a local `rete` binary.
 Define a wrapper in your current shell so that files in your working directory
 are available inside the container.
 
-This example pins the published 0.4.2 image, which writes format `0x05`.
-Current source builds write `0x06`; the 0.4.2 reader cannot open those newer
-files. See [Compatibility](compatibility.md) before exchanging files between
-the released image and a source build.
+This example pins the published 0.5.0 image, which writes format `0x06` and
+reads `0x05` and `0x06`. Readers up to 0.4.x cannot open `0x06` files. See
+[Compatibility](compatibility.md) before exchanging files with older readers.
 
 On a POSIX shell (Linux or macOS):
 
 ```sh
-alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.4.2'
+alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.5.0'
 ```
 
 On PowerShell:
 
 ```powershell
-function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.4.2 @args }
+function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.5.0 @args }
 ```
 
 `-v` shares your directory with `/data`, `-w` makes relative filenames work,
