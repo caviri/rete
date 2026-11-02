@@ -1322,6 +1322,18 @@ refused to ship (below). Absent on a healthy build.</p>
 <li>
 <p><code>recarded</code> — set by <code>rete recard</code> (below).</p>
 </li>
+<li>
+<p><code>conversions</code> — set by <code>rete convert</code>, one entry per conversion, oldest first:
+<code>at</code> (RFC 3339 UTC; with <code>RETE_BUILD_RECORD=reproducible</code> only when
+<code>SOURCE_DATE_EPOCH</code> is set), <code>engine</code> (the binary that converted, in full),
+<code>command</code> (<code>rete convert</code> and the flags that shaped the result),
+<code>source_format</code> (<code>0x05</code>), <code>source_content_hash</code>, <code>source_bytes</code> and
+<code>source_name</code>. Every other field is the record of the file that was converted,
+kept as it was, so <code>engine</code>, <code>inputs</code> and <code>counts</code> still describe the build
+that made the data. A file converted without a record gets one holding just
+this. <code>rete card</code> prints a <code>converted</code> line, <code>--json</code> carries the list, and
+Python's <code>rete_graph.build_record()</code> returns it with the rest.</p>
+</li>
 </ul>
 <p><code>rete card</code> prints it as a <code>build:</code> block. This one is the OpenCitations Meta
 development sample (1 work in 5,000, with provenance) built in a 4 GiB

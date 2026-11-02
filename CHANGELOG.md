@@ -27,6 +27,17 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `starter_queries` phase. Without a budget (the in-RAM build) nothing changes. The ceiling needs
   `/proc`, so it is a Linux feature.
 
+### Changed
+
+- **`rete convert` records the conversion in the build record.** It used to copy the
+  source's record verbatim, so a converted file claimed to be exactly what the original
+  engine wrote. The record now has a `conversions` list: each entry holds the converting
+  engine, the time (honouring `RETE_BUILD_RECORD=reproducible` and `SOURCE_DATE_EPOCH`), the
+  command and flags, and the source's format, content hash and size. The source's own record
+  (engine, inputs, counts) is kept as it was; a file without one gets a record with just the
+  conversion. `rete card`, `rete card --json` and Python's `build_record()` show it. The
+  content hash is unchanged (the record is outside it).
+
 ## [0.5.0] - 2026-11-02
 
 **Format change: every writer now writes format `0x06`** (#371, #379, #380). A file opens from

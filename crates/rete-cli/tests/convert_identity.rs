@@ -77,8 +77,11 @@ fn check(name: &str, extra: &[&str]) {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(card_version(&conv), 6, "{name}: converted card");
+    // The record says the file was converted, so the files differ there and
+    // nowhere else: compare them without it.
+    let plain = |p: &Path| rete_core::attach_build_info(&std::fs::read(p).unwrap(), &[]).unwrap();
     assert!(
-        std::fs::read(&conv).unwrap() == std::fs::read(&new).unwrap(),
+        plain(&conv) == plain(&new),
         "{name}: convert of the 0x05 build differs from the direct 0x06 build"
     );
 }

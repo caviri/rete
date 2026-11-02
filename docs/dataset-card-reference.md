@@ -798,6 +798,16 @@ card) carrying:
 - `dropped_queries` — starter queries this build generated, **ran**, and then
   refused to ship (below). Absent on a healthy build.
 - `recarded` — set by `rete recard` (below).
+- `conversions` — set by `rete convert`, one entry per conversion, oldest first:
+  `at` (RFC 3339 UTC; with `RETE_BUILD_RECORD=reproducible` only when
+  `SOURCE_DATE_EPOCH` is set), `engine` (the binary that converted, in full),
+  `command` (`rete convert` and the flags that shaped the result),
+  `source_format` (`0x05`), `source_content_hash`, `source_bytes` and
+  `source_name`. Every other field is the record of the file that was converted,
+  kept as it was, so `engine`, `inputs` and `counts` still describe the build
+  that made the data. A file converted without a record gets one holding just
+  this. `rete card` prints a `converted` line, `--json` carries the list, and
+  Python's `rete_graph.build_record()` returns it with the rest.
 
 `rete card` prints it as a `build:` block. This one is the OpenCitations Meta
 development sample (1 work in 5,000, with provenance) built in a 4 GiB
