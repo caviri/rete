@@ -139,6 +139,8 @@ jobs:
               - '.github/workflows/ci.yml'
             docs:
               - 'docs/**'
+              - 'tests/docgen/**'
+              - 'tests/gate/package*.json'
               - 'scripts/check_docs_links.py'
               - '.devcontainer/**'
               - '.github/workflows/ci.yml'
@@ -619,6 +621,11 @@ jobs:
             -e CARGO_TARGET_DIR=/work/target \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh docs'
+      - name: Documentation code highlighting and clipboard
+        run: |
+          docker run --rm --user root \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
+            sh -lc 'npm ci --prefix tests/gate --no-audit --no-fund && npx --prefix tests/gate playwright install chromium && node tests/docgen/code_blocks.cjs'
 
   conformance:
     name: W3C SPARQL 1.1 conformance

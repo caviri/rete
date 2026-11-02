@@ -6,6 +6,10 @@ working directory; no source checkout or Rust installation is needed.
 
 ## Set up the CLI {#getting-the-cli}
 
+Use the [installation selector](install.md) to choose your operating system
+and package. The Docker route below is a reproducible setup for this example;
+if you already installed the native CLI, continue at [Build a graph](#building-a-rete-file).
+
 The published CLI container runs the same commands as a local `rete` binary.
 Define a wrapper in your current shell so that files in your working directory
 are available inside the container.
