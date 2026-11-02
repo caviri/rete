@@ -525,12 +525,14 @@ fn copy_segs(
     measure: Option<u8>,
     out: &mut dyn Write,
     h: &mut blake3::Hasher,
+    progress: &mut dyn FnMut(u64),
 ) -> Result<u64, FileError> {
     const SPAN: u64 = 8 << 20;
     // The ceiling for measuring a block whose frame does not state its size:
     // generous, since this only bounds the writer's own check.
     const MEASURE_CEILING: u64 = 1 << 30;
     let mut max_raw = 0u64;
+    let mut done = 0u64;
     let mut i = 0;
     while i < segs.len() {
         let start = segs[i].input;
@@ -555,6 +557,8 @@ fn copy_segs(
             }
             h.update(&b);
             out.write_all(&b)?;
+            done += b.len() as u64;
+            progress(done);
         } else {
             let mut at = start;
             while at < end {
@@ -563,6 +567,8 @@ fn copy_segs(
                 h.update(&b);
                 out.write_all(&b)?;
                 at += n;
+                done += n;
+                progress(done);
             }
         }
         i = j;
@@ -600,20 +606,37 @@ pub fn assemble<W: Write + Seek>(
     out: &mut W,
     opts: WriteOpts,
 ) -> Result<Written, FileError> {
-    assemble_with(parts, input, out, opts, &mut |_| {})
+    assemble_with(
+        parts,
+        input,
+        out,
+        opts,
+        &mut Hooks {
+            copied: &mut |_| {},
+            progress: &mut |_, _| {},
+        },
+    )
 }
 
-/// [`assemble`], calling `copied(kind)` once each data section (a [`kind`] of
-/// `DICT_DATA`, `INDEX_DATA`, `QUAD_DATA`, `LABEL_DATA`, `TEXT_DATA` or
-/// `PYRAMID`) is in the output: the input bytes it came from are not read
-/// again. The memory-bounded build deletes the spill files behind it there, so
-/// the output grows as the spill shrinks.
+/// What [`assemble_with`] reports while it writes.
+pub struct Hooks<'a> {
+    /// Called once each data section (a [`kind`] of `DICT_DATA`, `INDEX_DATA`,
+    /// `QUAD_DATA`, `LABEL_DATA`, `TEXT_DATA` or `PYRAMID`) is in the output:
+    /// the input bytes it came from are not read again.
+    pub copied: &'a mut dyn FnMut(u8),
+    /// `(data bytes written so far, data bytes in all)`, after each write.
+    pub progress: &'a mut dyn FnMut(u64, u64),
+}
+
+/// [`assemble`], reporting through `hooks`. The memory-bounded build deletes the
+/// spill files behind each finished data section, so the output grows as the
+/// spill shrinks, and drives `--progress` from the byte count.
 pub fn assemble_with<W: Write + Seek>(
     parts: &Parts,
     input: &dyn RangeReader,
     out: &mut W,
     opts: WriteOpts,
-    copied: &mut dyn FnMut(u8),
+    hooks: &mut Hooks<'_>,
 ) -> Result<Written, FileError> {
     let codec = opts.internal_codec;
     if parts.pyramid_levels > u8::MAX as u16 {
@@ -797,10 +820,15 @@ pub fn assemble_with<W: Write + Seek>(
     // Data first, at its final offset, hashed per section.
     out.seek(SeekFrom::Start(data_offset))?;
     let n_front = fronts.len();
+    let mut written_before = 0u64;
     for (i, d) in data.iter().enumerate() {
         let mut h = blake3::Hasher::new();
-        let measured = copy_segs(input, &d.segs, d.measure, out, &mut h)?;
-        copied(d.kind);
+        let progress = &mut hooks.progress;
+        let measured = copy_segs(input, &d.segs, d.measure, out, &mut h, &mut |n| {
+            progress(written_before + n, data_len)
+        })?;
+        written_before += d.len();
+        (hooks.copied)(d.kind);
         let sec = &mut root.sections[n_front + i];
         sec.digest.copy_from_slice(&h.finalize().as_bytes()[..16]);
         if d.measure.is_some() {

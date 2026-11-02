@@ -145,6 +145,20 @@ fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) {
         "{name}: bounded build differs from the in-RAM 0x05 build plus convert"
     );
     rete().arg("verify").arg(&bounded).assert().success();
+    if src_name.ends_with(".nq") {
+        // A per-graph 0x05 file (the legacy layout) is re-encoded as a quad
+        // index by `convert`: the same bytes again.
+        let (pg, pgc) = (dir.path().join("pg.rete"), dir.path().join("pgc.rete"));
+        go(
+            with(&["--no-pyramid", "--named-graphs", "per-graph"], &pg),
+            true,
+        );
+        run(&["convert", s(&pg), "-o", s(&pgc)], false);
+        assert!(
+            b == std::fs::read(&pgc).unwrap(),
+            "{name}: bounded build differs from the in-RAM per-graph 0x05 build plus convert"
+        );
+    }
     // Nothing of the build is left beside the output or in the spill dir.
     let left: Vec<_> = std::fs::read_dir(&tmp)
         .unwrap()

@@ -693,6 +693,9 @@ where
         terms: merged.term_count as usize,
         pyramid_levels: 0,
     };
+    // Every spill file is still there, and the output not yet started: the
+    // scratch high-water mark of the build.
+    note_scratch(&tmp);
     let (metadata, build_info) = match opts.card_from_image {
         // A caller that derives its card from the data (the CLI's full card,
         // with starter queries) gets the image to read it through, and laps
@@ -710,7 +713,7 @@ where
         }
     };
     note_scratch(&tmp);
-    progress::begin(Phase::Write, None, Unit::None);
+    progress::begin(Phase::Write, None, Unit::Bytes);
     // Each section's spill file is deleted as soon as it is in the output, so
     // the two never stack.
     write_v06(output, &image, &metadata, &build_info, true)?;
@@ -2823,15 +2826,26 @@ fn write_v06(
     let tmp = PathBuf::from(tmp_name);
     let result = (|| {
         let mut out = BufWriter::with_capacity(8 << 20, File::create(&tmp)?);
+        // `--progress`: the data bytes copied, out of the data bytes in all.
+        let mut sized = false;
         let written = crate::v06::write::assemble_with(
             &parts,
             &src,
             &mut out,
             crate::v06::write::WriteOpts::default(),
-            &mut |kind| {
-                if consume {
-                    image.release(kind)
-                }
+            &mut crate::v06::write::Hooks {
+                copied: &mut |kind| {
+                    if consume {
+                        image.release(kind)
+                    }
+                },
+                progress: &mut |done, total| {
+                    if !sized {
+                        sized = true;
+                        progress::set_total(Some(total), Unit::Bytes);
+                    }
+                    progress::set_done(done);
+                },
             },
         )
         .map_err(fe)?;

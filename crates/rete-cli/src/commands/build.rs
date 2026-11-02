@@ -599,8 +599,11 @@ pub(crate) fn build(
 ) -> anyhow::Result<()> {
     let text_index = text_index.into_text_index();
     // Format 0x06 stores named graphs in the quad index only.
-    let _ = graphs;
-    let graphs = rete_core::GraphLayout::Quad;
+    let graphs = if super::v06::writes_legacy() {
+        graphs
+    } else {
+        rete_core::GraphLayout::Quad
+    };
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
         .iter()
         .map(|i| (i.as_str(), input_format(i, format)))
@@ -1057,12 +1060,10 @@ pub(crate) fn build_external_cmd(
              (they need the whole graph resident); run them via the standard build"
         );
     }
-    // Format 0x06 stores named graphs in the quad index only.
-    let graphs = if super::v06::writes_legacy() {
-        graphs
-    } else {
-        rete_core::GraphLayout::Quad
-    };
+    // The bounded build writes 0x06 whatever `RETE_WRITE_FORMAT` says, and
+    // 0x06 stores named graphs in the quad index only.
+    let _ = graphs;
+    let graphs = rete_core::GraphLayout::Quad;
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
         .iter()
         .map(|i| (i.as_str(), input_format(i, format)))
