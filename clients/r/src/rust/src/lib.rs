@@ -40,7 +40,10 @@ fn auto_block(len: u64) -> u64 {
 fn open_lazy(reader: AnyReader) -> RGraph {
     let file_len = reader.len();
     let counting = Arc::new(CountingReader::new(reader));
-    let cached = Arc::new(BlockCacheReader::new(counting.clone(), auto_block(file_len)));
+    let cached = Arc::new(BlockCacheReader::new(
+        counting.clone(),
+        auto_block(file_len),
+    ));
     let rete = match Rete::open_ranged_lazy(cached) {
         Ok(rete) => rete,
         Err(e) => fail(e),
@@ -111,10 +114,7 @@ impl RGraph {
         if self.rete.index_incomplete() {
             fail("a range fetch failed mid-query; refusing to return incomplete results — retry");
         }
-        results_envelope_json(
-            &out,
-            &format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#),
-        )
+        results_envelope_json(&out, &format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#))
     }
 
     /// Header summary as JSON.
@@ -222,7 +222,10 @@ impl RGraph {
 
 /// Serialize the Dataset Card: caller's curated JSON plus the count fields
 /// the CLI card schema requires (mirrors the Python client's card_bytes).
-fn card_bytes(curated: Option<serde_json::Value>, stats: &rete_core::ingest::BuildStats) -> Vec<u8> {
+fn card_bytes(
+    curated: Option<serde_json::Value>,
+    stats: &rete_core::ingest::BuildStats,
+) -> Vec<u8> {
     let Some(mut value) = curated else {
         return Vec::new();
     };
@@ -319,12 +322,11 @@ fn build_dataset(
     } else {
         None
     };
-    let quads = match rete_core::ingest::parse_statements_audited_surface(
-        text, format, None, surface,
-    ) {
-        Ok(quads) => quads,
-        Err(e) => fail(e),
-    };
+    let quads =
+        match rete_core::ingest::parse_statements_audited_surface(text, format, None, surface) {
+            Ok(quads) => quads,
+            Err(e) => fail(e),
+        };
     if quads.is_empty() {
         fail("no statements parsed (empty input or only comments)");
     }

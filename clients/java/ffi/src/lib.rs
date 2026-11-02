@@ -26,7 +26,7 @@
 //! is an exact inverse — no hidden capacity to leak.
 
 use rete_core::{
-    eval_query, results_envelope_json, BlockCacheReader, Rete, RangeReader, DEFAULT_BLOCK,
+    eval_query, results_envelope_json, BlockCacheReader, RangeReader, Rete, DEFAULT_BLOCK,
 };
 
 const STATUS_OK: u32 = 0;
@@ -274,13 +274,22 @@ pub unsafe extern "C" fn rete_build(
 ) -> *mut u8 {
     let text = match std::str::from_utf8(borrow(text_ptr, text_len)) {
         Ok(t) => t,
-        Err(e) => return pack(STATUS_ERR, format!("input text is not utf-8: {e}").as_bytes()),
+        Err(e) => {
+            return pack(
+                STATUS_ERR,
+                format!("input text is not utf-8: {e}").as_bytes(),
+            )
+        }
     };
     let format = match std::str::from_utf8(borrow(fmt_ptr, fmt_len)) {
         Ok(f) => f,
         Err(e) => return pack(STATUS_ERR, format!("format is not utf-8: {e}").as_bytes()),
     };
-    build_surface(text, format, rete_core::ingest::QuotedTripleSurface::default())
+    build_surface(
+        text,
+        format,
+        rete_core::ingest::QuotedTripleSurface::default(),
+    )
 }
 
 /// [`rete_build`], reading Turtle/TriG `<< … >>` in the named surface: the
@@ -313,15 +322,13 @@ pub unsafe extern "C" fn rete_build_syntax(
     } else {
         match rete_core::ingest::QuotedTripleSurface::parse(syntax) {
             Some(s) => s,
-            None => {
-                return pack(
-                    STATUS_ERR,
-                    format!(
-                        "unknown quoted-triple syntax {syntax:?} (expected \"rdf-star\" or \"rdf12\")"
-                    )
-                    .as_bytes(),
+            None => return pack(
+                STATUS_ERR,
+                format!(
+                    "unknown quoted-triple syntax {syntax:?} (expected \"rdf-star\" or \"rdf12\")"
                 )
-            }
+                .as_bytes(),
+            ),
         }
     };
     build_surface(text, format, surface)

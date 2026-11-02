@@ -730,7 +730,15 @@ fn build_dataset(
                     })
                 },
             );
-            let bytes = finish_build(bytes, &stats, "build_dataset", &refs, Some(!pyramid), text_index, pyramid.then_some(pyramid_algo))?;
+            let bytes = finish_build(
+                bytes,
+                &stats,
+                "build_dataset",
+                &refs,
+                Some(!pyramid),
+                text_index,
+                pyramid.then_some(pyramid_algo),
+            )?;
             return Ok((bytes, stats));
         }
         let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
@@ -741,7 +749,15 @@ fn build_dataset(
             algo,
             move |stats, _quads| card_bytes(curated, stats),
         );
-        let bytes = finish_build(bytes, &stats, "build_dataset", &refs, Some(!pyramid), text_index, pyramid.then_some(pyramid_algo))?;
+        let bytes = finish_build(
+            bytes,
+            &stats,
+            "build_dataset",
+            &refs,
+            Some(!pyramid),
+            text_index,
+            pyramid.then_some(pyramid_algo),
+        )?;
         Ok((bytes, stats))
     })?;
     let stats_json = format!(
