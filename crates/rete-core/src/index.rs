@@ -209,6 +209,33 @@ impl LeafedTiles {
         }
     }
 
+    /// How many tiles hold leading id `a`, from the root alone. A resident leaf
+    /// is counted exactly; one that is not is estimated from what the root
+    /// records of it: a leaf whose whole range is `a` holds `n` such tiles, and
+    /// a leaf shared with other ids holds its tiles' share of the range (at
+    /// least one). Never faults. The planner's row estimates stand on this, so
+    /// it must not say "one tile" for a predicate that fills a leaf.
+    pub(crate) fn admitted_estimate(&self, a: u32) -> f64 {
+        let mut tiles = 0.0;
+        for (li, lf) in self.leaves.iter().enumerate() {
+            if a < lf.min_a || a > lf.max_a {
+                continue;
+            }
+            tiles += match self.cells[li].get() {
+                Some(v) => v
+                    .iter()
+                    .filter(|(t, _)| t.min_a <= a && a <= t.max_a)
+                    .count() as f64,
+                None if lf.min_a == lf.max_a => lf.n as f64,
+                None => {
+                    let width = (lf.max_a as f64 - lf.min_a as f64) + 1.0;
+                    (lf.n as f64 / width).max(1.0)
+                }
+            };
+        }
+        tiles
+    }
+
     fn leaf_of(&self, ti: usize) -> usize {
         self.leaves
             .partition_point(|l| l.first <= ti)
@@ -425,8 +452,8 @@ impl TileList {
     }
 
     /// Stored bytes of the tiles whose leading range holds `a`, **without
-    /// faulting**: exact where the leaf is resident, else the mean tile size
-    /// (a bound leading id is one tile, rarely two) — the planner's cost
+    /// faulting**: exact where the leaf is resident, else the mean tile size times the
+    /// tiles the root says hold it — the planner's cost
     /// estimate must not cost a round trip.
     pub fn routed_bytes(&self, a: u32) -> u64 {
         match self {
@@ -453,7 +480,10 @@ impl TileList {
                         .map(|(t, _)| t.encoded_len())
                         .sum()
                 } else {
-                    l.total_bytes / l.total.max(1) as u64
+                    // The mean tile size times the tiles the root says hold
+                    // `a`: a predicate filling many tiles is many tiles' bytes.
+                    let mean = l.total_bytes as f64 / l.total.max(1) as f64;
+                    (l.admitted_estimate(a).max(1.0) * mean) as u64
                 }
             }
         }
@@ -1970,8 +2000,13 @@ impl GraphIndex {
                 return 0.0;
             }
             let per_tile = total as f64 / tiles.len() as f64;
-            // A leafed list whose leaf is not resident estimates one admitted
-            // tile rather than fault it: a cost estimate must not cost a read.
+            // A leafed list whose leaf is not resident must still be estimated
+            // from the root alone (a cost estimate must not cost a read), and
+            // must give the figure the same directory gives when laid out flat
+            // (format 0x05) to within the unavoidable: a predicate that fills
+            // thousands of tiles is thousands of tiles whichever layout stores
+            // them. Counting "one tile" here made the planner see a 2 M-row
+            // predicate as 7 k rows and hash-join it ([`LeafedTiles::admitted_estimate`]).
             let admitted = match (tiles, pa) {
                 (TileList::Leafed(l), Some(a))
                     if !l
@@ -1981,19 +2016,19 @@ impl GraphIndex {
                         .filter(|(_, lf)| lf.min_a <= a && a <= lf.max_a)
                         .all(|(li, _)| l.cells[li].get().is_some()) =>
                 {
-                    1
+                    l.admitted_estimate(a)
                 }
                 _ => {
                     let (start, end) = self.tile_span(si, pa);
                     (start..end)
                         .filter(|&ti| tiles[ti].syn_admits(pb, pc))
-                        .count()
+                        .count() as f64
                 }
             };
-            let est = if admitted == 0 {
+            let est = if admitted <= 0.0 {
                 0.0
             } else {
-                (admitted as f64 - 0.5) * per_tile
+                (admitted - 0.5).max(0.5) * per_tile
             };
             best = best.min(est);
         }

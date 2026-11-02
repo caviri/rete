@@ -506,3 +506,61 @@ fn a_sequential_walk_reads_ahead() {
         "{rounds} round trips for {chunks} sequential chunks — expected a doubling read-ahead"
     );
 }
+
+/// 100,000 subjects, each typed and labelled: the label predicate is the fat
+/// one, the class is not what limits the work.
+fn typed_and_labelled() -> Vec<u8> {
+    let (ty, label) = (
+        "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+        "<http://www.w3.org/2000/01/rdf-schema#label>",
+    );
+    let class = "<http://ex/T>";
+    let subjects: Vec<String> = (0..100_000u32).map(mt_node).collect();
+    let labels: Vec<String> = (0..100_000u32).map(|i| format!("\"label {i}\"")).collect();
+    let mut db = DictionaryBuilder::new();
+    for (s, l) in subjects.iter().zip(&labels) {
+        db.observe(s, ty, class);
+        db.observe(s, label, l);
+    }
+    let dict = db.build();
+    let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+    for (s, l) in subjects.iter().zip(&labels) {
+        ib.push(dict.encode(s, ty, class).unwrap());
+        ib.push(dict.encode(s, label, l).unwrap());
+    }
+    write_file(&dict, &ib.build(), false, &[], 0)
+}
+
+/// A 1,000-row left side joined to an OPTIONAL over a fat predicate probes
+/// the predicate per row; it does not load it. The decision came from the tile
+/// directory's row estimate, which on format 0x06 counted a leaf it had not
+/// read as ONE tile: the 100,000-row predicate read as a few hundred rows,
+/// under the probe floor, and the OPTIONAL was hash-joined — every label tile
+/// read and held (14.5 GB on an 8 B-triple file; 0.7 GB on its 0x05 twin).
+/// Counted in index bytes read, not time: both layouts must read a sliver of
+/// the index.
+#[test]
+fn a_small_left_side_probes_a_fat_optional_in_both_layouts() {
+    let v5 = typed_and_labelled();
+    let v06 = v6(v5.clone());
+    let q = "SELECT ?s ?l WHERE { { SELECT ?s WHERE { ?s a <http://ex/T> } LIMIT 1000 } \
+             OPTIONAL { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?l } }";
+    let want = select(&Rete::open(&v5).unwrap(), q);
+    assert_eq!(want.len(), 1000);
+    for (name, image, idx_kind) in [("0x05", v5, None), ("0x06", v06, Some(kind::INDEX_DATA))] {
+        let idx = match idx_kind {
+            Some(k) => region(&image, k),
+            None => (0, image.len() as u64),
+        };
+        let rec = Rec::new(image);
+        let rete = lazy(&rec);
+        rec.take();
+        assert_eq!(select(&rete, q), want, "{name}");
+        let i = inside(&rec.take(), idx);
+        assert!(
+            i < (idx.1 - idx.0) / 8,
+            "{name}: {i} of {} bytes read for 1000 probes of a 100,000-row predicate",
+            idx.1 - idx.0
+        );
+    }
+}
