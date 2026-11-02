@@ -207,10 +207,11 @@ fn every_str_shape_answers_like_a_file_without_an_index() {
         let expected: Vec<Vec<String>> = queries.iter().map(|q| rows(&plain, q)).collect();
         // A blank node has no lexical form: STR(?o) is an error for the
         // `_:b7`, `_:glucose1` and `_:created9` objects, so no needle matches
-        // one by its label, with or without an index. (That leaves a smaller
-        // share of the queries answering than when STR read the label.)
+        // one by its label, with or without an index. That leaves 313 of the
+        // 944 queries answering (it was more when STR read the label); the
+        // bound is pinned close to it so a fixture that stops answering shows.
         assert!(
-            expected.iter().filter(|r| !r.is_empty()).count() > queries.len() / 4,
+            expected.iter().filter(|r| !r.is_empty()).count() > 300,
             "the fixture should answer many queries"
         );
         for (name, sc) in scopes() {

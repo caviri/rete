@@ -90,8 +90,10 @@ file only once the readers that fetch it run this release. See
   the arguments the string functions read by text: `IRI(?b)` (it made `<_:b0>`), the language tag of `STRLANG`,
   the pattern and flags of `REGEX` and `REPLACE`, the replacement of `REPLACE`, and both arguments of
   `LANGMATCHES` must be string literals (a blank node, an IRI or a number is an error). `STRLEN`, `CONCAT`,
-  `UCASE`/`LCASE`, `SUBSTR`, `ENCODE_FOR_URI` and the hashes already refused a blank node. `GROUP_CONCAT` still
-  concatenates the lexical form of whatever it is given. The W3C SPARQL 1.1 suite stays at 239/312.
+  `UCASE`/`LCASE`, `SUBSTR`, `ENCODE_FOR_URI` and the hashes already refused a blank node. `GROUP_CONCAT` is
+  CONCAT over its elements (§18.5.1.7), so a blank node in the group makes the aggregate an error (unbound), where it
+  used to put the label in the text (`MIN` and `MAX` still order blank nodes). `STRLANG` with an empty or malformed
+  language tag is an error instead of a malformed literal. The W3C SPARQL 1.1 suite stays at 239/312.
 - **The memory-bounded build accepts more than 2³¹ subject-only or object-only terms.** The provisional
   role-only ids no longer spend bit 31 of a `u32` on the class, so each position may hold up to
   `u32::MAX` terms, the format's limit (the OpenCitations Index has 2.56 B subject-only terms). A final id

@@ -169,3 +169,58 @@ fn a_blank_node_is_still_a_term() {
     );
     assert_eq!(both.len(), 1);
 }
+
+/// GROUP_CONCAT is CONCAT over its elements (§18.5.1.7): one blank node in the
+/// group makes the aggregate an error, so it is unbound; the label never
+/// appears in the text. MIN and MAX still order blank nodes.
+#[test]
+fn group_concat_over_a_blank_node_is_unbound() {
+    let r = open();
+    let rows = select(
+        &r,
+        "SELECT (GROUP_CONCAT(?o) AS ?g) WHERE { ?s <http://ex/p> ?o }",
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("g"), None, "{rows:?}");
+    let distinct = select(
+        &r,
+        "SELECT (GROUP_CONCAT(DISTINCT ?o; separator=\"|\") AS ?g) WHERE { ?s <http://ex/p> ?o }",
+    );
+    assert_eq!(distinct[0].get("g"), None);
+    // STR(?o) inside the aggregate errors on the blank node's row, so the same.
+    let via_str = select(
+        &r,
+        "SELECT (GROUP_CONCAT(STR(?o)) AS ?g) WHERE { ?s <http://ex/p> ?o }",
+    );
+    assert_eq!(via_str[0].get("g"), None);
+    // Without the blank node the group concatenates as before.
+    let ok = select(
+        &r,
+        "SELECT (GROUP_CONCAT(?o; separator=\"|\") AS ?g) WHERE { ?s <http://ex/p> ?o FILTER(!isBlank(?o)) }",
+    );
+    let g = ok[0].get("g").expect("a value");
+    assert!(g.contains('x') && g.contains('y') && g.contains('|'), "{g}");
+    assert!(!g.contains("_:"));
+    // MIN and MAX keep ordering blank nodes (they sort before IRIs and literals).
+    let min = select(&r, "SELECT (MIN(?o) AS ?m) WHERE { ?s <http://ex/p> ?o }");
+    assert!(min[0]["m"].starts_with("_:"), "{min:?}");
+}
+
+/// STRLANG with an empty or malformed language tag is an error, not a
+/// malformed literal.
+#[test]
+fn strlang_refuses_a_malformed_tag() {
+    let r = open();
+    let one = |tag: &str| {
+        let rows = select(
+            &r,
+            &format!("SELECT ?t WHERE {{ <http://ex/c> <http://ex/p> ?o BIND(STRLANG(\"x\", \"{tag}\") AS ?t) }}"),
+        );
+        rows[0].get("t").cloned()
+    };
+    for bad in ["", "en us", "-en", "en-", "123", "en--us", "e n"] {
+        assert_eq!(one(bad), None, "tag {bad:?}");
+    }
+    assert_eq!(one("en-US").as_deref(), Some("\"x\"@en-US"));
+    assert_eq!(one("fr").as_deref(), Some("\"x\"@fr"));
+}

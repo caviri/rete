@@ -213,13 +213,18 @@ impl Accum {
                     .and_then(|s| row[s].as_ref())
                     .and_then(|v| ctx.resolver.str_of(v))
                 {
-                    Some(t) => {
+                    // GROUP_CONCAT is CONCAT over the elements (SPARQL 1.1
+                    // §18.5.1.7), and CONCAT takes string literals: a blank node
+                    // in the group makes the aggregate an error, not its label
+                    // `_:b0` in the text. (`str_of` itself stays as it is: MIN and
+                    // MAX order blank nodes.)
+                    Some(t) if !t.starts_with("_:") => {
                         let p = lexical(&t);
                         if !*distinct || seen.insert(p.clone()) {
                             parts.push(p);
                         }
                     }
-                    None => {
+                    _ => {
                         *err = true;
                         parts.clear();
                         seen.clear();

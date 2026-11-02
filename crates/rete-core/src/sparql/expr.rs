@@ -493,6 +493,12 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             // The language tag is a simple literal too: not an IRI or a blank
             // node read by its token text.
             let lang = lex_string_arg(f, 2, &arg(1)?)?;
+            // An empty or malformed tag would make a malformed literal
+            // (`"x"@`, `"x"@en us`): a type error instead.
+            if !is_language_tag(&lang) {
+                diag::bad_arg(f, 2, &arg(1)?);
+                return None;
+            }
             Some(Rc::from(make_literal(&v, Some(&lang), None)))
         }
         // IRI()/URI(): an IRI argument passes through; a string becomes <...>.
@@ -1242,6 +1248,16 @@ fn no_match(ctx: &Ctx, f: Builtin, bit: u8, args: &[FExpr]) {
             diag::note_no_match(f, needle);
         }
     }
+}
+
+/// BCP 47 shape of a language tag (RDF 1.1 `LANGTAG`): a primary subtag of
+/// letters, then any number of `-` subtags of letters and digits.
+fn is_language_tag(tag: &str) -> bool {
+    let mut parts = tag.split('-');
+    let first = parts.next().unwrap_or("");
+    !first.is_empty()
+        && first.bytes().all(|b| b.is_ascii_alphabetic())
+        && parts.all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// The unescaped lexical value of `token` iff it is a string literal (plain,
