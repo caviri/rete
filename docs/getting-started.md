@@ -113,9 +113,7 @@ Expected output:
 ```
 
 `logging` itself is absent: this query needs at least one dependency edge.
-For triple lookups, joins, JSON results and supported SPARQL features, see
-[CLI reference](cli.md) and [SPARQL support](sparql.md). Consult the support page for execution-mode differences before moving a
-complex query between local files and URLs.
+[Query a .rete](#query-a-rete) below shows the other ways to ask.
 
 <a id="inspecting-a-file"></a>
 Inspect the description stored with the graph:
@@ -135,24 +133,212 @@ provenance.
 <a id="validating-shapes"></a>
 Source syntax validation (`validate`), file integrity (`verify`) and
 [SHACL shape validation](shacl.md) check different things.
+
+## Query a .rete {#query-a-rete}
+
+The same file answers the same SPARQL from the CLI, Python, JavaScript, a URL
+and the browser. Each example below uses the graph you just built. For the
+query language itself, see [SPARQL support](sparql.md); for joins, reasoning and
+analysis, [Query and analyze](query-and-analyze.md).
+
+### Python
+
+```sh
+pip install rete-graph==0.5.0
+```
+
+Save as `query.py`:
+
+```python
+import rete_graph as rete
+
+g = rete.open("data.rete")
+rows = g.query("""
+    PREFIX e: <http://ex/>
+    SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package""")
+for row in rows:
+    print(row["package"].value)
+print(g.quads, "triples")
+```
+
+```sh
+python query.py
+```
+
+```text
+http://ex/app
+http://ex/web
+3 triples
+```
+
+The package is `rete-graph`; the module is `rete_graph`. `query()` returns one
+dict per row, with each value a `Term` that has `.value`. See [Python](python.md).
+
+### JavaScript
+
+```sh
+npm install rete-graph@0.5.0
+```
+
+Save as `query.mjs`:
+
+```js
+import { readFileSync } from "node:fs";
+import { open } from "rete-graph";
+
+const g = await open(readFileSync("data.rete"));
+const rows = g.query(`
+  PREFIX e: <http://ex/>
+  SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package`);
+for (const row of rows) console.log(row.package.value);
+console.log(g.quads, "triples");
+```
+
+```sh
+node query.mjs
+```
+
+```text
+http://ex/app
+http://ex/web
+3 triples
+```
+
+This runs in Node 18 or later. In a browser, open the bytes in a worker or
+fetch them yourself. See [JavaScript](javascript.md).
+
+### Labels and words
+
+A graph with `rdfs:label` literals can be searched by label prefix and by word.
+Our dependency graph has none, so add three labels and build a second file with
+both indexes:
+
+```sh
+cat > labels.nt <<'EOF'
+<http://ex/app> <http://www.w3.org/2000/01/rdf-schema#label> "Shop app" .
+<http://ex/web> <http://www.w3.org/2000/01/rdf-schema#label> "Web framework" .
+<http://ex/logging> <http://www.w3.org/2000/01/rdf-schema#label> "Logging library" .
+EOF
+rete build data.nt labels.nt -o labelled.rete --card --title "My dependency graph" --label-index --text-index
+```
+
+`rete search` matches a label prefix, and `--contains` matches a word in any
+literal:
+
+```sh
+rete search labelled.rete "Web"
+rete search labelled.rete --contains library
+```
+
+```text
+Web framework	<http://ex/web>
+<http://ex/logging>
+```
+
 <a id="label-search-autocomplete"></a>
 <a id="full-text-search-word--contains"></a>
-For label autocomplete and word search, see `build --label-index`,
-`build --text-index` and `search` in the [CLI reference](cli.md).
+The first command is what autocomplete uses; the second finds the subject by
+content. Both flags are optional and cost file size; see the
+[CLI reference](cli.md#full-text-index---text-index-and-its-scope).
+
+### What a query will read
+
+`rete cost` previews the range reads a query needs, without running it. It is
+most useful on a large or remote file:
+
+```sh
+rete cost data.rete "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn+ e:logging }"
+```
+
+```text
+query cost preview
+  source: data.rete
+  source kind: local
+  file bytes: 18221
+  current engine access: lazy-tiles
+  query predicates: <http://ex/dependsOn>
+  summary exact answer: unavailable (query shape is not exactly answerable from summary predicate totals)
+  summary overview: 18221 bytes in 2 range request(s) · skips index
+  routed pattern open: unavailable (query is not a single default-graph triple pattern)
+  lazy query open: 18221 bytes in 1 range request(s) · reads index
+  full query open: 18221 bytes in 2 range request(s) · reads index
+  index section: offset 18014 · len 184
+  note: SPARQL evaluation opens lazily (tile directories only) and range-fetches index tiles as the query touches them; the full query-open figure is the eager upper bound.
+```
+
+The graph is 18 KB, so the whole file is one read. On a large file the lazy
+open reads the first 64 KiB and the query then reads only the tiles it needs.
+
+### Several files
+
+`rete federate` runs one query over several files, local paths and URLs mixed,
+and merges the rows. Build a second file with one more dependency:
+
+```sh
+echo '<http://ex/api> <http://ex/dependsOn> <http://ex/logging> .' > more.nt
+rete build more.nt -o more.rete
+rete federate data.rete more.rete --query "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn e:logging }"
+```
+
+```text
+  data.rete: 1 row(s) in 2.2ms
+  more.rete: 1 row(s) in 2.5ms
+2 solution(s)
+federated 2 source(s): 2 queried, 0 pruned (routing on); 2 merged result(s)
+?package=<http://ex/web>
+?package=<http://ex/api>
+```
+
+Rows come in source order and are not re-sorted, because each file is queried on
+its own: `ORDER BY`, `COUNT` and `LIMIT` apply per file. The CLI does a union
+and no joins across files; the playground can join across sources. See
+[Federated queries](federation.md).
+
+### A file on a URL {#remote-query}
+
+A remote file is queried through HTTP range requests, so nothing is downloaded
+beyond what the query reads. To try it without a host, serve this directory with
+the repository's range-aware dev server,
+[`scripts/range_server.py`](https://github.com/caviri/rete/blob/main/scripts/range_server.py)
+(Python's `http.server` ignores `Range`). Here it runs in a container, after
+copying `range_server.py` into the directory:
+
+```sh
+docker run -d --name qs-range -p 8000:8000 -v "$PWD:/srv:ro" -w /srv python:3.12-slim python range_server.py 8000 /srv
+rete sparql-url http://host.docker.internal:8000/data.rete "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
+docker rm -f qs-range
+```
+
+(`host.docker.internal` is the host as seen from Docker Desktop. A native `rete`
+uses `127.0.0.1`.)
+
+```text
+?package=<http://ex/app>
+?package=<http://ex/web>
+2 solution(s)
+(fetched 18221 bytes in 1 range request(s); file is 18221 bytes)
+```
+
+The last line says what it fetched. This file is small, so it was read whole in
+one request. On a 106 MB graph, the
+[build tutorial](build-tutorial.md#8-use-the-file-over-http) shows a lookup that
+read about 3% of it.
+
+### The browser
+
+The [playground](playground-guide.md) runs the same queries in a page, with no
+install. Open a catalog dataset, or add your own file by URL under
+**+ Add source**. A browser needs the host to send CORS headers as well as
+honor `Range`; see [Hosting](hosting.md).
 
 ## Put the file on a URL {#deploying--querying-over-a-url}
 
-Upload `data.rete` to a host that supports HTTP byte ranges. A remote query
-uses the same SPARQL but reads the file through its URL:
+Upload `data.rete` to a host that supports HTTP byte ranges, then query it as in
+[A file on a URL](#remote-query), replacing the example address with yours:
 
 ```sh
 rete sparql-url https://your-host.example/data.rete "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
 ```
-
-Replace the example URL with your uploaded file. The two packages should be
-the same; the command also reports fetched bytes and requests. A tiny graph
-may be read in full. Larger graphs can benefit from selective range reads,
-but the cost depends on the query and file layout.
 
 Use [Hosting](hosting.md) to check range responses, caching and browser CORS.
 The shared CLI/Python/R HTTP reader can retain a bounded whole-file response
@@ -161,8 +347,9 @@ host is the reliable choice for large files.
 
 <a id="going-further"></a>
 Continue with the [playground](playground-guide.md), the
-[dependency-impact scenario](scenario.md), or
-[tables and large builds](data-engineering.md).
+[dependency-impact scenario](scenario.md), the
+[build tutorial](build-tutorial.md) (Python and CLI, the card, the file layout,
+time and memory), or [tables and large builds](data-engineering.md).
 <a id="building-from-source"></a>
 <a id="generating-synthetic-test-data"></a>
 <a id="scaling-to-1-gb"></a>

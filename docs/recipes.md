@@ -9,6 +9,10 @@ own data. Start with one that matches the outcome you want.
 materials, ask which packages depend on a library, and query the published
 file. This is a small end-to-end example of the file-and-URL workflow.
 
+**[Build a .rete, step by step](build-tutorial.md).** One synthetic graph built
+from Python and from the CLI, then the card, the schema, the file layout and
+what the build costs in time and memory.
+
 **[Build a graph in Python](python-build-tutorial.md).** Create RDF from code,
 add metadata, build a file and inspect it. The
 [browser notebooks](jupyterlite-guide.md) let you try the workflow without

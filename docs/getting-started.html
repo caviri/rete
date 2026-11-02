@@ -694,9 +694,7 @@ The <code>+</code> follows one or more <code>dependsOn</code> edges.</p>
 ?package=&lt;http://ex/web&gt;
 </code></pre>
 <p><code>logging</code> itself is absent: this query needs at least one dependency edge.
-For triple lookups, joins, JSON results and supported SPARQL features, see
-<a href="cli.html">CLI reference</a> and <a href="sparql.html">SPARQL support</a>. Consult the support page for execution-mode differences before moving a
-complex query between local files and URLs.</p>
+<a href="#query-a-rete">Query a .rete</a> below shows the other ways to ask.</p>
 <p><a id="inspecting-a-file"></a>
 Inspect the description stored with the graph:</p>
 <pre><code class="language-sh">rete card data.rete
@@ -710,28 +708,160 @@ matches. See <a href="dataset-cards.html">Dataset Cards</a> for curated metadata
 provenance.</p>
 <p><a id="validating-shapes"></a>
 Source syntax validation (<code>validate</code>), file integrity (<code>verify</code>) and
-<a href="shacl.html">SHACL shape validation</a> check different things.
-<a id="label-search-autocomplete"></a>
+<a href="shacl.html">SHACL shape validation</a> check different things.</p>
+<h2 id="query-a-rete">Query a .rete</h2>
+<p>The same file answers the same SPARQL from the CLI, Python, JavaScript, a URL
+and the browser. Each example below uses the graph you just built. For the
+query language itself, see <a href="sparql.html">SPARQL support</a>; for joins, reasoning and
+analysis, <a href="query-and-analyze.html">Query and analyze</a>.</p>
+<h3 id="python">Python</h3>
+<pre><code class="language-sh">pip install rete-graph==0.5.0
+</code></pre>
+<p>Save as <code>query.py</code>:</p>
+<pre><code class="language-python">import rete_graph as rete
+
+g = rete.open("data.rete")
+rows = g.query("""
+    PREFIX e: &lt;http://ex/&gt;
+    SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package""")
+for row in rows:
+    print(row["package"].value)
+print(g.quads, "triples")
+</code></pre>
+<pre><code class="language-sh">python query.py
+</code></pre>
+<pre><code class="language-text">http://ex/app
+http://ex/web
+3 triples
+</code></pre>
+<p>The package is <code>rete-graph</code>; the module is <code>rete_graph</code>. <code>query()</code> returns one
+dict per row, with each value a <code>Term</code> that has <code>.value</code>. See <a href="python.html">Python</a>.</p>
+<h3 id="javascript">JavaScript</h3>
+<pre><code class="language-sh">npm install rete-graph@0.5.0
+</code></pre>
+<p>Save as <code>query.mjs</code>:</p>
+<pre><code class="language-js">import { readFileSync } from "node:fs";
+import { open } from "rete-graph";
+
+const g = await open(readFileSync("data.rete"));
+const rows = g.query(`
+  PREFIX e: &lt;http://ex/&gt;
+  SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package`);
+for (const row of rows) console.log(row.package.value);
+console.log(g.quads, "triples");
+</code></pre>
+<pre><code class="language-sh">node query.mjs
+</code></pre>
+<pre><code class="language-text">http://ex/app
+http://ex/web
+3 triples
+</code></pre>
+<p>This runs in Node 18 or later. In a browser, open the bytes in a worker or
+fetch them yourself. See <a href="javascript.html">JavaScript</a>.</p>
+<h3 id="labels-and-words">Labels and words</h3>
+<p>A graph with <code>rdfs:label</code> literals can be searched by label prefix and by word.
+Our dependency graph has none, so add three labels and build a second file with
+both indexes:</p>
+<pre><code class="language-sh">cat &gt; labels.nt &lt;&lt;'EOF'
+&lt;http://ex/app&gt; &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; "Shop app" .
+&lt;http://ex/web&gt; &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; "Web framework" .
+&lt;http://ex/logging&gt; &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; "Logging library" .
+EOF
+rete build data.nt labels.nt -o labelled.rete --card --title "My dependency graph" --label-index --text-index
+</code></pre>
+<p><code>rete search</code> matches a label prefix, and <code>--contains</code> matches a word in any
+literal:</p>
+<pre><code class="language-sh">rete search labelled.rete "Web"
+rete search labelled.rete --contains library
+</code></pre>
+<pre><code class="language-text">Web framework	&lt;http://ex/web&gt;
+&lt;http://ex/logging&gt;
+</code></pre>
+<p><a id="label-search-autocomplete"></a>
 <a id="full-text-search-word--contains"></a>
-For label autocomplete and word search, see <code>build --label-index</code>,
-<code>build --text-index</code> and <code>search</code> in the <a href="cli.html">CLI reference</a>.</p>
+The first command is what autocomplete uses; the second finds the subject by
+content. Both flags are optional and cost file size; see the
+<a href="cli.html#full-text-index---text-index-and-its-scope">CLI reference</a>.</p>
+<h3 id="what-a-query-will-read">What a query will read</h3>
+<p><code>rete cost</code> previews the range reads a query needs, without running it. It is
+most useful on a large or remote file:</p>
+<pre><code class="language-sh">rete cost data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn+ e:logging }"
+</code></pre>
+<pre><code class="language-text">query cost preview
+  source: data.rete
+  source kind: local
+  file bytes: 18221
+  current engine access: lazy-tiles
+  query predicates: &lt;http://ex/dependsOn&gt;
+  summary exact answer: unavailable (query shape is not exactly answerable from summary predicate totals)
+  summary overview: 18221 bytes in 2 range request(s) · skips index
+  routed pattern open: unavailable (query is not a single default-graph triple pattern)
+  lazy query open: 18221 bytes in 1 range request(s) · reads index
+  full query open: 18221 bytes in 2 range request(s) · reads index
+  index section: offset 18014 · len 184
+  note: SPARQL evaluation opens lazily (tile directories only) and range-fetches index tiles as the query touches them; the full query-open figure is the eager upper bound.
+</code></pre>
+<p>The graph is 18 KB, so the whole file is one read. On a large file the lazy
+open reads the first 64 KiB and the query then reads only the tiles it needs.</p>
+<h3 id="several-files">Several files</h3>
+<p><code>rete federate</code> runs one query over several files, local paths and URLs mixed,
+and merges the rows. Build a second file with one more dependency:</p>
+<pre><code class="language-sh">echo '&lt;http://ex/api&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/logging&gt; .' &gt; more.nt
+rete build more.nt -o more.rete
+rete federate data.rete more.rete --query "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn e:logging }"
+</code></pre>
+<pre><code class="language-text">  data.rete: 1 row(s) in 2.2ms
+  more.rete: 1 row(s) in 2.5ms
+2 solution(s)
+federated 2 source(s): 2 queried, 0 pruned (routing on); 2 merged result(s)
+?package=&lt;http://ex/web&gt;
+?package=&lt;http://ex/api&gt;
+</code></pre>
+<p>Rows come in source order and are not re-sorted, because each file is queried on
+its own: <code>ORDER BY</code>, <code>COUNT</code> and <code>LIMIT</code> apply per file. The CLI does a union
+and no joins across files; the playground can join across sources. See
+<a href="federation.html">Federated queries</a>.</p>
+<h3 id="remote-query">A file on a URL</h3>
+<p>A remote file is queried through HTTP range requests, so nothing is downloaded
+beyond what the query reads. To try it without a host, serve this directory with
+the repository's range-aware dev server,
+<a href="https://github.com/caviri/rete/blob/main/scripts/range_server.py"><code>scripts/range_server.py</code></a>
+(Python's <code>http.server</code> ignores <code>Range</code>). Here it runs in a container, after
+copying <code>range_server.py</code> into the directory:</p>
+<pre><code class="language-sh">docker run -d --name qs-range -p 8000:8000 -v "$PWD:/srv:ro" -w /srv python:3.12-slim python range_server.py 8000 /srv
+rete sparql-url http://host.docker.internal:8000/data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
+docker rm -f qs-range
+</code></pre>
+<p>(<code>host.docker.internal</code> is the host as seen from Docker Desktop. A native <code>rete</code>
+uses <code>127.0.0.1</code>.)</p>
+<pre><code class="language-text">?package=&lt;http://ex/app&gt;
+?package=&lt;http://ex/web&gt;
+2 solution(s)
+(fetched 18221 bytes in 1 range request(s); file is 18221 bytes)
+</code></pre>
+<p>The last line says what it fetched. This file is small, so it was read whole in
+one request. On a 106 MB graph, the
+<a href="build-tutorial.html#8-use-the-file-over-http">build tutorial</a> shows a lookup that
+read about 3% of it.</p>
+<h3 id="the-browser">The browser</h3>
+<p>The <a href="playground-guide.html">playground</a> runs the same queries in a page, with no
+install. Open a catalog dataset, or add your own file by URL under
+<strong>+ Add source</strong>. A browser needs the host to send CORS headers as well as
+honor <code>Range</code>; see <a href="hosting.html">Hosting</a>.</p>
 <h2 id="deploying--querying-over-a-url">Put the file on a URL</h2>
-<p>Upload <code>data.rete</code> to a host that supports HTTP byte ranges. A remote query
-uses the same SPARQL but reads the file through its URL:</p>
+<p>Upload <code>data.rete</code> to a host that supports HTTP byte ranges, then query it as in
+<a href="#remote-query">A file on a URL</a>, replacing the example address with yours:</p>
 <pre><code class="language-sh">rete sparql-url https://your-host.example/data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn+ e:logging } ORDER BY ?package"
 </code></pre>
-<p>Replace the example URL with your uploaded file. The two packages should be
-the same; the command also reports fetched bytes and requests. A tiny graph
-may be read in full. Larger graphs can benefit from selective range reads,
-but the cost depends on the query and file layout.</p>
 <p>Use <a href="hosting.html">Hosting</a> to check range responses, caching and browser CORS.
 The shared CLI/Python/R HTTP reader can retain a bounded whole-file response
 from a host that ignores ranges; it refuses oversized responses. A range-capable
 host is the reliable choice for large files.</p>
 <p><a id="going-further"></a>
 Continue with the <a href="playground-guide.html">playground</a>, the
-<a href="scenario.html">dependency-impact scenario</a>, or
-<a href="data-engineering.html">tables and large builds</a>.
+<a href="scenario.html">dependency-impact scenario</a>, the
+<a href="build-tutorial.html">build tutorial</a> (Python and CLI, the card, the file layout,
+time and memory), or <a href="data-engineering.html">tables and large builds</a>.
 <a id="building-from-source"></a>
 <a id="generating-synthetic-test-data"></a>
 <a id="scaling-to-1-gb"></a>

@@ -79,6 +79,7 @@ const PAGES: &[(&str, &str)] = &[
     ("agent-frameworks.md", "LangChain & Pydantic AI"),
     ("fallacies.md", "Experiment: graphs from speech"),
     ("dataset-cards.md", "Dataset Cards"),
+    ("build-tutorial.md", "Build a .rete: Python and CLI"),
     ("hosting.md", "Hosting your .rete"),
     ("interop.md", "Triple-store interop"),
     ("media-companions.md", "Media & SQL companions"),
@@ -419,7 +420,8 @@ fn parent_for(md: &str) -> Option<&'static str> {
         | "plaza-guide.md"
         | "file-explorer.md"
         | "yasgui-guide.md" => "integrations.md",
-        "dataset-cards.md"
+        "build-tutorial.md"
+        | "dataset-cards.md"
         | "dataset-card-reference.md"
         | "hosting.md"
         | "interop.md"
@@ -2213,7 +2215,7 @@ mod tests {
     #[test]
     fn registry_and_sidebar_are_complete_unique_and_classified() {
         use std::collections::HashSet;
-        assert_eq!(super::PAGES.len(), 68);
+        assert_eq!(super::PAGES.len(), 69);
         let published: HashSet<_> = super::PAGES.iter().map(|p| p.0).collect();
         assert_eq!(published.len(), super::PAGES.len());
         assert_eq!(super::SECTIONS.len(), 4);
