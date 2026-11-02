@@ -476,7 +476,19 @@ pub(crate) struct QueryCost {
     /// property of the file. Interpret with `context` and the byte figures
     /// ("N ms for B bytes in R requests" travels; "N ms" does not).
     pub debug_ms: u64,
+    /// Present only when the run did **not** finish: `over_budget` (the query
+    /// passed the starter byte budget, or the memory the cost measurement was
+    /// allowed — see [`MeasureMem`]) or `failed` (it did not run). The other
+    /// figures are then what the run had spent when it stopped, and `rows` is
+    /// 0. Absent means the run completed. Absent before 0.5.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
+
+/// [`QueryCost::status`] of a run a budget stopped.
+pub(crate) const STATUS_OVER_BUDGET: &str = "over_budget";
+/// [`QueryCost::status`] of a run that did not complete for another reason.
+pub(crate) const STATUS_FAILED: &str = "failed";
 
 /// A starter query the build measured and then did not ship.
 ///
@@ -822,20 +834,28 @@ impl Recorder {
         if self.reproducible {
             return None;
         }
+        let phases: Vec<PhaseTime> = self
+            .collector
+            .snapshot()
+            .phases
+            .into_iter()
+            .map(|(p, d)| PhaseTime {
+                phase: p.as_str().into(),
+                ms: d.as_millis() as u64,
+                peak_rss_bytes: self.phase_peak(p),
+            })
+            .collect();
+        // The kernel's high-water mark is updated lazily, and a sampled
+        // `VmRSS` can read above it; the run's peak is never below a phase's.
+        let peak = phases
+            .iter()
+            .filter_map(|p| p.peak_rss_bytes)
+            .chain(peak_rss_bytes())
+            .max();
         Some(RunRecord {
             wall_ms: self.started.elapsed().as_millis() as u64,
-            phases: self
-                .collector
-                .snapshot()
-                .phases
-                .into_iter()
-                .map(|(p, d)| PhaseTime {
-                    phase: p.as_str().into(),
-                    ms: d.as_millis() as u64,
-                    peak_rss_bytes: self.phase_peak(p),
-                })
-                .collect(),
-            peak_rss_bytes: peak_rss_bytes(),
+            phases,
+            peak_rss_bytes: peak,
             memory_limit_bytes: memory_limit_bytes(),
             cpus: std::thread::available_parallelism()
                 .ok()
@@ -1300,6 +1320,14 @@ pub(crate) struct Measured {
     /// unbound. So `useless.is_some() && !vacuous` is exactly "measured zero
     /// rows", which is what can prove a claim wrong.
     pub vacuous: bool,
+    /// The run was stopped by a budget (the starter byte budget, or the memory
+    /// ceiling of [`MeasureMem`]) rather than failing on its own.
+    pub over_budget: bool,
+    /// The run was stopped by the **memory** ceiling. Unlike the byte budget,
+    /// which counts reads and gives the same answer every time, this depends
+    /// on how the allocator happens to stand against the ceiling, so it never
+    /// decides what the card holds: the query stays, flagged in the record.
+    pub over_memory: bool,
 }
 
 /// What a run's *result* decides, before its cost is tallied — the output of
@@ -1309,6 +1337,8 @@ struct Graded {
     error: Option<String>,
     useless: Option<String>,
     vacuous: bool,
+    over_budget: bool,
+    over_memory: bool,
 }
 
 impl Graded {
@@ -1320,6 +1350,25 @@ impl Graded {
             error: Some(why.clone()),
             useless: Some(why),
             vacuous: false,
+            over_budget: false,
+            over_memory: false,
+        }
+    }
+
+    /// A run the memory ceiling stopped.
+    fn over_memory(why: String) -> Self {
+        Self {
+            over_memory: true,
+            ..Self::over_budget(why)
+        }
+    }
+
+    /// A run a budget stopped: also an error and also useless, for the same
+    /// reason, and said so in the words that name the budget.
+    fn over_budget(why: String) -> Self {
+        Self {
+            over_budget: true,
+            ..Self::failed(why)
         }
     }
 }
@@ -1345,12 +1394,16 @@ fn grade(out: &QueryOutput) -> Graded {
         error: None,
         useless: None,
         vacuous: false,
+        over_budget: false,
+        over_memory: false,
     };
     let empty = |why: &str| Graded {
         rows: 0,
         error: None,
         useless: Some(why.to_string()),
         vacuous: false,
+        over_budget: false,
+        over_memory: false,
     };
     match out {
         QueryOutput::Select(_, rows) if rows.is_empty() => empty("measured 0 rows on the file"),
@@ -1363,6 +1416,8 @@ fn grade(out: &QueryOutput) -> Graded {
                 rows.len()
             )),
             vacuous: true,
+            over_budget: false,
+            over_memory: false,
         },
         QueryOutput::Select(_, rows) => answers(rows.len() as u64),
         QueryOutput::Ask(false) => empty("measured ASK false on the file"),
@@ -1395,29 +1450,71 @@ fn measure_one<R: RangeReader + Send + Sync + 'static>(
     reader: std::sync::Arc<CountingReader<R>>,
     q: &ExampleQuery,
     leash: Option<Leash>,
+    mem: Option<MeasureMem>,
 ) -> Measured {
     let start = std::time::Instant::now();
-    let open = Rete::open_ranged_lazy(reader.clone());
-    // The open is paid whatever the query; a starter budget counts from here.
-    if let (Ok(_), Some(l)) = (&open, &leash) {
-        l.arm();
-    }
-    let graded = match open {
-        Ok(rete) => match eval_query(&rete, &q.sparql) {
-            // A lazy open turns a failed range read into an empty tile and a
-            // flag, so the result of a run whose reads failed — a byte budget
-            // ran out, a request errored — is a partial answer that looks
-            // complete. It is a failed run, and saying so is what makes
-            // "costs more than N MB" an answer rather than a wrong row count.
-            Ok(_) if rete.index_incomplete() => Graded::failed(format!(
-                "did not finish: a range read was refused after {} bytes (byte budget \
-                 exhausted, or the source failed)",
-                reader.bytes_read()
-            )),
-            Ok(result) => grade(&result),
-            Err(e) => Graded::failed(format!("failed to run: {e}")),
-        },
-        Err(e) => Graded::failed(format!("the file did not open: {e}")),
+    // Under a memory budget the guard stops this query when the process passes
+    // the ceiling; the pages a stopped neighbour freed are given time to go
+    // back first, so they are not held against it.
+    let guard = mem.map(|m| {
+        settle(m.ceiling);
+        rete_core::guard::QueryGuard::start(m.ceiling, rete_core::guard::current_rss_bytes)
+    });
+    let run = rete_core::guard::run_guarded(|| {
+        let open = Rete::open_ranged_lazy(reader.clone());
+        // The open is paid whatever the query; a starter budget counts from here.
+        if let (Ok(_), Some(l)) = (&open, &leash) {
+            l.arm();
+        }
+        match open {
+            Ok(rete) => {
+                match eval_query(&rete, &q.sparql) {
+                    // A lazy open turns a failed range read into an empty tile
+                    // and a flag, so the result of a run whose reads failed — a
+                    // byte budget ran out, a request errored — is a partial
+                    // answer that looks complete. It is a failed run, and
+                    // saying so is what makes "costs more than N MB" an answer
+                    // rather than a wrong row count.
+                    Ok(_) if rete.index_incomplete() => {
+                        let why = format!(
+                            "did not finish: a range read was refused after {} bytes (byte \
+                             budget exhausted, or the source failed)",
+                            reader.bytes_read()
+                        );
+                        // Only a starter run has a byte budget to exhaust; a
+                        // local source does not fail on its own.
+                        if leash.is_some() {
+                            Graded::over_budget(why)
+                        } else {
+                            Graded::failed(why)
+                        }
+                    }
+                    Ok(result) => grade(&result),
+                    Err(e) => Graded::failed(format!("failed to run: {e}")),
+                }
+            }
+            Err(e) => Graded::failed(format!("the file did not open: {e}")),
+        }
+    });
+    let graded = match run {
+        Ok(g) => g,
+        Err(rete_core::guard::OverBudget) => Graded::over_memory(format!(
+            "did not finish: its working memory passed the {} MiB ceiling of the cost \
+             measurement (--memory-budget-mb {}, or what the process held when the \
+             measurement began plus {} MiB, whichever is more) after {} bytes read",
+            mem.map_or(0, |m| m.ceiling >> 20),
+            mem.map_or(0, |m| m.budget >> 20),
+            MeasureMem::HEADROOM >> 20,
+            reader.bytes_read()
+        )),
+    };
+    drop(guard);
+    let status = if graded.over_budget {
+        Some(STATUS_OVER_BUDGET.to_string())
+    } else if graded.error.is_some() {
+        Some(STATUS_FAILED.to_string())
+    } else {
+        None
     };
     Measured {
         cost: QueryCost {
@@ -1426,10 +1523,112 @@ fn measure_one<R: RangeReader + Send + Sync + 'static>(
             requests: reader.requests(),
             rows: graded.rows,
             debug_ms: start.elapsed().as_millis() as u64,
+            status,
         },
         error: graded.error,
         useless: graded.useless,
         vacuous: graded.vacuous,
+        over_budget: graded.over_budget,
+        over_memory: graded.over_memory,
+    }
+}
+
+/// What a cost measurement may use when the command has a memory budget
+/// (`--memory-budget-mb` of `rete build`, `rete merge` and `rete recard`).
+///
+/// The measurement runs the card's starter queries against the file, and a
+/// query's working state (a join's build side, a `GROUP BY`'s groups) is not
+/// bounded by any cache. So each query runs under a ceiling on the process's
+/// resident set size — the budget, or what the process already holds plus a
+/// little headroom if that is more, or, when the process is already past the
+/// budget, just under the container's memory limit (see
+/// [`with_baseline`](Self::with_baseline)) — and a query
+/// that passes it is stopped and recorded as over budget
+/// ([`rete_core::guard`]). A query is stopped at its next row, so the process
+/// can pass the ceiling by what one buffer's growth allocates: it stays within
+/// the budget plus 128 MiB (measured). The caches of each lazy open are
+/// left as they are (half the machine's free RAM, which the ceiling bounds
+/// first), so a run's `bytes` and `requests` are what an unbudgeted run's are.
+/// Without a budget the measurement is as it always was: no ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MeasureMem {
+    /// The command's budget, in bytes.
+    pub budget: u64,
+    /// The resident-set-size ceiling a query runs under.
+    pub ceiling: u64,
+}
+
+impl MeasureMem {
+    /// The measurement of a command with `budget_mb` MiB, as the process
+    /// stands now. Call it when the cost step begins: the ceiling follows the
+    /// resident memory found then, not whatever a previous query left behind.
+    pub(crate) fn for_budget_mb(budget_mb: u64) -> Self {
+        Self::for_budget_bytes(budget_mb.saturating_mul(1 << 20))
+    }
+
+    /// [`for_budget_mb`](Self::for_budget_mb) in bytes.
+    pub(crate) fn for_budget_bytes(budget: u64) -> Self {
+        Self::with_baseline(
+            budget,
+            rete_core::guard::current_rss_bytes().unwrap_or(0),
+            memory_limit_bytes(),
+        )
+    }
+
+    /// What a query may grow the process by when the process already holds the
+    /// whole budget. `RETE_COST_MEMORY_HEADROOM_MB` overrides it (the tests set
+    /// it to 0).
+    pub const HEADROOM: u64 = 32 << 20;
+
+    /// The ceiling, from the budget, the resident memory found when the step
+    /// begins (`baseline`) and the container's memory limit, if it has one:
+    ///
+    /// * the process is **within** the budget: the budget, or `baseline` plus
+    ///   [`HEADROOM`](Self::HEADROOM) if that is more;
+    /// * the process is **already past** the budget, as a build is at scale
+    ///   (OpenAIRE held 13.9 GB on a 9,000 MB budget): the budget no longer
+    ///   says anything the process can meet, so the guard's job is to stop a
+    ///   query before the container's OOM killer does. The ceiling is the
+    ///   limit less a margin (10 % of it, at least 512 MiB), or
+    ///   `baseline` plus headroom if that is more. With no limit known it is
+    ///   `baseline` plus headroom.
+    pub(crate) fn with_baseline(budget: u64, baseline: u64, limit: Option<u64>) -> Self {
+        let forced = std::env::var("RETE_COST_MEMORY_HEADROOM_MB")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let headroom = forced.map_or(Self::HEADROOM, |mb| mb << 20);
+        // The knob is for tests, which squeeze the ceiling: it also ignores the
+        // container's limit.
+        let limit = if forced.is_some() { None } else { limit };
+        let own = baseline.saturating_add(headroom);
+        let ceiling = if baseline <= budget {
+            budget.max(own)
+        } else {
+            let cap = limit
+                .map(|l| l.saturating_sub((l / 10).max(512 << 20)))
+                .unwrap_or(0);
+            own.max(cap)
+        };
+        MeasureMem { budget, ceiling }
+    }
+}
+
+/// Wait, briefly, for the resident set size to fall back under `limit` after
+/// a query that was stopped at the ceiling. jemalloc returns freed pages over
+/// the next ~300 ms (`dirty_decay_ms`), which is longer than a starter query
+/// runs, so without the wait the pages a stopped query freed would still count
+/// against the next one and stop it for nothing.
+fn settle(limit: u64) {
+    let mut last = u64::MAX;
+    for _ in 0..75 {
+        match rete_core::guard::current_rss_bytes() {
+            // Still falling: the pages are on their way back.
+            Some(rss) if rss > limit && rss < last => {
+                last = rss;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => return,
+        }
     }
 }
 
@@ -1445,6 +1644,7 @@ where
         std::sync::Arc::new(CountingReader::new(open()?)),
         q,
         None,
+        None,
     ))
 }
 
@@ -1452,15 +1652,19 @@ where
 /// budget ([`rete_core::card::STARTER_MAX_BYTES`]) counted from the moment the
 /// file is open — what `rete build` and `rete recard` decide a card's queries
 /// on. The reported `bytes` still include the open, as every cost figure does.
+/// With `mem` the run is also held to the command's memory budget
+/// ([`MeasureMem`]).
 pub(crate) fn measure_starter<R: RangeReader + Send + Sync + 'static>(
     src: R,
     q: &ExampleQuery,
+    mem: Option<MeasureMem>,
 ) -> Measured {
     let (reader, leash) = BudgetReader::after_open(src, rete_core::card::STARTER_MAX_BYTES);
     measure_one(
         std::sync::Arc::new(CountingReader::new(reader)),
         q,
         Some(leash),
+        mem,
     )
 }
 
@@ -1487,11 +1691,12 @@ pub(crate) fn measure_starter<R: RangeReader + Send + Sync + 'static>(
 pub(crate) fn measure_query_costs(
     image: std::sync::Arc<Vec<u8>>,
     queries: &[ExampleQuery],
+    mem: Option<MeasureMem>,
 ) -> Vec<Measured> {
     queries
         .iter()
         .map(|q| {
-            let m = measure_starter(ImageReader(image.clone()), q);
+            let m = measure_starter(ImageReader(image.clone()), q, mem);
             rete_core::build_progress::advance(1);
             m
         })
@@ -1519,6 +1724,13 @@ pub(crate) fn keep_answering(
     let mut kept = Vec::with_capacity(measured.len());
     let mut dropped = Vec::new();
     for m in measured {
+        // A query the memory ceiling stopped stays: whether it trips depends on
+        // allocator timing, and the card (inside the content hash) must not.
+        // Its figure carries `status: over_budget`.
+        if m.over_memory {
+            kept.push(m.cost);
+            continue;
+        }
         match m.useless {
             None => kept.push(m.cost),
             Some(why) => {
@@ -1589,6 +1801,8 @@ pub(crate) fn with_widest_costs(info: &BuildInfo) -> BuildInfo {
             q.requests = u64::MAX;
             q.rows = u64::MAX;
             q.debug_ms = u64::MAX;
+            // A run a budget stopped carries its status; the widest word.
+            q.status = Some(STATUS_OVER_BUDGET.to_string());
         }
     }
     w
@@ -1597,43 +1811,78 @@ pub(crate) fn with_widest_costs(info: &BuildInfo) -> BuildInfo {
 /// Measure the kept starter queries again, cold, against `source` — the file
 /// as it is read — and replace the figures in `costs` (same order, same
 /// context). The drop decisions stand: rows do not depend on the layout.
+///
+/// A query that now passes a budget (the starter byte budget, or the memory
+/// of `mem`) keeps its place in the card, which this step cannot rewrite, and
+/// its figure says so: [`QueryCost::status`] is `over_budget`. Returns how many
+/// did.
 pub(crate) fn remeasure_costs(
     source: std::sync::Arc<dyn RangeReader + Send + Sync>,
     queries: &[ExampleQuery],
     costs: &mut QueryCosts,
-) {
+    mem: Option<MeasureMem>,
+) -> usize {
+    let mut over = 0;
     for c in &mut costs.queries {
         if let Some(q) = queries.iter().find(|q| q.id == c.id) {
-            *c = measure_starter(source.clone(), q).cost;
+            let m = measure_starter(source.clone(), q, mem);
+            if m.over_budget {
+                over += 1;
+                eprintln!(
+                    "  {:<14} {}",
+                    q.id,
+                    m.error.as_deref().unwrap_or("over budget")
+                );
+            }
+            *c = m.cost;
         }
     }
+    over
 }
 
-/// [`remeasure_costs`] on the `0x06` file at `path` (its own card's queries),
-/// then the record patched in place — the last step of every writer that
-/// measured before the file had its final layout. A `0x05` file is left as
-/// it is: its costs do not depend on where the card sits.
+/// [`remeasure_costs`] on the `0x06` file at `path` (its own card's queries) —
+/// the last measurement of every writer that measured before the file had its
+/// final layout, and the **only** one whose figures are recorded. It is timed
+/// and its peak RSS taken as the `starter_queries` phase, added to the first
+/// measurement's. The caller seals and patches the record afterwards, so the
+/// record's wall time and peak cover this step. A `0x05` file is left as it
+/// is: its costs do not depend on where the card sits.
 pub(crate) fn remeasure_on_file(
     path: &str,
     info: &mut BuildInfo,
     rec: &Recorder,
+    memory_budget_mb: Option<u64>,
 ) -> anyhow::Result<()> {
     if !super::v06::file_is_v06(std::path::Path::new(path))? {
         return Ok(());
     }
-    let Some(costs) = info.query_costs.as_mut() else {
+    if info.query_costs.is_none() {
         return Ok(());
-    };
+    }
     let reader = super::range_source::LocalRangeReader::open(path)?;
     let Some(card) = super::card::load_card_ranged(&reader)? else {
         return Ok(());
     };
     let source: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
-    remeasure_costs(source, &card.queries, costs);
+    let costs = info.query_costs.as_mut().expect("checked above");
+    rec.begin_measured();
+    let over = remeasure_costs(
+        source,
+        &card.queries,
+        costs,
+        memory_budget_mb.map(MeasureMem::for_budget_mb),
+    );
+    rec.lap_measured(rete_core::build_trace::Phase::StarterQueries);
+    eprintln!(
+        "measured {} starter quer{} again on the file as written ({} over budget)",
+        costs.queries.len(),
+        if costs.queries.len() == 1 { "y" } else { "ies" },
+        over
+    );
     if rec.is_reproducible() {
         zero_debug_ms(info);
     }
-    patch_build_info(std::path::Path::new(path), &info.to_json_bytes())
+    Ok(())
 }
 
 /// How `rete build` reads the file it has just written.
@@ -2096,8 +2345,17 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
         for c in &costs.queries {
             let _ = writeln!(
                 out,
-                "        {:<14} {:>9} B in {:>2} req · {:>5} row(s) · {} ms",
-                c.id, c.bytes, c.requests, c.rows, c.debug_ms
+                "        {:<14} {:>9} B in {:>2} req · {:>5} row(s) · {} ms{}",
+                c.id,
+                c.bytes,
+                c.requests,
+                c.rows,
+                c.debug_ms,
+                match c.status.as_deref() {
+                    Some(STATUS_OVER_BUDGET) => " · OVER BUDGET (did not finish)",
+                    Some(_) => " · DID NOT RUN",
+                    None => "",
+                }
             );
         }
     }
@@ -2129,6 +2387,136 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A query whose own working rows pass the memory ceiling is stopped, and
+    /// the run says so: `over_budget`, not a wrong answer and not a crash. The
+    /// same query without a ceiling answers.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_query_past_the_memory_ceiling_is_stopped_and_recorded_over_budget() {
+        let rdf_type = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let label = "<http://www.w3.org/2000/01/rdf-schema#label>";
+        let triples: Vec<_> = (0..120_000)
+            .flat_map(|i| {
+                let s = format!("<http://x/s{i}>");
+                [
+                    (
+                        s.clone(),
+                        rdf_type.to_string(),
+                        "<http://x/C>".to_string(),
+                        None,
+                    ),
+                    (s, label.to_string(), format!("\"label {i}\""), None),
+                ]
+            })
+            .collect();
+        let (image, _) = rete_core::ingest::assemble_dataset(triples, b"{}");
+        let image = std::sync::Arc::new(image);
+        let q = ExampleQuery {
+            id: "heavy".into(),
+            title: String::new(),
+            dimension: String::new(),
+            question: String::new(),
+            sparql: "SELECT (COUNT(?s) AS ?n) (COUNT(?l) AS ?h) WHERE {                      ?s a <http://x/C> OPTIONAL { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?l } }"
+                .into(),
+            tier: rete_core::card::Tier::Index,
+            requires: Vec::new(),
+        };
+
+        let free = measure_starter(ImageReader(image.clone()), &q, None);
+        assert!(
+            free.error.is_none() && !free.over_budget,
+            "{:?}",
+            free.error
+        );
+        assert_eq!(free.cost.status, None);
+        assert_eq!(free.cost.rows, 1);
+
+        // 2 MiB above where the process stands: the join's rows alone are more.
+        let rss = rete_core::guard::current_rss_bytes().unwrap();
+        let mem = MeasureMem {
+            budget: 0,
+            ceiling: rss + (2 << 20),
+        };
+        let held = measure_starter(ImageReader(image.clone()), &q, Some(mem));
+        assert!(held.over_budget, "{:?}", held.error);
+        assert_eq!(held.cost.status.as_deref(), Some(STATUS_OVER_BUDGET));
+        assert_eq!(held.cost.rows, 0);
+        assert!(held.error.as_deref().unwrap().contains("working memory"));
+        // A starter that did not finish is not shipped, and not a contradiction
+        // of any template's claim.
+        assert!(held.useless.is_some() && !held.vacuous);
+    }
+
+    #[test]
+    fn the_ceiling_is_the_budget_or_the_process_plus_headroom() {
+        let mib = 1u64 << 20;
+        // Within the budget: the budget is the ceiling.
+        assert_eq!(
+            MeasureMem::with_baseline(512 * mib, 100 * mib, None).ceiling,
+            512 * mib
+        );
+        // A budget the process already exceeds, no container limit known:
+        // a little headroom over what it holds.
+        assert_eq!(
+            MeasureMem::with_baseline(16 * mib, 100 * mib, None).ceiling,
+            100 * mib + MeasureMem::HEADROOM
+        );
+    }
+
+    /// At scale the process is past the budget before the step begins (13.9 GB
+    /// resident on a 9,000 MB budget in a 16 GiB container): the ceiling is the
+    /// container's limit less a margin of 10 %, not baseline plus 32 MiB.
+    #[test]
+    fn past_the_budget_the_ceiling_stops_short_of_the_container_limit() {
+        let mib = 1u64 << 20;
+        let gib = 1u64 << 30;
+        let m = MeasureMem::with_baseline(9000 * mib, 13_900 * mib, Some(16 * gib));
+        assert_eq!(m.ceiling, 16 * gib - 16 * gib / 10);
+        assert!(m.ceiling > 13_900 * mib + MeasureMem::HEADROOM);
+        // A small container: the margin is at least 512 MiB.
+        let m = MeasureMem::with_baseline(100 * mib, 1500 * mib, Some(4 * gib));
+        assert_eq!(m.ceiling, 4 * gib - 512 * mib);
+        // A process already near the limit still gets its headroom.
+        let m = MeasureMem::with_baseline(100 * mib, 3900 * mib, Some(4 * gib));
+        assert_eq!(m.ceiling, 3900 * mib + MeasureMem::HEADROOM);
+        // Within the budget the limit plays no part.
+        let m = MeasureMem::with_baseline(512 * mib, 100 * mib, Some(16 * gib));
+        assert_eq!(m.ceiling, 512 * mib);
+    }
+
+    #[test]
+    fn a_stopped_run_carries_its_status_and_the_widest_reserve_has_room_for_it() {
+        let c = QueryCost {
+            id: "q".into(),
+            status: Some(STATUS_OVER_BUDGET.into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"status\":\"over_budget\""), "{json}");
+        // A run that finished says nothing.
+        let ok = QueryCost {
+            id: "q".into(),
+            ..Default::default()
+        };
+        assert!(!serde_json::to_string(&ok).unwrap().contains("status"));
+        let info = BuildInfo {
+            query_costs: Some(query_costs(vec![ok.clone()])),
+            ..Default::default()
+        };
+        let widest = with_widest_costs(&info).to_json_bytes();
+        let sealed = BuildInfo {
+            query_costs: Some(query_costs(vec![c])),
+            ..Default::default()
+        }
+        .to_json_bytes();
+        assert!(
+            sealed.len() <= widest.len(),
+            "{} > {}",
+            sealed.len(),
+            widest.len()
+        );
+    }
 
     #[test]
     fn rfc3339_formats_known_epochs() {

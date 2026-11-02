@@ -1335,6 +1335,11 @@ pub(crate) fn derive_full_card_from(
     let mut query_costs = None;
     let mut dropped = Vec::new();
     if measure_costs && !card.queries.is_empty() {
+        // Each query runs under the command's memory budget, the profile's
+        // reader already gone: see [`MeasureMem`].
+        let mem = crate::commands::buildinfo::MeasureMem::for_budget_bytes(match memory {
+            DeriveMemory::Caches(b) | DeriveMemory::Total(b) => b,
+        });
         let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> = match &src {
             CardSource::Path(p) => std::sync::Arc::new(LocalRangeReader::open(p)?),
             CardSource::Image(r) => r.clone(),
@@ -1346,11 +1351,20 @@ pub(crate) fn derive_full_card_from(
             "build" | "merge" => format!("the file this {who} wrote, on local disk"),
             _ => format!("local file {}", file_name(&path)),
         };
+        // Only claim a memory bound where one is enforced: the ceiling reads
+        // `/proc`, which is not there off Linux.
+        let held = if rete_core::guard::current_rss_bytes().is_some() {
+            format!(
+                "; each query held to the {} MiB memory budget",
+                mem.budget >> 20
+            )
+        } else {
+            "; memory budget not enforced on this platform".to_string()
+        };
         let transport = format!(
-            "{which}; cold lazy open per query; logical range reads, no block cache; \
-             reader fan-out {}; {} MiB budget per query past the open",
+            "{which}; cold lazy open per query; logical range reads, no block cache; reader fan-out {}; {} MiB budget per query past the open{held}",
             source.concurrency(),
-            rete_core::card::STARTER_MAX_BYTES >> 20
+            rete_core::card::STARTER_MAX_BYTES >> 20,
         );
         let mut measured = Vec::with_capacity(card.queries.len());
         live::begin(
@@ -1359,7 +1373,7 @@ pub(crate) fn derive_full_card_from(
             Unit::Queries,
         );
         for q in &card.queries {
-            let m = measure_starter(source.clone(), q);
+            let m = measure_starter(source.clone(), q, Some(mem));
             live::advance(1);
             eprintln!(
                 "{who}: {:<16} {:>7} row(s) {:>12} B {:>5} req {:>7} ms{}",
@@ -1610,7 +1624,18 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
             Some(&reserve),
         )?;
         rec.lap(Phase::Write);
-        crate::commands::buildinfo::remeasure_on_file(input, &mut info, &rec)?;
+        // The costs on the file as written, then the record — sealed after them,
+        // so its run covers the measurement — patched in place.
+        crate::commands::buildinfo::remeasure_on_file(
+            input,
+            &mut info,
+            &rec,
+            Some(opts.memory_budget_mb),
+        )?;
+        if let Some(r) = info.recarded.as_mut() {
+            r.run = rec.run();
+        }
+        patch_build_info(std::path::Path::new(input), &info.to_json_bytes())?;
         if opts.verify {
             let check = LocalRangeReader::open(input)?;
             if !rete_core::verify_ranged(&check)? {
@@ -1741,7 +1766,20 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         ) {
             let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
                 std::sync::Arc::new(LocalRangeReader::open(&tmp.to_string_lossy())?);
-            crate::commands::buildinfo::remeasure_costs(source, &card.queries, costs);
+            rec.begin_measured();
+            let over = crate::commands::buildinfo::remeasure_costs(
+                source,
+                &card.queries,
+                costs,
+                Some(crate::commands::buildinfo::MeasureMem::for_budget_mb(
+                    opts.memory_budget_mb,
+                )),
+            );
+            rec.lap_measured(Phase::StarterQueries);
+            eprintln!(
+                "recard: measured the starter queries again on the file as written ({over} over \
+                 budget)"
+            );
             if rec.is_reproducible() {
                 zero_debug_ms(&mut info);
             }

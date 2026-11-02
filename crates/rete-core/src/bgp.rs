@@ -791,6 +791,8 @@ fn triple_row(
     t: &(SlotTerm, SlotTerm, SlotTerm),
     (s_id, p_id, o_id): (u32, u32, u32),
 ) -> Option<Row> {
+    // A query under a memory ceiling ([`crate::guard`]) stops between rows.
+    crate::guard::check();
     let dict = ctx.rete.dictionary();
     let s_val = dict.subject_node(s_id) as i64;
     let p_val = pred_val(ctx, &t.1, p_id);

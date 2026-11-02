@@ -881,6 +881,7 @@ fn join_rows(
     let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
     let mut partial: Vec<usize> = Vec::new();
     for (i, row) in right.iter().enumerate() {
+        crate::guard::check();
         match key
             .iter()
             .map(|&s| row[s].clone())
@@ -938,6 +939,7 @@ fn minus_rows(ctx: &Ctx, left: Vec<Row>, right: Vec<Row>) -> Vec<Row> {
     let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
     let mut partial: Vec<usize> = Vec::new();
     for (i, row) in right.iter().enumerate() {
+        crate::guard::check();
         match key
             .iter()
             .map(|&s| row[s].clone())
@@ -2692,6 +2694,9 @@ fn join_iter<'q>(
         std::collections::HashMap::new();
     let mut partial: Vec<usize> = Vec::new();
     for (i, row) in right.iter().enumerate() {
+        // Building the hash table allocates without producing a row: a query
+        // under a memory ceiling ([`crate::guard`]) stops here too.
+        crate::guard::check();
         match jv
             .iter()
             .map(|&s| row[s].clone())
