@@ -986,8 +986,9 @@ are recorded together but labelled apart:
   budget stopped it: the starter byte budget (64 MiB past the open), or, in a
   build, `merge` or `recard` run with `--memory-budget-mb`, the memory the cost
   measurement was allowed (the budget, or what the process held when the step
-  began plus 32 MiB, whichever is more; a query is stopped when the process
-  passes it). `failed` means it did not run. The other figures are then what
+  began plus 32 MiB, whichever is more, or, when the process is already past the
+  budget, just under the container's memory limit; a query is stopped when the
+  process passes it). `failed` means it did not run. The other figures are then what
   the run had spent when it stopped, and `rows` is 0. A run that finished has no
   `status` at all, so a record without one reads as before.
 
@@ -996,9 +997,11 @@ before the file is written, and decides which queries the card keeps (below):
 the card is inside the content hash, so it has to be final before the file is.
 The second is against the file as written, because in `0x06` the bytes a query
 reads depend on the card region (the open reads the first 64 KiB). Only the
-second set of figures is stored. A query that passes a budget in the second run
-is already in the card, which can no longer change, so it stays there with
-`status: over_budget`; in the first run it is dropped.
+second set of figures is stored. A query the **memory** ceiling stops stays in
+the card in either run, with `status: over_budget`: whether it trips depends on
+allocator timing, and the card is inside the content hash, so memory never
+decides what the card holds. A query over the starter **byte** budget, which is
+deterministic, is dropped in the first run as before.
 
 The memory-bounded build and `rete merge` measure their starter queries
 against the file they have just written, as `rete recard` does. (Up to 0.4.0
@@ -1026,14 +1029,14 @@ caught:
   "cannot do better" than shipping it. The measurement can.
 
 - **a run that did not finish inside the starter byte budget** (64 MiB past
-  the open), **or inside the memory budget** of a command run with
-  `--memory-budget-mb` —
+  the open) —
   a query too expensive to be anyone's first query. The record says "did not
   finish", and it never counts as a contradiction of the template's claim: it
   says nothing about the query's rows. (Memory is held to the budget by
   stopping the query when the process passes it, since a query's working rows
-  are not a cache. Without a budget, as in the in-RAM build, only the byte
-  budget applies.)
+  are not a cache; but that query is **not** dropped, because it depends on
+  allocator timing: it stays, flagged `over_budget` in `query_costs`. Without a
+  budget, as in the in-RAM build, only the byte budget applies.)
 
 **Dropped, not fatal.** Refusing to build is the right answer for *authored*
 content — an oversized `extra` bag is the publisher's text, and quietly

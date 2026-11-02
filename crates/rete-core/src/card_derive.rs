@@ -2097,65 +2097,89 @@ pub struct StreamReport {
 /// classes in order of first appearance. Starts one byte wide and widens the
 /// first time a code does not fit, so the common case (tens of classes) costs
 /// one byte per subject.
-enum ClassMap {
-    U8(Vec<u8>),
-    U16(Vec<u16>),
-    U32(Vec<u32>),
+///
+/// **Widening happens in place.** The codes live in one byte buffer with a
+/// width of 1, 2 or 4 bytes per subject. Widening grows that buffer (a
+/// `realloc`, which for a buffer this size moves pages instead of copying
+/// them) and spreads the codes out from the last subject backwards, so the old
+/// and the new map are never both alive. Allocating a second, wider vector
+/// beside the first would have cost 3 bytes per subject for the moment of the
+/// copy: 7.7 GB at 2.56 B subjects, which no budget split accounted for.
+struct ClassMap {
+    data: Vec<u8>,
+    /// Bytes per subject: 1, 2 or 4.
+    width: usize,
 }
 
 impl ClassMap {
     fn new(subjects: u64) -> Self {
         // `vec![0; n]` is a zeroed allocation: pages that never get a class
         // are never touched, so an untyped region costs address space only.
-        ClassMap::U8(vec![0; subjects as usize + 1])
+        ClassMap {
+            data: vec![0; subjects as usize + 1],
+            width: 1,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.data.len() / self.width
+    }
+
+    fn read(data: &[u8], i: usize, width: usize) -> u32 {
+        let at = i * width;
+        match width {
+            1 => data[at] as u32,
+            2 => u16::from_le_bytes([data[at], data[at + 1]]) as u32,
+            _ => u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]),
+        }
+    }
+
+    fn write(data: &mut [u8], i: usize, width: usize, code: u32) {
+        let at = i * width;
+        match width {
+            1 => data[at] = code as u8,
+            2 => data[at..at + 2].copy_from_slice(&(code as u16).to_le_bytes()),
+            _ => data[at..at + 4].copy_from_slice(&code.to_le_bytes()),
+        }
     }
 
     fn get(&self, id: u32) -> u32 {
         let i = id as usize;
-        match self {
-            ClassMap::U8(v) => v.get(i).map_or(0, |&c| c as u32),
-            ClassMap::U16(v) => v.get(i).map_or(0, |&c| c as u32),
-            ClassMap::U32(v) => v.get(i).copied().unwrap_or(0),
+        if i < self.len() {
+            Self::read(&self.data, i, self.width)
+        } else {
+            0
         }
     }
 
-    fn set(&mut self, id: u32, code: u32) {
-        if code > u8::MAX as u32 {
-            if let ClassMap::U8(v) = self {
-                *self = ClassMap::U16(v.iter().map(|&c| c as u16).collect());
-            }
+    /// Widen to `width` bytes per subject, in place.
+    fn widen(&mut self, width: usize) {
+        let (n, old) = (self.len(), self.width);
+        if width <= old {
+            return;
         }
+        self.data.resize(n * width, 0);
+        for i in (0..n).rev() {
+            let v = Self::read(&self.data, i, old);
+            Self::write(&mut self.data, i, width, v);
+        }
+        self.width = width;
+    }
+
+    fn set(&mut self, id: u32, code: u32) {
         if code > u16::MAX as u32 {
-            if let ClassMap::U16(v) = self {
-                *self = ClassMap::U32(v.iter().map(|&c| c as u32).collect());
-            }
+            self.widen(4);
+        } else if code > u8::MAX as u32 {
+            self.widen(2);
         }
         let i = id as usize;
-        match self {
-            ClassMap::U8(v) => {
-                if let Some(slot) = v.get_mut(i) {
-                    *slot = code as u8;
-                }
-            }
-            ClassMap::U16(v) => {
-                if let Some(slot) = v.get_mut(i) {
-                    *slot = code as u16;
-                }
-            }
-            ClassMap::U32(v) => {
-                if let Some(slot) = v.get_mut(i) {
-                    *slot = code;
-                }
-            }
+        if i < self.len() {
+            Self::write(&mut self.data, i, self.width, code);
         }
     }
 
     fn bytes(&self) -> u64 {
-        match self {
-            ClassMap::U8(v) => v.len() as u64,
-            ClassMap::U16(v) => v.len() as u64 * 2,
-            ClassMap::U32(v) => v.len() as u64 * 4,
-        }
+        self.data.len() as u64
     }
 }
 
@@ -4234,5 +4258,32 @@ mod ns_tally_tests {
         let mem = derive_card(&quads, rete.header().term_count, 0, CardInput::default());
         assert!(mem.truncated);
         assert_eq!(c1.signals.base_iri, mem.signals.base_iri);
+    }
+}
+
+#[cfg(test)]
+mod class_map_tests {
+    use super::ClassMap;
+
+    #[test]
+    fn widening_keeps_every_code_and_never_holds_two_maps() {
+        let mut m = ClassMap::new(999);
+        for id in 0..1000u32 {
+            m.set(id, id % 200);
+        }
+        assert_eq!(m.bytes(), 1000);
+        m.set(5, 300);
+        assert_eq!(m.bytes(), 2000);
+        assert_eq!(m.get(5), 300);
+        for id in (0..1000u32).filter(|&i| i != 5) {
+            assert_eq!(m.get(id), id % 200, "{id}");
+        }
+        m.set(7, 70_000);
+        assert_eq!(m.bytes(), 4000);
+        assert_eq!((m.get(7), m.get(5), m.get(999)), (70_000, 300, 999 % 200));
+        // Out of range reads are untyped and writes are ignored, as before.
+        assert_eq!(m.get(5000), 0);
+        m.set(5000, 1);
+        assert_eq!(m.bytes(), 4000);
     }
 }

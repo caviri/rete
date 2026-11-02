@@ -1323,6 +1323,11 @@ pub(crate) struct Measured {
     /// The run was stopped by a budget (the starter byte budget, or the memory
     /// ceiling of [`MeasureMem`]) rather than failing on its own.
     pub over_budget: bool,
+    /// The run was stopped by the **memory** ceiling. Unlike the byte budget,
+    /// which counts reads and gives the same answer every time, this depends
+    /// on how the allocator happens to stand against the ceiling, so it never
+    /// decides what the card holds: the query stays, flagged in the record.
+    pub over_memory: bool,
 }
 
 /// What a run's *result* decides, before its cost is tallied — the output of
@@ -1333,6 +1338,7 @@ struct Graded {
     useless: Option<String>,
     vacuous: bool,
     over_budget: bool,
+    over_memory: bool,
 }
 
 impl Graded {
@@ -1345,6 +1351,15 @@ impl Graded {
             useless: Some(why),
             vacuous: false,
             over_budget: false,
+            over_memory: false,
+        }
+    }
+
+    /// A run the memory ceiling stopped.
+    fn over_memory(why: String) -> Self {
+        Self {
+            over_memory: true,
+            ..Self::over_budget(why)
         }
     }
 
@@ -1380,6 +1395,7 @@ fn grade(out: &QueryOutput) -> Graded {
         useless: None,
         vacuous: false,
         over_budget: false,
+        over_memory: false,
     };
     let empty = |why: &str| Graded {
         rows: 0,
@@ -1387,6 +1403,7 @@ fn grade(out: &QueryOutput) -> Graded {
         useless: Some(why.to_string()),
         vacuous: false,
         over_budget: false,
+        over_memory: false,
     };
     match out {
         QueryOutput::Select(_, rows) if rows.is_empty() => empty("measured 0 rows on the file"),
@@ -1400,6 +1417,7 @@ fn grade(out: &QueryOutput) -> Graded {
             )),
             vacuous: true,
             over_budget: false,
+            over_memory: false,
         },
         QueryOutput::Select(_, rows) => answers(rows.len() as u64),
         QueryOutput::Ask(false) => empty("measured ASK false on the file"),
@@ -1480,7 +1498,7 @@ fn measure_one<R: RangeReader + Send + Sync + 'static>(
     });
     let graded = match run {
         Ok(g) => g,
-        Err(rete_core::guard::OverBudget) => Graded::over_budget(format!(
+        Err(rete_core::guard::OverBudget) => Graded::over_memory(format!(
             "did not finish: its working memory passed the {} MiB ceiling of the cost \
              measurement (--memory-budget-mb {}, or what the process held when the \
              measurement began plus {} MiB, whichever is more) after {} bytes read",
@@ -1511,6 +1529,7 @@ fn measure_one<R: RangeReader + Send + Sync + 'static>(
         useless: graded.useless,
         vacuous: graded.vacuous,
         over_budget: graded.over_budget,
+        over_memory: graded.over_memory,
     }
 }
 
@@ -1521,12 +1540,13 @@ fn measure_one<R: RangeReader + Send + Sync + 'static>(
 /// query's working state (a join's build side, a `GROUP BY`'s groups) is not
 /// bounded by any cache. So each query runs under a ceiling on the process's
 /// resident set size — the budget, or what the process already holds plus a
-/// little headroom ([`HEADROOM`](Self::HEADROOM)) if that is more (the
-/// measurement cannot shrink the build around it) — and a query
+/// little headroom if that is more, or, when the process is already past the
+/// budget, just under the container's memory limit (see
+/// [`with_baseline`](Self::with_baseline)) — and a query
 /// that passes it is stopped and recorded as over budget
 /// ([`rete_core::guard`]). A query is stopped at its next row, so the process
 /// can pass the ceiling by what one buffer's growth allocates: it stays within
-/// the budget plus [`FLOOR`](Self::FLOOR). The caches of each lazy open are
+/// the budget plus 128 MiB (measured). The caches of each lazy open are
 /// left as they are (half the machine's free RAM, which the ceiling bounds
 /// first), so a run's `bytes` and `requests` are what an unbudgeted run's are.
 /// Without a budget the measurement is as it always was: no ceiling.
@@ -1539,12 +1559,6 @@ pub(crate) struct MeasureMem {
 }
 
 impl MeasureMem {
-    /// How far past the budget the process may get: a stopped query is
-    /// stopped at its next row, and what a buffer's growth (a hash table
-    /// rehashing, a vector doubling) allocates in between comes on top. Stated
-    /// as a floor, measured against it, and not a fraction of the budget.
-    pub const FLOOR: u64 = 128 << 20;
-
     /// The measurement of a command with `budget_mb` MiB, as the process
     /// stands now. Call it when the cost step begins: the ceiling follows the
     /// resident memory found then, not whatever a previous query left behind.
@@ -1554,24 +1568,48 @@ impl MeasureMem {
 
     /// [`for_budget_mb`](Self::for_budget_mb) in bytes.
     pub(crate) fn for_budget_bytes(budget: u64) -> Self {
-        Self::with_baseline(budget, rete_core::guard::current_rss_bytes().unwrap_or(0))
+        Self::with_baseline(
+            budget,
+            rete_core::guard::current_rss_bytes().unwrap_or(0),
+            memory_limit_bytes(),
+        )
     }
 
-    /// What a query may grow the process by even when the process already
-    /// holds the whole budget (a budget smaller than the build around it):
-    /// without it every query would be over budget before it ran.
-    /// `RETE_COST_MEMORY_HEADROOM_MB` overrides it (the tests set it to 0).
+    /// What a query may grow the process by when the process already holds the
+    /// whole budget. `RETE_COST_MEMORY_HEADROOM_MB` overrides it (the tests set
+    /// it to 0).
     pub const HEADROOM: u64 = 32 << 20;
 
-    pub(crate) fn with_baseline(budget: u64, baseline: u64) -> Self {
-        let headroom = std::env::var("RETE_COST_MEMORY_HEADROOM_MB")
+    /// The ceiling, from the budget, the resident memory found when the step
+    /// begins (`baseline`) and the container's memory limit, if it has one:
+    ///
+    /// * the process is **within** the budget: the budget, or `baseline` plus
+    ///   [`HEADROOM`](Self::HEADROOM) if that is more;
+    /// * the process is **already past** the budget, as a build is at scale
+    ///   (OpenAIRE held 13.9 GB on a 9,000 MB budget): the budget no longer
+    ///   says anything the process can meet, so the guard's job is to stop a
+    ///   query before the container's OOM killer does. The ceiling is the
+    ///   limit less a margin (10 % of it, at least 512 MiB), or
+    ///   `baseline` plus headroom if that is more. With no limit known it is
+    ///   `baseline` plus headroom.
+    pub(crate) fn with_baseline(budget: u64, baseline: u64, limit: Option<u64>) -> Self {
+        let forced = std::env::var("RETE_COST_MEMORY_HEADROOM_MB")
             .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .map_or(Self::HEADROOM, |mb| mb << 20);
-        MeasureMem {
-            budget,
-            ceiling: budget.max(baseline.saturating_add(headroom)),
-        }
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let headroom = forced.map_or(Self::HEADROOM, |mb| mb << 20);
+        // The knob is for tests, which squeeze the ceiling: it also ignores the
+        // container's limit.
+        let limit = if forced.is_some() { None } else { limit };
+        let own = baseline.saturating_add(headroom);
+        let ceiling = if baseline <= budget {
+            budget.max(own)
+        } else {
+            let cap = limit
+                .map(|l| l.saturating_sub((l / 10).max(512 << 20)))
+                .unwrap_or(0);
+            own.max(cap)
+        };
+        MeasureMem { budget, ceiling }
     }
 }
 
@@ -1581,9 +1619,14 @@ impl MeasureMem {
 /// runs, so without the wait the pages a stopped query freed would still count
 /// against the next one and stop it for nothing.
 fn settle(limit: u64) {
+    let mut last = u64::MAX;
     for _ in 0..75 {
         match rete_core::guard::current_rss_bytes() {
-            Some(rss) if rss > limit => std::thread::sleep(std::time::Duration::from_millis(20)),
+            // Still falling: the pages are on their way back.
+            Some(rss) if rss > limit && rss < last => {
+                last = rss;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
             _ => return,
         }
     }
@@ -1681,6 +1724,13 @@ pub(crate) fn keep_answering(
     let mut kept = Vec::with_capacity(measured.len());
     let mut dropped = Vec::new();
     for m in measured {
+        // A query the memory ceiling stopped stays: whether it trips depends on
+        // allocator timing, and the card (inside the content hash) must not.
+        // Its figure carries `status: over_budget`.
+        if m.over_memory {
+            kept.push(m.cost);
+            continue;
+        }
         match m.useless {
             None => kept.push(m.cost),
             Some(why) => {
@@ -2401,16 +2451,38 @@ mod tests {
     #[test]
     fn the_ceiling_is_the_budget_or_the_process_plus_headroom() {
         let mib = 1u64 << 20;
-        // A budget bigger than what the process holds is the ceiling.
+        // Within the budget: the budget is the ceiling.
         assert_eq!(
-            MeasureMem::with_baseline(512 * mib, 100 * mib).ceiling,
+            MeasureMem::with_baseline(512 * mib, 100 * mib, None).ceiling,
             512 * mib
         );
-        // A budget the process already exceeds leaves a little headroom.
+        // A budget the process already exceeds, no container limit known:
+        // a little headroom over what it holds.
         assert_eq!(
-            MeasureMem::with_baseline(16 * mib, 100 * mib).ceiling,
+            MeasureMem::with_baseline(16 * mib, 100 * mib, None).ceiling,
             100 * mib + MeasureMem::HEADROOM
         );
+    }
+
+    /// At scale the process is past the budget before the step begins (13.9 GB
+    /// resident on a 9,000 MB budget in a 16 GiB container): the ceiling is the
+    /// container's limit less a margin of 10 %, not baseline plus 32 MiB.
+    #[test]
+    fn past_the_budget_the_ceiling_stops_short_of_the_container_limit() {
+        let mib = 1u64 << 20;
+        let gib = 1u64 << 30;
+        let m = MeasureMem::with_baseline(9000 * mib, 13_900 * mib, Some(16 * gib));
+        assert_eq!(m.ceiling, 16 * gib - 16 * gib / 10);
+        assert!(m.ceiling > 13_900 * mib + MeasureMem::HEADROOM);
+        // A small container: the margin is at least 512 MiB.
+        let m = MeasureMem::with_baseline(100 * mib, 1500 * mib, Some(4 * gib));
+        assert_eq!(m.ceiling, 4 * gib - 512 * mib);
+        // A process already near the limit still gets its headroom.
+        let m = MeasureMem::with_baseline(100 * mib, 3900 * mib, Some(4 * gib));
+        assert_eq!(m.ceiling, 3900 * mib + MeasureMem::HEADROOM);
+        // Within the budget the limit plays no part.
+        let m = MeasureMem::with_baseline(512 * mib, 100 * mib, Some(16 * gib));
+        assert_eq!(m.ceiling, 512 * mib);
     }
 
     #[test]

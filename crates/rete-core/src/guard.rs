@@ -17,6 +17,16 @@
 //! no panic message is printed). The caller catches it with [`run_guarded`]
 //! and reports the query as over budget.
 //!
+//! **Choosing the ceiling** is the caller's (the CLI's cost measurement). Within
+//! its `--memory-budget-mb` the ceiling is the budget, or the process's resident
+//! memory when the step begins plus 32 MiB if that is more. A process already
+//! past its budget (at scale a build can hold 13.9 GB on a 9,000 MB budget)
+//! cannot meet it, so the ceiling is then the container's memory limit (cgroup
+//! v2 `memory.max`, v1 `memory.limit_in_bytes`) less 10 % of it or 512 MiB,
+//! whichever is larger: the guard must stop a query before the container's OOM
+//! killer does, not long before. The guard itself only compares against the
+//! number it is given.
+//!
 //! Limits, stated plainly: the check lives where tiles are read, so a stage
 //! that only reshuffles rows already in memory is not interrupted until the
 //! next tile access; the overshoot is what one watchdog interval and one tile

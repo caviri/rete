@@ -13,12 +13,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   as written, and a query's own working rows (a hash join's build side) are not a
   cache, so the budget did not reach them. Each starter query now runs under a ceiling on
   the process's resident memory, the budget (or what the process holds when the step
-  begins plus 32 MiB, if more), and is stopped when it passes it; the peak stays within the
+  begins plus 32 MiB, if more; once the process is already past the budget, just under the
+  container's memory limit), and is stopped when it passes it; the peak stays within the
   budget plus 128 MiB (514 MB for that build). `rete recard` (also `--in-place`) and `rete merge`
-  do the same under their own `--memory-budget-mb`. A query stopped before the file is written
-  is dropped from the card like one over the byte budget (`dropped_queries`); one stopped on the
-  file as written stays in the card and its `query_costs` entry carries a new `status:
-  over_budget`. The build record's peak RAM now covers the cost measurement on the file as
+  do the same under their own `--memory-budget-mb`. A query the ceiling stops **stays in the
+  card** and its `query_costs` entry carries a new `status: over_budget`: whether it trips
+  depends on allocator timing and the card is inside the content hash, so a bounded build at
+  any budget has the content hash of the in-RAM build. Only the deterministic starter byte budget
+  still drops a query. The class map of the streamed card derivation widens from 1 to 2 to 4
+  bytes per subject in place, instead of holding both maps for the copy (3 bytes per subject,
+  7.7 GB at 2.56 B subjects). The build record's peak RAM now covers the cost measurement on the file as
   written and the write (it was sealed before them), and that step is part of the
   `starter_queries` phase. Without a budget (the in-RAM build) nothing changes. The ceiling needs
   `/proc`, so it is a Linux feature.

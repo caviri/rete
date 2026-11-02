@@ -1351,14 +1351,20 @@ pub(crate) fn derive_full_card_from(
             "build" | "merge" => format!("the file this {who} wrote, on local disk"),
             _ => format!("local file {}", file_name(&path)),
         };
+        // Only claim a memory bound where one is enforced: the ceiling reads
+        // `/proc`, which is not there off Linux.
+        let held = if rete_core::guard::current_rss_bytes().is_some() {
+            format!(
+                "; each query held to the {} MiB memory budget",
+                mem.budget >> 20
+            )
+        } else {
+            "; memory budget not enforced on this platform".to_string()
+        };
         let transport = format!(
-            "{which}; cold lazy open per query; logical range reads, no block cache; \
-             reader fan-out {}; {} MiB budget per query past the open; each query held to \
-             the {} MiB memory budget plus {} MiB",
+            "{which}; cold lazy open per query; logical range reads, no block cache; reader fan-out {}; {} MiB budget per query past the open{held}",
             source.concurrency(),
             rete_core::card::STARTER_MAX_BYTES >> 20,
-            mem.budget >> 20,
-            crate::commands::buildinfo::MeasureMem::FLOOR >> 20
         );
         let mut measured = Vec::with_capacity(card.queries.len());
         live::begin(

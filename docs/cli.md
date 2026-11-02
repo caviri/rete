@@ -174,13 +174,24 @@ join's build side, a `GROUP BY`'s groups) are not a cache, so the budget cannot
 shrink them. Instead each starter query runs under a ceiling on the process's
 resident memory, `--memory-budget-mb` or what the process holds when the cost
 step begins plus 32 MiB, whichever is more, and is stopped when it passes it.
-It is stopped at its next row, so the process can pass the ceiling by what one
-buffer's growth allocates: the peak stays within the budget plus 128 MiB. The
-build goes on. A query stopped before the file is written is dropped from the
-card, like one over the byte budget (`dropped_queries`, "did not finish"). A
-query stopped on the file as written, when the card can no longer change, stays
-in the card, and its entry in `query_costs` says `status: over_budget` (see
-[the build record](dataset-cards.md#build-conditions-the-build-info-section)).
+When the process is already past the budget at that point (at scale it is: a
+build can hold 13.9 GB on a 9,000 MB budget), the budget says nothing the
+process can meet, so the ceiling is the container's memory limit (cgroup v2
+`memory.max`, or v1 `memory.limit_in_bytes`) less a margin of 10 % or 512 MiB,
+whichever is larger, or the process plus 32 MiB if that is more: the guard stops
+a query before the container's OOM killer does. It is stopped at its next row,
+so the process can pass the ceiling by what one buffer's growth allocates: the
+peak stays within the budget plus 128 MiB. The build goes on.
+
+**A query the ceiling stops is kept in the card.** Whether it trips depends on
+where the allocator stands against the ceiling, and the card is inside the
+content hash, so memory never decides what the card holds: a bounded build at
+any budget has the content hash of the in-RAM build. The query's entry in
+`query_costs` (outside the hash) says `status: over_budget` (see
+[the build record](dataset-cards.md#build-conditions-the-build-info-section)),
+with the bytes it had read and no rows. Only the content, and the byte budget
+(which counts reads and gives the same answer every time), decide which
+queries the card keeps.
 `rete recard` and `rete merge` do the same under their own
 `--memory-budget-mb`. Without a budget (the in-RAM build) nothing changes: the
 reader's caches are sized from the free RAM and no query is stopped. The ceiling
@@ -452,10 +463,11 @@ re-card of its output writes the card it already has.
 Then the starter queries are generated, each is run against the file inside the
 starter byte budget (64 MiB past the open, see [Dataset Cards](dataset-cards.md#bounded-by-construction))
 and inside `--memory-budget-mb` (the process may not pass it by more than
-128 MiB; see "The starter queries stay inside the budget" under `rete build`), and the ones that do not
-answer within them are dropped and recorded. With `--in-place` the costs are
-measured again on the file as written, where a query that now passes the budget
-stays in the card and is marked `over_budget` in `query_costs`. With
+128 MiB; see "The starter queries stay inside the budget" under `rete build`).
+The ones that do not answer within the byte budget are dropped and recorded; one
+the memory ceiling stops stays in the card and is marked `over_budget` in
+`query_costs`. With `--in-place` the costs are measured again on the file as
+written. With
 `-o`, the file is **rewritten with only the card (metadata section) and the
 build record (build-info section) replaced**: every other section — dictionary,
 index, pyramid, named graphs, text index, any section kind this binary does not

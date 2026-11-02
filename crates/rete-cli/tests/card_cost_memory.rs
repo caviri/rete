@@ -61,9 +61,8 @@ fn ids(v: &Value) -> Vec<String> {
 }
 
 /// With room to spare every starter query is measured and none is marked; with
-/// a budget the measurement cannot meet the build still finishes, no starter
-/// query goes missing without a record, and the ones that did not finish say
-/// so. The record of the roomy run also covers the cost step: the
+/// a budget the measurement cannot meet the build still finishes with the same
+/// card, and the queries that did not finish say so in the record. The record of the roomy run also covers the cost step: the
 /// `starter_queries` phase is there and no higher than the run's peak RSS.
 #[test]
 fn a_small_budget_records_the_queries_it_stopped_and_loses_none() {
@@ -89,54 +88,59 @@ fn a_small_budget_records_the_queries_it_stopped_and_loses_none() {
         .expect("the cost step is a phase of the record");
     assert!(phase["peak_rss_bytes"].as_u64().unwrap() <= peak, "{run}");
 
-    let tight = fixture.path("tight.rete");
-    build(&source, &tight, "8", "0", &[]);
-    let doc = card(&tight);
-    let costs = &doc["build"]["query_costs"]["queries"];
-    let stopped = costs
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|c| c["status"] == "over_budget")
-        .count();
-    let dropped = ids(&doc["build"]["dropped_queries"]);
-    assert!(
-        stopped > 0 || !dropped.is_empty(),
-        "a budget of 8 MiB stopped nothing: {costs}"
-    );
-
-    // Every query the roomy build measured is accounted for: costed (finished
-    // or marked over budget) or dropped with its reason. None vanished.
-    let mut seen = ids(costs);
-    seen.extend(dropped.iter().cloned());
-    seen.sort();
-    let mut want = generated.clone();
-    want.sort();
-    assert_eq!(
-        seen, want,
-        "costs + dropped_queries must cover the starters"
-    );
-
-    // A query that stayed in the card but did not finish says what it spent
-    // and has no rows; the ones that finished carry no status at all.
-    for c in costs.as_array().unwrap() {
-        match c["status"].as_str() {
-            None => assert!(c["rows"].as_u64().unwrap() > 0, "{c}"),
-            Some(s) => {
-                assert_eq!(s, "over_budget", "{c}");
-                assert_eq!(c["rows"], 0, "{c}");
+    // A budget the measurement cannot meet. Whether a query trips depends on
+    // where the allocator stands against the ceiling, so it must never decide
+    // what the card holds: three identical builds and the roomy one all have
+    // the same content hash, and every starter stays in the card.
+    let mut hashes = Vec::new();
+    let mut stopped = 0;
+    for n in 0..3 {
+        let tight = fixture.path(&format!("tight{n}.rete"));
+        build(&source, &tight, "8", "0", &[]);
+        let doc = card(&tight);
+        let costs = &doc["build"]["query_costs"]["queries"];
+        assert_eq!(
+            ids(costs),
+            generated,
+            "every starter is costed, none dropped for memory"
+        );
+        assert!(
+            doc["build"].get("dropped_queries").is_none(),
+            "{}",
+            doc["build"]["dropped_queries"]
+        );
+        assert_eq!(ids(&doc["queries"]), ids(&card(&roomy)["queries"]));
+        for c in costs.as_array().unwrap() {
+            match c["status"].as_str() {
+                None => assert!(c["rows"].as_u64().unwrap() > 0, "{c}"),
+                Some(s) => {
+                    assert_eq!(s, "over_budget", "{c}");
+                    assert_eq!(c["rows"], 0, "{c}");
+                    stopped += 1;
+                }
             }
         }
+        hashes.push(content_hash(&tight));
+        rete().arg("verify").arg(&tight).assert().success();
     }
-    // What was dropped for a budget says so.
-    for d in doc["build"]["dropped_queries"]
-        .as_array()
-        .into_iter()
-        .flatten()
-    {
-        assert!(d["why"].as_str().unwrap().contains("did not finish"), "{d}");
-    }
+    assert!(stopped > 0, "a budget of 8 MiB stopped nothing");
+    assert!(hashes.iter().all(|h| *h == hashes[0]), "{hashes:?}");
+    assert_eq!(
+        hashes[0],
+        content_hash(&roomy),
+        "same hash as a roomy build"
+    );
+    let in_ram = fixture.path("in_ram.rete");
+    common::build(&source, &in_ram, &["--card", "--no-pyramid"]);
+    assert_eq!(
+        hashes[0],
+        content_hash(&in_ram),
+        "same hash as the in-RAM build"
+    );
+}
 
-    // The file is whole.
-    rete().arg("verify").arg(&tight).assert().success();
+/// The file's content hash, from header bytes 8..24.
+fn content_hash(path: &Path) -> String {
+    let bytes = std::fs::read(path).unwrap();
+    bytes[8..24].iter().map(|b| format!("{b:02x}")).collect()
 }

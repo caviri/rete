@@ -1483,8 +1483,9 @@ quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
 budget stopped it: the starter byte budget (64 MiB past the open), or, in a
 build, <code>merge</code> or <code>recard</code> run with <code>--memory-budget-mb</code>, the memory the cost
 measurement was allowed (the budget, or what the process held when the step
-began plus 32 MiB, whichever is more; a query is stopped when the process
-passes it). <code>failed</code> means it did not run. The other figures are then what
+began plus 32 MiB, whichever is more, or, when the process is already past the
+budget, just under the container's memory limit; a query is stopped when the
+process passes it). <code>failed</code> means it did not run. The other figures are then what
 the run had spent when it stopped, and <code>rows</code> is 0. A run that finished has no
 <code>status</code> at all, so a record without one reads as before.</li>
 </ul>
@@ -1493,9 +1494,11 @@ before the file is written, and decides which queries the card keeps (below):
 the card is inside the content hash, so it has to be final before the file is.
 The second is against the file as written, because in <code>0x06</code> the bytes a query
 reads depend on the card region (the open reads the first 64 KiB). Only the
-second set of figures is stored. A query that passes a budget in the second run
-is already in the card, which can no longer change, so it stays there with
-<code>status: over_budget</code>; in the first run it is dropped.</p>
+second set of figures is stored. A query the <strong>memory</strong> ceiling stops stays in
+the card in either run, with <code>status: over_budget</code>: whether it trips depends on
+allocator timing, and the card is inside the content hash, so memory never
+decides what the card holds. A query over the starter <strong>byte</strong> budget, which is
+deterministic, is dropped in the first run as before.</p>
 <p>The memory-bounded build and <code>rete merge</code> measure their starter queries
 against the file they have just written, as <code>rete recard</code> does. (Up to 0.4.0
 both wrote a counts-only card with no starter queries, and so no costs.)</p>
@@ -1524,14 +1527,14 @@ one row of four unbound variables. That template's own note says the card
 </li>
 <li>
 <p><strong>a run that did not finish inside the starter byte budget</strong> (64 MiB past
-the open), <strong>or inside the memory budget</strong> of a command run with
-<code>--memory-budget-mb</code> —
+the open) —
 a query too expensive to be anyone's first query. The record says "did not
 finish", and it never counts as a contradiction of the template's claim: it
 says nothing about the query's rows. (Memory is held to the budget by
 stopping the query when the process passes it, since a query's working rows
-are not a cache. Without a budget, as in the in-RAM build, only the byte
-budget applies.)</p>
+are not a cache; but that query is <strong>not</strong> dropped, because it depends on
+allocator timing: it stays, flagged <code>over_budget</code> in <code>query_costs</code>. Without a
+budget, as in the in-RAM build, only the byte budget applies.)</p>
 </li>
 </ul>
 <p><strong>Dropped, not fatal.</strong> Refusing to build is the right answer for <em>authored</em>
