@@ -658,16 +658,14 @@ where
                 Some(l) => {
                     let s = l
                         .finish(shared(), (budget / 4) as usize, budget / 8, codec)
-                        .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?;
+                        .map_err(file_err)?;
                     note_scratch(&tmp);
                     s
                 }
                 None => None,
             };
             let schema_section = match ext_schema {
-                Some(x) => x
-                    .finish(shared())
-                    .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?,
+                Some(x) => x.finish(shared()).map_err(file_err)?,
                 None => Vec::new(),
             };
             if let Some(l) = &label_section {
@@ -2915,15 +2913,17 @@ impl Drop for PartialFile {
     }
 }
 
-/// The output as the writer sees it: a pass-through that, in tests, can fail
-/// or panic after a given number of bytes (what a full disk looks like).
-struct Out<W> {
-    inner: W,
+/// The output file, shared between the buffered writer above it and the
+/// code that makes it durable. In tests it can fail or panic after a given
+/// number of bytes have reached the file (what a full disk looks like, below
+/// the buffer, so a flush can fail).
+struct SharedFile {
+    file: std::rc::Rc<File>,
     #[cfg(test)]
     written: u64,
 }
 
-impl<W: Write> Write for Out<W> {
+impl Write for SharedFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         #[cfg(test)]
         {
@@ -2939,33 +2939,44 @@ impl<W: Write> Write for Out<W> {
                 }
             }
         }
-        self.inner.write(buf)
+        (&*self.file).write(buf)
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
+        (&*self.file).flush()
     }
 }
 
-impl<W: Seek> Seek for Out<W> {
+impl Seek for SharedFile {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.inner.seek(pos)
+        (&*self.file).seek(pos)
     }
 }
 
 #[cfg(test)]
 thread_local! {
-    /// Fail the write with an I/O error once this many bytes have gone out.
+    /// Fail the write with an I/O error once this many bytes have reached the file.
     static TEST_FAIL_AFTER: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-    /// Panic in the write once this many bytes have gone out.
+    /// Panic in the write once this many bytes have reached the file.
     static TEST_PANIC_AFTER: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// An `ExtBuildError` from a `FileError`, without a second `io:` prefix.
+fn file_err(e: crate::file::FileError) -> ExtBuildError {
+    match e {
+        crate::file::FileError::Io(e) => ExtBuildError::Io(e),
+        other => ExtBuildError::Io(std::io::Error::other(other.to_string())),
+    }
 }
 
 /// Write the `0x06` file at `output` from `image`: the directories are read out
 /// of the spill, the payload is copied once to its final offset, and each spill
-/// file goes as soon as every range of it is in. The file is written to
-/// `partial` (beside `output`), synced, then renamed into place, so a failed
-/// build leaves no half file under the final name. If only the rename fails,
-/// the finished file is kept and the error says where it is.
+/// file goes once every range of it is in the output **and durable**: before a
+/// file is deleted the buffer is flushed and the output `sync_data`-ed, so a
+/// full disk (which may only show at the flush or the sync) finds the spill
+/// still whole. The file is written to `partial` (beside `output`), synced,
+/// then renamed into place, so a failed build leaves no half file under the
+/// final name. If only the rename fails, the finished file is kept and the
+/// error says where it is.
 fn write_v06(
     output: &Path,
     image: &Arc<crate::extbuild_v06::SpillImage>,
@@ -2974,21 +2985,25 @@ fn write_v06(
     consume: bool,
     partial: &PartialFile,
 ) -> Result<(), ExtBuildError> {
-    let fe = |e: crate::file::FileError| ExtBuildError::Io(std::io::Error::other(e.to_string()));
     let src = crate::extbuild_v06::SharedImage(image.clone());
-    let mut parts = crate::v06::parts::from_v05(&src).map_err(fe)?;
+    let mut parts = crate::v06::parts::from_v05(&src).map_err(file_err)?;
     parts.card = (!card.is_empty()).then(|| card.to_vec());
     parts.build = (!record.is_empty()).then(|| record.to_vec());
     {
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&partial.path)?;
-        let mut out = Out {
-            inner: BufWriter::with_capacity(8 << 20, file),
-            #[cfg(test)]
-            written: 0,
-        };
+        let file = std::rc::Rc::new(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&partial.path)?,
+        );
+        let mut out = BufWriter::with_capacity(
+            8 << 20,
+            SharedFile {
+                file: file.clone(),
+                #[cfg(test)]
+                written: 0,
+            },
+        );
         // `--progress`: the data bytes copied, out of the data bytes in all.
         let mut sized = false;
         let written = crate::v06::write::assemble_with(
@@ -3019,15 +3034,21 @@ fn write_v06(
                         image.consumed(off, len)
                     }
                 },
+                settle: &mut |out| {
+                    if consume && image.has_ready() {
+                        out.flush()?;
+                        file.sync_data()?;
+                        image.delete_ready();
+                    }
+                    Ok(())
+                },
             },
         )
-        .map_err(fe)?;
+        .map_err(file_err)?;
         out.flush()?;
         // Durable before it takes the final name.
-        out.inner
-            .into_inner()
-            .map_err(|e| e.into_error())?
-            .sync_all()?;
+        drop(out.into_inner().map_err(|e| e.into_error())?);
+        file.sync_all()?;
         eprintln!(
             "extbuild: wrote format 0x06, {} bytes",
             written.header.file_len
@@ -3043,6 +3064,18 @@ fn write_v06(
                 output.display()
             ),
         )));
+    }
+    // The new name is durable too (Unix: the directory entry).
+    #[cfg(unix)]
+    if let Some(dir) = output.parent() {
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        };
+        if let Ok(d) = File::open(dir) {
+            let _ = d.sync_all();
+        }
     }
     Ok(())
 }
@@ -4779,10 +4812,11 @@ mod tests {
         );
     }
 
-    /// A write that fails before it has consumed anything (injected): the
-    /// spill is still whole, so it is kept; the working file is not.
+    /// The first flush fails (injected below the buffer, as a full disk shows
+    /// it): the first spill file has been copied into the buffer but must not
+    /// have been deleted, so the whole spill is kept; the working file is not.
     #[test]
-    fn an_io_error_at_the_start_of_the_write_keeps_the_spill() {
+    fn a_failing_first_flush_keeps_the_spill_whole() {
         let f = Failing::new("iofail-early");
         TEST_FAIL_AFTER.with(|c| c.set(Some(0)));
         let r = f.build(|_| {});
@@ -4792,6 +4826,18 @@ mod tests {
         let (files, dirs) = f.entries();
         assert!(files.is_empty(), "no output and no working file: {files:?}");
         assert_eq!(dirs.len(), 1, "the whole spill is kept");
+        let names: Vec<String> = std::fs::read_dir(&dirs[0])
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            ["g.shared.sec", "g.subj.sec", "g.obj.sec", "g.pred.sec"]
+                .iter()
+                .all(|n| names.iter().any(|m| m == n)),
+            "every dictionary section is still there, the predicates one included: {names:?}"
+        );
+        assert!(!e.contains("io: io:"), "{e}");
     }
 
     /// A write that fails part way (a full disk, injected): an error, no
@@ -4925,6 +4971,7 @@ mod tests {
                 progress: &mut |_, _| {},
                 needed: &mut |o, l| needed.push((o, l)),
                 consumed: &mut |o, l| consumed.push((o, l)),
+                settle: &mut |_| Ok(()),
             },
         )
         .unwrap();

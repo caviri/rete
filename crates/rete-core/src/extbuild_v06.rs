@@ -97,6 +97,7 @@ impl ImageBuilder {
             track: Mutex::new(Track {
                 needed: vec![0; n],
                 copied: vec![0; n],
+                ready: vec![false; n],
                 gone: vec![false; n],
             }),
             released: std::sync::atomic::AtomicBool::new(false),
@@ -118,6 +119,8 @@ pub(crate) struct SpillImage {
 struct Track {
     needed: Vec<u64>,
     copied: Vec<u64>,
+    /// Fully copied: may go as soon as the output has made the bytes durable.
+    ready: Vec<bool>,
     gone: Vec<bool>,
 }
 
@@ -214,7 +217,7 @@ impl SpillImage {
         for (i, n) in self.spans(off, len) {
             t.copied[i] += n;
             if t.needed[i] > 0 && t.copied[i] >= t.needed[i] {
-                self.remove(i, &mut t);
+                t.ready[i] = true;
             }
         }
     }
@@ -226,6 +229,24 @@ impl SpillImage {
         let Ok(mut t) = self.track.lock() else { return };
         for i in 0..self.pieces.len() {
             if self.pieces[i].release == Some(kind) {
+                t.ready[i] = true;
+            }
+        }
+    }
+
+    /// Is any file ready to go?
+    pub(crate) fn has_ready(&self) -> bool {
+        self.track
+            .lock()
+            .map(|t| (0..t.ready.len()).any(|i| t.ready[i] && !t.gone[i]))
+            .unwrap_or(false)
+    }
+
+    /// Delete every ready file. The caller has made the output durable first.
+    pub(crate) fn delete_ready(&self) {
+        let Ok(mut t) = self.track.lock() else { return };
+        for i in 0..self.pieces.len() {
+            if t.ready[i] {
                 self.remove(i, &mut t);
             }
         }
@@ -310,8 +331,11 @@ mod tests {
         img.consumed(9, 4);
         assert!(f.exists());
         img.consumed(3, 4);
+        // Ready, not deleted: the caller syncs the output first.
+        assert!(f.exists() && img.has_ready() && !img.any_released());
+        img.delete_ready();
         assert!(!f.exists());
-        assert!(img.any_released());
+        assert!(img.any_released() && !img.has_ready());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

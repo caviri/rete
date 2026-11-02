@@ -519,6 +519,7 @@ fn build_front(
 
 /// Copy `segs` from `input` to `out`, coalescing input-adjacent segments into
 /// reads of at most 8 MiB, hashing everything written into `h`.
+#[allow(clippy::too_many_arguments)]
 fn copy_segs(
     input: &dyn RangeReader,
     segs: &[Seg],
@@ -527,6 +528,7 @@ fn copy_segs(
     h: &mut blake3::Hasher,
     progress: &mut dyn FnMut(u64),
     consumed: &mut dyn FnMut(u64, u64),
+    settle: &mut dyn FnMut(&mut dyn Write) -> std::io::Result<()>,
 ) -> Result<u64, FileError> {
     const SPAN: u64 = 8 << 20;
     // The ceiling for measuring a block whose frame does not state its size:
@@ -575,6 +577,7 @@ fn copy_segs(
         for sg in &segs[i..j] {
             consumed(sg.input, sg.len);
         }
+        settle(out)?;
         i = j;
     }
     Ok(max_raw)
@@ -620,6 +623,7 @@ pub fn assemble<W: Write + Seek>(
             progress: &mut |_, _| {},
             needed: &mut |_, _| {},
             consumed: &mut |_, _| {},
+            settle: &mut |_| Ok(()),
         },
     )
 }
@@ -639,6 +643,12 @@ pub struct Hooks<'a> {
     /// order the ranges come in. Once every announced range of a spill file
     /// has been consumed, nothing reads that file again.
     pub consumed: &'a mut dyn FnMut(u64, u64),
+    /// Called with the output after every copied run and every finished data
+    /// section, once `consumed` / `copied` may have made spill files ready to
+    /// go. The implementation flushes `out`, makes the bytes durable, and only
+    /// then deletes: a file must never be removed while its bytes are still in
+    /// a buffer or an unsynced page.
+    pub settle: &'a mut dyn FnMut(&mut dyn Write) -> std::io::Result<()>,
 }
 
 /// [`assemble`], reporting through `hooks`. The memory-bounded build deletes
@@ -844,6 +854,7 @@ pub fn assemble_with<W: Write + Seek>(
         let mut h = blake3::Hasher::new();
         let progress = &mut hooks.progress;
         let consumed = &mut hooks.consumed;
+        let settle = &mut hooks.settle;
         let measured = copy_segs(
             input,
             &d.segs,
@@ -852,9 +863,11 @@ pub fn assemble_with<W: Write + Seek>(
             &mut h,
             &mut |n| progress(written_before + n, data_len),
             &mut **consumed,
+            &mut **settle,
         )?;
         written_before += d.len();
         (hooks.copied)(d.kind);
+        (hooks.settle)(out)?;
         let sec = &mut root.sections[n_front + i];
         sec.digest.copy_from_slice(&h.finalize().as_bytes()[..16]);
         if d.measure.is_some() {
