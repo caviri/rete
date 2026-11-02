@@ -5,20 +5,24 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
-**Format change: every writer now writes format `0x06`.** A file opens from
+## [0.5.0] - 2026-11-02
+
+**Format change: every writer now writes format `0x06`** (#371, #379, #380). A file opens from
 its first 64 KiB: a 128-byte header, the root block (every section's range and
 BLAKE3 digest, and the first level of every directory), the Dataset Card and
 the planner statistics, then the leaf directories; the data follows, one
 section after another. The payload blocks are the `0x05` ones, copied
 unchanged. Readers of this release read `0x05` and `0x06`; **readers up to
 0.4.2 refuse `0x06`** (`unsupported .rete format 0x06`). Convert a published
-file only once the readers that fetch it run this release. See
+file only once the readers that fetch it run this release. The format is still
+in development and backward compatibility is not guaranteed. Every file now
+carries a build record (engine version, commit, options). See
 [SPEC §4](https://caviri.github.io/rete/SPEC.html) and
 [compatibility](https://caviri.github.io/rete/compatibility.html).
 
 ### Added
 
-- **Every writer writes `0x06` and a build record.** The Python, R and Java clients and
+- **Every writer writes `0x06` and a build record** (#380). The Python, R and Java clients and
   the browser engine used to write `0x05` through `assemble_dataset*`, with no build
   record; cardless CLI builds, `merge` without a card and `repyramid` wrote none either.
   Now one step in rete-core (`rete_core::build_record::finish_in_ram`) turns the in-RAM
@@ -45,11 +49,11 @@ file only once the readers that fetch it run this release. See
   zstd encoder, so their bytes differ). The public `rete_core::write_file`, `write_dataset` and
   `write_dataset_with_metadata` now return `0x06` (per-graph named graphs become the quad index); the `0x05`
   images are the `_v05` twins. `rete recard` of an existing `0x05` file still writes `0x05`.
-- **Card file: `base_iri`.** An optional curated `base_iri` (an absolute IRI) overrides the derived
+- **Card file: `base_iri`** (#375). An optional curated `base_iri` (an absolute IRI) overrides the derived
   `signals.base_iri` and the starter queries built on it. Past the namespace-tally cap the derived
   value is only an approximate dominant namespace.
 
-- **`rete convert in.rete -o out.rete`** turns a `0x05` file into `0x06` from
+- **`rete convert in.rete -o out.rete`** (#371) turns a `0x05` file into `0x06` from
   its sections, without parsing RDF: one read and one write of the file (4.7 s
   for the 205 MB OpenCitations sample). The output has the content hash a
   fresh build of the same data gets. A file whose only labels are the
@@ -68,9 +72,9 @@ file only once the readers that fetch it run this release. See
 
 ### Changed
 
-- **`--named-graphs` defaults to `quad`**, and `per-graph` is refused: `0x06`
+- **`--named-graphs` defaults to `quad`** (#371), and `per-graph` is refused: `0x06`
   stores named graphs in the quad index only.
-- **Query commands open local files lazily** above 1 MiB (`sparql`, `query`,
+- **Query commands open local files lazily** (#371) above 1 MiB (`sparql`, `query`,
   `bgp`, `why`, `cypher`, `search`, `stats`, `graphs`, `schema`, `shacl`).
   On 83 local jobs (the OpenCitations sample and seven catalog files) a
   query took 18.0 s in all, against 59.8 s for 0.4.2 on the `0x05` files;
@@ -83,7 +87,7 @@ file only once the readers that fetch it run this release. See
   same with the record alone, so the content hash stays.
 - **Starter-query costs are measured on the file as written** (in `0x06` they
   depend on the layout, card region included: the open reads the first 64 KiB).
-- **The memory-bounded build and `rete merge` write `0x06` directly.** The sections stay in the
+- **The memory-bounded build and `rete merge` write `0x06` directly** (#379). The sections stay in the
   spill; one write copies each to its final offset and deletes each spill file as soon as
   it is read through, so the disk holds the spill plus an output that grows file by file as the
   spill shrinks (it used to hold the `0x05` file and its `0x06` copy side by side), and there is
@@ -96,7 +100,7 @@ file only once the readers that fetch it run this release. See
   `--progress` now plans `labels+schema`, `card_derive` and `starter_queries` before `write`,
   and no `content_hash` step: the write hashes as it copies. A named-graph input is always
   stored as a quad index.
-- **Planner: fewer whole-pattern loads.** `FILTER (NOT) EXISTS` and `MINUS` over
+- **Planner: fewer whole-pattern loads** (G9, G10, G11, G31, #378). `FILTER (NOT) EXISTS` and `MINUS` over
   a fat BGP (cheapest pattern at least a million rows) probe it once per outer
   row instead of loading it. A join with a `UNION` whose branches are BGPs
   pushes the other side's rows (a `VALUES` block, or a preceding pattern) into
@@ -111,7 +115,7 @@ file only once the readers that fetch it run this release. See
 
 ### Fixed
 
-- **`STR()` of a blank node is an error, as SPARQL 1.1 says (G28).** It returned the label (`_:b0`), so a row
+- **`STR()` of a blank node is an error, as SPARQL 1.1 says (G28, #381).** It returned the label (`_:b0`), so a row
   with a blank node bound `?t` to `"_:b0"` and `CONTAINS(STR(?s), "b0")` matched it. Now the expression is an
   error: a `BIND` leaves its variable unbound and a `FILTER` drops the row. The same label no longer leaks through
   the arguments the string functions read by text: `IRI(?b)` (it made `<_:b0>`), the language tag of `STRLANG`,
@@ -121,18 +125,57 @@ file only once the readers that fetch it run this release. See
   CONCAT over its elements (§18.5.1.7), so a blank node in the group makes the aggregate an error (unbound), where it
   used to put the label in the text (`MIN` and `MAX` still order blank nodes). `STRLANG` with an empty or malformed
   language tag is an error instead of a malformed literal. The W3C SPARQL 1.1 suite stays at 239/312.
-- **The memory-bounded build accepts more than 2³¹ subject-only or object-only terms.** The provisional
+- **The memory-bounded build accepts more than 2³¹ subject-only or object-only terms** (G30, #376). The provisional
   role-only ids no longer spend bit 31 of a `u32` on the class, so each position may hold up to
   `u32::MAX` terms, the format's limit (the OpenCitations Index has 2.56 B subject-only terms). A final id
   past `u32::MAX` is refused with the numbers when the dictionary merge ends. The build also stops during
   chunking, from a HyperLogLog estimate of the distinct subject and object terms, as soon as one position
   clearly exceeds `u32::MAX`, instead of after the merge.
-- A `206` whose `Content-Range` end or total is not the one asked for, or whose
+- A `206` (#371) whose `Content-Range` end or total is not the one asked for, or whose
   body is longer than the range, is refused instead of being cut to fit (a
   file replaced under the same URL could be read as two versions spliced
   together). The block cache refuses a blob of the wrong length.
-- Every `0x06` decompression is bounded by its section's largest block,
+- Every `0x06` decompression (#371) is bounded by its section's largest block,
   recorded by the writer and checked against the zstd frame header first.
+
+- **Card derivation no longer runs out of memory on graphs with millions of distinct subject
+  namespaces** (#374). The tally behind `signals.base_iri` kept one entry per distinct IRI-up-to-last-slash,
+  which on DataCite (`https://doi.org/<prefix>/<suffix>`) grew with the record count (about 4 GB a
+  minute, past any `--memory-budget-mb`). It is now bounded at 65,536 entries in `build`, `recard`
+  and the in-memory derivation, counted in the budget line. Cards of graphs at or under the cap are
+  byte-identical; past it the card is marked `truncated`.
+- **A corrupt or hostile `.rete` is refused cleanly instead of panicking or
+  decoding to wrong ids** (#369). Container lengths and counts are checked before they
+  size a slice (a length near 2^64 overflowed `pos + len`; on wasm32 a length or
+  offset past 4 GiB kept its low 32 bits and read other bytes). Varints refuse a
+  10th byte with more than bit 63 in it. Triple ids, tile-directory ids and
+  dictionary counts that do not fit a `u32` are errors, where `as u32` and
+  `wrapping_add` turned them into other, plausible ids. Dictionary chunk
+  directories must start at run 0 and ascend. The tile-synopsis trailer read is
+  capped at 20 bytes per tile. A short read is a failed load wherever it was
+  sliced or decoded as if whole: lazy tiles (a raw tile read one byte short lost
+  its last rows), the named-graph walk (it panicked), `query_ranged` and the
+  card read. New fuzz-style tests overwrite every position of a file with these
+  varints and shorten every read of an open in turn.
+- **Memory-bounded builds sharing a `--tmp-dir` no longer delete each other's
+  spill** (#370). The spill directory was `.rete-extbuild-<pid>-<seq>`, and in a
+  container the pid is usually 1, so two builds writing to one folder got the
+  same directory and the first to finish removed it under the other; a
+  directory left by a killed build was reused. It is now
+  `.rete-extbuild-<pid>-<seq>-<random>`, created exclusively: a name that
+  exists is never adopted, and no other directory is touched.
+
+- **`docs/yasgui.html` ships the current engine** (#372). Nothing rebuilt it: it said
+  "Built 2026-08-08 from unknown." and had no `partition_plan` and no quad
+  index. `scripts/build_wasm.sh` now builds it with the playground, stamped with
+  the workspace version instead of a date, CI's wasm job fails when the tracked
+  page differs from its rebuild, and the gate checks that it embeds this
+  build's glue and engine.
+- **The playground accepts `localhost:8090/x.rete`** (#372; and any `host:port/…`
+  on localhost, an IP or a dotted name), which it refused as an unknown
+  scheme; like any address typed without a scheme it opens over https. It
+  refuses an `http(s):` address with no host (`https:`, `https:///x.rete`) and
+  a port past 65535, which it used to pass to the reader.
 
 ### Measured
 
@@ -147,47 +190,6 @@ build takes the same time (73.2–77.0 s against 73.7 s). Every one of the 83
 queries returns the rows it did on `0x05` (a label prefix search returns more
 where `convert` added a label index), and the W3C SPARQL 1.1 suite scores
 239 / 312 on both formats, test for test.
-
-### Fixed
-
-- **Card derivation no longer runs out of memory on graphs with millions of distinct subject
-  namespaces.** The tally behind `signals.base_iri` kept one entry per distinct IRI-up-to-last-slash,
-  which on DataCite (`https://doi.org/<prefix>/<suffix>`) grew with the record count (about 4 GB a
-  minute, past any `--memory-budget-mb`). It is now bounded at 65,536 entries in `build`, `recard`
-  and the in-memory derivation, counted in the budget line. Cards of graphs at or under the cap are
-  byte-identical; past it the card is marked `truncated`.
-- **A corrupt or hostile `.rete` is refused cleanly instead of panicking or
-  decoding to wrong ids.** Container lengths and counts are checked before they
-  size a slice (a length near 2^64 overflowed `pos + len`; on wasm32 a length or
-  offset past 4 GiB kept its low 32 bits and read other bytes). Varints refuse a
-  10th byte with more than bit 63 in it. Triple ids, tile-directory ids and
-  dictionary counts that do not fit a `u32` are errors, where `as u32` and
-  `wrapping_add` turned them into other, plausible ids. Dictionary chunk
-  directories must start at run 0 and ascend. The tile-synopsis trailer read is
-  capped at 20 bytes per tile. A short read is a failed load wherever it was
-  sliced or decoded as if whole: lazy tiles (a raw tile read one byte short lost
-  its last rows), the named-graph walk (it panicked), `query_ranged` and the
-  card read. New fuzz-style tests overwrite every position of a file with these
-  varints and shorten every read of an open in turn.
-- **Memory-bounded builds sharing a `--tmp-dir` no longer delete each other's
-  spill.** The spill directory was `.rete-extbuild-<pid>-<seq>`, and in a
-  container the pid is usually 1, so two builds writing to one folder got the
-  same directory and the first to finish removed it under the other; a
-  directory left by a killed build was reused. It is now
-  `.rete-extbuild-<pid>-<seq>-<random>`, created exclusively: a name that
-  exists is never adopted, and no other directory is touched.
-
-- **`docs/yasgui.html` ships the current engine.** Nothing rebuilt it: it said
-  "Built 2026-08-08 from unknown." and had no `partition_plan` and no quad
-  index. `scripts/build_wasm.sh` now builds it with the playground, stamped with
-  the workspace version instead of a date, CI's wasm job fails when the tracked
-  page differs from its rebuild, and the gate checks that it embeds this
-  build's glue and engine.
-- **The playground accepts `localhost:8090/x.rete`** (and any `host:port/…`
-  on localhost, an IP or a dotted name), which it refused as an unknown
-  scheme; like any address typed without a scheme it opens over https. It
-  refuses an `http(s):` address with no host (`https:`, `https:///x.rete`) and
-  a port past 65535, which it used to pass to the reader.
 
 ## [0.4.2] - 2026-10-31
 
