@@ -2088,6 +2088,7 @@ mod tests {
             named_graphs: 0,
             terms: 0,
             pyramid_levels: 0,
+            label_index: false,
         };
         let (card, record) = hook(std::sync::Arc::new(Broken), &stats).unwrap();
         assert!(card.is_empty() && record.is_empty());

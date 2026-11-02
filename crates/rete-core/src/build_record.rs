@@ -212,7 +212,10 @@ pub fn to_json(r: &Record, stats: Option<&BuildStats>) -> Vec<u8> {
     for (k, v) in [
         ("no_pyramid", r.options.no_pyramid),
         ("text_index", r.options.text_index),
-        ("label_index", r.options.label_index),
+        (
+            "label_index",
+            r.options.label_index || stats.is_some_and(|s| s.label_index),
+        ),
     ] {
         if v {
             p.insert(k.into(), json!(true));
@@ -396,5 +399,35 @@ mod tests {
         assert_eq!(v["params"]["command"], "build");
         assert_eq!(v["inputs"][0]["bytes"], 14);
         assert_eq!(v["schema"], 1);
+    }
+    #[test]
+    fn a_binding_style_record_says_the_file_has_a_label_index() {
+        // The callers of the shared assembler (Python, R, Java, the browser) set
+        // no `label_index` option, yet the file has the index; the record reads
+        // it from the build's stats.
+        let quads: Vec<crate::format::RawQuad> = vec![(
+            "<http://ex/a>".into(),
+            "<http://www.w3.org/2000/01/rdf-schema#label>".into(),
+            "\"A\"".into(),
+            None,
+        )];
+        let (image, stats) = crate::ingest::assemble_dataset_quad(quads, &[]);
+        assert!(crate::Rete::open(&image).unwrap().has_label_index());
+        let r = Record {
+            front_end: front_end::PYTHON.into(),
+            front_end_version: "9.9.9".into(),
+            built_at: None,
+            options: Options {
+                command: "build".into(),
+                ..Default::default()
+            },
+            inputs: vec![],
+            statements_read: Some(1),
+        };
+        let v: Value = serde_json::from_slice(&to_json(&r, Some(&stats))).unwrap();
+        assert_eq!(v["params"]["label_index"], true);
+        // Without stats (nothing known) the field stays absent.
+        let v: Value = serde_json::from_slice(&to_json(&r, None)).unwrap();
+        assert!(v["params"].get("label_index").is_none());
     }
 }

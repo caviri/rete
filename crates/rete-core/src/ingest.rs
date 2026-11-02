@@ -932,6 +932,9 @@ pub struct BuildStats {
     pub terms: usize,
     /// Levels in the community pyramid, or `0` when the build skipped it.
     pub pyramid_levels: u16,
+    /// Whether the file got a label index. The record says so even when the
+    /// caller (a binding) set no option for it.
+    pub label_index: bool,
 }
 
 /// How a build stores the **named graphs** (the default graph is unaffected).
@@ -1385,6 +1388,7 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
         named_graphs: named.graph_count(),
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
+        label_index: opts.label_index,
     };
     let pending = metadata(&stats, &quads);
     crate::build_trace::lap(crate::build_trace::Phase::CardDerive);
@@ -1565,6 +1569,7 @@ where
         named_graphs: named.graph_count(),
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
+        label_index: opts.label_index,
     };
     let pending = metadata(&stats, &dict, &default_triples);
     crate::build_trace::lap(crate::build_trace::Phase::CardDerive);
