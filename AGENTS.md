@@ -371,9 +371,12 @@ Before touching a `.rete` that is already published. Full lifecycle in
   *next* build, never a published file. The card is inside the content hash, so
   a new card is a new file identity. `rete recard` is the cheapest way there:
   only the card and the build record change, every other section is copied
-  byte for byte — or, with `--in-place`, not copied at all: the new card and
-  record are appended after the data and the header is rewritten last (the old
-  card stays behind as dead bytes; a later copying re-card drops them). In
+  byte for byte — or, with `--in-place`, not copied at all: in `0x06` the new
+  card and record go into the card region's free space beside the old pair (one
+  copy of the file when they do not fit, and a file built without a card has no
+  region) and the header is rewritten last; in `0x05` they are appended after
+  the data (the old card stays behind as dead bytes; a later copying re-card
+  drops them). In
   place still changes the file under its name, so the recovery-copy rule below
   applies to it too, unless the old file is not needed back.
 - **Survey before you re-card.** `bash scripts/recard/survey.sh` reads the CARD

@@ -103,7 +103,7 @@ rete build data.nt -o data.rete --no-pyramid --label-index   # labels + schema, 
 rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index
 ```
 
-**The memory-bounded build (`--memory-budget-mb N`).** It writes format `0x06` directly: the sections stay in the spill, and the one write copies each of them to its final place in the output and deletes it, so the disk holds the spill plus one output, with the two trading places as the write goes (no intermediate file, no convert pass). It reads the input
+**The memory-bounded build (`--memory-budget-mb N`).** It writes format `0x06` directly: the sections stay in the spill, and the one write copies each of them to its final place in the output and deletes it, so the disk holds the spill (its peak is in the sort phases, and all of it when the write starts) plus an output that grows file by file as the spill shrinks: at any moment at most the data of the file being copied is in both (no intermediate file, no convert pass). A failure before the first spill file is deleted keeps the whole spill and prints its path; the output is written under a working name beside the final one and renamed once synced. It reads the input
 once and cuts it into chunks of about half the budget, or smaller where the
 chunk's dictionary would take its working set past 85% of the budget (0.4.2):
 a term-dense stretch, two new terms per statement like the OpenCitations Meta

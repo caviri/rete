@@ -840,10 +840,11 @@ feeds), `parse+chunk`, `frequent_objects` (its `--frequent-objects` pass,
 0.4.2), `dictionary`, `encode` and `named_graphs` (the memory-bounded build
 and `merge`), `card_derive`, `pyramid`, `text_index`,
 `labels+schema`, `dictionary_section`, `index_permutations`, `serialize`,
-`starter_queries`, `write` and `content_hash` (in `0x05`, the read of every
-hashed section that placing a card after the data needs: the memory-bounded
-build, `merge` and `recard --in-place`; in `0x06`, the write of the card
-region). In the memory-bounded build the SCHEMA pass is
+`starter_queries`, `write` and `content_hash` (only for `0x05`: the read of
+every hashed section that placing a card after the data needs. In `0x06` the
+hash is the section digests, computed as the data is written, so there is no
+such step, and the memory-bounded build lists `labels+schema`, `card_derive`
+and `starter_queries` before its one `write`). In the memory-bounded build the SCHEMA pass is
 fed from the remap and permutation merges, so part of its cost sits in
 `encode` and `index_permutations`; `labels+schema` is only its finish.
 

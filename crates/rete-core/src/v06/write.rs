@@ -526,6 +526,7 @@ fn copy_segs(
     out: &mut dyn Write,
     h: &mut blake3::Hasher,
     progress: &mut dyn FnMut(u64),
+    consumed: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, FileError> {
     const SPAN: u64 = 8 << 20;
     // The ceiling for measuring a block whose frame does not state its size:
@@ -571,6 +572,9 @@ fn copy_segs(
                 progress(done);
             }
         }
+        for sg in &segs[i..j] {
+            consumed(sg.input, sg.len);
+        }
         i = j;
     }
     Ok(max_raw)
@@ -614,6 +618,8 @@ pub fn assemble<W: Write + Seek>(
         &mut Hooks {
             copied: &mut |_| {},
             progress: &mut |_, _| {},
+            needed: &mut |_, _| {},
+            consumed: &mut |_, _| {},
         },
     )
 }
@@ -626,11 +632,19 @@ pub struct Hooks<'a> {
     pub copied: &'a mut dyn FnMut(u8),
     /// `(data bytes written so far, data bytes in all)`, after each write.
     pub progress: &'a mut dyn FnMut(u64, u64),
+    /// `(input offset, length)` of every payload range the copy will read,
+    /// announced once before the first byte is written.
+    pub needed: &'a mut dyn FnMut(u64, u64),
+    /// `(input offset, length)` of a payload range now in the output, whatever
+    /// order the ranges come in. Once every announced range of a spill file
+    /// has been consumed, nothing reads that file again.
+    pub consumed: &'a mut dyn FnMut(u64, u64),
 }
 
-/// [`assemble`], reporting through `hooks`. The memory-bounded build deletes the
-/// spill files behind each finished data section, so the output grows as the
-/// spill shrinks, and drives `--progress` from the byte count.
+/// [`assemble`], reporting through `hooks`. The memory-bounded build deletes
+/// each spill file as soon as every range it feeds is in the output, so the
+/// output grows as the spill shrinks, and drives `--progress` from the byte
+/// count.
 pub fn assemble_with<W: Write + Seek>(
     parts: &Parts,
     input: &dyn RangeReader,
@@ -663,6 +677,11 @@ pub fn assemble_with<W: Write + Seek>(
         }
     };
     let (data, dict_off, perm_off, quad_off) = layout_data(parts, graph_major);
+    for d in &data {
+        for sg in &d.segs {
+            (hooks.needed)(sg.input, sg.len);
+        }
+    }
     let quad_gdir = match &parts.quad {
         Some(q) if q.gdir.len > 0 => input.read_at(q.gdir.offset, q.gdir.len)?,
         _ => Vec::new(),
@@ -824,9 +843,16 @@ pub fn assemble_with<W: Write + Seek>(
     for (i, d) in data.iter().enumerate() {
         let mut h = blake3::Hasher::new();
         let progress = &mut hooks.progress;
-        let measured = copy_segs(input, &d.segs, d.measure, out, &mut h, &mut |n| {
-            progress(written_before + n, data_len)
-        })?;
+        let consumed = &mut hooks.consumed;
+        let measured = copy_segs(
+            input,
+            &d.segs,
+            d.measure,
+            out,
+            &mut h,
+            &mut |n| progress(written_before + n, data_len),
+            &mut **consumed,
+        )?;
         written_before += d.len();
         (hooks.copied)(d.kind);
         let sec = &mut root.sections[n_front + i];

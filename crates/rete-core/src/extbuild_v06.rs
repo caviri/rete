@@ -8,9 +8,11 @@
 //! byte of it is on disk as one file. [`crate::v06::parts::from_v05`] reads the
 //! directories out of it and [`crate::v06::write::assemble_with`] copies the
 //! payload once, to its final offset in the `0x06` output, deleting each spill
-//! file as soon as its data is in. Peak disk is the spill plus the output, with
-//! the two trading places as the write goes, and there is no intermediate
-//! file and no convert pass.
+//! file as soon as every range it feeds is in. Peak disk is the spill (the
+//! sort phases' peak, and the whole of it when the write starts) plus the
+//! output, which grows file by file as the spill shrinks: at any moment at
+//! most the data of the file being copied is in both. There is no
+//! intermediate file and no convert pass.
 //!
 //! The same image answers the dictionary lookups of the label and schema passes
 //! and, for `--card`, the card derivation, before the output exists.
@@ -87,10 +89,17 @@ impl ImageBuilder {
     }
 
     pub(crate) fn finish(self) -> SpillImage {
+        let n = self.pieces.len();
         SpillImage {
             len: self.at,
             pieces: self.pieces,
             open: Mutex::new(HashMap::new()),
+            track: Mutex::new(Track {
+                needed: vec![0; n],
+                copied: vec![0; n],
+                gone: vec![false; n],
+            }),
+            released: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -100,6 +109,16 @@ pub(crate) struct SpillImage {
     len: u64,
     pieces: Vec<Piece>,
     open: Mutex<HashMap<usize, Arc<File>>>,
+    track: Mutex<Track>,
+    released: std::sync::atomic::AtomicBool,
+}
+
+/// Per piece: the bytes the copy will read, the bytes it has read, and whether
+/// the file is gone.
+struct Track {
+    needed: Vec<u64>,
+    copied: Vec<u64>,
+    gone: Vec<bool>,
 }
 
 fn read_exact_at(f: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
@@ -142,17 +161,72 @@ impl SpillImage {
         Ok(f)
     }
 
-    /// Delete the spill files that fed data section `kind`.
+    /// Has any spill file been deleted? Until one has, the spill is whole and
+    /// a failed build can leave it for a resume.
+    pub(crate) fn any_released(&self) -> bool {
+        self.released.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn remove(&self, i: usize, t: &mut Track) {
+        if t.gone[i] {
+            return;
+        }
+        t.gone[i] = true;
+        self.released
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut open) = self.open.lock() {
+            open.remove(&i);
+        }
+        if let Src::File(path) = &self.pieces[i].src {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    /// The pieces `[off, off + len)` overlaps, with the bytes in each.
+    fn spans(&self, off: u64, len: u64) -> Vec<(usize, u64)> {
+        let end = off.saturating_add(len);
+        let mut i = self.pieces.partition_point(|p| p.start + p.len <= off);
+        let mut at = off;
+        let mut out = Vec::new();
+        while at < end && i < self.pieces.len() {
+            let p = &self.pieces[i];
+            let n = (p.start + p.len).min(end) - at;
+            out.push((i, n));
+            at += n;
+            i += 1;
+        }
+        out
+    }
+
+    /// The copy will read `len` bytes at `off`.
+    pub(crate) fn need(&self, off: u64, len: u64) {
+        if let Ok(mut t) = self.track.lock() {
+            for (i, n) in self.spans(off, len) {
+                t.needed[i] += n;
+            }
+        }
+    }
+
+    /// The copy has read `len` bytes at `off`: a file whose every announced
+    /// byte is now consumed is deleted.
+    pub(crate) fn consumed(&self, off: u64, len: u64) {
+        let Ok(mut t) = self.track.lock() else { return };
+        for (i, n) in self.spans(off, len) {
+            t.copied[i] += n;
+            if t.needed[i] > 0 && t.copied[i] >= t.needed[i] {
+                self.remove(i, &mut t);
+            }
+        }
+    }
+
+    /// Delete what is left of the spill files that fed data section `kind`
+    /// (a file the copy announced nothing of, like a token table already in
+    /// memory).
     pub(crate) fn release(&self, kind: u8) {
-        for (i, p) in self.pieces.iter().enumerate() {
-            if p.release != Some(kind) {
-                continue;
-            }
-            if let Ok(mut open) = self.open.lock() {
-                open.remove(&i);
-            }
-            if let Src::File(path) = &p.src {
-                let _ = std::fs::remove_file(path);
+        let Ok(mut t) = self.track.lock() else { return };
+        for i in 0..self.pieces.len() {
+            if self.pieces[i].release == Some(kind) {
+                self.remove(i, &mut t);
             }
         }
     }
@@ -229,8 +303,15 @@ mod tests {
         assert!(img.read_at(10, 7).is_err());
         img.release(6);
         assert!(f.exists());
-        img.release(7);
+        assert!(!img.any_released());
+        // Two ranges announced; the file goes with the second, not before.
+        img.need(3, 4);
+        img.need(9, 4);
+        img.consumed(9, 4);
+        assert!(f.exists());
+        img.consumed(3, 4);
         assert!(!f.exists());
+        assert!(img.any_released());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -92,7 +92,7 @@ fn content_hash(bytes: &[u8]) -> [u8; 16] {
 }
 
 /// The three builds of `src` with `extra`, compared pairwise.
-fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) {
+fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) -> Vec<u8> {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join(src_name);
     std::fs::write(&input, src).unwrap();
@@ -171,6 +171,7 @@ fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) {
         .filter(|n| n.ends_with(".partial"))
         .collect();
     assert!(beside.is_empty(), "{name}: partial file left: {beside:?}");
+    b
 }
 
 const FLAG_SETS: &[&[&str]] = &[
@@ -183,7 +184,7 @@ const FLAG_SETS: &[&[&str]] = &[
 #[test]
 fn bounded_equals_in_ram_and_convert_on_the_gate_fixtures() {
     for (i, flags) in FLAG_SETS.iter().enumerate() {
-        three_ways(&format!("worldcup {i}"), "worldcup2026.nt", WORLDCUP, flags);
+        let _ = three_ways(&format!("worldcup {i}"), "worldcup2026.nt", WORLDCUP, flags);
         three_ways(
             &format!("named-only {i}"),
             "named-graphs-only.nq",
@@ -368,4 +369,256 @@ fn a_bounded_build_with_a_card_has_its_room_and_recards_in_place() {
     let again = std::fs::read(&carded).unwrap();
     assert_eq!(again.len(), len, "the new pair fits beside the old one");
     rete().arg("verify").arg(&carded).assert().success();
+}
+
+// ---- the record's reservation, failure paths, a build with real structure ----
+
+/// Run the CLI; `reproducible` pins the record's clock. Returns stderr.
+fn run_stderr(args: &[&str], reproducible: bool) -> String {
+    let mut c = rete();
+    c.env_remove("RETE_WRITE_FORMAT");
+    if reproducible {
+        c.env("RETE_BUILD_RECORD", "reproducible")
+            .env("SOURCE_DATE_EPOCH", "1700000000");
+    } else {
+        c.env_remove("RETE_BUILD_RECORD");
+    }
+    let o = c.args(args).output().unwrap();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert!(o.status.success(), "{args:?}: {err}");
+    err
+}
+
+/// The three record shapes that sized the reservation wrongly: a sealed
+/// record longer than its room costs a copy of the whole file.
+const RECORD_SHAPES: [(&str, bool, &[&str]); 3] = [
+    ("default", false, &[]),
+    ("no card costs", false, &["--no-card-costs"]),
+    ("reproducible", true, &[]),
+];
+
+fn assert_in_place(name: &str, err: &str, file: &Path) {
+    assert!(
+        !err.contains("outgrew")
+            && !err.contains("moving it")
+            && !err.contains("rewriting the file"),
+        "{name}: the build record did not fit its reservation:\n{err}"
+    );
+    rete().arg("verify").arg(file).assert().success();
+}
+
+/// More inputs than the record lists by name (it keeps eight), several
+/// shapes: the sealed record fits the room reserved for it.
+#[test]
+fn a_bounded_build_with_a_card_never_outgrows_its_record_reservation() {
+    let dir = tempfile::tempdir().unwrap();
+    let card = dir.path().join("card.json");
+    std::fs::write(&card, r#"{"title": "Many inputs"}"#).unwrap();
+    let mut inputs = Vec::new();
+    for k in 0..10 {
+        let p = dir.path().join(format!("in{k}.nt"));
+        let body: String = (0..30)
+            .map(|i| {
+                format!(
+                    "<http://example.test/s{k}_{i}> <http://example.test/p{}> \"value {k} {i}\" .\n",
+                    i % 3
+                )
+            })
+            .collect();
+        std::fs::write(&p, body).unwrap();
+        inputs.push(p);
+    }
+    for (name, repro, extra) in RECORD_SHAPES {
+        let out = dir
+            .path()
+            .join(format!("out-{}.rete", name.replace(' ', "-")));
+        let mut a = vec!["build"];
+        a.extend(inputs.iter().map(|p| s(p)));
+        a.extend_from_slice(&[
+            "-o",
+            s(&out),
+            "--memory-budget-mb",
+            "64",
+            "--card-file",
+            s(&card),
+        ]);
+        a.extend_from_slice(extra);
+        let err = run_stderr(&a, repro);
+        assert_in_place(name, &err, &out);
+    }
+}
+
+/// Merge with a card, with more than eight inputs: the same.
+#[test]
+fn merge_with_a_card_and_many_inputs_fits_its_record_reservation() {
+    let dir = tempfile::tempdir().unwrap();
+    let card = dir.path().join("card.json");
+    std::fs::write(&card, r#"{"title": "Merged"}"#).unwrap();
+    let mut parts = Vec::new();
+    for k in 0..10 {
+        let src = dir.path().join(format!("p{k}.nt"));
+        let body: String = (0..20)
+            .map(|i| {
+                format!(
+                    "<http://example.test/s{k}_{i}> <http://www.w3.org/2000/01/rdf-schema#label> \"Label {k} {i}\" .\n"
+                )
+            })
+            .collect();
+        std::fs::write(&src, body).unwrap();
+        let out = dir.path().join(format!("p{k}.rete"));
+        run(&["build", s(&src), "-o", s(&out), "--no-pyramid"], false);
+        parts.push(out);
+    }
+    for (name, repro, extra) in RECORD_SHAPES {
+        let out = dir
+            .path()
+            .join(format!("m-{}.rete", name.replace(' ', "-")));
+        let mut a = vec!["merge"];
+        a.extend(parts.iter().map(|p| s(p)));
+        a.extend_from_slice(&[
+            "-o",
+            s(&out),
+            "--memory-budget-mb",
+            "64",
+            "--card-file",
+            s(&card),
+        ]);
+        a.extend_from_slice(extra);
+        let err = run_stderr(&a, repro);
+        assert_in_place(name, &err, &out);
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(stored_card(&bytes).is_some(), "{name}: a card");
+    }
+}
+
+/// `--named-graphs per-graph` with the bounded build is refused by name, even
+/// where the in-RAM hook still writes that layout.
+#[test]
+fn per_graph_is_refused_by_the_bounded_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("g.nq");
+    std::fs::write(&src, catalog(true)).unwrap();
+    for legacy in [false, true] {
+        let mut c = rete();
+        if legacy {
+            c.env("RETE_WRITE_FORMAT", "5");
+        } else {
+            c.env_remove("RETE_WRITE_FORMAT");
+        }
+        let o = c
+            .args(["build", s(&src), "-o", s(&dir.path().join("o.rete"))])
+            .args(["--memory-budget-mb", "64", "--named-graphs", "per-graph"])
+            .output()
+            .unwrap();
+        assert!(!o.status.success());
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(err.contains("quad index only"), "{err}");
+        assert!(!dir.path().join("o.rete").exists());
+    }
+}
+
+/// A predicate-restricted text index (section kind 11) from the bounded
+/// build is the in-RAM build's, byte for byte, and is flagged partial.
+#[test]
+fn a_predicate_restricted_text_index_is_identical() {
+    let flags = [
+        "--text-index",
+        "--text-index-include",
+        "http://purl.org/dc/terms/title",
+    ];
+    let bytes = three_ways("kind 11", "catalog.nq", &catalog(true), &flags);
+    let h = rete_core::v06::Header06::from_bytes(&bytes).unwrap();
+    assert!(h.has(rete_core::v06::P_TEXT), "a text index");
+    assert!(
+        h.has(rete_core::v06::P_TEXT_PARTIAL),
+        "predicate-restricted: kind 11"
+    );
+    // And the scope that excludes instead, with a label index alongside.
+    let flags = [
+        "--text-index",
+        "--text-index-exclude",
+        "http://purl.org/dc/terms/title",
+        "--label-index",
+    ];
+    let _ = three_ways("kind 11 exclude", "catalog.nt", &catalog(false), &flags);
+}
+
+/// A bounded build whose input spans several chunks, with tiles and
+/// dictionary chunks cut small so every directory has several leaves: the
+/// in-RAM build's bytes again.
+#[test]
+fn a_build_of_several_chunks_tiles_and_leaves_equals_the_in_ram_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("big.nt");
+    {
+        use std::io::Write;
+        let mut w = std::io::BufWriter::new(std::fs::File::create(&src).unwrap());
+        let n = 90_000u64;
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        for i in 0..n {
+            // ~400 bytes of words per literal, so a chunk fills at 64 MiB.
+            let mut lit = String::with_capacity(420);
+            while lit.len() < 400 {
+                x = x
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                lit.push_str(&format!("w{:x} ", x >> 40));
+            }
+            writeln!(
+                w,
+                "<http://example.test/s{i}> <http://example.test/p{}> \"{lit}\" .",
+                i % 5
+            )
+            .unwrap();
+            if i % 3 == 0 {
+                writeln!(
+                    w,
+                    "<http://example.test/s{i}> <http://example.test/link> <http://example.test/s{}> .",
+                    (i * 7) % n
+                )
+                .unwrap();
+            }
+        }
+    }
+    let knobs = ["--tile-kib", "4", "--dict-chunk-kib", "4"];
+    let (bounded, ram) = (dir.path().join("bounded.rete"), dir.path().join("ram.rete"));
+    let mut a = vec![
+        "build",
+        s(&src),
+        "-o",
+        s(&bounded),
+        "--memory-budget-mb",
+        "64",
+    ];
+    a.extend_from_slice(&knobs);
+    let err = run_stderr(&a, true);
+    let chunks: u64 = err
+        .lines()
+        .find_map(|l| {
+            let l = l.strip_prefix("extbuild: ")?;
+            let (n, rest) = l.split_once(" chunk(s)")?;
+            rest.contains("spilled").then(|| n.parse().ok()).flatten()
+        })
+        .expect("the chunk count is logged");
+    assert!(chunks >= 2, "the input must span several chunks: {chunks}");
+    let mut b = vec!["build", s(&src), "-o", s(&ram), "--no-pyramid"];
+    b.extend_from_slice(&knobs);
+    run_stderr(&b, true);
+    let (x, y) = (
+        std::fs::read(&bounded).unwrap(),
+        std::fs::read(&ram).unwrap(),
+    );
+    assert!(
+        x == y,
+        "bounded build of {chunks} chunks differs from the in-RAM build"
+    );
+    // Several leaves in the dictionary directory.
+    let (_, root) = rete_core::v06::open::read_front(&rete_core::SliceReader::new(&x)).unwrap();
+    let dict =
+        rete_core::v06::decode_dict_root(root.unit(rete_core::v06::tag::DICT).unwrap()).unwrap();
+    assert!(
+        dict.iter().any(|d| d.leaves.len() > 1),
+        "several dictionary leaves"
+    );
+    rete().arg("verify").arg(&bounded).assert().success();
 }

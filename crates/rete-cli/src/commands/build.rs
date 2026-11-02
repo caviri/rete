@@ -1062,7 +1062,12 @@ pub(crate) fn build_external_cmd(
     }
     // The bounded build writes 0x06 whatever `RETE_WRITE_FORMAT` says, and
     // 0x06 stores named graphs in the quad index only.
-    let _ = graphs;
+    if graphs == rete_core::GraphLayout::PerGraph {
+        anyhow::bail!(
+            "--named-graphs per-graph: the memory-bounded build writes format 0x06, which \
+             stores named graphs in the quad index only"
+        );
+    }
     let graphs = rete_core::GraphLayout::Quad;
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
         .iter()
@@ -1309,11 +1314,26 @@ pub(crate) fn full_card_hook(
         info.dropped_queries = full.dropped;
         let meta = full.card.to_json_bytes();
         outcome.meta_len.set(meta.len());
-        // The costs are a property of the final layout, card region included:
-        // reserve the record with every cost at its widest and measure again
-        // on the file as written ([`finish_full_card`]).
+        // The record goes into the file before the write it describes, so its
+        // room is reserved now, from a copy sealed as the final one will be
+        // (the inputs' sizes and digests, the timestamps) with everything
+        // still to be measured at its widest: the starter-query costs (they are
+        // a property of the final layout, card region included, and are
+        // measured again on the file as written, [`finish_full_card`]), the run
+        // and the spill counters (the scratch peak is only known at the end).
+        // Sizing it from `info` as it stands (placeholder inputs, stale
+        // counters) left the sealed record longer than its room, and a record
+        // that does not fit costs a copy of the whole file.
+        let mut sealed = info.clone();
+        rec.seal(&mut sealed);
+        sealed.spill = Some(buildinfo::SpillRecord {
+            chunks: u64::MAX,
+            merge_passes: u64::MAX,
+            sort_runs: u64::MAX,
+            scratch_peak_bytes: u64::MAX,
+        });
         let reserve =
-            buildinfo::with_widest_costs(&info).reserve_bytes(buildinfo::Pending::Write, &rec);
+            buildinfo::with_widest_costs(&sealed).reserve_bytes(buildinfo::Pending::Write, &rec);
         Ok((meta, reserve))
     })
 }
@@ -1331,8 +1351,9 @@ pub(crate) fn finish_full_card(
 ) -> anyhow::Result<()> {
     if let Some(e) = outcome.failed.borrow().as_ref() {
         anyhow::bail!(
-            "{e}\n{output} is complete but has no card; `rete recard {output} --in-place \
-             --card-file …` gives it one without rebuilding"
+            "{e}\n{output} is complete but has no card, and so no card region to fill: \
+             `rete recard {output} -o <new.rete> --card-file …` (a full copy) gives it one \
+             without rebuilding"
         );
     }
     let mut info = info.borrow_mut();
@@ -2006,7 +2027,7 @@ mod tests {
                 },
                 true,
                 rete_core::PermSet::ALL,
-                rete_core::GraphLayout::PerGraph,
+                rete_core::GraphLayout::Quad,
                 false,
                 ingest::QuotedTripleSurface::default(),
                 None,
@@ -2037,5 +2058,52 @@ mod tests {
             }
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A card derivation that cannot read its sections does not lose the
+    /// build: the hook hands back no card, and `finish_full_card` reports it
+    /// once the file is written — pointing at a copying re-card, since a file
+    /// without a card has no card region to fill in place.
+    #[test]
+    fn a_failing_card_derivation_is_reported_with_the_right_remedy() {
+        struct Broken;
+        impl rete_core::RangeReader for Broken {
+            fn len(&self) -> u64 {
+                4096
+            }
+            fn read_at(&self, _: u64, _: u64) -> std::io::Result<Vec<u8>> {
+                Err(std::io::Error::other("unreadable"))
+            }
+        }
+        let rec = std::rc::Rc::new(buildinfo::Recorder::start(&[]));
+        let info = std::rc::Rc::new(std::cell::RefCell::new(buildinfo::BuildInfo::default()));
+        let outcome = std::rc::Rc::new(CardOutcome::default());
+        let hook = full_card_hook(
+            info.clone(),
+            card::CardInput::default(),
+            false,
+            64,
+            rec.clone(),
+            rete_core::IriReport::default,
+            outcome.clone(),
+            "build",
+        );
+        let stats = ingest::BuildStats {
+            statements: 0,
+            default_triples: 0,
+            named_graphs: 0,
+            terms: 0,
+            pyramid_levels: 0,
+        };
+        let (card, record) = hook(std::sync::Arc::new(Broken), &stats).unwrap();
+        assert!(card.is_empty() && record.is_empty());
+        let e = finish_full_card("x.rete", &info, &rec, &outcome)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("unreadable"), "{e}");
+        assert!(
+            e.contains("-o <new.rete>") && !e.contains("--in-place"),
+            "{e}"
+        );
     }
 }

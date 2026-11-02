@@ -57,9 +57,12 @@ file only once the readers that fetch it run this release. See
 - **Starter-query costs are measured on the file as written** (in `0x06` they
   depend on the layout, card region included: the open reads the first 64 KiB).
 - **The memory-bounded build and `rete merge` write `0x06` directly.** The sections stay in the
-  spill; one write copies each to its final offset and deletes it, so peak disk is the spill
-  plus one output (it used to be the `0x05` file and its `0x06` copy side by side) and there is
-  no convert pass. The output is byte for byte what the in-RAM build, or the in-RAM `0x05`
+  spill; one write copies each to its final offset and deletes each spill file as soon as
+  it is read through, so the disk holds the spill plus an output that grows file by file as the
+  spill shrinks (it used to hold the `0x05` file and its `0x06` copy side by side), and there is
+  no convert pass. The output is written under a working name beside the final one, synced, and
+  renamed; a failure before the first spill file is deleted keeps the whole spill and prints its
+  path. The output is byte for byte what the in-RAM build, or the in-RAM `0x05`
   build plus `rete convert`, writes for the same input and what a direct build of the union
   writes for a merge. With a card, the card is derived from the finished sections before the
   file exists, so it goes into the card region of that one file (it used to cost another copy).
