@@ -564,3 +564,56 @@ fn a_small_left_side_probes_a_fat_optional_in_both_layouts() {
         );
     }
 }
+
+/// `?s a <rare class> . ?s <other> ?x`: the rare class is a handful of rows of
+/// a predicate that fills thousands of tiles, so the join seeds from it and
+/// probes `other` per subject. Seeding from `other` (100,000 rows) reads a large
+/// part of the index. Both layouts must read a sliver of it.
+#[test]
+fn a_rare_class_seeds_the_join_in_both_layouts() {
+    let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+    let (common, rare, other) = (
+        "<http://ex/Common>",
+        "<http://ex/Rare>",
+        "<http://ex/other>",
+    );
+    let subjects: Vec<String> = (0..100_000u32).map(mt_node).collect();
+    let mut db = DictionaryBuilder::new();
+    let mut triples: Vec<(String, &str, String)> = Vec::new();
+    for (i, s) in subjects.iter().enumerate() {
+        triples.push((s.clone(), ty, common.into()));
+        triples.push((s.clone(), other, format!("\"o {i}\"")));
+        if i % 5000 == 0 {
+            triples.push((s.clone(), ty, rare.into()));
+        }
+    }
+    for (s, p, o) in &triples {
+        db.observe(s, p, o);
+    }
+    let dict = db.build();
+    let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+    for (s, p, o) in &triples {
+        ib.push(dict.encode(s, p, o).unwrap());
+    }
+    let v5 = write_file(&dict, &ib.build(), false, &[], 0);
+    let v06 = v6(v5.clone());
+    let q = format!("SELECT ?s ?x WHERE {{ ?s a {rare} . ?s {other} ?x }}");
+    let want = select(&Rete::open(&v5).unwrap(), &q);
+    assert_eq!(want.len(), 20);
+    for (name, image, idx_kind) in [("0x05", v5, None), ("0x06", v06, Some(kind::INDEX_DATA))] {
+        let idx = match idx_kind {
+            Some(k) => region(&image, k),
+            None => (0, image.len() as u64),
+        };
+        let rec = Rec::new(image);
+        let rete = lazy(&rec);
+        rec.take();
+        assert_eq!(select(&rete, &q), want, "{name}");
+        let i = inside(&rec.take(), idx);
+        assert!(
+            i < (idx.1 - idx.0) / 8,
+            "{name}: {i} of {} index bytes for a 20-row join",
+            idx.1 - idx.0
+        );
+    }
+}

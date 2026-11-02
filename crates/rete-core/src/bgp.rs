@@ -2100,6 +2100,64 @@ mod tests {
         assert!(budget6.is_some_and(|b| b >= 1000), "{budget6:?}");
     }
 
+    /// A selective object on a fat leading predicate must estimate small in
+    /// both layouts: `?s rdf:type <rare class>` is a few tiles of a predicate
+    /// that fills thousands, and the planner seeds the join from it. On 0x06 a
+    /// leaf that is not resident used to be estimated without the bound object
+    /// (the whole of `rdf:type`) or by the ids' average share of its leaf
+    /// (skewed ids put a rare class beside a huge one).
+    #[test]
+    fn a_rare_object_of_a_fat_predicate_estimates_small_in_both_layouts() {
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..120_000 {
+            let s = format!("<http://ex/s{i:06}>");
+            owned.push((s.clone(), ty.into(), "<http://ex/Common>".into()));
+            owned.push((s.clone(), "<http://ex/other>".into(), format!("\"o {i}\"")));
+            if i % 3000 == 0 {
+                owned.push((s, ty.into(), "<http://ex/Rare>".into()));
+            }
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = write_file(&dict, &ib.build(), false, &[], 0);
+        let v6: &'static [u8] = Box::leak(
+            crate::v06::write::convert_image(&v5, Default::default())
+                .unwrap()
+                .into_boxed_slice(),
+        );
+        let leaked5: &'static [u8] = Box::leak(v5.into_boxed_slice());
+        let figures = |rete: &Rete| {
+            let est = |q: &[TriplePattern]| {
+                let mut slots = Slots::new();
+                collect_pattern_slots(q, &mut slots);
+                let ctx = Ctx::new(rete, slots);
+                bgp_min_estimate(&ctx, rete.default_index(), q).unwrap()
+            };
+            (
+                est(&[pat("?s", ty, "<http://ex/Rare>")]),
+                est(&[pat("?s", ty, "<http://ex/Common>")]),
+                est(&[pat("?s", "<http://ex/other>", "?x")]),
+            )
+        };
+        for (name, bytes) in [("0x05", leaked5), ("0x06", v6)] {
+            let rete = Rete::open_ranged_lazy(crate::reader::SliceReader::new(bytes)).unwrap();
+            let (rare, common, other) = figures(&rete);
+            assert!(rare * 20.0 < other, "{name}: rare {rare} vs other {other}");
+            assert!(
+                rare * 20.0 < common,
+                "{name}: rare {rare} vs common {common}"
+            );
+        }
+    }
+
     /// Every join path the planner can pick — materialized prefix, probed last
     /// pattern, streamed seed with hashed or probed later patterns, streaming
     /// merge join — returns the same solution multiset. The thresholds are
