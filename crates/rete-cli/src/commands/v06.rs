@@ -85,12 +85,20 @@ pub(crate) fn convert(
     } else {
         None
     };
+    // The record says what happened: the source's own record, as it was, with
+    // this conversion appended (or just the conversion, for a file without one).
+    let in_len = rete_core::RangeReader::len(&reader);
+    let conversion = conversion_entry(input, &reader, quad, label_index)?;
+    let source_record = rete_core::v06::write::source_build_record(&reader)
+        .map_err(|e| anyhow::anyhow!("reading {input}: {e}"))?;
+    let record = super::buildinfo::with_conversion(source_record.as_deref(), &conversion)?;
     let tmp = std::path::PathBuf::from(format!("{output}.convert-tmp"));
     let written = {
         let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
-        let w = match rete_core::v06::write::convert_with_labels(
+        let w = match rete_core::v06::write::convert_with_record(
             &reader,
             labels.as_deref(),
+            Some(record),
             &mut out,
             opts,
         ) {
@@ -98,7 +106,7 @@ pub(crate) fn convert(
             Err(rete_core::format::FileError::Container(m)) if m.contains("kind 5") => {
                 drop(out);
                 let _ = std::fs::remove_file(&tmp);
-                return convert_per_graph(input, output, label_index);
+                return convert_per_graph(input, output, label_index, &conversion);
             }
             Err(e) => {
                 drop(out);
@@ -110,7 +118,6 @@ pub(crate) fn convert(
         w
     };
     std::fs::rename(&tmp, output)?;
-    let in_len = rete_core::RangeReader::len(&reader);
     eprintln!(
         "convert: wrote {output} — format 0x06, {} bytes ({:+.2}% vs {} bytes), content hash {}, {:.1}s",
         written.header.file_len,
@@ -120,6 +127,40 @@ pub(crate) fn convert(
         started.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+/// This conversion, for the build record: the engine, the time, the command
+/// with the flags that shaped the result, and the file it started from.
+fn conversion_entry(
+    input: &str,
+    reader: &super::range_source::RangedSourceReader,
+    quad: Option<&str>,
+    label_index: bool,
+) -> anyhow::Result<super::buildinfo::Conversion> {
+    use super::buildinfo as bi;
+    let len = rete_core::RangeReader::len(reader);
+    let head = rete_core::RangeReader::read_at(
+        reader,
+        0,
+        (rete_core::format::HEADER_LEN as u64).min(len),
+    )?;
+    let h = rete_core::format::Header::from_bytes(&head)?;
+    let mut command = String::from("rete convert");
+    if let Some(q) = quad {
+        command.push_str(&format!(" --quad-clustering {q}"));
+    }
+    if !label_index {
+        command.push_str(" --no-label-index");
+    }
+    Ok(bi::Conversion {
+        at: bi::timestamp(),
+        engine: Some(bi::engine()),
+        command,
+        source_format: format!("0x{:02x}", h.version),
+        source_content_hash: hex16(&h.content_hash),
+        source_bytes: len,
+        source_name: Some(bi::file_name(input)),
+    })
 }
 
 /// The LABEL_INDEX section `build --label-index` would write, for an input
@@ -149,7 +190,12 @@ fn legacy_label_section(input: &str) -> anyhow::Result<Option<Vec<u8>>> {
 
 /// Kind-5 inputs: decode every statement and rebuild with the quad index —
 /// the per-graph layout is not one `0x06` can carry.
-fn convert_per_graph(input: &str, output: &str, label_index: bool) -> anyhow::Result<()> {
+fn convert_per_graph(
+    input: &str,
+    output: &str,
+    label_index: bool,
+    conversion: &super::buildinfo::Conversion,
+) -> anyhow::Result<()> {
     eprintln!(
         "convert: {input} stores its named graphs per graph (kind 5); re-encoding them as a quad index"
     );
@@ -180,6 +226,10 @@ fn convert_per_graph(input: &str, output: &str, label_index: bool) -> anyhow::Re
         card.clone().unwrap_or_default()
     });
     let image = finish_recorded(image, "convert", &stats)?;
+    // The re-encoded file's lean record, plus the conversion.
+    let lean = rete_core::read_build_info(&image)?;
+    let record = super::buildinfo::with_conversion(lean.as_deref(), conversion)?;
+    let image = rete_core::attach_build_info(&image, &record)?;
     std::fs::write(output, &image)?;
     eprintln!(
         "convert: wrote {output} — format 0x06, {} bytes",

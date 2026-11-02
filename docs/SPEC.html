@@ -1062,6 +1062,11 @@ build timestamps, the engine (version, commit, target, features), the flags in
 force, the inputs (file names and BLAKE3 digests), statement counts, per-phase
 timings and peak memory, and measured starter-query costs (see
 <a href="dataset-cards.html#build-conditions-the-build-info-section">Dataset Cards</a>).
+A file converted from <code>0x05</code> carries a <code>conversions</code> list: one entry per
+<code>rete convert</code> (the engine, the time, the command and flags, and the source's
+format version, content hash and size), appended to the source's own record,
+which is kept as it was; a source without a record gets one that holds only the
+conversion.
 Since 0.4.0 the JSON may be followed by <strong>ASCII spaces</strong> up to the section's
 length: the writer reserves the record's widest form before the build has
 finished and fills it in place afterwards. JSON allows trailing whitespace, so

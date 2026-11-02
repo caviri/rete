@@ -1024,7 +1024,34 @@ pub fn convert_with_labels<W: Write + Seek>(
     out: &mut W,
     opts: WriteOpts,
 ) -> Result<Written, FileError> {
+    convert_with_record(input, labels, None, out, opts)
+}
+
+/// The source file's build record as stored (raw JSON, possibly padded), or
+/// `None` when it has none — what [`convert_with_record`] is given to extend.
+pub fn source_build_record(input: &dyn RangeReader) -> Result<Option<Vec<u8>>, FileError> {
+    let len = input.len().min(crate::header::HEADER_LEN as u64);
+    let h = crate::header::Header::from_bytes(&input.read_at(0, len)?)?;
+    if h.build_info_len == 0 {
+        return Ok(None);
+    }
+    Ok(Some(input.read_at(h.build_info_offset, h.build_info_len)?))
+}
+
+/// [`convert_with_labels`], writing `record` as the build record instead of
+/// the input's own (`None` keeps the input's, byte for byte). The record is
+/// outside the content hash.
+pub fn convert_with_record<W: Write + Seek>(
+    input: &dyn RangeReader,
+    labels: Option<&[u8]>,
+    record: Option<Vec<u8>>,
+    out: &mut W,
+    opts: WriteOpts,
+) -> Result<Written, FileError> {
     let mut parts = parts::from_v05(input)?;
+    if record.is_some() {
+        parts.build = record;
+    }
     let Some(sec) = labels.filter(|s| !s.is_empty() && parts.labels.is_none()) else {
         return assemble(&parts, input, out, opts);
     };

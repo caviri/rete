@@ -1128,10 +1128,14 @@ dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
 — copied byte for byte; the directories are re-cut into leaves at the front,
 next to the card and the statistics. Nothing is parsed as RDF, so the cost is
 one read and one write of the file. The input may be a path or an http(s) URL.</p>
-<p>The card and the build record are carried as they are. The output has the
-content hash <code>rete build</code> gives the same data and flags — not the <code>0x05</code> file's,
-since the format is part of the identity — and, when the file has no build
-record, the same bytes. Two inputs take more than a copy:</p>
+<p>The card is carried as it is. The build record is carried too, with a
+<code>conversions</code> entry added that names the converting engine, the time, the
+command and flags, and the source's format, content hash and size (a file
+without a record gets one holding just that). The output has the content hash
+<code>rete build</code> gives the same data and flags — not the <code>0x05</code> file's, since the
+format is part of the identity — and, record apart, the same bytes; the record
+is outside the hash. <code>RETE_BUILD_RECORD=reproducible</code> makes two conversions of
+one file byte-identical. Two inputs take more than a copy:</p>
 <ul>
 <li><strong>Per-graph named graphs</strong> (the <code>0x05</code> NAMED_GRAPHS section) are re-encoded as
 a quad index from the decoded statements, as <code>repyramid</code> would. This reads the

@@ -399,6 +399,7 @@ fn build_activity(b: &BuildInfo, doc: &mut Map<String, Value>) -> Value {
         "rete:run",
         "rete:spill",
         "rete:recarded",
+        "rete:conversions",
         "rete:host",
     ] {
         ctx.insert(term.into(), json!({ "@type": "@json" }));
@@ -490,6 +491,9 @@ fn build_activity(b: &BuildInfo, doc: &mut Map<String, Value>) -> Value {
     }
     if let Some(r) = &b.recarded {
         act.insert("rete:recarded".into(), as_json(r));
+    }
+    if !b.conversions.is_empty() {
+        act.insert("rete:conversions".into(), as_json(&b.conversions));
     }
     Value::Object(act)
 }
