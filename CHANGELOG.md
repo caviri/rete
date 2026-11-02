@@ -84,6 +84,14 @@ file only once the readers that fetch it run this release. See
 
 ### Fixed
 
+- **`STR()` of a blank node is an error, as SPARQL 1.1 says (G28).** It returned the label (`_:b0`), so a row
+  with a blank node bound `?t` to `"_:b0"` and `CONTAINS(STR(?s), "b0")` matched it. Now the expression is an
+  error: a `BIND` leaves its variable unbound and a `FILTER` drops the row. The same label no longer leaks through
+  the arguments the string functions read by text: `IRI(?b)` (it made `<_:b0>`), the language tag of `STRLANG`,
+  the pattern and flags of `REGEX` and `REPLACE`, the replacement of `REPLACE`, and both arguments of
+  `LANGMATCHES` must be string literals (a blank node, an IRI or a number is an error). `STRLEN`, `CONCAT`,
+  `UCASE`/`LCASE`, `SUBSTR`, `ENCODE_FOR_URI` and the hashes already refused a blank node. `GROUP_CONCAT` still
+  concatenates the lexical form of whatever it is given. The W3C SPARQL 1.1 suite stays at 239/312.
 - **The memory-bounded build accepts more than 2³¹ subject-only or object-only terms.** The provisional
   role-only ids no longer spend bit 31 of a `u32` on the class, so each position may hold up to
   `u32::MAX` terms, the format's limit (the OpenCitations Index has 2.56 B subject-only terms). A final id

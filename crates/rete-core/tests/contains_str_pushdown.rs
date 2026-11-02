@@ -149,7 +149,7 @@ fn str_over_an_iri_object_keeps_its_row() {
 }
 
 /// Every STR shape, with and without a proof that `?o` is a literal, over IRI,
-/// literal and blank-node objects, in the default graph, a `UNION` with
+/// literal and blank-node objects (which STR refuses, so they never match), in the default graph, a `UNION` with
 /// `GRAPH ?g`, and `GRAPH <g>`: always the plain file's rows.
 #[test]
 fn every_str_shape_answers_like_a_file_without_an_index() {
@@ -205,8 +205,12 @@ fn every_str_shape_answers_like_a_file_without_an_index() {
     for layout in [GraphLayout::PerGraph, GraphLayout::Quad] {
         let plain = Rete::open(&build(layout, None)).unwrap();
         let expected: Vec<Vec<String>> = queries.iter().map(|q| rows(&plain, q)).collect();
+        // A blank node has no lexical form: STR(?o) is an error for the
+        // `_:b7`, `_:glucose1` and `_:created9` objects, so no needle matches
+        // one by its label, with or without an index. (That leaves a smaller
+        // share of the queries answering than when STR read the label.)
         assert!(
-            expected.iter().filter(|r| !r.is_empty()).count() > queries.len() / 3,
+            expected.iter().filter(|r| !r.is_empty()).count() > queries.len() / 4,
             "the fixture should answer many queries"
         );
         for (name, sc) in scopes() {
