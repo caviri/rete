@@ -354,7 +354,17 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         r
     };
     match f {
-        Builtin::Str => s(lex(&a0()?)),
+        // STR is defined for a literal and an IRI. A blank node has no lexical
+        // form (SPARQL 1.1 §17.4.2.5): the expression is an error, so the row
+        // binds nothing, and the label `_:b0` never reaches a string.
+        Builtin::Str => {
+            let a = a0()?;
+            if a.starts_with("_:") {
+                diag::bad_arg(f, 1, &a);
+                return None;
+            }
+            s(lex(&a))
+        }
         // RDF-star accessors return the component TERM (an IRI/literal/quoted
         // triple), not a lexical string; TRIPLE builds a quoted triple from three
         // term values. `None` (a type error) when the argument is not a quoted
@@ -480,7 +490,15 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         }
         Builtin::StrLang => {
             let v = simple_arg(f, &arg(0)?)?;
-            let lang = lex(&arg(1)?);
+            // The language tag is a simple literal too: not an IRI or a blank
+            // node read by its token text.
+            let lang = lex_string_arg(f, 2, &arg(1)?)?;
+            // An empty or malformed tag would make a malformed literal
+            // (`"x"@`, `"x"@en us`): a type error instead.
+            if !is_language_tag(&lang) {
+                diag::bad_arg(f, 2, &arg(1)?);
+                return None;
+            }
             Some(Rc::from(make_literal(&v, Some(&lang), None)))
         }
         // IRI()/URI(): an IRI argument passes through; a string becomes <...>.
@@ -489,7 +507,9 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             if is_iri(&a) {
                 Some(a)
             } else {
-                Some(Rc::from(format!("<{}>", lex(&a))))
+                // A string literal only: a blank node (or a number) is an error,
+                // not an IRI spelled from its token.
+                Some(Rc::from(format!("<{}>", lex_string_arg(f, 1, &a)?)))
             }
         }
         Builtin::EncodeForUri => {
@@ -501,10 +521,10 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             let a = a0()?;
             let lang = string_arg_of(f, 0, &a)?; // arg1 must be a string literal
             let text = lex(&a);
-            let pat = lex(&args.get(1)?.value(ctx, b)?);
-            let rep = lex(&args.get(2)?.value(ctx, b)?);
+            let pat = lex_string_arg(f, 2, &args.get(1)?.value(ctx, b)?)?;
+            let rep = lex_string_arg(f, 3, &args.get(2)?.value(ctx, b)?)?;
             let flags = match args.get(3) {
-                Some(e) => lex(&e.value(ctx, b)?),
+                Some(e) => lex_string_arg(f, 4, &e.value(ctx, b)?)?,
                 None => String::new(),
             };
             let Some(out) = ctx.resolver.regex_replace(&pat, &flags, &text, &rep) else {
@@ -1160,8 +1180,15 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<bool> {
             match (&text, &pat) {
                 // The text argument must be a string literal — a non-string is a
                 // type error, matching SPARQL and CONTAINS above.
-                (Some(text), Some(pat)) if string_arg(text).is_some() => {
-                    let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
+                (Some(text), Some(pat))
+                    if string_arg(text).is_some() && string_arg(pat).is_some() =>
+                {
+                    // The flags are a string literal as well: an IRI or a blank
+                    // node is no flag string.
+                    let flags = match args.get(2) {
+                        None => String::new(),
+                        Some(e) => lex_string_arg(f, 3, &e.value(ctx, b)?)?.to_string(),
+                    };
                     let pat = lexical(pat);
                     match ctx.resolver.regex_try(&pat, &flags, &lexical(text)) {
                         Some(true) => Some(true),
@@ -1187,7 +1214,10 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<bool> {
         // (case-insensitive; "*" matches any non-empty tag).
         Builtin::LangMatches => {
             let (tag, range) = (val(0)?, val(1)?);
-            Some(lang_matches(&lexical(&tag), &lexical(&range)))
+            Some(lang_matches(
+                &lex_string_arg(f, 1, &tag)?,
+                &lex_string_arg(f, 2, &range)?,
+            ))
         }
         // GeoSPARQL topological relations: a malformed / non-geometry argument
         // is a type error.
@@ -1217,6 +1247,30 @@ fn no_match(ctx: &Ctx, f: Builtin, bit: u8, args: &[FExpr]) {
         if let Some(needle) = args.get(1) {
             diag::note_no_match(f, needle);
         }
+    }
+}
+
+/// BCP 47 shape of a language tag (RDF 1.1 `LANGTAG`): a primary subtag of
+/// letters, then any number of `-` subtags of letters and digits.
+fn is_language_tag(tag: &str) -> bool {
+    let mut parts = tag.split('-');
+    let first = parts.next().unwrap_or("");
+    !first.is_empty()
+        && first.bytes().all(|b| b.is_ascii_alphabetic())
+        && parts.all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
+/// The unescaped lexical value of `token` iff it is a string literal (plain,
+/// `xsd:string` or language-tagged); otherwise the argument is reported at
+/// 1-based `pos` and the call is a type error. For the arguments a string
+/// function reads by text (a pattern, flags, a language range), where an IRI or
+/// a blank node would otherwise be read by its token: `_:b0`.
+fn lex_string_arg(f: Builtin, pos: usize, token: &str) -> Option<String> {
+    if string_arg(token).is_some() {
+        Some(crate::terms::lexical(token).into_owned())
+    } else {
+        diag::bad_arg(f, pos, token);
+        None
     }
 }
 
