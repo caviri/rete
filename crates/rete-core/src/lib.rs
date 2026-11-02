@@ -48,7 +48,6 @@ pub mod file;
 #[doc(hidden)]
 pub mod geo;
 pub mod geo3;
-/// A memory ceiling for one query on the calling thread ([`guard::QueryGuard`]).
 #[doc(hidden)]
 pub mod guard;
 #[doc(hidden)]
