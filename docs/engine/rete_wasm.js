@@ -1473,8 +1473,9 @@ export function build_with_card_syntax(text, format, card_json, quoted_triple_sy
  * - **Sections are uncompressed** (the wasm build has no zstd *encoder*), so
  *   the file is larger than a CLI build of the same graph. Every reader
  *   accepts it.
- * - **No build-info section** (kind 7): its cost figures come from *running*
- *   the starter queries, which is a benchmark, not a build.
+ * - **The build record has no starter-query costs**: they come from *running*
+ *   the starter queries, which is a benchmark, not a build. Everything else
+ *   in the record is there (see `finish_build`).
  *
  * # Why this is a separate function
  *
@@ -2833,6 +2834,10 @@ function __wbg_get_imports() {
             const ret = arg0.msCrypto;
             return ret;
         },
+        __wbg_new_0_445c13a750296eb6: function() {
+            const ret = new Date();
+            return ret;
+        },
         __wbg_new_2ee370dca414d926: function() { return handleError(function () {
             const ret = new XMLHttpRequest();
             return ret;
@@ -2946,6 +2951,10 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_subarray_4aa221f6a4f5ab22: function(arg0, arg1, arg2) {
             const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+            return ret;
+        },
+        __wbg_toISOString_d485be0388a74494: function(arg0) {
+            const ret = arg0.toISOString();
             return ret;
         },
         __wbg_versions_276b2795b1c6a219: function(arg0) {
