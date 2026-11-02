@@ -808,17 +808,19 @@ open reads the first 64 KiB and the query then reads only the tiles it needs.</p
 and merges the rows. Build a second file with one more dependency:</p>
 <pre><code class="language-sh">echo '&lt;http://ex/api&gt; &lt;http://ex/dependsOn&gt; &lt;http://ex/logging&gt; .' &gt; more.nt
 rete build more.nt -o more.rete
-rete federate data.rete more.rete --query "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn e:logging } ORDER BY ?package"
+rete federate data.rete more.rete --query "PREFIX e: &lt;http://ex/&gt; SELECT ?package WHERE { ?package e:dependsOn e:logging }"
 </code></pre>
-<pre><code class="language-text">  data.rete: 1 row(s) in 3.8ms
-  more.rete: 1 row(s) in 2.2ms
+<pre><code class="language-text">  data.rete: 1 row(s) in 2.2ms
+  more.rete: 1 row(s) in 2.5ms
 2 solution(s)
 federated 2 source(s): 2 queried, 0 pruned (routing on); 2 merged result(s)
 ?package=&lt;http://ex/web&gt;
 ?package=&lt;http://ex/api&gt;
 </code></pre>
-<p>Each file contributes its own rows, so a <code>COUNT</code> or <code>LIMIT</code> applies per file, and
-there are no joins across files. See <a href="federation.html">Federated queries</a>.</p>
+<p>Rows come in source order and are not re-sorted, because each file is queried on
+its own: <code>ORDER BY</code>, <code>COUNT</code> and <code>LIMIT</code> apply per file. The CLI does a union
+and no joins across files; the playground can join across sources. See
+<a href="federation.html">Federated queries</a>.</p>
 <h3 id="remote-query">A file on a URL</h3>
 <p>A remote file is queried through HTTP range requests, so nothing is downloaded
 beyond what the query reads. To try it without a host, serve this directory with

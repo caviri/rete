@@ -277,20 +277,22 @@ and merges the rows. Build a second file with one more dependency:
 ```sh
 echo '<http://ex/api> <http://ex/dependsOn> <http://ex/logging> .' > more.nt
 rete build more.nt -o more.rete
-rete federate data.rete more.rete --query "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn e:logging } ORDER BY ?package"
+rete federate data.rete more.rete --query "PREFIX e: <http://ex/> SELECT ?package WHERE { ?package e:dependsOn e:logging }"
 ```
 
 ```text
-  data.rete: 1 row(s) in 3.8ms
-  more.rete: 1 row(s) in 2.2ms
+  data.rete: 1 row(s) in 2.2ms
+  more.rete: 1 row(s) in 2.5ms
 2 solution(s)
 federated 2 source(s): 2 queried, 0 pruned (routing on); 2 merged result(s)
 ?package=<http://ex/web>
 ?package=<http://ex/api>
 ```
 
-Each file contributes its own rows, so a `COUNT` or `LIMIT` applies per file, and
-there are no joins across files. See [Federated queries](federation.md).
+Rows come in source order and are not re-sorted, because each file is queried on
+its own: `ORDER BY`, `COUNT` and `LIMIT` apply per file. The CLI does a union
+and no joins across files; the playground can join across sources. See
+[Federated queries](federation.md).
 
 ### A file on a URL {#remote-query}
 
