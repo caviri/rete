@@ -89,9 +89,13 @@ def test_rdf_star_is_the_default_and_unchanged():
         rete.build(TTL12, "ttl")
     with pytest.raises(ValueError, match="quoted_triple_syntax"):
         rete.build(PLAIN, "nt", quoted_triple_syntax="rdf13")
-    # N-Triples ignores the flag: identical bytes under both values.
-    assert rete.build(PLAIN) == rete.build(PLAIN, quoted_triple_syntax="rdf-star")
-    assert rete.build(PLAIN) == rete.build(PLAIN, quoted_triple_syntax="rdf12")
+    # N-Triples ignores the flag: the same file under both values (the content
+    # hash; the build record beside it carries the clock).
+    def chash(data):
+        return rete.open(data).content_hash()
+
+    assert chash(rete.build(PLAIN)) == chash(rete.build(PLAIN, quoted_triple_syntax="rdf-star"))
+    assert chash(rete.build(PLAIN)) == chash(rete.build(PLAIN, quoted_triple_syntax="rdf12"))
     # The same Turtle bytes are two graphs under the two readers.
     star = rete.open(rete.build(TTL_STAR, "ttl"))
     r12 = rete.open(rete.Builder().add(TTL_STAR, "ttl", quoted_triple_syntax="rdf12").run())

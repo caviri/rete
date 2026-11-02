@@ -76,9 +76,12 @@ test("reads RDF 1.2 TriG", async () => {
 test("rdf-star is the default reader, and unchanged", async () => {
   await assert.rejects(build(TTL12, "ttl"), /rdf12/);
   await assert.rejects(build(PLAIN, "nt", { quotedTripleSyntax: "rdf13" }), /quoted-triple syntax/);
-  const plain = await build(PLAIN);
-  assert.deepEqual(await build(PLAIN, "nt", { quotedTripleSyntax: "rdf-star" }), plain);
-  assert.deepEqual(await build(PLAIN, "nt", { quotedTripleSyntax: "rdf12" }), plain);
+  // The same file under both values: its content hash (every section and the
+  // card). The build record beside them carries the browser's clock.
+  const hashOf = async (bytes) => (await open(bytes)).contentHash();
+  const plain = await hashOf(await build(PLAIN));
+  assert.equal(await hashOf(await build(PLAIN, "nt", { quotedTripleSyntax: "rdf-star" })), plain);
+  assert.equal(await hashOf(await build(PLAIN, "nt", { quotedTripleSyntax: "rdf12" })), plain);
   // The same Turtle bytes are two graphs under the two readers.
   assert.equal((await open(await build(TTL_STAR, "ttl"))).quads, 1);
   assert.equal((await open(await build(TTL_STAR, "ttl", { quotedTripleSyntax: "rdf12" }))).quads, 2);
