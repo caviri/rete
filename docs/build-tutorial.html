@@ -814,7 +814,7 @@ build record. <code>--pyramid-algo types</code> is the same choice as in Python.
 <code>--label-index</code> writes the label index described in
 <a href="#9-optional-flags">section 9</a>. The build also ran 20 starter queries against
 the file it had just written; the card keeps those that answer.</p>
-<p><code>rete info</code> prints the decoded header (a long debug dump, which the <code>sed</code> above
+<p><code>rete info</code> prints the decoded header (a long debug dump, which the <code>sed</code> below
 skips), then the front of the file and its sections:</p>
 <pre><code class="language-sh">rete info solar.rete | sed -n '/^format 0x06/,/^permutations/p'
 </code></pre>
@@ -872,8 +872,9 @@ System 4 planet 0 moon 1	&lt;https://example.org/solar/S4_p0_m1&gt;
 </code></pre>
 <h2 id="4-the-card">4. The card</h2>
 <p>The card is a JSON document inside the file. It describes the dataset to
-someone who has not opened it. A reader can fetch it without touching the data, because it sits at the front of
-the file, so it is the first thing to look at in an unknown graph. Print it:</p>
+someone who has not opened it. It sits at the front of the file, so a reader
+can fetch it without touching the data. It is the first thing to look at in an
+unknown graph. Print it:</p>
 <pre><code class="language-sh">rete card solar.rete | head -n 40
 </code></pre>
 <pre><code class="language-text">Dataset Card

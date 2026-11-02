@@ -250,7 +250,7 @@ build record. `--pyramid-algo types` is the same choice as in Python.
 [section 9](#9-optional-flags). The build also ran 20 starter queries against
 the file it had just written; the card keeps those that answer.
 
-`rete info` prints the decoded header (a long debug dump, which the `sed` above
+`rete info` prints the decoded header (a long debug dump, which the `sed` below
 skips), then the front of the file and its sections:
 
 ```sh
@@ -336,8 +336,9 @@ System 4 planet 0 moon 1	<https://example.org/solar/S4_p0_m1>
 ## 4. The card
 
 The card is a JSON document inside the file. It describes the dataset to
-someone who has not opened it. A reader can fetch it without touching the data, because it sits at the front of
-the file, so it is the first thing to look at in an unknown graph. Print it:
+someone who has not opened it. It sits at the front of the file, so a reader
+can fetch it without touching the data. It is the first thing to look at in an
+unknown graph. Print it:
 
 ```sh
 rete card solar.rete | head -n 40
