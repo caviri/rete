@@ -244,7 +244,8 @@ its length, as in §4.9), each at the offset and length the header gives,
 relative to the region; the rest is free. The writer sizes the region
 `2 × (card + record) + 8 KiB`, or 0 when there is neither. The card is inside
 the content hash; the build record is not (it records when, how and how fast,
-which differ between two builds of the same data).
+which differ between two builds of the same data). Every writer leaves a
+record, a cardless one included; its `front_end` field says which one.
 
 `rete recard --in-place` writes the new card and record into a free gap of the
 region **beside** the old pair, syncs, then rewrites the 128-byte header — one

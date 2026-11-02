@@ -60,8 +60,8 @@ fn gzipped_turtle_builds_identically() {
             .success();
     }
     assert_eq!(
-        std::fs::read(&out_plain).unwrap(),
-        std::fs::read(&out_gz).unwrap(),
+        common::read_plain(&out_plain),
+        common::read_plain(&out_gz),
         "gzip must not change the built file"
     );
 }
@@ -117,8 +117,8 @@ fn external_build_from_gzipped_turtle_matches_in_ram() {
         .success();
 
     assert_eq!(
-        std::fs::read(&out_ext).unwrap(),
-        std::fs::read(&out_ram).unwrap(),
+        common::read_plain(&out_ext),
+        common::read_plain(&out_ram),
         "external build of .ttl.gz must equal the in-RAM --no-pyramid build"
     );
 }
@@ -173,8 +173,8 @@ fn collapse_graphs_matches_the_default_graph_build() {
         .success();
 
     assert_eq!(
-        std::fs::read(&out_collapsed).unwrap(),
-        std::fs::read(&out_ttl).unwrap(),
+        common::read_plain(&out_collapsed),
+        common::read_plain(&out_ttl),
         "a collapsed TriG must build to the same file as the equivalent Turtle"
     );
 }
@@ -207,8 +207,8 @@ fn external_build_keeps_named_graphs_byte_identically() {
         .success();
 
     assert_eq!(
-        std::fs::read(&out_ext).unwrap(),
-        std::fs::read(&out_ram).unwrap(),
+        common::read_plain(&out_ext),
+        common::read_plain(&out_ram),
         "external build of a TriG must equal the in-RAM --no-pyramid build"
     );
     rete()
@@ -343,8 +343,8 @@ fn merge_reads_its_inputs_inside_the_budget() {
     );
     merge("64", &m64);
     assert_eq!(
-        std::fs::read(&m512).unwrap(),
-        std::fs::read(&m64).unwrap(),
+        common::read_plain(&m512),
+        common::read_plain(&m64),
         "the budget changed the merged file"
     );
     // ...which is the memory-bounded build of the union, byte for byte.
@@ -357,8 +357,8 @@ fn merge_reads_its_inputs_inside_the_budget() {
         .assert()
         .success();
     assert_eq!(
-        std::fs::read(&m512).unwrap(),
-        std::fs::read(&built).unwrap(),
+        common::read_plain(&m512),
+        common::read_plain(&built),
         "the merge is not the build of its inputs' union"
     );
 }
@@ -406,8 +406,8 @@ fn external_build_writes_the_in_ram_text_index() {
             .success()
             .stderr(predicates::str::contains("extbuild: text index"));
         assert_eq!(
-            std::fs::read(&ext).unwrap(),
-            std::fs::read(&ram).unwrap(),
+            common::read_plain(&ext),
+            common::read_plain(&ram),
             "{extra:?}: memory-bounded and in-RAM builds differ"
         );
         rete()
@@ -572,8 +572,8 @@ fn external_build_with_label_index_matches_in_ram() {
         .arg(&out_ram)
         .assert()
         .success();
-    let ext = std::fs::read(&out_ext).unwrap();
-    assert_eq!(ext, std::fs::read(&out_ram).unwrap());
+    let ext = common::read_plain(&out_ext);
+    assert_eq!(ext, common::read_plain(&out_ram));
     let h = rete_core::Header::from_bytes(&ext).unwrap();
     assert!(h.label_index_section().is_some() && h.schema_section().is_some());
     rete()

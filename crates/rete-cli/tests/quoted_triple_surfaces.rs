@@ -552,8 +552,8 @@ fn files_without_quoted_triples_are_byte_identical_either_way() {
         // The built files themselves, byte for byte — the strongest form of the
         // claim, and stronger than comparing digests of them.
         assert_eq!(
-            std::fs::read(&star).unwrap(),
-            std::fs::read(&twelve).unwrap(),
+            common::read_plain(&star),
+            common::read_plain(&twelve),
             "{name}: the built .rete must be byte-identical either way"
         );
     }

@@ -1087,6 +1087,43 @@ impl IntoMetadata for DeferredMetadata {
     }
 }
 
+/// [`assemble_dataset`] for the writers that finish as format `0x06` (the
+/// bindings and the browser): named graphs go in the quad index, the only
+/// layout `0x06` has. Everything else is `assemble_dataset`'s.
+pub fn assemble_dataset_quad(quads: Vec<RawQuad>, metadata: &[u8]) -> (Vec<u8>, BuildStats) {
+    let blob = metadata.to_vec();
+    assemble_dataset_with_quad(quads, move |_, _| blob)
+}
+
+/// [`assemble_dataset_with`] with the named graphs in the quad index.
+pub fn assemble_dataset_with_quad<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
+    assemble_dataset_with_opts_algo_quad(quads, true, false, None, PyramidAlgo::Louvain, metadata)
+}
+
+/// [`assemble_dataset_with_opts_algo`] with the named graphs in the quad index.
+pub fn assemble_dataset_with_opts_algo_quad<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    with_pyramid: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
+    assemble_dataset_with_layout(
+        quads,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        crate::index::PermSet::ALL,
+        GraphLayout::Quad,
+        metadata,
+    )
+}
+
 /// Assemble a complete `.rete` file image from parsed quads: one shared
 /// dictionary, the default-graph index, one index per named graph, and the
 /// community pyramid. `metadata` is the opaque metadata-section payload (the

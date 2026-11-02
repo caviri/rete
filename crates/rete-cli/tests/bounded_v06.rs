@@ -137,11 +137,11 @@ fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) -> Vec<u8> 
     assert_eq!(std::fs::read(&old).unwrap()[4], 5, "{name}: legacy hook");
     assert_eq!(content_hash(&b), content_hash(&r), "{name}: content hash");
     assert!(
-        b == r,
+        plain(&b) == plain(&r),
         "{name}: bounded build differs from the in-RAM build"
     );
     assert!(
-        b == c,
+        plain(&b) == plain(&c),
         "{name}: bounded build differs from the in-RAM 0x05 build plus convert"
     );
     rete().arg("verify").arg(&bounded).assert().success();
@@ -155,7 +155,7 @@ fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) -> Vec<u8> 
         );
         run(&["convert", s(&pg), "-o", s(&pgc)], false);
         assert!(
-            b == std::fs::read(&pgc).unwrap(),
+            plain(&b) == plain(&std::fs::read(&pgc).unwrap()),
             "{name}: bounded build differs from the in-RAM per-graph 0x05 build plus convert"
         );
     }
@@ -266,7 +266,10 @@ fn merge_of_parts_equals_the_direct_build_of_the_union() {
         );
         assert_eq!(m[4], 6, "{name}: merge writes 0x06");
         assert_eq!(content_hash(&d), content_hash(&m), "{name}: content hash");
-        assert!(m == d, "{name}: merge differs from the direct build");
+        assert!(
+            plain(&m) == plain(&d),
+            "{name}: merge differs from the direct build"
+        );
         rete().arg("verify").arg(&merged).assert().success();
         assert!(std::fs::read_dir(&tmp).unwrap().next().is_none());
     }
@@ -609,7 +612,7 @@ fn a_build_of_several_chunks_tiles_and_leaves_equals_the_in_ram_build() {
         std::fs::read(&ram).unwrap(),
     );
     assert!(
-        x == y,
+        plain(&x) == plain(&y),
         "bounded build of {chunks} chunks differs from the in-RAM build"
     );
     // Several leaves in the dictionary directory.
@@ -621,4 +624,132 @@ fn a_build_of_several_chunks_tiles_and_leaves_equals_the_in_ram_build() {
         "several dictionary leaves"
     );
     rete().arg("verify").arg(&bounded).assert().success();
+}
+
+/// The file without its build record. Every build now carries one, and two
+/// builds of the same data differ in it by design (the entry point, the memory
+/// budget, the spill, the clock); the identity the tests prove is the data, the
+/// card region apart from the record, and the content hash, which the record is
+/// outside of.
+fn plain(bytes: &[u8]) -> Vec<u8> {
+    rete_core::attach_build_info(bytes, &[]).unwrap()
+}
+
+/// What a binding does (`assemble_dataset_quad`, then the shared
+/// `finish_in_ram` with a record) is the CLI's conversion of the same in-RAM
+/// image: the same bytes, build record apart, which names the front end. (The
+/// bindings still build the legacy layout, a combined pyramid block and no
+/// SCHEMA section, which `rete build` does not; what is compared is the format
+/// step, and that named graphs survive it as a quad index.)
+#[test]
+fn a_binding_style_build_equals_the_conversion_of_its_image() {
+    use rete_core::build_record as br;
+    for (name, text, format) in [
+        ("triples", catalog(false), "nt"),
+        ("quads", catalog(true), "nq"),
+    ] {
+        let quads = rete_core::ingest::parse_statements(&text, format).unwrap();
+        let (image, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
+        let converted = rete_core::v06::write::convert_image(&image, Default::default()).unwrap();
+        let record = br::to_json(
+            &br::Record {
+                front_end: br::front_end::PYTHON.into(),
+                front_end_version: "0.0.0".into(),
+                built_at: None,
+                options: br::Options {
+                    command: "build".into(),
+                    format: Some(format.into()),
+                    ..Default::default()
+                },
+                inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+                statements_read: None,
+            },
+            Some(&stats),
+        );
+        let binding = br::finish_in_ram(image, Some(&record)).unwrap();
+        assert_eq!(binding[4], 6, "{name}: 0x06");
+        assert!(rete_core::verify(&binding).unwrap(), "{name}: verifies");
+        assert_eq!(
+            content_hash(&binding),
+            content_hash(&converted),
+            "{name}: hash"
+        );
+        assert!(
+            plain(&binding) == plain(&converted),
+            "{name}: differs from the conversion of the same image"
+        );
+        if name == "quads" {
+            let r = rete_core::Rete::open(&binding).unwrap();
+            assert!(r.named_graph_count() > 1, "named graphs survive");
+        }
+        let r = rete_core::read_build_info(&binding)
+            .unwrap()
+            .expect("a record");
+        let v: serde_json::Value =
+            serde_json::from_slice(String::from_utf8_lossy(&r).trim_end().as_bytes()).unwrap();
+        assert_eq!(v["front_end"], "python");
+        assert_eq!(v["counts"]["statements_unique"], stats.statements as u64);
+    }
+}
+
+/// Every CLI writer leaves a build record, with no card asked for: the
+/// in-RAM build, the bounded build, `merge`, `repyramid`, `convert` of an old
+/// file. Each names the front end and its own entry point.
+#[test]
+fn every_cli_writer_leaves_a_record_without_a_card() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("c.nt");
+    std::fs::write(&src, catalog(false)).unwrap();
+    let ram = dir.path().join("ram.rete");
+    let bounded = dir.path().join("bounded.rete");
+    let merged = dir.path().join("merged.rete");
+    let pyr = dir.path().join("pyr.rete");
+    run(&["build", s(&src), "-o", s(&ram)], false);
+    run(
+        &[
+            "build",
+            s(&src),
+            "-o",
+            s(&bounded),
+            "--memory-budget-mb",
+            "64",
+        ],
+        false,
+    );
+    run(
+        &[
+            "merge",
+            s(&ram),
+            s(&bounded),
+            "-o",
+            s(&merged),
+            "--memory-budget-mb",
+            "64",
+        ],
+        false,
+    );
+    run(&["repyramid", s(&ram), "-o", s(&pyr)], false);
+    for (name, file, command) in [
+        ("in-RAM build", &ram, "build"),
+        ("bounded build", &bounded, "build --memory-budget-mb"),
+        ("merge", &merged, "merge"),
+        ("repyramid", &pyr, "repyramid"),
+    ] {
+        let bytes = std::fs::read(file).unwrap();
+        assert_eq!(bytes[4], 6, "{name}: 0x06");
+        let r = rete_core::read_build_info(&bytes)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{name}: no build record"));
+        let v: serde_json::Value =
+            serde_json::from_slice(String::from_utf8_lossy(&r).trim_end().as_bytes()).unwrap();
+        assert_eq!(v["front_end"], "cli", "{name}");
+        assert_eq!(v["params"]["command"], command, "{name}");
+        assert!(stored_card(&bytes).is_none(), "{name}: no card");
+        assert!(v["inputs"][0]["blake3"].is_string(), "{name}: input digest");
+        rete().arg("verify").arg(file).assert().success();
+    }
+    // Without a card there is still room beside the record: it patches in place.
+    let before = std::fs::metadata(&ram).unwrap().len();
+    run(&["card-audit", s(&ram), "--json"], false);
+    assert_eq!(std::fs::metadata(&ram).unwrap().len(), before);
 }

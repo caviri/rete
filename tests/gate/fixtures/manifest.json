@@ -17,10 +17,9 @@
     "writes NONE of them, plus no build record. The fixture looks fine and",
     "check_card_modal fails as if the playground were broken.",
     "",
-    "`buildRecord` is false for cardless builds by design: rete build attaches",
-    "the kind-7 section only to a card-carrying image, so a cardless file stays",
-    "byte-identical to pre-build-info output (crates/rete-cli/src/commands/build.rs,",
-    "attach_build_record)."
+    "`buildRecord` is true for every fixture: since 0.5.0 every writer leaves a",
+    "build record (kind 7), a cardless build included; only the card and its",
+    "measured starter-query costs depend on --card."
   ],
   "fixtures": [
     {
@@ -35,7 +34,7 @@
         "quads": 7,
         "namedGraphs": 0,
         "card": false,
-        "buildRecord": false,
+        "buildRecord": true,
         "curatedFields": []
       },
       "whyTheseProperties": [
@@ -154,7 +153,7 @@
         "namedGraphs": 3,
         "defaultGraphTriples": 0,
         "card": false,
-        "buildRecord": false,
+        "buildRecord": true,
         "curatedFields": []
       },
       "whyTheseProperties": [

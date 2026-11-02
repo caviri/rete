@@ -605,15 +605,21 @@ pub(crate) fn card_cmd(
     match &read.card {
         // A cardless file can still answer the one question the header alone
         // decides — and staying silent about it is what #189 was about.
-        None => println!(
-            "(no dataset card — {}; {}{})",
-            read.text_index.describe(),
-            read.permutations.describe(),
-            read.quoted_triples
-                .describe()
-                .map(|d| format!("; quoted triples {d}"))
-                .unwrap_or_default()
-        ),
+        None => {
+            println!(
+                "(no dataset card — {}; {}{})",
+                read.text_index.describe(),
+                read.permutations.describe(),
+                read.quoted_triples
+                    .describe()
+                    .map(|d| format!("; quoted triples {d}"))
+                    .unwrap_or_default()
+            );
+            // Every writer leaves a build record, a cardless one included.
+            if let (CardFormat::Text, Some(b)) = (&format, read.build.as_ref()) {
+                println!("{}", super::buildinfo::format_build_info(b));
+            }
+        }
         Some(card) => print_card(
             card,
             read.build.as_ref(),

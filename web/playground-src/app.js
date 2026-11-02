@@ -11529,8 +11529,7 @@ self.onmessage = function (e) {
       // blanks that look like measurements.
       return `<div class="card-build"><h4>Build record</h4>` +
         `<p class="microcopy">This file carries no build record. It was written before ` +
-        `<code>.rete</code> stored one, or by a writer that does not (an in-browser build ` +
-        `records no starter-query costs, because it derives no starter queries). ` +
+        `<code>.rete</code> stored one, or by a writer that does not. ` +
         `Nothing about the build is known from the file — which is different from ` +
         `a build that measured nothing.</p></div>`;
     }
@@ -11539,11 +11538,12 @@ self.onmessage = function (e) {
     // carry (older writers, a re-card, an in-browser build) gets no row at all.
     const p = b.params || {};
     const run = b.run || {};
-    const flags = buildRecordFlags(p);
+    const flags = buildRecordFlags(p, b.front_end);
     const runParts = buildRecordRunParts(run);
     const sp = b.spill;
     const rows = [
       b.built_at ? cardRow("Built at", esc(String(b.built_at))) : "",
+      b.front_end ? cardRow("Front end", esc(String(b.front_end))) : "",
       b.builder ? cardRow("Builder", esc(String(b.builder))) : "",
       b.engine ? cardRow("Engine", buildRecordEngineHtml(b.engine, b.host, b.builder)) : "",
       flags ? cardRow("Flags", `<code>${esc(flags)}</code>`) : "",
@@ -11582,10 +11582,12 @@ self.onmessage = function (e) {
   // The flags in force, as the command line that would reproduce them. The
   // record stores EFFECTIVE values (default or not, since 0.4.0), so this is
   // the whole configuration rather than only what was typed.
-  function buildRecordFlags(p) {
+  function buildRecordFlags(p, frontEnd) {
     const f = [];
     const cmd = String(p.command || "").replace(/\s*--memory-budget-mb$/, "");
-    if (cmd) f.push(`rete ${cmd}`);
+    // The CLI's command is `rete build`; a binding or the browser names its
+    // own entry point (`python build_dataset`, `wasm build`).
+    if (cmd) f.push(`${frontEnd && frontEnd !== "cli" ? frontEnd : "rete"} ${cmd}`);
     const val = (flag, v) => { if (v != null && v !== "") f.push(`${flag} ${v}`); };
     const on = (flag, v) => { if (v) f.push(flag); };
     val("--format", p.format);
@@ -11772,9 +11774,9 @@ self.onmessage = function (e) {
         // by the header's section directory rather than by anything written
         // into the metadata section.
         (tiLine ? `<p class="microcopy">Full-text index: ${esc(tiLine)}</p>` : "") +
-        // A cardless build writes no build record either, so this is normally
-        // silent — but the two sections are independent, and if one is somehow
-        // there without the other, saying so beats hiding it.
+        // Every build writes a build record, a cardless one included: the two
+        // sections are independent, so a file with a record and no card shows
+        // the record under the "no card" notice.
         (cardBuildObj ? renderBuildRecord(cardBuildObj) : "");
       return;
     }

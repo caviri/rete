@@ -154,18 +154,23 @@ const main = async () => {
   // The counts are the build's own measurement, so they are real.
   if (!shown.stats.length) failures.push("the browser-written card carries no counts");
 
-  // The honest boundary: no derived profile, no build record — as ABSENCE.
+  // The honest boundary: no derived profile — as ABSENCE.
   for (const derived of ["Predicates", "Classes", "Vocabularies", "Example queries", "Signals"]) {
     if (shown.sections.some((s) => s.startsWith(derived))) {
       failures.push(`a browser build rendered a derived section it never computed: ${derived}`);
     }
   }
   if (shown.costs) failures.push("a browser build showed per-query costs it never measured");
-  if (!/no build record/i.test(shown.build)) {
-    failures.push(`a file without build info did not say so: "${shown.build.slice(0, 140)}"`);
+  // Every writer leaves a build record now; the browser's has no run and no
+  // measured costs, and names itself.
+  if (/no build record/i.test(shown.build)) {
+    failures.push(`a browser build carries a build record and the modal said it did not: "${shown.build.slice(0, 140)}"`);
   }
-  if (/\b0 ms\b/.test(shown.build) || /Built at\s*$/.test(shown.build)) {
-    failures.push("the absent build record rendered as zeros/blanks instead of absence");
+  if (!/rete-core/.test(shown.build)) {
+    failures.push(`the browser build record does not name its engine: "${shown.build.slice(0, 140)}"`);
+  }
+  if (/\b0 ms\b/.test(shown.build)) {
+    failures.push("the build record rendered a zero timing for a phase the browser never ran");
   }
 
   if (errs.length) failures.push(`page errors: ${errs.slice(0, 2).join(" | ")}`);

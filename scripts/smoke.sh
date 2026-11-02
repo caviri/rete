@@ -89,7 +89,16 @@ check "build knobs" "5 triples"         -- "$B" build "$T/g.nt" -o "$T/knobs.ret
   --dict-chunk-kib 8 --zstd-level 19 --frequent-objects 4
 check "knobs verify" "OK|matches"       -- "$B" verify "$T/knobs.rete"
 check "knobs answer" "ex/Bob"           -- "$B" query "$T/knobs.rete" --object "<http://ex/Person>"
-check "knobs ext = ram" "^same$"        -- bash -c "$B build '$T/g.nt' -o '$T/knobs-ram.rete' --no-pyramid --frequent-objects 4 >/dev/null 2>&1; $B build '$T/g.nt' -o '$T/knobs-ext.rete' --memory-budget-mb 64 --frequent-objects 4 >/dev/null 2>&1; cmp -s '$T/knobs-ram.rete' '$T/knobs-ext.rete' && echo same || echo differ"
+# Two builds of one input differ in their build record (the entry point, the
+# memory budget, the clock), which is outside the content hash. "Same" below is
+# the content hash in the header (bytes 8..24): every section digest and the
+# card, which is the identity a build owes.
+same_content() {
+  if cmp -s <(dd if="$1" bs=1 skip=8 count=16 2>/dev/null) <(dd if="$2" bs=1 skip=8 count=16 2>/dev/null); then echo same; else echo differ; fi
+}
+export -f same_content
+
+check "knobs ext = ram" "^same$"        -- bash -c "$B build '$T/g.nt' -o '$T/knobs-ram.rete' --no-pyramid --frequent-objects 4 >/dev/null 2>&1; $B build '$T/g.nt' -o '$T/knobs-ext.rete' --memory-budget-mb 64 --frequent-objects 4 >/dev/null 2>&1; same_content '$T/knobs-ram.rete' '$T/knobs-ext.rete'"
 check_code "tile-kib range" 2 "4..=4096|4096"  -- "$B" build "$T/g.nt" -o "$T/x.rete" --tile-kib 2
 
 echo "== full-text index =="
@@ -101,7 +110,7 @@ EOF
 check "text-index build"      "quads"                -- "$B" build "$T/text.nq" -o "$T/text.rete" --text-index --no-pyramid
 # The memory-bounded build takes --text-index and writes the same bytes.
 check "text-index ext build"  "extbuild: text index" -- "$B" build "$T/text.nq" -o "$T/text-ext.rete" --text-index --memory-budget-mb 64
-check "text-index ext = ram"  "^same$"               -- bash -c "cmp '$T/text.rete' '$T/text-ext.rete' && echo same"
+check "text-index ext = ram"  "^same$"               -- bash -c "same_content '$T/text.rete' '$T/text-ext.rete'"
 check "search --contains"     "<http://ex/w1>"       -- "$B" search "$T/text-ext.rete" --contains glucose
 check "scope: named graphs"   "<http://ex/w1/prov>"  -- bash -c "$B build '$T/text.nq' -o '$T/text-all.rete' --text-index --text-index-graphs all --memory-budget-mb 64 >/dev/null 2>&1 && $B search '$T/text-all.rete' --contains created"
 check "scope: exclude"        "covers: .*all but <http://ex/desc>" -- bash -c "$B build '$T/text.nq' -o '$T/text-ex.rete' --text-index --text-index-exclude http://ex/desc >/dev/null 2>&1 && $B search '$T/text-ex.rete' --contains modified 2>&1"
@@ -136,12 +145,14 @@ echo "== format 0x06 =="
 # the test hook that still writes one) to the very bytes the 0x06 build writes.
 check "0x06 build"        "format version: 0x06"   -- "$B" info "$T/g.rete"
 check "0x06 verify"       "OK .*format 0x06"       -- "$B" verify "$T/g.rete"
+# Every writer leaves a build record, a card-less one included, and names itself.
+check "build record cardless"  "front end +: cli"  -- "$B" card "$T/g.rete"
 check "0x06 verify dict"  "section dict matches"   -- "$B" verify "$T/g.rete" --section dict
 check_code "0x06 verify bad section" 1 "unknown section" -- "$B" verify "$T/g.rete" --section nope
 RETE_WRITE_FORMAT=5 "$B" build "$T/g.nt" -o "$T/g05.rete" >/dev/null 2>&1
 check "0x05 still written by the hook" "magic|version: 5" -- "$B" info "$T/g05.rete"
 check "convert"           "format 0x06"            -- "$B" convert "$T/g05.rete" -o "$T/g06.rete"
-check "convert = build"   "^same$"                 -- bash -c "cmp -s '$T/g06.rete' '$T/g.rete' && echo same || echo differ"
+check "convert = build"   "^same$"                 -- bash -c "same_content '$T/g06.rete' '$T/g.rete'"
 check "convert verify"    "OK|matches"             -- "$B" verify "$T/g06.rete"
 check "convert answers"   "ex/Bob"                 -- "$B" sparql "$T/g06.rete" "SELECT ?o WHERE { <http://ex/Alice> <http://ex/knows> ?o }"
 check_code "convert refuses 0x06" 1 "already format 0x06" -- "$B" convert "$T/g.rete" -o "$T/g07.rete"
@@ -181,7 +192,7 @@ check "summary schema section" "SCHEMA section"    -- "$B" summary "$T/lab.rete"
 check "verify sections"        "OK|matches"        -- "$B" verify "$T/lab.rete"
 check "no label index"         "no label index"    -- bash -c "$B search '$T/g.rete' ali 2>&1"
 check "memory-bounded labels"  "triples|quads"     -- "$B" build "$T/lab.nt" -o "$T/labx.rete" --memory-budget-mb 64 --label-index
-check "external = in-memory"   "^same$"            -- bash -c "cmp -s '$T/lab.rete' '$T/labx.rete' && echo same || echo differ"
+check "external = in-memory"   "^same$"            -- bash -c "same_content '$T/lab.rete' '$T/labx.rete'"
 check "card label signal"      '"entries": ?2' -- bash -c "$B build '$T/lab.nt' -o '$T/labc.rete' --label-index --card >/dev/null 2>&1; $B card '$T/labc.rete' --json"
 
 # The quad index (`--named-graphs quad`): same graphs, same answers.
@@ -190,7 +201,7 @@ check "quad graphs"   "g1|g2"                       -- "$B" graphs "$T/dq.rete"
 check "quad GRAPH <g>" "Bob"                        -- "$B" sparql "$T/dq.rete" 'SELECT ?o WHERE { GRAPH <http://ex/g1> { ?s <http://ex/knows> ?o } }'
 check "quad verify"   "OK|matches"                  -- "$B" verify "$T/dq.rete"
 check "quad export"   "<http://ex/g2>"              -- "$B" export "$T/dq.rete"
-check "quad external = in-memory" "^same$"     -- bash -c "$B build '$T/d.nq' -o '$T/dqr.rete' --no-pyramid --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; $B build '$T/d.nq' -o '$T/dqx.rete' --memory-budget-mb 64 --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; cmp -s '$T/dqr.rete' '$T/dqx.rete' && echo same || echo differ"
+check "quad external = in-memory" "^same$"     -- bash -c "$B build '$T/d.nq' -o '$T/dqr.rete' --no-pyramid --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; $B build '$T/d.nq' -o '$T/dqx.rete' --memory-budget-mb 64 --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; same_content '$T/dqr.rete' '$T/dqx.rete'"
 
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
@@ -275,7 +286,7 @@ echo "== progress (--progress) =="
 check "progress plain"        "^progress: build done in" -- bash -c "$B build '$T/g.nt' -o '$T/pp.rete' --progress plain 2>&1 >/dev/null"
 check "progress json bounded" '"event":"done"'           -- bash -c "$B build '$T/g.nt' -o '$T/pj.rete' --memory-budget-mb 64 --progress json 2>&1 >/dev/null | tail -1"
 check "progress stdout clean" "^wrote [^ ]+: 5 triples"  -- bash -c "$B build '$T/g.nt' -o '$T/ps.rete' --progress json 2>/dev/null"
-check "progress same bytes"   "^same$"                   -- bash -c "$B build '$T/g.nt' -o '$T/p0.rete' --progress off >/dev/null 2>&1; $B build '$T/g.nt' -o '$T/p1.rete' --progress json >/dev/null 2>&1; cmp -s '$T/p0.rete' '$T/p1.rete' && echo same || echo differ"
+check "progress same bytes"   "^same$"                   -- bash -c "$B build '$T/g.nt' -o '$T/p0.rete' --progress off >/dev/null 2>&1; $B build '$T/g.nt' -o '$T/p1.rete' --progress json >/dev/null 2>&1; same_content '$T/p0.rete' '$T/p1.rete'"
 check "progress env merge"    "^progress: merge "        -- bash -c "RETE_PROGRESS=plain $B merge '$T/gcx.rete' '$T/gmx.rete' -o '$T/pm.rete' --memory-budget-mb 64 2>&1 >/dev/null"
 check "progress recard"       '"event":"start"'          -- bash -c "$B recard '$T/gcx.rete' -o '$T/pr.rete' --keep-curated --progress json 2>&1 >/dev/null"
 check "progress off"          "^0$"                      -- bash -c "$B build '$T/g.nt' -o '$T/po.rete' --progress off 2>&1 >/dev/null | grep -cE '^(progress:|[{])'"

@@ -22,6 +22,7 @@ pub mod bgp;
 #[doc(hidden)]
 pub mod block_cache;
 pub mod build_progress;
+pub mod build_record;
 pub mod build_trace;
 #[doc(hidden)]
 pub mod card_derive;

@@ -844,6 +844,16 @@ in place). Both are invisible to older readers: verified with the released
 0.3.7 binary on the OpenCitations development sample built both ways, <code>card</code>
 prints its known subset with no warning and <code>verify</code> passes (the section is
 outside the content hash).</p>
+<h3 id="the-05-build-record">The 0.5 build record</h3>
+<p>From 0.5.0 every writer writes format <code>0x06</code> <strong>and</strong> a build record: the CLI
+with or without a card, <code>rete merge</code>, the Python, R and Java clients and the
+browser engine. The record gains a <code>front_end</code> field (<code>cli</code>, <code>python</code>, <code>r</code>,
+<code>java</code>, <code>wasm</code>), optional like the rest. A client's or the browser's record
+is the lean one (engine, host, options, the input's length and BLAKE3, counts);
+only the CLI measures phases, spill and starter-query costs. Two builds of one
+input differ in the record by design, so byte comparison of builds is done on
+the file without it (<code>rete_core::attach_build_info(image, &amp;[])</code>) or with
+<code>RETE_BUILD_RECORD=reproducible</code>.</p>
 <h3 id="a-card-after-the-data">A card after the data</h3>
 <p>In <code>0x05</code>, the memory-bounded build, <code>rete merge</code> and <code>rete recard --in-place</code>
 wrote the Dataset Card (and the build record beside it) <strong>after every other

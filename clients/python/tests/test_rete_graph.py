@@ -228,7 +228,7 @@ def test_builder_end_to_end(tmp_path, nt_text):
     # Counts + format_version are stamped automatically at build time.
     assert card["quad_count"] == 6
     assert card["term_count"] == g.terms
-    assert card["format_version"] == 5  # the client writes the 0x05 layout
+    assert card["format_version"] == 6  # the client writes the 0x06 layout
 
     # The opt-in text index was actually built and is queryable.
     assert "http://example.org/alice" in g.text_search("researcher")
@@ -753,3 +753,47 @@ def test_live_remote_smoke():
     rows = g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3")
     assert 0 < len(rows) <= 3
     assert g.stats()["bytes"] < g.stats()["fileLength"]  # lazy, not a download
+
+
+# --- format 0x06 and the build record: every writer writes both -------------
+
+
+_RECORD_NT = (
+    "<http://example.org/a> <http://example.org/p> <http://example.org/b> .\n"
+    "<http://example.org/a> <http://example.org/name> \"A\" .\n"
+)
+
+
+def test_build_writes_0x06_with_a_build_record():
+    data = rete.build(_RECORD_NT)
+    # The header's format byte: 0x06, and the file verifies (content hash and
+    # every section digest).
+    assert data[:4] == b"RETE" and data[4] == 6
+    assert rete.verify(data)
+    rec = rete.build_record(data)
+    assert rec is not None
+    assert rec["front_end"] == "python"
+    assert rec["builder"].startswith("rete-python ")
+    assert rec["engine"]["name"] == "rete-core"
+    assert rec["engine"]["version"] == rete.__engine_version__
+    assert rec["params"]["command"] == "build"
+    assert rec["params"]["format"] == "nt"
+    inp = rec["inputs"][0]
+    assert inp["bytes"] == len(_RECORD_NT.encode())
+    assert len(inp["blake3"]) == 64
+    assert rec["counts"]["statements_unique"] == 2
+    # The record is outside the content hash: opening the file is unchanged.
+    g = rete.open(data)
+    assert g.quads == 2
+
+
+def test_build_dataset_record_names_its_options():
+    b = rete.Builder().add(_RECORD_NT).text_index()
+    data = b.run()
+    assert data[4] == 6 and rete.verify(data)
+    rec = rete.build_record(data)
+    assert rec["front_end"] == "python"
+    assert rec["params"]["command"] == "build_dataset"
+    assert rec["params"]["text_index"] is True
+    assert rec["params"]["pyramid_algo"] == "louvain"
+

@@ -40,6 +40,10 @@ pub(crate) struct BuildInfo {
     /// card's curated `created`/`source_date`, which describe the *data*.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub built_at: Option<String>,
+    /// Which front end wrote the file: `cli`, `python`, `r`, `java` or `wasm`
+    /// (`rete_core::build_record::front_end`). Absent before 0.5.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front_end: Option<String>,
     /// The binary that wrote the file, e.g. `rete-cli 0.3.2`. The gap this
     /// closes: a misbehaving external file used to carry no way to tell which
     /// `rete` had written it.
@@ -528,6 +532,7 @@ pub(crate) fn new_build_info(params: BuildParams) -> BuildInfo {
     BuildInfo {
         schema: BUILD_INFO_SCHEMA,
         built_at: timestamp(),
+        front_end: Some(rete_core::build_record::front_end::CLI.to_string()),
         builder: Some(builder_version()),
         engine: Some(engine()),
         host: Some(host()),
@@ -1931,6 +1936,7 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
         }
         _ => opt(&mut out, "built at", &info.built_at),
     }
+    opt(&mut out, "front end", &info.front_end);
     match &info.engine {
         Some(e) => {
             let mut line = format!("{} {}", e.name, e.version);

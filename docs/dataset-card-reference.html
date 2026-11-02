@@ -1242,23 +1242,39 @@ that would do nothing with opaque publisher keys.</li>
 <p>The card answers <em>what the data is</em>; a second, adjacent record answers <strong>how
 this particular file came to be</strong> — the questions you ask when a file behaves
 oddly and there was previously no way to answer them from the file ("which
-<code>rete</code> even wrote this?"). Every card build also writes a <strong>build-info
-section</strong> (format section kind <code>7</code>, laid out immediately after the card)
-carrying:</p>
+<code>rete</code> even wrote this?"). <strong>Every writer</strong> — the CLI with or without a card,
+the Python, R and Java clients, the browser engine — writes a <strong>build-info
+section</strong> (format section kind <code>7</code>; in <code>0x06</code> in the card region, beside the
+card) carrying:</p>
 <ul>
-<li><code>started_at</code>, <code>built_at</code> — when the build started and when it wrote the file
+<li>
+<p><code>front_end</code> — which front end wrote the file: <code>cli</code>, <code>python</code>, <code>r</code>, <code>java</code> or
+<code>wasm</code>. A binding's or the browser's record is the lean one: the engine
+(<code>rete-core</code>; the browser's <code>commit</code> is <code>unknown</code>, its artifacts being
+byte-compared builds), the host, the options of the call, the input as a
+length and a BLAKE3 (<code>string</code> for text handed over in memory), and the counts.
+It has no run block and no starter-query costs.</p>
+</li>
+<li>
+<p><code>started_at</code>, <code>built_at</code> — when the build started and when it wrote the file
 (RFC 3339 UTC; <code>SOURCE_DATE_EPOCH</code> is honored for reproducible pipelines).
 Distinct from the curated <code>created</code> and <code>source_date</code>, which describe the
-<em>data</em>.</li>
-<li><code>builder</code> — the binary that wrote the file (<code>rete-cli 0.4.0</code>), and <code>engine</code>,
+<em>data</em>.</p>
+</li>
+<li>
+<p><code>builder</code> — the binary that wrote the file (<code>rete-cli 0.4.0</code>), and <code>engine</code>,
 the same binary in full: <code>version</code>, the git <code>commit</code> it was built from
 (<code>unknown</code> when the build could not see one), the <code>target</code> triple, the cargo
 <code>profile</code> (<code>release</code>, or <code>debug</code> — whose timings mean nothing next to a
 release build's) and the rete-core <code>features</code> compiled in (<code>compression</code>,
-<code>parallel</code>, <code>rdf12-turtle</code>, <code>unicode-regex</code>).</li>
-<li><code>host</code> — the operating system and architecture, and <strong>nothing else</strong> about
-the machine: no host name, user name, path or environment.</li>
-<li><code>params</code> — every flag that shaped the file, by its <strong>effective</strong> value, so
+<code>parallel</code>, <code>rdf12-turtle</code>, <code>unicode-regex</code>).</p>
+</li>
+<li>
+<p><code>host</code> — the operating system and architecture, and <strong>nothing else</strong> about
+the machine: no host name, user name, path or environment.</p>
+</li>
+<li>
+<p><code>params</code> — every flag that shaped the file, by its <strong>effective</strong> value, so
 the record reads the same whatever a later version's defaults are:
 <code>permutations</code>, <code>named_graphs</code> (<code>per-graph</code>/<code>quad</code>), <code>collapse_graphs</code>,
 <code>strict</code>, <code>quoted_triple_syntax</code>, <code>type_predicate</code>, the pyramid algorithm or
@@ -1267,30 +1283,45 @@ the record reads the same whatever a later version's defaults are:
 and dictionary-chunk size, zstd level and frame shape, frequent objects),
 the section <code>codec</code>, <code>card_costs</code> (not <code>--no-card-costs</code>), the card's
 <code>card_top_n</code> cap, and <code>card_file</code> — its <strong>file name</strong> and BLAKE3, never its
-path.</li>
-<li><code>inputs</code> — each input by <strong>file name only</strong> (<code>stdin</code> for <code>-</code>), its <code>format</code>
+path.</p>
+</li>
+<li>
+<p><code>inputs</code> — each input by <strong>file name only</strong> (<code>stdin</code> for <code>-</code>), its <code>format</code>
 (<code>rete</code> for the shards of a <code>rete merge</code> and the input of <code>repyramid</code>),
 <code>compression</code> (<code>gzip</code>, detected from the bytes), <code>bytes</code> as stored, and the
 <code>blake3</code> of exactly those bytes (below). A build over more than 64 inputs
-lists the first 64 and counts the rest in <code>inputs_omitted</code>.</li>
-<li><code>counts</code> — <code>statements_read</code> (what the parser handed over),
+lists the first 64 and counts the rest in <code>inputs_omitted</code>.</p>
+</li>
+<li>
+<p><code>counts</code> — <code>statements_read</code> (what the parser handed over),
 <code>statements_inferred</code> (<code>--materialize</code>), <code>statements_unique</code> (what the file
 holds), <code>duplicates_dropped</code>, <code>default_graph_triples</code>, <code>named_graphs</code>,
 <code>named_graph_quads</code>, <code>terms</code>, and <code>invalid_iris</code> — the IRIs the tolerant
-parse stored verbatim (a <code>--strict</code> build that finished had none).</li>
-<li><code>run</code> — the debugging figures of this one run: <code>wall_ms</code>, <code>phases</code> (wall
+parse stored verbatim (a <code>--strict</code> build that finished had none).</p>
+</li>
+<li>
+<p><code>run</code> — the debugging figures of this one run: <code>wall_ms</code>, <code>phases</code> (wall
 time per phase, below), <code>peak_rss_bytes</code> (<code>VmHWM</code>; <code>null</code> off Linux),
 <code>memory_limit_bytes</code> (the process's cgroup limit; <code>null</code> when none) and
-<code>cpus</code> (logical CPUs available to the process).</li>
-<li><code>spill</code> — the memory-bounded build and <code>rete merge</code> only: <code>chunks</code>,
+<code>cpus</code> (logical CPUs available to the process).</p>
+</li>
+<li>
+<p><code>spill</code> — the memory-bounded build and <code>rete merge</code> only: <code>chunks</code>,
 <code>merge_passes</code> (k-way merges over spilled files), <code>sort_runs</code> (the files
 those merges read) and <code>scratch_peak_bytes</code> (the spill directory at its
 fullest, sampled at phase boundaries and after each sort writes its runs — a
-lower bound).</li>
-<li><code>query_costs</code> — measured cost figures for every starter query (below).</li>
-<li><code>dropped_queries</code> — starter queries this build generated, <strong>ran</strong>, and then
-refused to ship (below). Absent on a healthy build.</li>
-<li><code>recarded</code> — set by <code>rete recard</code> (below).</li>
+lower bound).</p>
+</li>
+<li>
+<p><code>query_costs</code> — measured cost figures for every starter query (below).</p>
+</li>
+<li>
+<p><code>dropped_queries</code> — starter queries this build generated, <strong>ran</strong>, and then
+refused to ship (below). Absent on a healthy build.</p>
+</li>
+<li>
+<p><code>recarded</code> — set by <code>rete recard</code> (below).</p>
+</li>
 </ul>
 <p><code>rete card</code> prints it as a <code>build:</code> block. This one is the OpenCitations Meta
 development sample (1 work in 5,000, with provenance) built in a 4 GiB
@@ -1362,7 +1393,8 @@ parsing: on the 975 MB OpenCitations pilot, reading the file from the page
 cache took 0.05 s and reading and hashing it 0.12 s (read and hash together
 ran at about 8 GB/s, on one core), so the digest added 0.07 s to a 51.5 s in-RAM
 build (0.1%) and a 13.7 s memory-bounded one (0.5%). There is no switch to
-skip it. A cardless build has no record and hashes nothing.</p>
+skip it. Since 0.5.0 every build has a record, a cardless one included, so every
+build hashes its inputs.</p>
 <p><code>rete merge</code> is the exception to "no second pass": it reads its shards by range,
 in index order, so it hashes each one in a sequential read of its own before
 the merge starts — timed as the record's <code>read</code> phase. That is one read of
@@ -1423,8 +1455,8 @@ build-info section is <strong>deliberately excluded from the hash</strong>: <cod
 does not cover it (old readers see an unknown kind-7 entry and ignore it; new
 readers skip it knowingly), stripping it from two builds of the same input
 yields byte-identical images, and its contents are advisory provenance, not
-integrity-protected data. Cardless builds carry no build-info at all and remain
-byte-identical to pre-build-info output.</p>
+integrity-protected data. Before 0.5.0 a cardless build carried none; now every
+writer does.</p>
 <h3 id="the-starter-query-cost-figures">The starter-query cost figures</h3>
 <p>Each starter query is run once, <strong>cold</strong> (a fresh lazy open per query, what a
 stateless remote client pays), against the finished image. Two kinds of number

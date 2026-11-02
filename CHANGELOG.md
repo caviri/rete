@@ -18,6 +18,23 @@ file only once the readers that fetch it run this release. See
 
 ### Added
 
+- **Every writer writes `0x06` and a build record.** The Python, R and Java clients and
+  the browser engine used to write `0x05` through `assemble_dataset*`, with no build
+  record; cardless CLI builds, `merge` without a card and `repyramid` wrote none either.
+  Now one step in rete-core (`rete_core::build_record::finish_in_ram`) turns the in-RAM
+  image into the `0x06` file and puts the record in the card region, for all of them, and
+  `rete_core::ingest::assemble_dataset_quad` and friends store named graphs in the quad
+  index (a `0x06` file has no other layout). The record has a new `front_end` field (`cli`,
+  `python`, `r`, `java`, `wasm`). A binding's or the browser's record is the lean one: the
+  engine (`rete-core`: version, commit, target, profile, features; the browser's commit is
+  `unknown`, its artifacts being byte-compared builds), host, the options of the call, the
+  input's length and BLAKE3, the counts. The CLI's hashes every input of every build now
+  (it only did with a card), and a build with no card still carries its record.
+  `rete_graph.build_record(image)` and `rete_graph.verify(image)` read the record and check
+  a file from Python. Two builds of one input differ in the record, so byte comparison is
+  of the file without it (`rete_core::attach_build_info(image, &[])`) or under
+  `RETE_BUILD_RECORD=reproducible`. `RETE_WRITE_FORMAT=5` stays the test hook for every
+  front end. The in-browser build's peak is the `0x05` image plus the `0x06` file.
 - **Card file: `base_iri`.** An optional curated `base_iri` (an absolute IRI) overrides the derived
   `signals.base_iri` and the starter queries built on it. Past the namespace-tally cap the derived
   value is only an approximate dominant namespace.

@@ -343,8 +343,30 @@ fn build_surface(
             b"no statements parsed (empty input or only comments)",
         );
     }
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
-    pack(STATUS_OK, &bytes)
+    let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
+    // The in-RAM image as `0x06`, with the build record (`front_end: "java"`),
+    // through the one step every front end shares.
+    use rete_core::build_record as br;
+    let record = br::to_json(
+        &br::Record {
+            front_end: br::front_end::JAVA.into(),
+            front_end_version: env!("CARGO_PKG_VERSION").into(),
+            built_at: br::timestamp(),
+            options: br::Options {
+                command: "build".into(),
+                format: Some(format.to_string()),
+                pyramid_algo: Some("louvain".into()),
+                ..Default::default()
+            },
+            inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+            statements_read: None,
+        },
+        Some(&stats),
+    );
+    match br::finish_in_ram(bytes, Some(&record)) {
+        Ok(b) => pack(STATUS_OK, &b),
+        Err(e) => pack(STATUS_ERR, e.to_string().as_bytes()),
+    }
 }
 
 /// Header summary of a `.rete` image as JSON:

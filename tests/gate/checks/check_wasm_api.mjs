@@ -181,17 +181,25 @@ try {
     t.ok(`derivedQueryWellFormed:${q && q.id}`, wellFormed,
       "a generated query is missing its PREFIX block or left a placeholder unsubstituted");
   }
-  // Still no build record: its cost figures come from RUNNING the queries,
-  // which is a benchmark, not a build.
-  t.equal("derivedBuildRecord", derivedEnvelope.build, null,
-    "a browser build must not write a build record, derived or not");
+  // A build record, yes (every writer leaves one), but not its cost figures:
+  // those come from RUNNING the queries, which is a benchmark, not a build.
+  const derivedRecord = derivedEnvelope.build ? JSON.parse(derivedEnvelope.build) : null;
+  t.ok("derivedBuildRecord", derivedRecord !== null, "a browser build must write a build record");
+  t.equal("derivedBuildRecord.front_end", derivedRecord && derivedRecord.front_end, "wasm");
+  t.equal("derivedBuildRecord.engine", derivedRecord && derivedRecord.engine && derivedRecord.engine.name, "rete-core");
+  t.equal("derivedBuildRecord.query_costs", derivedRecord && derivedRecord.query_costs, undefined,
+    "a browser build must not claim measured starter-query costs");
   derivedGraph.free();
 
-  // A cardless build stays byte-identical to the old `build` — the card path must
-  // not have changed what a card-free file looks like.
+  // A cardless build answers like the plain `build` — the card path must not
+  // have changed what a card-free file holds. (The files differ in their build
+  // record: the entry point, the clock.)
   const plain = api.build_with_card(fixture, "nt", "");
-  t.ok("build_with_card('') is byte-identical to build()",
-    Buffer.compare(Buffer.from(plain), Buffer.from(api.build(fixture, "nt"))) === 0);
+  const plainRef = api.build(fixture, "nt");
+  const countOf = (bytes) => JSON.parse(api.info(bytes)).quads;
+  t.equal("build_with_card('') holds build()'s quads", countOf(plain), countOf(plainRef));
+  const record = JSON.parse(JSON.parse(api.card_and_build(plain)).build);
+  t.equal("a browser build record names its front end", record.front_end, "wasm");
   t.equal("cardless file reports no card", JSON.parse(api.card_and_build(plain)).card, null);
   cardedGraph.free();
 

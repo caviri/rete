@@ -328,8 +328,33 @@ fn build_dataset(
     if quads.is_empty() {
         fail("no statements parsed (empty input or only comments)");
     }
+    let finish = |bytes: Vec<u8>, stats: &rete_core::ingest::BuildStats| -> Vec<u8> {
+        use rete_core::build_record as br;
+        let record = br::to_json(
+            &br::Record {
+                front_end: br::front_end::R.into(),
+                front_end_version: env!("CARGO_PKG_VERSION").into(),
+                built_at: br::timestamp(),
+                options: br::Options {
+                    command: "build_dataset".into(),
+                    format: Some(format.to_string()),
+                    no_pyramid: !with_pyramid,
+                    text_index,
+                    pyramid_algo: with_pyramid.then(|| pyramid_algo.to_string()),
+                    ..Default::default()
+                },
+                inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+                statements_read: None,
+            },
+            Some(stats),
+        );
+        match br::finish_in_ram(bytes, Some(&record)) {
+            Ok(b) => b,
+            Err(e) => fail(e),
+        }
+    };
     if let Some((input, examples)) = derived_input {
-        let (bytes, _stats) = rete_core::ingest::assemble_dataset_with_opts_algo(
+        let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
             quads,
             with_pyramid,
             text_index,
@@ -351,9 +376,9 @@ fn build_dataset(
                 })
             },
         );
-        return bytes;
+        return finish(bytes, &stats);
     }
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with_opts_algo(
+    let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
         quads,
         with_pyramid,
         text_index,
@@ -361,7 +386,7 @@ fn build_dataset(
         algo,
         move |stats, _quads| card_bytes(curated, stats),
     );
-    bytes
+    finish(bytes, &stats)
 }
 
 /// Version of the Rust engine compiled into this package. The package's own
