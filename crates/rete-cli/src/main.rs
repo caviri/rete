@@ -2160,8 +2160,8 @@ fn generate_release_artifacts(output: &Path) -> anyhow::Result<()> {
 mod federate_tests {
     use crate::commands::federate::{source_predicates, MergeAcc};
     use rete_core::{
-        build_pyramid_meta, eval_query, query_predicates, write_dataset, Binding,
-        DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete, DEFAULT_TILE_BUDGET,
+        build_pyramid_meta, eval_query, query_predicates, write_dataset_v05 as write_dataset,
+        Binding, DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete, DEFAULT_TILE_BUDGET,
     };
 
     /// Build an in-memory `.rete` from `(s, p, o)` N-Triples-token triples.

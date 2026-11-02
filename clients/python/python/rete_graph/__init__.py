@@ -36,7 +36,16 @@ __engine_version__ = _rete.__engine_version__
 #: ``RAYON_NUM_THREADS``) and ``http`` (the CLI's range reader behind
 #: ``open(url)``); a Pyodide wheel lists neither.
 __engine_features__ = tuple(_rete.__engine_features__)
-__all__ = ["open", "build", "Builder", "Graph", "Term", "DEFAULT_GRAPH"]
+__all__ = [
+    "open",
+    "build",
+    "build_record",
+    "verify",
+    "Builder",
+    "Graph",
+    "Term",
+    "DEFAULT_GRAPH",
+]
 
 
 class _DefaultGraph:
@@ -754,6 +763,22 @@ def _as_text_source(source: Any, format: str) -> Tuple[str, str]:
             text = text.replace(f" {_RDFLIB_DEFAULT_GRAPH} .", " .")
         return text, ("nq" if context_aware else "nt")
     return source, format
+
+
+def build_record(image: bytes) -> Optional[Dict[str, Any]]:
+    """The build record of a ``.rete`` image as a dict, or ``None`` when it has
+    none. It says how the file came to be: ``front_end`` (``"python"`` for a
+    build made here), the ``engine`` (version, commit, target, features), the
+    ``params`` of the build, the ``inputs`` (a label, length and BLAKE3 each)
+    and the ``counts``. It is outside the content hash."""
+    raw = _rete.read_build_record(bytes(image))
+    return json.loads(raw) if raw else None
+
+
+def verify(image: bytes) -> bool:
+    """Check an image's content hash and, in format 0x06, every section digest
+    against its bytes."""
+    return _rete.verify_image(bytes(image))
 
 
 def build(source: Any, format: str = "nt", *, quoted_triple_syntax: str = "rdf-star") -> bytes:

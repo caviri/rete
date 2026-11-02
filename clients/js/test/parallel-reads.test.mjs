@@ -33,8 +33,8 @@ const INT = "http://www.w3.org/2001/XMLSchema#integer";
 
 const title = (i) => {
   let s = "";
-  for (let k = 0; s.length < 256; k++) s += createHash("sha256").update(`${i}:${k}`).digest("hex");
-  return s.slice(0, 256);
+  for (let k = 0; s.length < 512; k++) s += createHash("sha256").update(`${i}:${k}`).digest("hex");
+  return s.slice(0, 512);
 };
 
 function citations() {

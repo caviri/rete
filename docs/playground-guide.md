@@ -23,7 +23,7 @@ Before querying an unfamiliar graph, open **Card** beside the source. The
 counts, vocabulary and starter queries without reading the triple index.
 **Use** loads a card query into the editor; these also appear beside catalog
 examples. **JSON** lets you copy or download the card. The rendered view also
-shows any separate build record. Older or cardless files may lack these fields.
+shows any separate build record. Older files may lack these fields.
 
 To open your own file, use **+ Add source > Connect (lazy)** with a `.rete` URL.
 Its host needs ranges and browser CORS; see [Hosting](hosting.md).

@@ -2047,6 +2047,9 @@ fn checked_tile(codec: u8, bytes: &[u8]) -> Option<Vec<u8>> {
 /// Serialize a complete `.rete` file image from a dictionary, index, and an
 /// (optionally empty) encoded pyramid-meta section. `pyramid_levels` records the
 /// number of dendrogram rounds the pyramid spans (0 if no pyramid).
+///
+/// The image is format `0x06`, the one layout every writer produces (the
+/// legacy `0x05` image is [`write_file_v05`]).
 pub fn write_file(
     dict: &Dictionary,
     index: &GraphIndex,
@@ -2055,6 +2058,28 @@ pub fn write_file(
     pyramid_levels: u16,
 ) -> Vec<u8> {
     write_dataset(dict, index, &[], has_quads, pyramid_meta, pyramid_levels)
+}
+
+/// The legacy `0x05` image of [`write_file`]. The layout of the first stable
+/// generation, kept for the tests that pin its byte layout, for the in-RAM
+/// builders that hand their `0x05` image to the one `0x06` finish step, and for
+/// `RETE_WRITE_FORMAT=5`.
+#[doc(hidden)]
+pub fn write_file_v05(
+    dict: &Dictionary,
+    index: &GraphIndex,
+    has_quads: bool,
+    pyramid_meta: &[u8],
+    pyramid_levels: u16,
+) -> Vec<u8> {
+    write_dataset_v05(dict, index, &[], has_quads, pyramid_meta, pyramid_levels)
+}
+
+/// A finished `0x05` image as the `0x06` file the public writers return (the
+/// image is untouched under `RETE_WRITE_FORMAT=5`).
+fn into_v06(image: Vec<u8>) -> Vec<u8> {
+    crate::build_record::finish_in_ram(image, None)
+        .unwrap_or_else(|e| panic!("writing format 0x06: {e}"))
 }
 
 /// Encode an index container (v0.2): one raw tiled section payload per
@@ -2136,7 +2161,9 @@ fn decode_named_graphs(
 }
 
 /// Serialize a full RDF *dataset*: the default-graph index plus zero or more
-/// named graphs `(iri, index)`, all sharing one dictionary.
+/// named graphs `(iri, index)`, all sharing one dictionary. Format `0x06`; named
+/// graphs, given per graph here, are stored as the quad index (`0x06` has no
+/// other layout).
 pub fn write_dataset(
     dict: &Dictionary,
     default_index: &GraphIndex,
@@ -2146,6 +2173,28 @@ pub fn write_dataset(
     pyramid_levels: u16,
 ) -> Vec<u8> {
     write_dataset_with_metadata(
+        dict,
+        default_index,
+        named,
+        has_quads,
+        pyramid_meta,
+        pyramid_levels,
+        &[],
+        &[],
+    )
+}
+
+/// The legacy `0x05` image of [`write_dataset`] (see [`write_file_v05`]).
+#[doc(hidden)]
+pub fn write_dataset_v05(
+    dict: &Dictionary,
+    default_index: &GraphIndex,
+    named: &[(String, GraphIndex)],
+    has_quads: bool,
+    pyramid_meta: &[u8],
+    pyramid_levels: u16,
+) -> Vec<u8> {
+    write_dataset_with_metadata_v05(
         dict,
         default_index,
         named,
@@ -2190,6 +2239,32 @@ pub(crate) fn encode_dict_container(dict: &Dictionary, codec: u8) -> Vec<u8> {
 /// is computed over exactly the same parts (a zero-length hash update is a no-op).
 #[allow(clippy::too_many_arguments)]
 pub fn write_dataset_with_metadata(
+    dict: &Dictionary,
+    default_index: &GraphIndex,
+    named: &[(String, GraphIndex)],
+    has_quads: bool,
+    pyramid_meta: &[u8],
+    pyramid_levels: u16,
+    metadata: &[u8],
+    text_index: &[u8],
+) -> Vec<u8> {
+    into_v06(write_dataset_with_metadata_v05(
+        dict,
+        default_index,
+        named,
+        has_quads,
+        pyramid_meta,
+        pyramid_levels,
+        metadata,
+        text_index,
+    ))
+}
+
+/// The legacy `0x05` image of [`write_dataset_with_metadata`] (see
+/// [`write_file_v05`]).
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_dataset_with_metadata_v05(
     dict: &Dictionary,
     default_index: &GraphIndex,
     named: &[(String, GraphIndex)],
@@ -7251,6 +7326,11 @@ pub(crate) fn dict_chunk_keys_for_test(image: &[u8]) -> Vec<Vec<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{
+        write_dataset_v05 as write_dataset,
+        write_dataset_with_metadata_v05 as write_dataset_with_metadata,
+        write_file_v05 as write_file,
+    };
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
 

@@ -1409,7 +1409,7 @@ impl SortKey {
 mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
-    use crate::file::{write_file, Rete};
+    use crate::file::{write_file_v05 as write_file, Rete};
     use crate::index::GraphIndexBuilder;
     use crate::row::{Ctx, Slots, Val};
 

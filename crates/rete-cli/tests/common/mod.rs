@@ -158,3 +158,10 @@ pub fn serve(data: Vec<u8>, mode: RangeMode) -> String {
     });
     url
 }
+
+/// A `.rete` file's bytes without its build record. Every build writes one now
+/// (the clock, the run's timings, the entry point and the input's name are in
+/// it), so two builds of one input are the same file only without it.
+pub fn read_plain(path: impl AsRef<Path>) -> Vec<u8> {
+    rete_core::attach_build_info(&std::fs::read(path).unwrap(), &[]).unwrap()
+}

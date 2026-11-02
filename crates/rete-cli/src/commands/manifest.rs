@@ -429,8 +429,15 @@ pub(crate) fn seal(
             continue;
         }
         let n = quads.len();
-        let (image, _stats) =
-            assemble_dataset_with_opts(quads, false, false, None, |_, _| Vec::new());
+        let (image, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
+            quads,
+            false,
+            false,
+            None,
+            rete_core::PyramidAlgo::Louvain,
+            |_, _| Vec::new(),
+        );
+        let image = super::v06::finish_recorded(image, "manifest segment", &stats)?;
         let header = Header::from_bytes(&image[..HEADER_LEN])
             .map_err(|e| anyhow::anyhow!("built segment has a bad header: {e}"))?;
         let hash = hex16(&header.content_hash);
@@ -483,8 +490,15 @@ pub(crate) fn compact(
     let visible = visible_quads(manifest_path)?;
     let quads: Vec<RawQuad> = visible.into_iter().collect();
     let n = quads.len();
-    let (image, _stats) =
-        assemble_dataset_with_opts(quads, !no_pyramid, false, None, |_, _| Vec::new());
+    let (image, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
+        quads,
+        !no_pyramid,
+        false,
+        None,
+        rete_core::PyramidAlgo::Louvain,
+        |_, _| Vec::new(),
+    );
+    let image = super::v06::finish_recorded(image, "manifest compact", &stats)?;
     let header = Header::from_bytes(&image[..HEADER_LEN])
         .map_err(|e| anyhow::anyhow!("compacted file has a bad header: {e}"))?;
     let hash = hex16(&header.content_hash);

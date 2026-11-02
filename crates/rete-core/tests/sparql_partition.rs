@@ -3,8 +3,8 @@
 //! query's rows, and every split that could not promise that is refused.
 
 use rete_core::{
-    eval_query, eval_query_partitioned, partition_plan, write_file, DictionaryBuilder,
-    GraphIndexBuilder, PartitionPlan, QueryOpts, QueryOutput, Rete, SparqlError,
+    eval_query, eval_query_partitioned, partition_plan, write_file_v05 as write_file,
+    DictionaryBuilder, GraphIndexBuilder, PartitionPlan, QueryOpts, QueryOutput, Rete, SparqlError,
 };
 
 const P: &str = "PREFIX : <http://ex.org/> ";

@@ -12,7 +12,7 @@ readme = "README.md"
 keywords = ["rdf", "sparql", "graph", "database", "range-queries"]
 categories = ["database", "data-structures", "web-programming"]
 publish = ["crates-io"]
-include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md", "LICENSE"]
+include = ["build.rs", "src/**", "tests/**", "examples/**", "Cargo.toml", "README.md", "LICENSE"]
 
 # docs.rs builds default features only, which would hide the `parallel` module.
 # The builder is native Linux with a C toolchain, so `compression` + `rayon`

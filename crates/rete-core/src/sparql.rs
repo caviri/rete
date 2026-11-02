@@ -1143,7 +1143,7 @@ mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
-    use crate::write_file;
+    use crate::write_file_v05 as write_file;
 
     fn rete_from(triples: &[(&str, &str, &str)]) -> Vec<u8> {
         let mut db = DictionaryBuilder::new();
@@ -1676,7 +1676,7 @@ mod tests {
 
     #[test]
     fn graph_queries_over_named_graphs() {
-        use crate::write_dataset;
+        use crate::write_dataset_v05 as write_dataset;
         // Shared dict; social graph has knows edges, profile graph has ages.
         let mut db = DictionaryBuilder::new();
         let edges = [
@@ -1732,7 +1732,7 @@ mod tests {
 
     #[test]
     fn from_unions_named_graphs() {
-        use crate::write_dataset;
+        use crate::write_dataset_v05 as write_dataset;
         // social graph: Alice knows Bob. profile graph: Bob knows Carol.
         // A join spanning both only works if FROM merges them into the default.
         let mut db = DictionaryBuilder::new();
@@ -1784,7 +1784,7 @@ mod tests {
 
     #[test]
     fn union_default_graph_opt_in() {
-        use crate::write_dataset;
+        use crate::write_dataset_v05 as write_dataset;
         // default graph: Root knows Alice. social: Alice knows Bob (twice — once
         // duplicated in profile, to pin set-union dedup). profile: the duplicate
         // plus Bob knows Carol.
@@ -2601,7 +2601,7 @@ mod tests {
     /// A pattern inside `GRAPH <g>` is sized by the graph, not by the file.
     #[test]
     fn a_named_graph_is_sized_by_its_own_triples() {
-        use crate::write_dataset;
+        use crate::write_dataset_v05 as write_dataset;
         let mut db = DictionaryBuilder::new();
         let big: Vec<(String, String, String)> = (0..300)
             .map(|i| {

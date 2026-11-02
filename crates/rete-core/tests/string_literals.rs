@@ -8,7 +8,9 @@
 //! plain spelling in its results.
 
 use rete_core::ingest::{assemble_dataset, parse_statements};
-use rete_core::{eval_sparql, write_file, DictionaryBuilder, GraphIndexBuilder, Rete};
+use rete_core::{
+    eval_sparql, write_file_v05 as write_file, DictionaryBuilder, GraphIndexBuilder, Rete,
+};
 
 const XS: &str = "http://www.w3.org/2001/XMLSchema#string";
 

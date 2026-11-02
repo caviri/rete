@@ -26,7 +26,7 @@
 //! is an exact inverse — no hidden capacity to leak.
 
 use rete_core::{
-    eval_query, results_envelope_json, BlockCacheReader, Rete, RangeReader, DEFAULT_BLOCK,
+    eval_query, results_envelope_json, BlockCacheReader, RangeReader, Rete, DEFAULT_BLOCK,
 };
 
 const STATUS_OK: u32 = 0;
@@ -274,13 +274,22 @@ pub unsafe extern "C" fn rete_build(
 ) -> *mut u8 {
     let text = match std::str::from_utf8(borrow(text_ptr, text_len)) {
         Ok(t) => t,
-        Err(e) => return pack(STATUS_ERR, format!("input text is not utf-8: {e}").as_bytes()),
+        Err(e) => {
+            return pack(
+                STATUS_ERR,
+                format!("input text is not utf-8: {e}").as_bytes(),
+            )
+        }
     };
     let format = match std::str::from_utf8(borrow(fmt_ptr, fmt_len)) {
         Ok(f) => f,
         Err(e) => return pack(STATUS_ERR, format!("format is not utf-8: {e}").as_bytes()),
     };
-    build_surface(text, format, rete_core::ingest::QuotedTripleSurface::default())
+    build_surface(
+        text,
+        format,
+        rete_core::ingest::QuotedTripleSurface::default(),
+    )
 }
 
 /// [`rete_build`], reading Turtle/TriG `<< … >>` in the named surface: the
@@ -317,8 +326,8 @@ pub unsafe extern "C" fn rete_build_syntax(
                 return pack(
                     STATUS_ERR,
                     format!(
-                        "unknown quoted-triple syntax {syntax:?} (expected \"rdf-star\" or \"rdf12\")"
-                    )
+                    "unknown quoted-triple syntax {syntax:?} (expected \"rdf-star\" or \"rdf12\")"
+                )
                     .as_bytes(),
                 )
             }
@@ -343,8 +352,31 @@ fn build_surface(
             b"no statements parsed (empty input or only comments)",
         );
     }
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
-    pack(STATUS_OK, &bytes)
+    let read = quads.len() as u64;
+    let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
+    // The in-RAM image as `0x06`, with the build record (`front_end: "java"`),
+    // through the one step every front end shares.
+    use rete_core::build_record as br;
+    let record = br::to_json(
+        &br::Record {
+            front_end: br::front_end::JAVA.into(),
+            front_end_version: env!("CARGO_PKG_VERSION").into(),
+            built_at: br::timestamp(),
+            options: br::Options {
+                command: "build".into(),
+                format: Some(format.to_string()),
+                pyramid_algo: Some("louvain".into()),
+                ..Default::default()
+            },
+            inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+            statements_read: Some(read),
+        },
+        Some(&stats),
+    );
+    match br::finish_in_ram(bytes, Some(&record)) {
+        Ok(b) => pack(STATUS_OK, &b),
+        Err(e) => pack(STATUS_ERR, e.to_string().as_bytes()),
+    }
 }
 
 /// Header summary of a `.rete` image as JSON:

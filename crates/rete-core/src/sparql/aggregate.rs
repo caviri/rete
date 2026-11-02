@@ -394,7 +394,7 @@ fn compute_agg(ctx: &Ctx, agg: &Agg, members: &[Row]) -> Option<String> {
 mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
-    use crate::file::{write_file, Rete};
+    use crate::file::{write_file_v05 as write_file, Rete};
     use crate::index::GraphIndexBuilder;
     use crate::row::{Slots, Val};
     use crate::sparql::{ArithOp, FExpr};

@@ -6,19 +6,17 @@
 use rete_core::v06::write::{WriteOpts, MIN_FILE_LEN};
 
 /// `RETE_WRITE_FORMAT=5`: the in-RAM build writes the legacy `0x05` layout —
-/// a test hook (the byte-identity test of `convert`), not a user option.
+/// a test hook (the byte-identity test of `convert`), not a user option. One
+/// switch for every front end: it lives in `rete_core::build_record`.
 pub(crate) fn writes_legacy() -> bool {
-    std::env::var("RETE_WRITE_FORMAT").is_ok_and(|v| v.trim() == "5")
+    rete_core::build_record::writes_legacy()
 }
 
 /// Turn a finished in-memory `0x05` image into the `0x06` file the writer
 /// emits (unless [`writes_legacy`]). The same code `rete convert` runs, so a
 /// build and a converted build of the same input are the same bytes.
 pub(crate) fn finish(image: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    if writes_legacy() || rete_core::v06::open::is_v06(&image) {
-        return Ok(image);
-    }
-    rete_core::v06::write::convert_image(&image, WriteOpts::default())
+    rete_core::build_record::finish_in_ram(image, None)
         .map_err(|e| anyhow::anyhow!("writing 0x06: {e}"))
 }
 
@@ -178,10 +176,10 @@ fn convert_per_graph(input: &str, output: &str, label_index: bool) -> anyhow::Re
     opts.text_index_scope = scope.as_ref();
     opts.label_index = rete.has_label_index() || (label_index && legacy_labels);
     opts.perms = rete.header().perms;
-    let (image, _) = rete_core::ingest::assemble_dataset_opts(quads, &opts, |_, _| {
+    let (image, stats) = rete_core::ingest::assemble_dataset_opts(quads, &opts, |_, _| {
         card.clone().unwrap_or_default()
     });
-    let image = finish(image)?;
+    let image = finish_recorded(image, "convert", &stats)?;
     std::fs::write(output, &image)?;
     eprintln!(
         "convert: wrote {output} — format 0x06, {} bytes",
@@ -246,4 +244,31 @@ pub(crate) fn recard_file(
     };
     std::fs::rename(&tmp, path)?;
     Ok((h, true))
+}
+
+/// [`finish`] for the in-RAM writers that are not `rete build`: the file as
+/// `0x06` with a lean build record (`front_end: "cli"`, the entry point named
+/// `command`, the counts) beside it, so no CLI-written file lacks one.
+pub(crate) fn finish_recorded(
+    image: Vec<u8>,
+    command: &str,
+    stats: &rete_core::ingest::BuildStats,
+) -> anyhow::Result<Vec<u8>> {
+    use rete_core::build_record as br;
+    let record = br::to_json(
+        &br::Record {
+            front_end: br::front_end::CLI.into(),
+            front_end_version: env!("CARGO_PKG_VERSION").into(),
+            built_at: br::timestamp(),
+            options: br::Options {
+                command: command.into(),
+                ..Default::default()
+            },
+            inputs: Vec::new(),
+            statements_read: None,
+        },
+        Some(stats),
+    );
+    rete_core::build_record::finish_in_ram(image, Some(&record))
+        .map_err(|e| anyhow::anyhow!("writing 0x06: {e}"))
 }

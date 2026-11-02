@@ -83,13 +83,15 @@ def test_reads_rdf12_trig_with_builder_and_suffix(tmp_path):
     assert g.graph_names() == ["http://example.test/g"]
 
 
-def test_rdf_star_is_the_default_and_unchanged():
+def test_rdf_star_is_the_default_and_unchanged(monkeypatch):
     # RDF 1.2 Turtle through the default reader is a loud error naming the flag.
     with pytest.raises(ValueError, match="rdf12"):
         rete.build(TTL12, "ttl")
     with pytest.raises(ValueError, match="quoted_triple_syntax"):
         rete.build(PLAIN, "nt", quoted_triple_syntax="rdf13")
-    # N-Triples ignores the flag: identical bytes under both values.
+    # N-Triples ignores the flag: identical bytes under both values (the record
+    # pinned, as it carries the clock).
+    monkeypatch.setenv("RETE_BUILD_RECORD", "reproducible")
     assert rete.build(PLAIN) == rete.build(PLAIN, quoted_triple_syntax="rdf-star")
     assert rete.build(PLAIN) == rete.build(PLAIN, quoted_triple_syntax="rdf12")
     # The same Turtle bytes are two graphs under the two readers.

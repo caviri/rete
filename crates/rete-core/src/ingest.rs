@@ -932,6 +932,9 @@ pub struct BuildStats {
     pub terms: usize,
     /// Levels in the community pyramid, or `0` when the build skipped it.
     pub pyramid_levels: u16,
+    /// Whether the file got a label index. The record says so even when the
+    /// caller (a binding) set no option for it.
+    pub label_index: bool,
 }
 
 /// How a build stores the **named graphs** (the default graph is unaffected).
@@ -1085,6 +1088,54 @@ impl IntoMetadata for DeferredMetadata {
     fn into_metadata(self, counts: FinalCounts) -> Vec<u8> {
         (self.0)(counts)
     }
+}
+
+/// [`assemble_dataset`] for the writers that finish as format `0x06` (the
+/// bindings and the browser): named graphs go in the quad index, the only
+/// layout `0x06` has. Everything else is `assemble_dataset`'s.
+pub fn assemble_dataset_quad(quads: Vec<RawQuad>, metadata: &[u8]) -> (Vec<u8>, BuildStats) {
+    let blob = metadata.to_vec();
+    assemble_dataset_with_quad(quads, move |_, _| blob)
+}
+
+/// [`assemble_dataset_with`] with the named graphs in the quad index.
+pub fn assemble_dataset_with_quad<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
+    assemble_dataset_with_opts_algo_quad(quads, true, false, None, PyramidAlgo::Louvain, metadata)
+}
+
+/// [`assemble_dataset_with_opts_algo`] for the `0x06` writers, with **the layout
+/// `rete build --label-index` writes**: the named graphs in the quad index, the
+/// pyramid block carrying only the community material, the SCHEMA section and
+/// the label index. The browser engine and the Python, R and Java clients all
+/// assemble through this, so one input and one set of options is one content
+/// hash whichever front end built it (the browser and Java, having no zstd
+/// encoder, write their sections uncompressed and so differ in bytes). The label
+/// index is on because label prefix search is what a graph built in memory is
+/// opened to do (the playground, the MCP server), and the legacy label block it
+/// replaces is gone from the community-only pyramid block.
+pub fn assemble_dataset_with_opts_algo_quad<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    with_pyramid: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
+    let text_index = crate::text_index::IntoTextIndex::into_text_index(with_text_index);
+    let opts = AssembleOptions {
+        with_pyramid,
+        with_text_index: text_index.is_some(),
+        text_index_scope: text_index.as_ref(),
+        type_override,
+        algo,
+        graph_layout: GraphLayout::Quad,
+        label_index: true,
+        ..AssembleOptions::sectioned()
+    };
+    assemble_dataset_opts(quads, &opts, metadata)
 }
 
 /// Assemble a complete `.rete` file image from parsed quads: one shared
@@ -1337,6 +1388,7 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
         named_graphs: named.graph_count(),
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
+        label_index: opts.label_index,
     };
     let pending = metadata(&stats, &quads);
     crate::build_trace::lap(crate::build_trace::Phase::CardDerive);
@@ -1517,6 +1569,7 @@ where
         named_graphs: named.graph_count(),
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
+        label_index: opts.label_index,
     };
     let pending = metadata(&stats, &dict, &default_triples);
     crate::build_trace::lap(crate::build_trace::Phase::CardDerive);

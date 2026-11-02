@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rete_core::{
-    eval_query, write_dataset, Binding, ByteRange, DictionaryBuilder, GraphIndexBuilder, Header,
-    QueryOutput, RangeReader, Rete, HEADER_LEN,
+    eval_query, write_dataset_v05 as write_dataset, Binding, ByteRange, DictionaryBuilder,
+    GraphIndexBuilder, Header, QueryOutput, RangeReader, Rete, HEADER_LEN,
 };
 
 /// An in-memory reader that can be told to fail every read, or to return

@@ -260,6 +260,22 @@ in place). Both are invisible to older readers: verified with the released
 prints its known subset with no warning and `verify` passes (the section is
 outside the content hash).
 
+### The 0.5 build record
+
+From 0.5.0 every writer writes format `0x06` **and** a build record: the CLI
+with or without a card, `rete merge`, the Python, R and Java clients and the
+browser engine. The record gains a `front_end` field (`cli`, `python`, `r`,
+`java`, `wasm`), optional like the rest. A client's or the browser's record
+is the lean one (engine, host, options, the input's length and BLAKE3, counts);
+only the CLI measures phases, spill and starter-query costs. A file with no card
+gets a card region that is its record and nothing more (no doubling, no 8 KiB of
+slack: the region is in the first read), so `rete recard --in-place` of such a
+file copies it once; a file written with a card keeps the room to re-card in
+place. Two builds of one
+input differ in the record by design, so byte comparison of builds is done on
+the file without it (`rete_core::attach_build_info(image, &[])`) or with
+`RETE_BUILD_RECORD=reproducible`.
+
 ### A card after the data
 
 In `0x05`, the memory-bounded build, `rete merge` and `rete recard --in-place`

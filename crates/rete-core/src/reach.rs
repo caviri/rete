@@ -67,7 +67,9 @@ pub fn batch_reach_serial(
 mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
-    use crate::file::{build_pyramid_meta, write_dataset, Rete, DEFAULT_TILE_BUDGET};
+    use crate::file::{
+        build_pyramid_meta, write_dataset_v05 as write_dataset, Rete, DEFAULT_TILE_BUDGET,
+    };
     use crate::index::GraphIndexBuilder;
 
     /// Two clusters of `knows` edges joined by a bridge.

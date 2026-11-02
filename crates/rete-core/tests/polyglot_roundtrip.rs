@@ -21,7 +21,9 @@ use rete_core::range::{
     detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader, POLYGLOT_DIGITS,
     POLYGLOT_MARKER,
 };
-use rete_core::{write_file, DictionaryBuilder, GraphIndexBuilder, Rete, HEADER_LEN};
+use rete_core::{
+    write_file_v05 as write_file, DictionaryBuilder, GraphIndexBuilder, Rete, HEADER_LEN,
+};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

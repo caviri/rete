@@ -42,6 +42,17 @@ test_that("ASK and CONSTRUCT", {
   expect_equal(df$predicate, "http://example.org/knownBy")
 })
 
+test_that("a build is format 0x06 with a build record", {
+  data <- rete_build(NT)
+  expect_equal(as.integer(data[5]), 6L)
+  # The record sits beside the card as plain JSON; drop the zero padding so the
+  # image reads as text.
+  text <- rawToChar(data[data != as.raw(0)])
+  expect_true(grepl("\"front_end\":\"r\"", text, fixed = TRUE, useBytes = TRUE))
+  expect_true(grepl("\"name\":\"rete-core\"", text, fixed = TRUE, useBytes = TRUE))
+  expect_equal(rete_info(rete_open(data))$quads, 6)
+})
+
 test_that("local file opens lazily and matches the raw image", {
   path <- tempfile(fileext = ".rete")
   data <- rete_build(NT)

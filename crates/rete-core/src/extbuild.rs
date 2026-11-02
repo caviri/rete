@@ -706,6 +706,7 @@ where
             named_graphs: named_graphs as usize,
             terms: merged.term_count as usize,
             pyramid_levels: 0,
+            label_index: false,
         };
         // Every spill file is still there, and the output not yet started: the
         // scratch high-water mark of the build.

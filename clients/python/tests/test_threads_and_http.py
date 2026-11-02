@@ -49,7 +49,10 @@ def test_the_native_wheel_has_parallel_and_http():
 
 
 @native
-def test_a_parallel_build_is_byte_identical_to_a_single_threaded_one(tmp_path):
+def test_a_parallel_build_is_byte_identical_to_a_single_threaded_one(tmp_path, monkeypatch):
+    # Whole-file identity needs the build record pinned too: it carries the
+    # clock, which `RETE_BUILD_RECORD=reproducible` leaves out.
+    monkeypatch.setenv("RETE_BUILD_RECORD", "reproducible")
     text = _graph_text(20_000)
     src = tmp_path / "g.nt"
     src.write_text(text)

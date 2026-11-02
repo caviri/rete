@@ -227,13 +227,14 @@ fn write_carded(
     let header = rete_core::Header::from_bytes(&bytes)?;
     let mut info = buildinfo::new_build_info(flags.params(Some(header.dict_codec)));
     rec.begin(&mut info);
-    if !flags.measure_costs {
+    let loaded = card::load_card(&bytes)?;
+    if loaded.is_some() && !flags.measure_costs {
         eprintln!(
             "--no-card-costs: the starter queries were NOT run, so nothing checked that they \
              answer on this file"
         );
     }
-    let card = card::load_card(&bytes)?.filter(|c| flags.measure_costs && !c.queries.is_empty());
+    let card = loaded.filter(|c| flags.measure_costs && !c.queries.is_empty());
     let bytes = match card {
         Some(card) => {
             live::begin(
@@ -609,10 +610,9 @@ pub(crate) fn build(
         .map(|i| (i.as_str(), input_format(i, format)))
         .collect();
     // The build record's clock and input taps start here, before any input is
-    // opened. A cardless build carries no record, so it taps nothing: its
-    // inputs are not hashed.
-    let recording = card_args.requested() || reason;
-    let rec = buildinfo::Recorder::start(if recording { &inputs_fmt[..] } else { &[] });
+    // opened. Every build carries a record, so every input is hashed as it is
+    // read.
+    let rec = buildinfo::Recorder::start(&inputs_fmt[..]);
     let flags = RecordFlags {
         command: "build",
         format,
@@ -676,7 +676,6 @@ pub(crate) fn build(
         } else {
             None
         };
-        let card_requested = curated.is_some();
         // Invalid-IRI audit, shared across every input so the build reports one
         // total. The assembler reads the inputs TWICE (observe terms, then
         // encode), so the audit runs on the first pass only — auditing both
@@ -750,22 +749,16 @@ pub(crate) fn build(
             .map_err(|e| ingest_error(None, e))?;
         let bytes = super::v06::finish(bytes)?;
         let audit = audit.into_inner();
-        let len = if card_requested {
-            write_carded(
-                output,
-                bytes,
-                &flags,
-                &rec,
-                &stats,
-                rec.statements_read.get(),
-                None,
-                &audit.report,
-            )?
-        } else {
-            live::begin(Phase::Write, None, Unit::None);
-            std::fs::write(output, &bytes)?;
-            bytes.len()
-        };
+        let len = write_carded(
+            output,
+            bytes,
+            &flags,
+            &rec,
+            &stats,
+            rec.statements_read.get(),
+            None,
+            &audit.report,
+        )?;
         progress::finish(stats.statements as u64, output);
         print_build_summary(output, &stats, len);
         crate::commands::iri_report::warn_after_build(&audit.report);
@@ -852,7 +845,6 @@ pub(crate) fn build(
     } else {
         None
     };
-    let card_requested = curated.is_some();
     let (bytes, stats) =
         ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
             Some(curated) => {
@@ -877,22 +869,16 @@ pub(crate) fn build(
             None => rete_core::ingest::DeferredMetadata::none(),
         });
     let bytes = super::v06::finish(bytes)?;
-    let len = if card_requested {
-        write_carded(
-            output,
-            bytes,
-            &flags,
-            &rec,
-            &stats,
-            read,
-            inferred,
-            &audit.report,
-        )?
-    } else {
-        live::begin(Phase::Write, None, Unit::None);
-        std::fs::write(output, &bytes)?;
-        bytes.len()
-    };
+    let len = write_carded(
+        output,
+        bytes,
+        &flags,
+        &rec,
+        &stats,
+        read,
+        inferred,
+        &audit.report,
+    )?;
     progress::finish(stats.statements as u64, output);
     print_build_summary(output, &stats, len);
     crate::commands::iri_report::warn_after_build(&audit.report);
@@ -1097,11 +1083,7 @@ pub(crate) fn build_external_cmd(
         );
     }
 
-    let rec = std::rc::Rc::new(buildinfo::Recorder::start(if card_args.requested() {
-        &inputs_fmt[..]
-    } else {
-        &[]
-    }));
+    let rec = std::rc::Rc::new(buildinfo::Recorder::start(&inputs_fmt[..]));
     let curated = if card_args.requested() {
         Some(card::load_curated(&card_args)?)
     } else {
@@ -1130,11 +1112,11 @@ pub(crate) fn build_external_cmd(
         memory_budget_mb: Some(memory_budget_mb),
         card_args: &card_args,
     };
-    let info = curated.is_some().then(|| {
+    let info = {
         let mut info = buildinfo::new_build_info(flags.params(None));
         rec.begin(&mut info);
         std::rc::Rc::new(std::cell::RefCell::new(info))
-    });
+    };
     let out_path = std::path::Path::new(output).to_path_buf();
     // Named graphs come from N-Quads and TriG unless they are folded away.
     let named = !collapse_graphs && inputs_fmt.iter().any(|(_, f)| matches!(*f, "nq" | "trig"));
@@ -1152,24 +1134,22 @@ pub(crate) fn build_external_cmd(
     // streaming assembler — the audit needs no pass guard.
     let audit = std::rc::Rc::new(std::cell::RefCell::new(iri_audit(strict)));
     let read = rec.statements_read.clone();
-    // The card, derived from the finished sections before the file is written
-    // (see `full_card_hook`).
+    // The card, when asked for, derived from the finished sections before
+    // the file is written, and the build record either way (see
+    // `full_card_hook`).
     let outcome = std::rc::Rc::new(CardOutcome::default());
-    let card_from_image = match (&info, curated) {
-        (Some(info), Some(curated)) => {
-            let report = audit.clone();
-            Some(full_card_hook(
-                info.clone(),
-                curated,
-                measure_costs,
-                memory_budget_mb,
-                rec.clone(),
-                move || report.borrow().report.clone(),
-                outcome.clone(),
-                "build",
-            ))
-        }
-        _ => None,
+    let card_from_image = {
+        let report = audit.clone();
+        Some(full_card_hook(
+            info.clone(),
+            curated,
+            measure_costs,
+            memory_budget_mb,
+            rec.clone(),
+            move || report.borrow().report.clone(),
+            outcome.clone(),
+            "build",
+        ))
     };
     let stats = rete_core::extbuild::build_external(
         |visit| {
@@ -1236,9 +1216,7 @@ pub(crate) fn build_external_cmd(
         other => anyhow::anyhow!("{other}"),
     })?;
     let report = audit.borrow().report.clone();
-    if let Some(info) = &info {
-        finish_full_card(output, info, &rec, &outcome)?;
-    }
+    finish_full_card(output, &info, &rec, &outcome)?;
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
     progress::finish(stats.statements as u64, output);
     print_build_summary(output, &stats, byte_len);
@@ -1274,7 +1252,7 @@ pub(crate) struct CardOutcome {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn full_card_hook(
     info: std::rc::Rc<std::cell::RefCell<buildinfo::BuildInfo>>,
-    curated: card::CardInput,
+    curated: Option<card::CardInput>,
     measure_costs: bool,
     memory_budget_mb: u64,
     rec: std::rc::Rc<buildinfo::Recorder>,
@@ -1293,26 +1271,32 @@ pub(crate) fn full_card_hook(
             &iri(),
         ));
         info.spill = Some(rec.spill());
-        let full = card::derive_full_card_from(
-            card::CardSource::Image(image),
-            curated,
-            None,
-            measure_costs,
-            card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
-            Some(stats.default_triples as u64),
-            &rec,
-            who,
-        );
-        let full = match full {
-            Ok(f) => f,
-            Err(e) => {
-                *outcome.failed.borrow_mut() = Some(format!("{e:#}"));
-                return Ok((Vec::new(), Vec::new()));
+        // Without a card there is nothing to derive: the record alone.
+        let meta = match curated {
+            None => Vec::new(),
+            Some(curated) => {
+                let full = card::derive_full_card_from(
+                    card::CardSource::Image(image),
+                    curated,
+                    None,
+                    measure_costs,
+                    card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
+                    Some(stats.default_triples as u64),
+                    &rec,
+                    who,
+                );
+                let full = match full {
+                    Ok(f) => f,
+                    Err(e) => {
+                        *outcome.failed.borrow_mut() = Some(format!("{e:#}"));
+                        return Ok((Vec::new(), Vec::new()));
+                    }
+                };
+                info.query_costs = full.query_costs;
+                info.dropped_queries = full.dropped;
+                full.card.to_json_bytes()
             }
         };
-        info.query_costs = full.query_costs;
-        info.dropped_queries = full.dropped;
-        let meta = full.card.to_json_bytes();
         outcome.meta_len.set(meta.len());
         // The record goes into the file before the write it describes, so its
         // room is reserved now, from a copy sealed as the final one will be
@@ -1364,12 +1348,19 @@ pub(crate) fn finish_full_card(
     } else {
         buildinfo::patch_build_info(std::path::Path::new(output), &info.to_json_bytes())?;
     }
-    eprintln!(
-        "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside the \
-         content hash) in the card region",
-        outcome.meta_len.get(),
-        info.to_json_bytes().len()
-    );
+    if outcome.meta_len.get() == 0 {
+        eprintln!(
+            "embedded build info ({} bytes, outside the content hash)",
+            info.to_json_bytes().len()
+        );
+    } else {
+        eprintln!(
+            "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside \
+             the content hash) in the card region",
+            outcome.meta_len.get(),
+            info.to_json_bytes().len()
+        );
+    }
     Ok(())
 }
 
@@ -1405,11 +1396,7 @@ pub(crate) fn repyramid(
     label_index: bool,
 ) -> anyhow::Result<()> {
     let tapped = [(input, "rete")];
-    let rec = buildinfo::Recorder::start(if card_args.requested() {
-        &tapped[..]
-    } else {
-        &[]
-    });
+    let rec = buildinfo::Recorder::start(&tapped[..]);
     let bytes = std::fs::read(input)?;
     if let Some(tap) = rec.taps.first() {
         tap.bytes.set(bytes.len() as u64);
@@ -1468,7 +1455,6 @@ pub(crate) fn repyramid(
     } else {
         None
     };
-    let card_requested = curated.is_some();
     let opts = sections.assemble_options(
         true,
         text_index.as_ref(),
@@ -1495,7 +1481,7 @@ pub(crate) fn repyramid(
             None => rete_core::ingest::DeferredMetadata::none(),
         });
     let out_bytes = super::v06::finish(out_bytes)?;
-    let len = if card_requested {
+    let len = {
         let flags = RecordFlags {
             command: "repyramid",
             format: None,
@@ -1525,9 +1511,6 @@ pub(crate) fn repyramid(
             None,
             &rete_core::IriReport::default(),
         )?
-    } else {
-        std::fs::write(output, &out_bytes)?;
-        out_bytes.len()
     };
     if stats.named_graphs > 0 {
         println!(
@@ -1840,10 +1823,10 @@ mod tests {
         );
     }
 
-    /// A cardless build must stay byte-identical to pre-build-info output — no
-    /// metadata, no build-info, nothing volatile.
+    /// A cardless build carries no card and still carries the build record:
+    /// the front end, the engine, the input's name, size and digest.
     #[test]
-    fn cardless_build_gets_no_build_info() {
+    fn cardless_build_carries_a_record_and_no_card() {
         let nt = "<http://x/a> <http://x/p> <http://x/b> .\n";
         let pid = std::process::id();
         let inp = std::env::temp_dir().join(format!("rete_nobi_in_{pid}.nt"));
@@ -1872,10 +1855,21 @@ mod tests {
         let bytes = std::fs::read(&out).unwrap();
         std::fs::remove_file(&inp).ok();
         std::fs::remove_file(&out).ok();
-        assert!(rete_core::read_build_info(&bytes).unwrap().is_none());
-        let h = rete_core::Header::from_bytes(&bytes).unwrap();
-        assert_eq!(h.metadata_len, 0);
-        assert_eq!(h.build_info_len, 0);
+        let record = rete_core::read_build_info(&bytes)
+            .unwrap()
+            .expect("a record");
+        let v: serde_json::Value =
+            serde_json::from_slice(String::from_utf8_lossy(&record).trim_end().as_bytes()).unwrap();
+        assert_eq!(v["front_end"], "cli");
+        assert_eq!(v["engine"]["name"], "rete-cli");
+        assert_eq!(v["inputs"][0]["bytes"], nt.len() as u64);
+        assert_eq!(
+            v["inputs"][0]["blake3"],
+            blake3::hash(nt.as_bytes()).to_hex().as_str()
+        );
+        let h = rete_core::v06::Header06::from_bytes(&bytes).unwrap();
+        assert_eq!(h.card_len, 0, "no card");
+        assert!(h.build_len > 0, "a record");
     }
 
     /// `build --materialize` runs the reasoner and bakes RDFS entailments into the
@@ -2080,7 +2074,7 @@ mod tests {
         let outcome = std::rc::Rc::new(CardOutcome::default());
         let hook = full_card_hook(
             info.clone(),
-            card::CardInput::default(),
+            Some(card::CardInput::default()),
             false,
             64,
             rec.clone(),
@@ -2094,6 +2088,7 @@ mod tests {
             named_graphs: 0,
             terms: 0,
             pyramid_levels: 0,
+            label_index: false,
         };
         let (card, record) = hook(std::sync::Arc::new(Broken), &stats).unwrap();
         assert!(card.is_empty() && record.is_empty());

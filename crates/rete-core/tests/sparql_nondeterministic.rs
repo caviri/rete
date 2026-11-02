@@ -6,8 +6,8 @@
 //! that keeps `std::time` out of the core.)
 
 use rete_core::{
-    build_pyramid_meta, eval_sparql, write_file, DictionaryBuilder, GraphIndexBuilder, Rete,
-    DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_sparql, write_file_v05 as write_file, DictionaryBuilder,
+    GraphIndexBuilder, Rete, DEFAULT_TILE_BUDGET,
 };
 
 fn rete() -> Rete {

@@ -195,11 +195,7 @@ pub(crate) fn merge_cmd(
     // once the merged file is on disk — the counts, the spill, the card's
     // costs and every phase's time. Timed from here.
     let tapped: Vec<(&str, &'static str)> = inputs.iter().map(|i| (i.as_str(), "rete")).collect();
-    let rec = std::rc::Rc::new(buildinfo::Recorder::start(if card_args.requested() {
-        &tapped[..]
-    } else {
-        &[]
-    }));
+    let rec = std::rc::Rc::new(buildinfo::Recorder::start(&tapped[..]));
 
     // The merged file carries the UNION of its inputs' permutation sets: an
     // all-lean merge stays lean, and one full input is enough to keep the
@@ -273,25 +269,22 @@ pub(crate) fn merge_cmd(
         card_args: &card_args,
     };
     let wants_card = curated.is_some();
-    let info = wants_card.then(|| {
+    let info = {
         let mut info = buildinfo::new_build_info(flags.params(None));
         rec.begin(&mut info);
         std::rc::Rc::new(std::cell::RefCell::new(info))
-    });
-    let outcome = std::rc::Rc::new(crate::commands::build::CardOutcome::default());
-    let card_from_image = match (&info, curated) {
-        (Some(info), Some(curated)) => Some(crate::commands::build::full_card_hook(
-            info.clone(),
-            curated,
-            measure_costs,
-            memory_budget_mb,
-            rec.clone(),
-            rete_core::IriReport::default,
-            outcome.clone(),
-            "merge",
-        )),
-        _ => None,
     };
+    let outcome = std::rc::Rc::new(crate::commands::build::CardOutcome::default());
+    let card_from_image = Some(crate::commands::build::full_card_hook(
+        info.clone(),
+        curated,
+        measure_costs,
+        memory_budget_mb,
+        rec.clone(),
+        rete_core::IriReport::default,
+        outcome.clone(),
+        "merge",
+    ));
     progress::plan(crate::commands::build::external_plan(
         progress::Kind::Merge,
         !rec.taps.is_empty(),
@@ -387,9 +380,7 @@ pub(crate) fn merge_cmd(
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
-    if let Some(info) = &info {
-        crate::commands::build::finish_full_card(output, info, &rec, &outcome)?;
-    }
+    crate::commands::build::finish_full_card(output, &info, &rec, &outcome)?;
 
     let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
     progress::finish(stats.statements as u64, output);

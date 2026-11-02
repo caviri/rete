@@ -31,6 +31,9 @@ fn graph() -> String {
 
 fn build(src: &Path, out: &Path, extra: &[&str], env: &[(&str, &str)]) {
     let mut cmd = rete();
+    // The record pinned: two builds with one command are then one file.
+    cmd.env("RETE_BUILD_RECORD", "reproducible")
+        .env("SOURCE_DATE_EPOCH", "1700000000");
     cmd.arg("build").arg(src).arg("-o").arg(out).args(extra);
     for (k, v) in env {
         cmd.env(k, v);
@@ -84,7 +87,7 @@ fn knobs_change_bytes_not_statements() {
     verify(&base);
     let expected = statements(&base);
     assert_eq!(expected.len(), 12_000);
-    let base_bytes = std::fs::read(&base).unwrap();
+    let base_bytes = common::read_plain(&base);
 
     let variants: [&[&str]; 5] = [
         &["--tile-kib", "4"],
@@ -100,7 +103,7 @@ fn knobs_change_bytes_not_statements() {
         build(&c.src, &out, &args, &[]);
         verify(&out);
         assert_ne!(
-            std::fs::read(&out).unwrap(),
+            common::read_plain(&out),
             base_bytes,
             "{flags:?} changed nothing"
         );
@@ -157,12 +160,12 @@ fn sized_frames_are_the_default() {
         &["--no-pyramid"],
         &[("RETE_ZSTD_FRAME", "stream")],
     );
-    let (s, t) = frame_shapes(&std::fs::read(&sized).unwrap());
+    let (s, t) = frame_shapes(&common::read_plain(&sized));
     assert!(
         s > 0 && t == 0,
         "default build: {s} sized, {t} stream frames"
     );
-    let (s, t) = frame_shapes(&std::fs::read(&stream).unwrap());
+    let (s, t) = frame_shapes(&common::read_plain(&stream));
     assert!(
         s == 0 && t > 0,
         "RETE_ZSTD_FRAME=stream: {s} sized, {t} stream frames"
@@ -191,7 +194,7 @@ fn external_build_matches_under_every_knob() {
     let mut b = vec!["--memory-budget-mb", "64"];
     b.extend_from_slice(&knobs);
     build(&c.src, &ext, &b, &[]);
-    assert_eq!(std::fs::read(&ext).unwrap(), std::fs::read(&mem).unwrap());
+    assert_eq!(common::read_plain(&ext), common::read_plain(&mem));
 
     // `--frequent-objects` too (G3, refused up to 0.4.1): the memory-bounded
     // build promotes the same terms, and says how many it did.
@@ -215,13 +218,13 @@ fn external_build_matches_under_every_knob() {
         let log = String::from_utf8_lossy(&run.get_output().stderr).into_owned();
         assert!(log.contains("extbuild: frequent objects"), "{log}");
         assert_eq!(
-            std::fs::read(&ext).unwrap(),
-            std::fs::read(&mem).unwrap(),
+            common::read_plain(&ext),
+            common::read_plain(&mem),
             "--frequent-objects {n}: memory-bounded and in-RAM builds differ"
         );
         assert_ne!(
-            std::fs::read(&ext).unwrap(),
-            std::fs::read(c.dir.join("mem.rete")).unwrap()
+            common::read_plain(&ext),
+            common::read_plain(c.dir.join("mem.rete"))
         );
     }
 }

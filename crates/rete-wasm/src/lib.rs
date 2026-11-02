@@ -82,8 +82,48 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
             "no statements parsed (empty input or only comments)",
         ));
     }
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
-    Ok(bytes)
+    let read = quads.len() as u64;
+    let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
+    finish_build(bytes, "build", format, text, &stats, read)
+}
+
+/// The file every browser build returns: the in-RAM `0x05` image laid out as
+/// `0x06` (the one step the CLI and every binding share,
+/// [`rete_core::build_record::finish_in_ram`]), with the build record beside
+/// the card: engine, options, the input (name, length, BLAKE3), counts, and
+/// `front_end: "wasm"`. The browser's clock is the only one there is, so the
+/// timestamp comes from it.
+fn finish_build(
+    bytes: Vec<u8>,
+    command: &str,
+    format: &str,
+    text: &str,
+    stats: &rete_core::ingest::BuildStats,
+    read: u64,
+) -> Result<Vec<u8>, JsValue> {
+    use rete_core::build_record as br;
+    let built_at = js_sys::Date::new_0()
+        .to_iso_string()
+        .as_string()
+        .filter(|s| s.len() >= 19)
+        .map(|s| format!("{}Z", &s[..19]));
+    let record = br::to_json(
+        &br::Record {
+            front_end: br::front_end::WASM.into(),
+            front_end_version: env!("CARGO_PKG_VERSION").into(),
+            built_at,
+            options: br::Options {
+                command: command.into(),
+                format: Some(format.into()),
+                pyramid_algo: Some("louvain".into()),
+                ..Default::default()
+            },
+            inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+            statements_read: Some(read),
+        },
+        Some(stats),
+    );
+    br::finish_in_ram(bytes, Some(&record)).map_err(err)
 }
 
 /// [`build`], but the file carries a **Dataset Card** written from
@@ -169,13 +209,15 @@ fn build_card_surface(
         ));
     }
     if card_json.trim().is_empty() {
-        let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
-        return Ok(bytes);
+        let read = quads.len() as u64;
+        let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
+        return finish_build(bytes, "build_with_card", format, text, &stats, read);
     }
     let curated = validated_card(card_json)?;
+    let read = quads.len() as u64;
     // The counts are only known once the dictionary and indexes exist, so the
     // card is serialized from inside the writer rather than handed in whole.
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with(quads, move |stats, _| {
+    let (bytes, stats) = rete_core::ingest::assemble_dataset_with_quad(quads, move |stats, _| {
         let card = rete_core::card::compose_curated_card(
             curated,
             stats.default_triples as u64,
@@ -186,7 +228,7 @@ fn build_card_surface(
         );
         serde_json::to_vec(&card).expect("card serializes")
     });
-    Ok(bytes)
+    finish_build(bytes, "build_with_card", format, text, &stats, read)
 }
 
 /// [`build_with_card`], but the card also carries the **auto-derived profile**
@@ -204,8 +246,9 @@ fn build_card_surface(
 /// - **Sections are uncompressed** (the wasm build has no zstd *encoder*), so
 ///   the file is larger than a CLI build of the same graph. Every reader
 ///   accepts it.
-/// - **No build-info section** (kind 7): its cost figures come from *running*
-///   the starter queries, which is a benchmark, not a build.
+/// - **The build record has no starter-query costs**: they come from *running*
+///   the starter queries, which is a benchmark, not a build. Everything else
+///   in the record is there (see `finish_build`).
 ///
 /// # Why this is a separate function
 ///
@@ -237,20 +280,22 @@ pub fn build_with_derived_card(
         validated_card(card_json)?;
         rete_core::card::CardInput::from_json_str(card_json).map_err(js_error)?
     };
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with(quads, move |stats, quads| {
-        let card = rete_core::card::derive_card(
-            quads,
-            stats.terms as u64,
-            stats.named_graphs as u64,
-            curated,
-        );
-        // The counts the file actually holds are known only once the indexes
-        // have deduplicated the input — the same two-stage stamp the CLI uses.
-        rete_core::ingest::DeferredMetadata::new(move |counts| {
-            card.with_final_counts(counts).to_json_bytes()
-        })
-    });
-    Ok(bytes)
+    let read = quads.len() as u64;
+    let (bytes, stats) =
+        rete_core::ingest::assemble_dataset_with_quad(quads, move |stats, quads| {
+            let card = rete_core::card::derive_card(
+                quads,
+                stats.terms as u64,
+                stats.named_graphs as u64,
+                curated,
+            );
+            // The counts the file actually holds are known only once the indexes
+            // have deduplicated the input — the same two-stage stamp the CLI uses.
+            rete_core::ingest::DeferredMetadata::new(move |counts| {
+                card.with_final_counts(counts).to_json_bytes()
+            })
+        });
+    finish_build(bytes, "build_with_derived_card", format, text, &stats, read)
 }
 
 /// Check a curated card document without building anything — so an editor can

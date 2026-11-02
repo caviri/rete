@@ -741,9 +741,17 @@ understand them:
 The card answers *what the data is*; a second, adjacent record answers **how
 this particular file came to be** — the questions you ask when a file behaves
 oddly and there was previously no way to answer them from the file ("which
-`rete` even wrote this?"). Every card build also writes a **build-info
-section** (format section kind `7`, laid out immediately after the card)
-carrying:
+`rete` even wrote this?"). **Every writer** — the CLI with or without a card,
+the Python, R and Java clients, the browser engine — writes a **build-info
+section** (format section kind `7`; in `0x06` in the card region, beside the
+card) carrying:
+
+- `front_end` — which front end wrote the file: `cli`, `python`, `r`, `java` or
+  `wasm`. A binding's or the browser's record is the lean one: the engine
+  (`rete-core`; the browser's `commit` is `unknown`, its artifacts being
+  byte-compared builds), the host, the options of the call, the input as a
+  length and a BLAKE3 (`string` for text handed over in memory), and the counts.
+  It has no run block and no starter-query costs.
 
 - `started_at`, `built_at` — when the build started and when it wrote the file
   (RFC 3339 UTC; `SOURCE_DATE_EPOCH` is honored for reproducible pipelines).
@@ -873,13 +881,20 @@ parsing: on the 975 MB OpenCitations pilot, reading the file from the page
 cache took 0.05 s and reading and hashing it 0.12 s (read and hash together
 ran at about 8 GB/s, on one core), so the digest added 0.07 s to a 51.5 s in-RAM
 build (0.1%) and a 13.7 s memory-bounded one (0.5%). There is no switch to
-skip it. A cardless build has no record and hashes nothing.
+skip it. Since 0.5.0 every build has a record, a cardless one included, so every
+build hashes its inputs.
 
 `rete merge` is the exception to "no second pass": it reads its shards by range,
 in index order, so it hashes each one in a sequential read of its own before
 the merge starts — timed as the record's `read` phase. That is one read of
-every shard, against the merge's own walk of their dictionaries and index;
-a merge without a card does not hash.
+every shard, against the merge's own walk of their dictionaries and index.
+Since 0.5.0 every merge hashes, a merge without a card included (every build
+has a record), and the pass stays separate: the merge reads a shard through a
+block cache, in an order of its own, so its reads cannot be hashed on the way.
+It is cheap: merging two shards of 174 MB and 118 MB (22 M statements, 75 s)
+the `read` phase took 46 ms with the shards in the page cache (BLAKE3, several
+GB/s). From a cold disk it is one sequential read of every shard, at the
+disk's speed. Not measured on a very large input.
 
 ### Written last, in place
 
@@ -947,8 +962,8 @@ build-info section is **deliberately excluded from the hash**: `rete verify`
 does not cover it (old readers see an unknown kind-7 entry and ignore it; new
 readers skip it knowingly), stripping it from two builds of the same input
 yields byte-identical images, and its contents are advisory provenance, not
-integrity-protected data. Cardless builds carry no build-info at all and remain
-byte-identical to pre-build-info output.
+integrity-protected data. Before 0.5.0 a cardless build carried none; now every
+writer does.
 
 ### The starter-query cost figures
 

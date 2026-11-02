@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use proptest::prelude::*;
 use rete_core::{
-    build_pyramid_meta, eval_sparql, write_file, Binding, DictionaryBuilder, GraphIndexBuilder,
-    RangeReader, Rete, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_sparql, write_file_v05 as write_file, Binding, DictionaryBuilder,
+    GraphIndexBuilder, RangeReader, Rete, DEFAULT_TILE_BUDGET,
 };
 
 /// An owned in-memory `RangeReader`: `SliceReader` borrows, but `open_ranged_lazy`

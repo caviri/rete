@@ -40,7 +40,10 @@ fn auto_block(len: u64) -> u64 {
 fn open_lazy(reader: AnyReader) -> RGraph {
     let file_len = reader.len();
     let counting = Arc::new(CountingReader::new(reader));
-    let cached = Arc::new(BlockCacheReader::new(counting.clone(), auto_block(file_len)));
+    let cached = Arc::new(BlockCacheReader::new(
+        counting.clone(),
+        auto_block(file_len),
+    ));
     let rete = match Rete::open_ranged_lazy(cached) {
         Ok(rete) => rete,
         Err(e) => fail(e),
@@ -111,10 +114,7 @@ impl RGraph {
         if self.rete.index_incomplete() {
             fail("a range fetch failed mid-query; refusing to return incomplete results — retry");
         }
-        results_envelope_json(
-            &out,
-            &format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#),
-        )
+        results_envelope_json(&out, &format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#))
     }
 
     /// Header summary as JSON.
@@ -222,7 +222,10 @@ impl RGraph {
 
 /// Serialize the Dataset Card: caller's curated JSON plus the count fields
 /// the CLI card schema requires (mirrors the Python client's card_bytes).
-fn card_bytes(curated: Option<serde_json::Value>, stats: &rete_core::ingest::BuildStats) -> Vec<u8> {
+fn card_bytes(
+    curated: Option<serde_json::Value>,
+    stats: &rete_core::ingest::BuildStats,
+) -> Vec<u8> {
     let Some(mut value) = curated else {
         return Vec::new();
     };
@@ -319,17 +322,42 @@ fn build_dataset(
     } else {
         None
     };
-    let quads = match rete_core::ingest::parse_statements_audited_surface(
-        text, format, None, surface,
-    ) {
-        Ok(quads) => quads,
-        Err(e) => fail(e),
-    };
+    let quads =
+        match rete_core::ingest::parse_statements_audited_surface(text, format, None, surface) {
+            Ok(quads) => quads,
+            Err(e) => fail(e),
+        };
     if quads.is_empty() {
         fail("no statements parsed (empty input or only comments)");
     }
+    let read = quads.len() as u64;
+    let finish = |bytes: Vec<u8>, stats: &rete_core::ingest::BuildStats| -> Vec<u8> {
+        use rete_core::build_record as br;
+        let record = br::to_json(
+            &br::Record {
+                front_end: br::front_end::R.into(),
+                front_end_version: env!("CARGO_PKG_VERSION").into(),
+                built_at: br::timestamp(),
+                options: br::Options {
+                    command: "build_dataset".into(),
+                    format: Some(format.to_string()),
+                    no_pyramid: !with_pyramid,
+                    text_index,
+                    pyramid_algo: with_pyramid.then(|| pyramid_algo.to_string()),
+                    ..Default::default()
+                },
+                inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+                statements_read: Some(read),
+            },
+            Some(stats),
+        );
+        match br::finish_in_ram(bytes, Some(&record)) {
+            Ok(b) => b,
+            Err(e) => fail(e),
+        }
+    };
     if let Some((input, examples)) = derived_input {
-        let (bytes, _stats) = rete_core::ingest::assemble_dataset_with_opts_algo(
+        let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
             quads,
             with_pyramid,
             text_index,
@@ -351,9 +379,9 @@ fn build_dataset(
                 })
             },
         );
-        return bytes;
+        return finish(bytes, &stats);
     }
-    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with_opts_algo(
+    let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
         quads,
         with_pyramid,
         text_index,
@@ -361,7 +389,7 @@ fn build_dataset(
         algo,
         move |stats, _quads| card_bytes(curated, stats),
     );
-    bytes
+    finish(bytes, &stats)
 }
 
 /// Version of the Rust engine compiled into this package. The package's own

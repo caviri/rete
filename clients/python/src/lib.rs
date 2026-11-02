@@ -487,6 +487,52 @@ fn rdf12_triple_term(token: &str) -> Option<String> {
     rete_core::terms::rdf12_triple_term(token).map(|t| t.into_owned())
 }
 
+/// The file every build returns: the in-RAM `0x05` image laid out as `0x06`
+/// (the one step the CLI, the browser and every binding share,
+/// [`rete_core::build_record::finish_in_ram`]), with the build record beside
+/// the card: engine, options, the inputs (a label, length and BLAKE3 each),
+/// counts, and `front_end: "python"`.
+#[allow(clippy::too_many_arguments)]
+fn finish_build(
+    bytes: Vec<u8>,
+    stats: &rete_core::ingest::BuildStats,
+    command: &str,
+    sources: &[(&str, &str)],
+    no_pyramid: Option<bool>,
+    text_index: bool,
+    pyramid_algo: Option<&str>,
+    read: u64,
+) -> PyResult<Vec<u8>> {
+    use rete_core::build_record as br;
+    let record = br::to_json(
+        &br::Record {
+            front_end: br::front_end::PYTHON.into(),
+            front_end_version: env!("CARGO_PKG_VERSION").into(),
+            built_at: br::timestamp(),
+            options: br::Options {
+                command: command.into(),
+                format: match sources {
+                    [(_, f)] => Some((*f).to_string()),
+                    _ => None,
+                },
+                no_pyramid: no_pyramid.unwrap_or(false),
+                text_index,
+                pyramid_algo: pyramid_algo.map(str::to_string),
+                ..Default::default()
+            },
+            inputs: sources
+                .iter()
+                .map(|(text, format)| br::Input::from_bytes("string", format, text.as_bytes()))
+                .collect(),
+            // What the parser handed over: the record's duplicates dropped are
+            // this less the unique count.
+            statements_read: Some(read),
+        },
+        Some(stats),
+    );
+    br::finish_in_ram(bytes, Some(&record)).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 /// Build a complete `.rete` file image from RDF text. `format` is `"nt"`,
 /// `"nq"` (named graphs become a dataset), `"ttl"`, `"trig"` or `"rdfxml"`;
 /// `quoted_triple_syntax` is how Turtle/TriG `<< … >>` is read.
@@ -505,10 +551,35 @@ fn build(
                 "no statements parsed (empty input or only comments)",
             ));
         }
-        let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
-        Ok(bytes)
+        let read = quads.len() as u64;
+        let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
+        finish_build(
+            bytes,
+            &stats,
+            "build",
+            &[(text.as_str(), format)],
+            Some(false),
+            false,
+            Some("louvain"),
+            read,
+        )
     })?;
     Ok(PyBytes::new(py, &bytes).unbind())
+}
+
+/// The build record (JSON text) of a `.rete` image, or `None` when it carries
+/// none: how the file came to be — engine, front end, options, inputs.
+#[pyfunction]
+fn read_build_record(data: Vec<u8>) -> PyResult<Option<String>> {
+    let record = rete_core::read_build_info(&data).map_err(runtime_err)?;
+    Ok(record.map(|b| String::from_utf8_lossy(&b).trim_end().to_string()))
+}
+
+/// Whether the image's content hash (and, in `0x06`, every section digest)
+/// matches its bytes.
+#[pyfunction]
+fn verify_image(py: Python<'_>, data: Vec<u8>) -> PyResult<bool> {
+    py.detach(|| rete_core::verify(&data)).map_err(runtime_err)
 }
 
 /// Serialize the Dataset Card for the metadata section: the caller's curated
@@ -638,8 +709,13 @@ fn build_dataset(
                 "no statements parsed (empty input or only comments)",
             ));
         }
+        let refs: Vec<(&str, &str)> = sources
+            .iter()
+            .map(|(t, f, _)| (t.as_str(), f.as_str()))
+            .collect();
+        let read = quads.len() as u64;
         if let Some((input, examples)) = derived_input {
-            return Ok(rete_core::ingest::assemble_dataset_with_opts_algo(
+            let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
                 quads,
                 pyramid,
                 text_index,
@@ -660,16 +736,38 @@ fn build_dataset(
                         card.with_final_counts(counts).to_json_bytes()
                     })
                 },
-            ));
+            );
+            let bytes = finish_build(
+                bytes,
+                &stats,
+                "build_dataset",
+                &refs,
+                Some(!pyramid),
+                text_index,
+                pyramid.then_some(pyramid_algo),
+                read,
+            )?;
+            return Ok((bytes, stats));
         }
-        Ok(rete_core::ingest::assemble_dataset_with_opts_algo(
+        let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
             quads,
             pyramid,
             text_index,
             type_predicate.as_deref(),
             algo,
             move |stats, _quads| card_bytes(curated, stats),
-        ))
+        );
+        let bytes = finish_build(
+            bytes,
+            &stats,
+            "build_dataset",
+            &refs,
+            Some(!pyramid),
+            text_index,
+            pyramid.then_some(pyramid_algo),
+            read,
+        )?;
+        Ok((bytes, stats))
     })?;
     let stats_json = format!(
         r#"{{"statements":{},"defaultTriples":{},"namedGraphs":{},"terms":{},"pyramidLevels":{}}}"#,
@@ -696,6 +794,8 @@ fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open_reader, m)?)?;
     m.add_function(wrap_pyfunction!(build, m)?)?;
     m.add_function(wrap_pyfunction!(build_dataset, m)?)?;
+    m.add_function(wrap_pyfunction!(read_build_record, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_image, m)?)?;
     m.add_function(wrap_pyfunction!(rdf12_triple_term, m)?)?;
     // Single source of truth for the dump batch size, so the pure-Python
     // wrapper's default cannot drift from the binding's.

@@ -1895,7 +1895,7 @@ fn const_predicate(t: &SlotTerm) -> Option<Option<u32>> {
 mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
-    use crate::file::write_file;
+    use crate::file::write_file_v05 as write_file;
     use crate::index::GraphIndexBuilder;
 
     fn rete_from(triples: &[(&str, &str, &str)]) -> Vec<u8> {
