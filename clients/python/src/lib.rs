@@ -492,6 +492,7 @@ fn rdf12_triple_term(token: &str) -> Option<String> {
 /// [`rete_core::build_record::finish_in_ram`]), with the build record beside
 /// the card: engine, options, the inputs (a label, length and BLAKE3 each),
 /// counts, and `front_end: "python"`.
+#[allow(clippy::too_many_arguments)]
 fn finish_build(
     bytes: Vec<u8>,
     stats: &rete_core::ingest::BuildStats,
@@ -500,6 +501,7 @@ fn finish_build(
     no_pyramid: Option<bool>,
     text_index: bool,
     pyramid_algo: Option<&str>,
+    read: u64,
 ) -> PyResult<Vec<u8>> {
     use rete_core::build_record as br;
     let record = br::to_json(
@@ -522,7 +524,9 @@ fn finish_build(
                 .iter()
                 .map(|(text, format)| br::Input::from_bytes("string", format, text.as_bytes()))
                 .collect(),
-            statements_read: None,
+            // What the parser handed over: the record's duplicates dropped are
+            // this less the unique count.
+            statements_read: Some(read),
         },
         Some(stats),
     );
@@ -547,6 +551,7 @@ fn build(
                 "no statements parsed (empty input or only comments)",
             ));
         }
+        let read = quads.len() as u64;
         let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
         finish_build(
             bytes,
@@ -556,6 +561,7 @@ fn build(
             Some(false),
             false,
             Some("louvain"),
+            read,
         )
     })?;
     Ok(PyBytes::new(py, &bytes).unbind())
@@ -707,6 +713,7 @@ fn build_dataset(
             .iter()
             .map(|(t, f, _)| (t.as_str(), f.as_str()))
             .collect();
+        let read = quads.len() as u64;
         if let Some((input, examples)) = derived_input {
             let (bytes, stats) = rete_core::ingest::assemble_dataset_with_opts_algo_quad(
                 quads,
@@ -738,6 +745,7 @@ fn build_dataset(
                 Some(!pyramid),
                 text_index,
                 pyramid.then_some(pyramid_algo),
+                read,
             )?;
             return Ok((bytes, stats));
         }
@@ -757,6 +765,7 @@ fn build_dataset(
             Some(!pyramid),
             text_index,
             pyramid.then_some(pyramid_algo),
+            read,
         )?;
         Ok((bytes, stats))
     })?;

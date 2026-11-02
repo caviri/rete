@@ -122,7 +122,9 @@ pub fn batch_reach_parallel(
 mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
-    use crate::file::{build_pyramid_meta, write_dataset, Rete, DEFAULT_TILE_BUDGET};
+    use crate::file::{
+        build_pyramid_meta, write_dataset_v05 as write_dataset, Rete, DEFAULT_TILE_BUDGET,
+    };
     use crate::index::GraphIndexBuilder;
     use crate::pyramid::{build_dendrogram, project_graph};
     use crate::tiling::{choose_round_for_budget, tile_by_community};

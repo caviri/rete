@@ -636,13 +636,13 @@ fn plain(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// What a binding does (`assemble_dataset_quad`, then the shared
-/// `finish_in_ram` with a record) is the CLI's conversion of the same in-RAM
-/// image: the same bytes, build record apart, which names the front end. (The
-/// bindings still build the legacy layout, a combined pyramid block and no
-/// SCHEMA section, which `rete build` does not; what is compared is the format
-/// step, and that named graphs survive it as a quad index.)
+/// `finish_in_ram` with a record) is `rete build` of the same input: the same
+/// sections and content hash (one layout for every writer: quad index,
+/// community-only pyramid block, SCHEMA section), the same bytes build record
+/// apart, which names the front end; and it is the CLI's conversion of the same
+/// in-RAM image.
 #[test]
-fn a_binding_style_build_equals_the_conversion_of_its_image() {
+fn a_binding_style_build_equals_rete_build_and_the_conversion_of_its_image() {
     use rete_core::build_record as br;
     for (name, text, format) in [
         ("triples", catalog(false), "nt"),
@@ -667,6 +667,22 @@ fn a_binding_style_build_equals_the_conversion_of_its_image() {
             Some(&stats),
         );
         let binding = br::finish_in_ram(image, Some(&record)).unwrap();
+        // `rete build` of the same text, default options.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join(format!("in.{format}"));
+        std::fs::write(&src, &text).unwrap();
+        let cli = dir.path().join("cli.rete");
+        run(&["build", s(&src), "-o", s(&cli)], false);
+        let cli = std::fs::read(&cli).unwrap();
+        assert_eq!(
+            content_hash(&binding),
+            content_hash(&cli),
+            "{name}: same content hash as rete build"
+        );
+        assert!(
+            plain(&binding) == plain(&cli),
+            "{name}: a binding's build differs from rete build section for section"
+        );
         assert_eq!(binding[4], 6, "{name}: 0x06");
         assert!(rete_core::verify(&binding).unwrap(), "{name}: verifies");
         assert_eq!(
@@ -745,11 +761,72 @@ fn every_cli_writer_leaves_a_record_without_a_card() {
         assert_eq!(v["front_end"], "cli", "{name}");
         assert_eq!(v["params"]["command"], command, "{name}");
         assert!(stored_card(&bytes).is_none(), "{name}: no card");
+        // No card: the region is the record and nothing more.
+        let h = rete_core::v06::Header06::from_bytes(&bytes).unwrap();
+        assert_eq!(h.card_len, 0, "{name}");
+        assert_eq!(h.card_region_len, h.build_len, "{name}: the record alone");
         assert!(v["inputs"][0]["blake3"].is_string(), "{name}: input digest");
         rete().arg("verify").arg(file).assert().success();
     }
-    // Without a card there is still room beside the record: it patches in place.
-    let before = std::fs::metadata(&ram).unwrap().len();
-    run(&["card-audit", s(&ram), "--json"], false);
-    assert_eq!(std::fs::metadata(&ram).unwrap().len(), before);
+}
+
+/// A cardless file's card region is its record alone (no doubling, no 8 KiB of
+/// slack in the first read); a file written with a card keeps the room to
+/// re-card in place. Re-carding a cardless file therefore copies it once.
+#[test]
+fn a_cardless_region_is_the_record_and_a_carded_one_keeps_its_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("c.nt");
+    std::fs::write(&src, catalog(false)).unwrap();
+    let card_file = dir.path().join("card.json");
+    std::fs::write(&card_file, r#"{"title": "Room"}"#).unwrap();
+    let (plain, carded) = (
+        dir.path().join("plain.rete"),
+        dir.path().join("carded.rete"),
+    );
+    run(&["build", s(&src), "-o", s(&plain)], false);
+    run(
+        &[
+            "build",
+            s(&src),
+            "-o",
+            s(&carded),
+            "--card-file",
+            s(&card_file),
+        ],
+        false,
+    );
+    let header =
+        |p: &Path| rete_core::v06::Header06::from_bytes(&std::fs::read(p).unwrap()).unwrap();
+    let (hp, hc) = (header(&plain), header(&carded));
+    assert_eq!(hp.card_len, 0);
+    assert!(hp.build_len > 0);
+    assert_eq!(hp.card_region_len, hp.build_len, "the record alone");
+    assert_eq!(
+        hc.card_region_len,
+        2 * (hc.card_len + hc.build_len) + rete_core::v06::CARD_SLACK_MIN,
+        "a carded file keeps its slack"
+    );
+    // Carded: re-card in place, nothing moves.
+    let carded_len = std::fs::metadata(&carded).unwrap().len();
+    run(
+        &["recard", s(&carded), "--in-place", "--keep-curated"],
+        false,
+    );
+    assert_eq!(std::fs::metadata(&carded).unwrap().len(), carded_len);
+    // Cardless: giving it a card is one copy (the file grows by the card's room).
+    let plain_len = std::fs::metadata(&plain).unwrap().len();
+    run(
+        &[
+            "recard",
+            s(&plain),
+            "--in-place",
+            "--card-file",
+            s(&card_file),
+        ],
+        false,
+    );
+    assert!(std::fs::metadata(&plain).unwrap().len() > plain_len);
+    rete().arg("verify").arg(&plain).assert().success();
+    assert!(stored_card(&std::fs::read(&plain).unwrap()).is_some());
 }

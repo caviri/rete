@@ -31,6 +31,9 @@ fn graph() -> String {
 
 fn build(src: &Path, out: &Path, extra: &[&str], env: &[(&str, &str)]) {
     let mut cmd = rete();
+    // The record pinned: two builds with one command are then one file.
+    cmd.env("RETE_BUILD_RECORD", "reproducible")
+        .env("SOURCE_DATE_EPOCH", "1700000000");
     cmd.arg("build").arg(src).arg("-o").arg(out).args(extra);
     for (k, v) in env {
         cmd.env(k, v);
@@ -123,9 +126,9 @@ fn flag_beats_environment() {
         &["--no-pyramid", "--zstd-level", "3"],
         &[("RETE_ZSTD_LEVEL", "19")],
     );
-    let f = common::read_plain(&flag);
-    assert_eq!(common::read_plain(&env), f);
-    assert_eq!(common::read_plain(&both), f);
+    let f = std::fs::read(&flag).unwrap();
+    assert_eq!(std::fs::read(&env).unwrap(), f);
+    assert_eq!(std::fs::read(&both).unwrap(), f);
 }
 
 /// Count zstd frames by their Frame_Header_Descriptor single-segment bit.

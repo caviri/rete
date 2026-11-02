@@ -1009,8 +1009,8 @@ mod tests {
 
     fn build_deps() -> Vec<u8> {
         use rete_core::{
-            build_pyramid_meta, write_dataset, DictionaryBuilder, GraphIndexBuilder,
-            DEFAULT_TILE_BUDGET,
+            build_pyramid_meta, write_dataset_v05 as write_dataset, DictionaryBuilder,
+            GraphIndexBuilder, DEFAULT_TILE_BUDGET,
         };
         // The dependency graph from examples/deps.nt (subset sufficient for tests).
         let triples_nt: &[(&str, &str, &str)] = &[

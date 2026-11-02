@@ -82,8 +82,9 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
             "no statements parsed (empty input or only comments)",
         ));
     }
+    let read = quads.len() as u64;
     let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
-    finish_build(bytes, "build", format, text, &stats)
+    finish_build(bytes, "build", format, text, &stats, read)
 }
 
 /// The file every browser build returns: the in-RAM `0x05` image laid out as
@@ -98,6 +99,7 @@ fn finish_build(
     format: &str,
     text: &str,
     stats: &rete_core::ingest::BuildStats,
+    read: u64,
 ) -> Result<Vec<u8>, JsValue> {
     use rete_core::build_record as br;
     let built_at = js_sys::Date::new_0()
@@ -117,7 +119,7 @@ fn finish_build(
                 ..Default::default()
             },
             inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
-            statements_read: None,
+            statements_read: Some(read),
         },
         Some(stats),
     );
@@ -207,10 +209,12 @@ fn build_card_surface(
         ));
     }
     if card_json.trim().is_empty() {
+        let read = quads.len() as u64;
         let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
-        return finish_build(bytes, "build_with_card", format, text, &stats);
+        return finish_build(bytes, "build_with_card", format, text, &stats, read);
     }
     let curated = validated_card(card_json)?;
+    let read = quads.len() as u64;
     // The counts are only known once the dictionary and indexes exist, so the
     // card is serialized from inside the writer rather than handed in whole.
     let (bytes, stats) = rete_core::ingest::assemble_dataset_with_quad(quads, move |stats, _| {
@@ -224,7 +228,7 @@ fn build_card_surface(
         );
         serde_json::to_vec(&card).expect("card serializes")
     });
-    finish_build(bytes, "build_with_card", format, text, &stats)
+    finish_build(bytes, "build_with_card", format, text, &stats, read)
 }
 
 /// [`build_with_card`], but the card also carries the **auto-derived profile**
@@ -276,6 +280,7 @@ pub fn build_with_derived_card(
         validated_card(card_json)?;
         rete_core::card::CardInput::from_json_str(card_json).map_err(js_error)?
     };
+    let read = quads.len() as u64;
     let (bytes, stats) =
         rete_core::ingest::assemble_dataset_with_quad(quads, move |stats, quads| {
             let card = rete_core::card::derive_card(
@@ -290,7 +295,7 @@ pub fn build_with_derived_card(
                 card.with_final_counts(counts).to_json_bytes()
             })
         });
-    finish_build(bytes, "build_with_derived_card", format, text, &stats)
+    finish_build(bytes, "build_with_derived_card", format, text, &stats, read)
 }
 
 /// Check a curated card document without building anything — so an editor can

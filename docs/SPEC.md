@@ -242,7 +242,10 @@ The card region holds the Dataset Card (JSON compressed with the internal
 codec) and the build record (raw JSON, possibly followed by ASCII spaces up to
 its length, as in §4.9), each at the offset and length the header gives,
 relative to the region; the rest is free. The writer sizes the region
-`2 × (card + record) + 8 KiB`, or 0 when there is neither. The card is inside
+`2 × (card + record) + 8 KiB` when it writes a card, the record alone when it
+writes none (that space is in the first 64 KiB the open reads, where slack
+would push the leaf directories out of it, so a file with no card is re-carded
+by a copy), and 0 when there is neither. The card is inside
 the content hash; the build record is not (it records when, how and how fast,
 which differ between two builds of the same data). Every writer leaves a
 record, a cardless one included; its `front_end` field says which one.

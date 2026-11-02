@@ -13,8 +13,8 @@ use std::sync::Arc;
 use rete_core::varint::write_uvarint;
 use rete_core::{
     attach_build_info, eval_sparql, read_card_and_build_info_ranged, replace_metadata,
-    write_dataset, DictionaryBuilder, GraphIndexBuilder, RangeReader, Rete, SliceReader,
-    HEADER_LEN,
+    write_dataset_v05 as write_dataset, DictionaryBuilder, GraphIndexBuilder, RangeReader, Rete,
+    SliceReader, HEADER_LEN,
 };
 
 fn iri(s: &str) -> String {

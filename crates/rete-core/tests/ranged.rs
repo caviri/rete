@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use rete_core::{
-    build_pyramid_meta, eval_query, validate_shacl, write_file, CountingReader, DataGraph,
-    DictionaryBuilder, GraphIndexBuilder, QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes,
-    SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_query, validate_shacl, write_file_v05 as write_file, CountingReader,
+    DataGraph, DictionaryBuilder, GraphIndexBuilder, QueryOutput, RangeReader, Rete, ReteGraph,
+    ShaclShapes, SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
 };
 
 /// A `RangeReader` over an in-memory image that records each `(offset, len)`,
@@ -816,7 +816,7 @@ fn dataset_with_named_graphs_budget(sizes: &[usize], tile_budget: Option<usize>)
         .enumerate()
         .map(|(g, b)| (format!("<http://ex/g{g:03}>"), b.build()))
         .collect();
-    rete_core::write_dataset(&dict, &def.build(), &named, true, &[], 0)
+    rete_core::write_dataset_v05(&dict, &def.build(), &named, true, &[], 0)
 }
 
 /// The layout override on both fetch strategies: over a file of BIG

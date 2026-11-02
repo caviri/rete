@@ -7,8 +7,9 @@
 use std::collections::BTreeMap;
 
 use rete_core::{
-    build_pyramid_meta, eval_sparql, write_dataset, write_file, DictionaryBuilder,
-    GraphIndexBuilder, Rete, SliceReader, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_sparql, write_dataset_v05 as write_dataset,
+    write_file_v05 as write_file, DictionaryBuilder, GraphIndexBuilder, Rete, SliceReader,
+    DEFAULT_TILE_BUDGET,
 };
 
 /// Exercise the read paths *past* `open`: a file may open successfully yet carry

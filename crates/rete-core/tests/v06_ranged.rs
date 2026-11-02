@@ -14,9 +14,9 @@ use std::sync::Mutex;
 use rete_core::ingest::{assemble_dataset_with_layout, GraphLayout, RawQuad};
 use rete_core::v06::{kind, open::read_front, write::convert_image, FIRST_READ};
 use rete_core::{
-    build_pyramid_meta, eval_query, write_file, DictionaryBuilder, GraphIndexBuilder, PermSet,
-    PyramidAlgo, QueryOutput, RangeReader, Rete, SliceReader, SummaryView, TextIndexScope,
-    DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_query, write_file_v05 as write_file, DictionaryBuilder,
+    GraphIndexBuilder, PermSet, PyramidAlgo, QueryOutput, RangeReader, Rete, SliceReader,
+    SummaryView, TextIndexScope, DEFAULT_TILE_BUDGET,
 };
 
 /// Records every `(offset, len)` and every `read_many` batch; can be switched

@@ -308,7 +308,16 @@ pub fn finish_in_ram(image: Vec<u8>, record: Option<&[u8]>) -> Result<Vec<u8>, F
         };
     }
     let src = crate::reader::SliceReader::new(&image);
-    let mut parts = crate::v06::parts::from_v05(&src)?;
+    let mut parts = match crate::v06::parts::from_v05(&src) {
+        Ok(p) => p,
+        // A per-graph (kind 5) image: the named graphs are re-encoded as the
+        // quad index, the only layout `0x06` has, and the result finished.
+        Err(FileError::Container(m)) if m.contains("kind 5") => {
+            let requad = reencode_per_graph(&image)?;
+            return finish_in_ram(requad, record);
+        }
+        Err(e) => return Err(e),
+    };
     if let Some(r) = record {
         parts.build = Some(r.to_vec());
     }
@@ -320,6 +329,38 @@ pub fn finish_in_ram(image: Vec<u8>, record: Option<&[u8]>) -> Result<Vec<u8>, F
         crate::v06::write::WriteOpts::default(),
     )?;
     Ok(out.into_inner())
+}
+
+/// A `0x05` image whose named graphs are stored per graph (kind 5), rebuilt as
+/// a `0x05` image with the quad index: every statement is read back out and
+/// assembled again with what the file carries (pyramid, text index and its
+/// scope, label index, permutations, card). What `rete convert` does for such a
+/// file, and what the public per-graph writers fall back to.
+pub fn reencode_per_graph(image: &[u8]) -> Result<Vec<u8>, FileError> {
+    let rete = crate::Rete::open(image)?;
+    let card = rete.metadata().map(<[u8]>::to_vec);
+    let mut quads: Vec<crate::format::RawQuad> = rete
+        .dump(None)
+        .into_iter()
+        .map(|(s, p, o)| (s, p, o, None))
+        .collect();
+    let named: Vec<String> = rete.graph_names().iter().map(|g| g.to_string()).collect();
+    for g in &named {
+        for (s, p, o) in rete.dump(Some(g)) {
+            quads.push((s, p, o, Some(g.clone())));
+        }
+    }
+    let scope = rete.text_index_scope();
+    let mut opts = crate::ingest::AssembleOptions::sectioned();
+    opts.graph_layout = crate::GraphLayout::Quad;
+    opts.with_pyramid = rete.header().pyramid_meta_len > 0;
+    opts.with_text_index = rete.has_text_index();
+    opts.text_index_scope = scope.as_ref();
+    opts.label_index = rete.has_label_index();
+    opts.perms = rete.header().perms;
+    let (out, _) =
+        crate::ingest::assemble_dataset_opts(quads, &opts, |_, _| card.clone().unwrap_or_default());
+    Ok(out)
 }
 
 #[cfg(test)]

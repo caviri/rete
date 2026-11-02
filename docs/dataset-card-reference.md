@@ -887,8 +887,14 @@ build hashes its inputs.
 `rete merge` is the exception to "no second pass": it reads its shards by range,
 in index order, so it hashes each one in a sequential read of its own before
 the merge starts — timed as the record's `read` phase. That is one read of
-every shard, against the merge's own walk of their dictionaries and index;
-a merge without a card does not hash.
+every shard, against the merge's own walk of their dictionaries and index.
+Since 0.5.0 every merge hashes, a merge without a card included (every build
+has a record), and the pass stays separate: the merge reads a shard through a
+block cache, in an order of its own, so its reads cannot be hashed on the way.
+It is cheap: merging two shards of 174 MB and 118 MB (22 M statements, 75 s)
+the `read` phase took 46 ms with the shards in the page cache (BLAKE3, several
+GB/s). From a cold disk it is one sequential read of every shard, at the
+disk's speed. Not measured on a very large input.
 
 ### Written last, in place
 

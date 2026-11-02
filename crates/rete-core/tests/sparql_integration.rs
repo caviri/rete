@@ -3,8 +3,9 @@
 //! features combine. Complements the per-feature unit tests in `src/sparql.rs`.
 
 use rete_core::{
-    build_pyramid_meta, eval_query, eval_sparql, eval_sparql_reasoned, write_dataset, write_file,
-    DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_query, eval_sparql, eval_sparql_reasoned,
+    write_dataset_v05 as write_dataset, write_file_v05 as write_file, DictionaryBuilder,
+    GraphIndexBuilder, QueryOutput, Rete, DEFAULT_TILE_BUDGET,
 };
 
 const XSD_INT: &str = "<http://www.w3.org/2001/XMLSchema#integer>";

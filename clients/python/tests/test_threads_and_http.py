@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -48,23 +49,24 @@ def test_the_native_wheel_has_parallel_and_http():
 
 
 @native
-def test_a_parallel_build_is_byte_identical_to_a_single_threaded_one(tmp_path):
-    # "Identical" is the content hash: it covers every section and the card. The
-    # build record beside them (the clock, the entry point) is outside it.
+def test_a_parallel_build_is_byte_identical_to_a_single_threaded_one(tmp_path, monkeypatch):
+    # Whole-file identity needs the build record pinned too: it carries the
+    # clock, which `RETE_BUILD_RECORD=reproducible` leaves out.
+    monkeypatch.setenv("RETE_BUILD_RECORD", "reproducible")
     text = _graph_text(20_000)
     src = tmp_path / "g.nt"
     src.write_text(text)
     here = rete.build(text)
     # A fresh interpreter whose rayon pool has one thread: the serial schedule.
     script = (
-        "import sys, rete_graph as rete; "
-        "print(rete.open(rete.build(open(sys.argv[1]).read())).content_hash())"
+        "import hashlib, sys, rete_graph as rete; "
+        "print(hashlib.sha256(rete.build(open(sys.argv[1]).read())).hexdigest())"
     )
     env = dict(os.environ, RAYON_NUM_THREADS="1")
     one = subprocess.run(
         [sys.executable, "-c", script, str(src)], env=env, capture_output=True, text=True, check=True
     ).stdout.strip()
-    assert rete.open(here).content_hash() == one
+    assert hashlib.sha256(here).hexdigest() == one
     (row,) = rete.open(here).query(COUNT_Q)
     assert row["n"].to_python() == 80_000
 

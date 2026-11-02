@@ -322,13 +322,15 @@ pub unsafe extern "C" fn rete_build_syntax(
     } else {
         match rete_core::ingest::QuotedTripleSurface::parse(syntax) {
             Some(s) => s,
-            None => return pack(
-                STATUS_ERR,
-                format!(
+            None => {
+                return pack(
+                    STATUS_ERR,
+                    format!(
                     "unknown quoted-triple syntax {syntax:?} (expected \"rdf-star\" or \"rdf12\")"
                 )
-                .as_bytes(),
-            ),
+                    .as_bytes(),
+                )
+            }
         }
     };
     build_surface(text, format, surface)
@@ -350,6 +352,7 @@ fn build_surface(
             b"no statements parsed (empty input or only comments)",
         );
     }
+    let read = quads.len() as u64;
     let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
     // The in-RAM image as `0x06`, with the build record (`front_end: "java"`),
     // through the one step every front end shares.
@@ -366,7 +369,7 @@ fn build_surface(
                 ..Default::default()
             },
             inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
-            statements_read: None,
+            statements_read: Some(read),
         },
         Some(&stats),
     );

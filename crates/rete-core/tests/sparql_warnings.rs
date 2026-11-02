@@ -6,8 +6,9 @@
 //! same as Oxigraph and Jena); what is new is the warning that says why.
 
 use rete_core::{
-    eval_query, eval_query_with_warnings, warnings_json, write_file, DictionaryBuilder,
-    GraphIndexBuilder, QueryOpts, QueryOutput, QueryWarning, Rete, SparqlError, WarningSeverity,
+    eval_query, eval_query_with_warnings, warnings_json, write_file_v05 as write_file,
+    DictionaryBuilder, GraphIndexBuilder, QueryOpts, QueryOutput, QueryWarning, Rete, SparqlError,
+    WarningSeverity,
 };
 
 const P: &str = "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> ";

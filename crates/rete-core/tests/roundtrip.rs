@@ -8,8 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rete_core::{
-    build_pyramid_meta, write_dataset, DictionaryBuilder, GraphIndexBuilder, Rete,
-    DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, write_dataset_v05 as write_dataset, DictionaryBuilder, GraphIndexBuilder,
+    Rete, DEFAULT_TILE_BUDGET,
 };
 
 /// A tiny deterministic LCG — no `rand` dependency, fully reproducible per seed.
@@ -84,9 +84,9 @@ fn check_seed(seed: u64, n_terms: usize, n_triples: usize, with_pyramid: bool) {
     }
     let image = if with_pyramid {
         let (meta, levels) = build_pyramid_meta(&dict, &ids, DEFAULT_TILE_BUDGET);
-        rete_core::write_file(&dict, &ib.build(), false, &meta, levels)
+        rete_core::write_file_v05(&dict, &ib.build(), false, &meta, levels)
     } else {
-        rete_core::write_file(&dict, &ib.build(), false, &[], 0)
+        rete_core::write_file_v05(&dict, &ib.build(), false, &[], 0)
     };
 
     // Read it back and compare as sets.

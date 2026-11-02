@@ -34,7 +34,16 @@ file only once the readers that fetch it run this release. See
   a file from Python. Two builds of one input differ in the record, so byte comparison is
   of the file without it (`rete_core::attach_build_info(image, &[])`) or under
   `RETE_BUILD_RECORD=reproducible`. `RETE_WRITE_FORMAT=5` stays the test hook for every
-  front end. The in-browser build's peak is the `0x05` image plus the `0x06` file.
+  front end. The in-browser build's peak is the `0x05` image plus the `0x06` file. A file with no card gets a
+  card region that is its record and nothing more (the `2 × (card + record) + 8 KiB` is for a file written
+  with a card): the region is in the first 64 KiB the open reads, where slack would push the leaf directories
+  out, so `rete recard --in-place` of a cardless file copies it once. **One layout for every writer:** the
+  clients and the browser assemble through the same options `rete build` uses (named graphs as a quad index,
+  the community-only pyramid block, a SCHEMA section), so one input and one set of options is one content
+  hash whichever front end built it (the browser and the Java client write uncompressed sections, having no
+  zstd encoder, so their bytes differ). The public `rete_core::write_file`, `write_dataset` and
+  `write_dataset_with_metadata` now return `0x06` (per-graph named graphs become the quad index); the `0x05`
+  images are the `_v05` twins. `rete recard` of an existing `0x05` file still writes `0x05`.
 - **Card file: `base_iri`.** An optional curated `base_iri` (an absolute IRI) overrides the derived
   `signals.base_iri` and the starter queries built on it. Past the namespace-tally cap the derived
   value is only an approximate dominant namespace.

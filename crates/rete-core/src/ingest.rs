@@ -1103,7 +1103,13 @@ pub fn assemble_dataset_with_quad<M: IntoMetadata>(
     assemble_dataset_with_opts_algo_quad(quads, true, false, None, PyramidAlgo::Louvain, metadata)
 }
 
-/// [`assemble_dataset_with_opts_algo`] with the named graphs in the quad index.
+/// [`assemble_dataset_with_opts_algo`] for the `0x06` writers, with **the layout
+/// `rete build` writes**: the named graphs in the quad index, the pyramid block
+/// carrying only the community material, and the SCHEMA section. The CLI, the
+/// browser engine and the Python, R and Java clients all assemble through this,
+/// so one input and one set of options is one content hash whichever front end
+/// built it (the browser and Java, having no zstd encoder, write their sections
+/// uncompressed and so differ in bytes).
 pub fn assemble_dataset_with_opts_algo_quad<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
@@ -1112,16 +1118,17 @@ pub fn assemble_dataset_with_opts_algo_quad<M: IntoMetadata>(
     algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
-    assemble_dataset_with_layout(
-        quads,
+    let text_index = crate::text_index::IntoTextIndex::into_text_index(with_text_index);
+    let opts = AssembleOptions {
         with_pyramid,
-        with_text_index,
+        with_text_index: text_index.is_some(),
+        text_index_scope: text_index.as_ref(),
         type_override,
         algo,
-        crate::index::PermSet::ALL,
-        GraphLayout::Quad,
-        metadata,
-    )
+        graph_layout: GraphLayout::Quad,
+        ..AssembleOptions::sectioned()
+    };
+    assemble_dataset_opts(quads, &opts, metadata)
 }
 
 /// Assemble a complete `.rete` file image from parsed quads: one shared

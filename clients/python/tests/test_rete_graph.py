@@ -797,3 +797,11 @@ def test_build_dataset_record_names_its_options():
     assert rec["params"]["text_index"] is True
     assert rec["params"]["pyramid_algo"] == "louvain"
 
+
+
+def test_the_record_counts_the_duplicates_it_dropped():
+    nt = _RECORD_NT + _RECORD_NT.splitlines()[0] + "\n"  # one statement twice
+    c = rete.build_record(rete.build(nt))["counts"]
+    assert (c["statements_read"], c["statements_unique"], c["duplicates_dropped"]) == (3, 2, 1)
+    c = rete.build_record(rete.Builder().add(nt).run())["counts"]
+    assert (c["statements_read"], c["statements_unique"], c["duplicates_dropped"]) == (3, 2, 1)

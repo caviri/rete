@@ -479,7 +479,7 @@ pub(crate) fn bound_mask(rows: &[Row], nslots: usize) -> Vec<bool> {
 mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
-    use crate::file::{write_file, Rete};
+    use crate::file::{write_file_v05 as write_file, Rete};
     use crate::index::GraphIndexBuilder;
 
     fn fixture() -> Rete {

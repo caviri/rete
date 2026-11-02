@@ -934,15 +934,19 @@ pub fn assemble_with<W: Write + Seek>(
 /// The smallest `0x06` file: 1 KiB, what every reader reads first anyway.
 pub const MIN_FILE_LEN: u64 = 1024;
 
-/// The card region's length for a card and record of these stored lengths:
-/// both, twice over, plus [`CARD_SLACK_MIN`] — so a re-card can write the new
-/// pair beside the old one and switch with one header write (SPEC.md §6).
-/// No card and no record: no region.
+/// The card region's length for a card and record of these stored lengths.
+///
+/// With a card: both, twice over, plus [`CARD_SLACK_MIN`] — so a re-card can
+/// write the new pair beside the old one and switch with one header write
+/// (SPEC.md §4.4). With **no card** the region is the record alone: that space
+/// is in the 64 KiB the open reads first, so slack there would only push the
+/// leaf directories out of it, and a file nobody carded yet is re-carded by a
+/// copy. No card and no record: no region.
 pub fn card_region_len(card_len: u32, build_len: u32) -> u32 {
-    if card_len == 0 && build_len == 0 {
-        0
-    } else {
-        2 * (card_len + build_len) + CARD_SLACK_MIN
+    match (card_len, build_len) {
+        (0, 0) => 0,
+        (0, b) => b,
+        (c, b) => 2 * (c + b) + CARD_SLACK_MIN,
     }
 }
 

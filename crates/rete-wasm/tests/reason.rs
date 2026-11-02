@@ -4,7 +4,8 @@
 //! in-memory check covers the JSON shape and the verdict logic).
 
 use rete_core::{
-    build_pyramid_meta, write_dataset, DictionaryBuilder, GraphIndexBuilder, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, write_dataset_v05 as write_dataset, DictionaryBuilder, GraphIndexBuilder,
+    DEFAULT_TILE_BUDGET,
 };
 use serde_json::Value;
 

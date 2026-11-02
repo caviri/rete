@@ -330,6 +330,7 @@ fn build_dataset(
     if quads.is_empty() {
         fail("no statements parsed (empty input or only comments)");
     }
+    let read = quads.len() as u64;
     let finish = |bytes: Vec<u8>, stats: &rete_core::ingest::BuildStats| -> Vec<u8> {
         use rete_core::build_record as br;
         let record = br::to_json(
@@ -346,7 +347,7 @@ fn build_dataset(
                     ..Default::default()
                 },
                 inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
-                statements_read: None,
+                statements_read: Some(read),
             },
             Some(stats),
         );
