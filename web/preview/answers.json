@@ -18169,7 +18169,7 @@
    "index": 0,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 164 range req · 274.5 MB of 58.78 GB fetched (incl. opening the file) · 153.5 MB cached this session · 54875 ms",
+   "qmeta": "25 row(s) | 164 range req · 275.2 MB of 62.95 GB fetched (incl. opening the file) · 154.0 MB cached this session · 49096 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -18374,7 +18374,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 54900
+   "elapsedMs": 49130
   },
   "datacite:1": {
    "id": "datacite:1",
@@ -18397,7 +18397,7 @@
    "index": 2,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 16 range req · 10.0 MB of 58.78 GB fetched · 163.5 MB cached this session · 4445 ms",
+   "qmeta": "25 row(s) | 16 range req · 8.8 MB of 62.95 GB fetched · 162.8 MB cached this session · 3578 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -18602,7 +18602,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 4471
+   "elapsedMs": 3594
   },
   "datacite:3": {
    "id": "datacite:3",
@@ -18610,7 +18610,7 @@
    "index": 3,
    "view": "table",
    "ok": true,
-   "qmeta": "47 row(s) | 48 range req · 62.0 MB of 58.78 GB fetched · 225.5 MB cached this session · 193204 ms",
+   "qmeta": "47 row(s) | 50 range req · 62.0 MB of 62.95 GB fetched · 224.8 MB cached this session · 161662 ms",
    "count": 47,
    "unit": "row",
    "columns": [
@@ -18707,7 +18707,289 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 193217
+   "elapsedMs": 161682
+  },
+  "datacite:4": {
+   "id": "datacite:4",
+   "dataset": "datacite",
+   "index": 4,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 55 range req · 30.0 MB of 62.95 GB fetched · 254.8 MB cached this session · 13799 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Record",
+     "var": "record"
+    },
+    {
+     "label": "Relation",
+     "var": "relation"
+    },
+    {
+     "label": "DOI it names",
+     "var": "doi"
+    },
+    {
+     "label": "As written",
+     "var": "asWritten"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://doi.org/10.14288/1.0378232",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#isIdenticalTo",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1088/1674-4527/19/4/49",
+      "media": false
+     },
+     {
+      "text": "10.1088/1674–4527/19/4/49",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.17169/refubium-25568",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#isIdenticalTo",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.5817/erb2019-1-3",
+      "media": false
+     },
+     {
+      "text": "10.5817/erb2019–1-3",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.17879/31039615161",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#isIdenticalTo",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1186/s40694-021-00127-2",
+      "media": false
+     },
+     {
+      "text": "10.1186/s40694‑021‑00127‑2",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.18150/pi3agj",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#isSourceOf",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.31338/2657-599x.ph.2022-4.3",
+      "media": false
+     },
+     {
+      "text": "10.31338/2657‐599x.ph.2022‐4.3",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.23641/asha.29847827.v1",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#isSupplementTo",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1044/2025_aja-25-00013",
+      "media": false
+     },
+     {
+      "text": "10.1044/2025_aja‐25‐00013",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.23641/asha.29847827",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#isSupplementTo",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1044/2025_aja-25-00013",
+      "media": false
+     },
+     {
+      "text": "10.1044/2025_aja‐25‐00013",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.25592/uhhfdm.18069",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#cites",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.5194/tc-6-431-2012",
+      "media": false
+     },
+     {
+      "text": "10.5194/tc‐6‐431‐2012",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.25592/uhhfdm.18070",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#cites",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.5194/tc-6-431-2012",
+      "media": false
+     },
+     {
+      "text": "10.5194/tc‐6‐431‐2012",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 13816
+  },
+  "datacite:5": {
+   "id": "datacite:5",
+   "dataset": "datacite",
+   "index": 5,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 509 range req · 553.7 MB of 62.95 GB fetched (incl. opening the file) · 432.5 MB cached this session · 133560 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "DOI",
+     "var": "doi"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.823387",
+      "media": false
+     },
+     {
+      "text": "(Fig. 4) Bulk mineralogy of permafrost core ICDP5011-3",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.823388",
+      "media": false
+     },
+     {
+      "text": "(Fig. 4) Content of total organic carbon in permafrost core ICDP5011-3",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.823389",
+      "media": false
+     },
+     {
+      "text": "(Fig. 6) Grain size composition of permafrost core ICDP5011-3",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.848607",
+      "media": false
+     },
+     {
+      "text": "(Table 1) Growth rate and cultivation characteristics of arctic snow and permafrost algal strains",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.819291",
+      "media": false
+     },
+     {
+      "text": "(Table 1) Mean annual ground temperatures and description of permafrost boreholes in Russia",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.786398",
+      "media": false
+     },
+     {
+      "text": "(Table 1) Radiocarbon ages for permafrost core BY-pond and monoliths BY-hc1-3, Bylot Island",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.816841",
+      "media": false
+     },
+     {
+      "text": "(Table 1a) Radiocarbon dating of organic remains in frozen sediments of the Barrow permafrost tunnel in 2004",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1594/pangaea.816842",
+      "media": false
+     },
+     {
+      "text": "(Table 1b) Radiocarbon dating of organic remains in ice wedges of the Barrow permafrost tunnel in 2004",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 133590
   },
   "davidrumsey:0": {
    "id": "davidrumsey:0",
