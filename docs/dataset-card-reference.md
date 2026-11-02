@@ -982,6 +982,23 @@ are recorded together but labelled apart:
   (`engine`, `transport`, and a note saying exactly this) so it cannot be
   quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
   9 requests" survives being read elsewhere; "12 ms" does not.
+- **`status` is there only when the run did not finish.** `over_budget` means a
+  budget stopped it: the starter byte budget (64 MiB past the open), or, in a
+  build, `merge` or `recard` run with `--memory-budget-mb`, the memory the cost
+  measurement was allowed (the budget, or what the process held when the step
+  began plus 32 MiB, whichever is more; a query is stopped when the process
+  passes it). `failed` means it did not run. The other figures are then what
+  the run had spent when it stopped, and `rows` is 0. A run that finished has no
+  `status` at all, so a record without one reads as before.
+
+The costs are measured twice. The first run is against the finished sections,
+before the file is written, and decides which queries the card keeps (below):
+the card is inside the content hash, so it has to be final before the file is.
+The second is against the file as written, because in `0x06` the bytes a query
+reads depend on the card region (the open reads the first 64 KiB). Only the
+second set of figures is stored. A query that passes a budget in the second run
+is already in the card, which can no longer change, so it stays there with
+`status: over_budget`; in the first run it is dropped.
 
 The memory-bounded build and `rete merge` measure their starter queries
 against the file they have just written, as `rete recard` does. (Up to 0.4.0
@@ -1009,10 +1026,14 @@ caught:
   "cannot do better" than shipping it. The measurement can.
 
 - **a run that did not finish inside the starter byte budget** (64 MiB past
-  the open) —
+  the open), **or inside the memory budget** of a command run with
+  `--memory-budget-mb` —
   a query too expensive to be anyone's first query. The record says "did not
   finish", and it never counts as a contradiction of the template's claim: it
-  says nothing about the query's rows.
+  says nothing about the query's rows. (Memory is held to the budget by
+  stopping the query when the process passes it, since a query's working rows
+  are not a cache. Without a budget, as in the in-RAM build, only the byte
+  budget applies.)
 
 **Dropped, not fatal.** Refusing to build is the right answer for *authored*
 content — an oversized `extra` bag is the publisher's text, and quietly

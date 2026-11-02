@@ -380,7 +380,7 @@ pub(crate) fn merge_cmd(
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
-    crate::commands::build::finish_full_card(output, &info, &rec, &outcome)?;
+    crate::commands::build::finish_full_card(output, &info, &rec, &outcome, memory_budget_mb)?;
 
     let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
     progress::finish(stats.statements as u64, output);

@@ -1375,6 +1375,8 @@ impl GraphIndex {
     /// not permanently poison a long-lived (resident) session. A local tile
     /// with no body returns an empty entry (constructed empty on purpose).
     fn tile_entry(&self, section: usize, tile: usize) -> Option<Arc<CacheEntry>> {
+        // A query run under a memory ceiling ([`crate::guard`]) stops here.
+        crate::guard::check();
         let key = (section as u8, tile as u32);
         if let Some(e) = self.cache.get(key) {
             return Some(e);

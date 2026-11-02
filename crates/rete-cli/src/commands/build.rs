@@ -89,9 +89,10 @@ impl BuildSections {
 fn drop_measured_empty_queries(
     bytes: Vec<u8>,
     mut card: card::DatasetCard,
+    mem: Option<buildinfo::MeasureMem>,
 ) -> anyhow::Result<(Vec<u8>, buildinfo::QueryCosts, Vec<buildinfo::DroppedQuery>)> {
     let image = std::sync::Arc::new(bytes);
-    let measured = buildinfo::measure_query_costs(image.clone(), &card.queries);
+    let measured = buildinfo::measure_query_costs(image.clone(), &card.queries, mem);
     let mut bytes = std::sync::Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone());
     eprintln!(
         "measured {} starter quer{} against the built file",
@@ -242,7 +243,10 @@ fn write_carded(
                 Some(card.queries.len() as u64),
                 Unit::Queries,
             );
-            let (bytes, costs, dropped) = drop_measured_empty_queries(bytes, card)?;
+            let mem = flags
+                .memory_budget_mb
+                .map(buildinfo::MeasureMem::for_budget_mb);
+            let (bytes, costs, dropped) = drop_measured_empty_queries(bytes, card, mem)?;
             info.query_costs = Some(costs);
             info.dropped_queries = dropped;
             rec.lap(rete_core::build_trace::Phase::StarterQueries);
@@ -272,7 +276,10 @@ fn write_carded(
         if let (Some(costs), Some(card)) = (info.query_costs.as_mut(), card::load_card(&image)?) {
             let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
                 std::sync::Arc::new(rete_core::BytesReader(std::sync::Arc::from(&image[..])));
-            buildinfo::remeasure_costs(source, &card.queries, costs);
+            let mem = flags
+                .memory_budget_mb
+                .map(buildinfo::MeasureMem::for_budget_mb);
+            buildinfo::remeasure_costs(source, &card.queries, costs, mem);
             if rec.is_reproducible() {
                 buildinfo::zero_debug_ms(&mut info);
             }
@@ -1216,7 +1223,7 @@ pub(crate) fn build_external_cmd(
         other => anyhow::anyhow!("{other}"),
     })?;
     let report = audit.borrow().report.clone();
-    finish_full_card(output, &info, &rec, &outcome)?;
+    finish_full_card(output, &info, &rec, &outcome, memory_budget_mb)?;
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
     progress::finish(stats.statements as u64, output);
     print_build_summary(output, &stats, byte_len);
@@ -1332,6 +1339,7 @@ pub(crate) fn finish_full_card(
     info: &std::rc::Rc<std::cell::RefCell<buildinfo::BuildInfo>>,
     rec: &buildinfo::Recorder,
     outcome: &CardOutcome,
+    memory_budget_mb: u64,
 ) -> anyhow::Result<()> {
     if let Some(e) = outcome.failed.borrow().as_ref() {
         anyhow::bail!(
@@ -1341,13 +1349,15 @@ pub(crate) fn finish_full_card(
         );
     }
     let mut info = info.borrow_mut();
+    // The costs measured again on the file as written come first, so the record
+    // sealed after them — its wall time, its phases and its peak RSS — covers
+    // that step too.
+    if info.query_costs.is_some() {
+        buildinfo::remeasure_on_file(output, &mut info, rec, Some(memory_budget_mb))?;
+    }
     rec.seal(&mut info);
     info.spill = Some(rec.spill());
-    if info.query_costs.is_some() {
-        buildinfo::remeasure_on_file(output, &mut info, rec)?;
-    } else {
-        buildinfo::patch_build_info(std::path::Path::new(output), &info.to_json_bytes())?;
-    }
+    buildinfo::patch_build_info(std::path::Path::new(output), &info.to_json_bytes())?;
     if outcome.meta_len.get() == 0 {
         eprintln!(
             "embedded build info ({} bytes, outside the content hash)",
@@ -2092,7 +2102,7 @@ mod tests {
         };
         let (card, record) = hook(std::sync::Arc::new(Broken), &stats).unwrap();
         assert!(card.is_empty() && record.is_empty());
-        let e = finish_full_card("x.rete", &info, &rec, &outcome)
+        let e = finish_full_card("x.rete", &info, &rec, &outcome, 64)
             .unwrap_err()
             .to_string();
         assert!(e.contains("unreadable"), "{e}");

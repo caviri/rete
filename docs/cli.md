@@ -169,6 +169,32 @@ derivation's time and peak RSS are the `card_derive` and
 `content_hash`. On the OpenCitations sample: see
 [Maintaining a published card](dataset-cards.md#which-re-card-path).
 
+**The starter queries stay inside the budget.** A query's own working rows (a
+join's build side, a `GROUP BY`'s groups) are not a cache, so the budget cannot
+shrink them. Instead each starter query runs under a ceiling on the process's
+resident memory, `--memory-budget-mb` or what the process holds when the cost
+step begins plus 32 MiB, whichever is more, and is stopped when it passes it.
+It is stopped at its next row, so the process can pass the ceiling by what one
+buffer's growth allocates: the peak stays within the budget plus 128 MiB. The
+build goes on. A query stopped before the file is written is dropped from the
+card, like one over the byte budget (`dropped_queries`, "did not finish"). A
+query stopped on the file as written, when the card can no longer change, stays
+in the card, and its entry in `query_costs` says `status: over_budget` (see
+[the build record](dataset-cards.md#build-conditions-the-build-info-section)).
+`rete recard` and `rete merge` do the same under their own
+`--memory-budget-mb`. Without a budget (the in-RAM build) nothing changes: the
+reader's caches are sized from the free RAM and no query is stopped. The ceiling
+reads `/proc`, so it is a Linux feature; elsewhere no query is stopped.
+`RETE_COST_MEMORY_HEADROOM_MB` replaces the 32 MiB (the tests set it to 0).
+
+The costs are measured twice, and only the second set is recorded. The first
+run is against the finished sections, before the output exists, and decides
+which queries the card keeps: the card is inside the content hash, so it has to
+be final before the file is. The second is against the file as written, because
+in `0x06` a query's bytes depend on the card region (the open reads the first
+64 KiB). Both are the `starter_queries` phase, and the record's peak RSS is the
+whole process's, the second measurement and the write included.
+
 `--strict` refuses input carrying an IRI that the N-Triples/N-Quads `IRIREF`
 grammar and RFC 3987 disallow. It is **off** by default and the build only
 *counts* them — see [Invalid IRIs](#invalid-iris) for what that means and why the
@@ -424,8 +450,12 @@ memory-bounded `rete build` runs this same derivation for its own card, so a
 re-card of its output writes the card it already has.
 
 Then the starter queries are generated, each is run against the file inside the
-starter byte budget (64 MiB past the open, see [Dataset Cards](dataset-cards.md#bounded-by-construction)),
-and the ones that do not answer within it are dropped and recorded. With
+starter byte budget (64 MiB past the open, see [Dataset Cards](dataset-cards.md#bounded-by-construction))
+and inside `--memory-budget-mb` (the process may not pass it by more than
+128 MiB; see "The starter queries stay inside the budget" under `rete build`), and the ones that do not
+answer within them are dropped and recorded. With `--in-place` the costs are
+measured again on the file as written, where a query that now passes the budget
+stays in the card and is marked `over_budget` in `query_costs`. With
 `-o`, the file is **rewritten with only the card (metadata section) and the
 build record (build-info section) replaced**: every other section — dictionary,
 index, pyramid, named graphs, text index, any section kind this binary does not
@@ -601,8 +631,9 @@ on disk they are streamed into the profile and every starter query is run
 against the file, by the derivation
 [`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
 runs (so a re-card of the merged file writes the same card, byte for byte),
-inside this command's `--memory-budget-mb`; the card and the build record then
-go into the card region, as for the memory-bounded build. The data sections are
+inside this command's `--memory-budget-mb`, the queries' memory included (see
+"The starter queries stay inside the budget" under `rete build`); the card and the
+build record then go into the card region, as for the memory-bounded build. The data sections are
 the same bytes as
 without a card, and the same as `rete build --memory-budget-mb` writes for the
 union of the shards' statements. Up to 0.4.0 a merged card carried counts only
