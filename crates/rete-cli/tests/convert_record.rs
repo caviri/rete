@@ -190,11 +190,7 @@ fn the_source_record_is_kept_byte_for_byte() {
 fn a_per_graph_source_keeps_its_record_too() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("in.nq");
-    let mut nq = nt().replace(
-        " .
-", " .
-",
-    );
+    let mut nq = nt();
     nq.push_str("<http://example.test/e1> <http://example.test/in> <http://example.test/e2> <http://example.test/g1> .
 ");
     std::fs::write(&src, nq).unwrap();
