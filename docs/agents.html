@@ -747,7 +747,9 @@ N-Triples, N-Quads), the model sends the text to <code>load_rdf</code>, which bu
 graph in memory, queryable by every tool as <code>chat:&lt;name&gt;</code> until the extension
 restarts — no granted folder needed. Long files go in several parts; <code>save_as</code>
 keeps the result as a <code>.rete</code> in a granted folder. A <code>.rete</code> itself is binary
-and cannot travel through the chat: put it in a granted folder or give its URL.</p>
+and cannot travel through the chat: put it in a granted folder or give its URL.
+The same goes for a Jelly (<code>.jelly</code>) file: <code>load_rdf</code> and <code>build_rete</code> read it by
+<code>path</code> from a granted folder.</p>
 <p><strong>Long queries do not time out.</strong> Claude gives up on a tool call after 60 s,
 and a query that visits thousands of scattered entities in a large published
 graph (title and year for every work citing a paper, on the 60 GB Crossref

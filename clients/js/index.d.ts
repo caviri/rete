@@ -221,11 +221,12 @@ export const wasm: Record<string, (...args: never[]) => unknown>;
 /**
  * Build a complete `.rete` file image from RDF text. `quotedTripleSyntax`
  * (default `"rdf-star"`, like `rete build`) decides what Turtle/TriG `<< … >>`
- * means; N-Triples and N-Quads ignore it.
+ * means; N-Triples and N-Quads ignore it. Jelly (`"jelly"`) is binary: pass
+ * the file's bytes. Bytes are also accepted for the text formats (UTF-8).
  */
 export function build(
-  text: string,
-  format?: "nt" | "nq" | "ttl" | "trig",
+  text: string | Uint8Array | ArrayBuffer,
+  format?: "nt" | "nq" | "ttl" | "trig" | "jelly",
   opts?: { quotedTripleSyntax?: QuotedTripleSyntax },
 ): Promise<Uint8Array>;
 

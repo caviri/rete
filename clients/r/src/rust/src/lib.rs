@@ -275,7 +275,8 @@ fn curated_for_derivation(
     }
 }
 
-/// Build a complete `.rete` file image from RDF text. `card_json` may be ""
+/// Build a complete `.rete` file image from RDF text, or from a raw vector
+/// (required for `"jelly"`, which is binary). `card_json` may be ""
 /// (no card); `pyramid_algo` is "louvain", "types", or "none";
 /// `derive_card` opts into the auto-derived card profile;
 /// `quoted_triple_syntax` ("rdf-star" or "rdf12") is how Turtle/TriG
@@ -283,7 +284,7 @@ fn curated_for_derivation(
 /// @noRd
 #[extendr]
 fn build_dataset(
-    text: &str,
+    text: Robj,
     format: &str,
     card_json: &str,
     pyramid_algo: &str,
@@ -322,11 +323,30 @@ fn build_dataset(
     } else {
         None
     };
-    let quads =
-        match rete_core::ingest::parse_statements_audited_surface(text, format, None, surface) {
-            Ok(quads) => quads,
-            Err(e) => fail(e),
-        };
+    let (data, as_text): (&[u8], Option<&str>) = if let Some(raw) = text.as_raw_slice() {
+        (raw, None)
+    } else if let Some(s) = text.as_str() {
+        (s.as_bytes(), Some(s))
+    } else {
+        fail("`text` must be a character string, or a raw vector (the bytes of a .jelly file)")
+    };
+    let parsed = match (as_text, format) {
+        (None, "jelly") => rete_core::ingest::parse_jelly_bytes(data),
+        (Some(_), "jelly") => fail(
+            "jelly is a binary format: pass the file's bytes as a raw vector (readBin()), not text",
+        ),
+        (None, _) => match std::str::from_utf8(data) {
+            Ok(t) => rete_core::ingest::parse_statements_audited_surface(t, format, None, surface),
+            Err(e) => fail(format!("input is not valid UTF-8 text: {e}")),
+        },
+        (Some(t), _) => {
+            rete_core::ingest::parse_statements_audited_surface(t, format, None, surface)
+        }
+    };
+    let quads = match parsed {
+        Ok(quads) => quads,
+        Err(e) => fail(e),
+    };
     if quads.is_empty() {
         fail("no statements parsed (empty input or only comments)");
     }
@@ -346,7 +366,11 @@ fn build_dataset(
                     pyramid_algo: with_pyramid.then(|| pyramid_algo.to_string()),
                     ..Default::default()
                 },
-                inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+                inputs: vec![br::Input::from_bytes(
+                    if as_text.is_some() { "string" } else { "bytes" },
+                    format,
+                    data,
+                )],
                 statements_read: Some(read),
             },
             Some(stats),

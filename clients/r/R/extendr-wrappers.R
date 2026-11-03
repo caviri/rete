@@ -14,7 +14,8 @@ NULL
 #' @useDynLib rete, .registration = TRUE
 NULL
 
-#' Build a complete `.rete` file image from RDF text. `card_json` may be ""
+#' Build a complete `.rete` file image from RDF text, or from a raw vector
+#' (required for `"jelly"`, which is binary). `card_json` may be ""
 #' (no card); `pyramid_algo` is "louvain", "types", or "none";
 #' `derive_card` opts into the auto-derived card profile;
 #' `quoted_triple_syntax` ("rdf-star" or "rdf12") is how Turtle/TriG

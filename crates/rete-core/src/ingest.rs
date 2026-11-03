@@ -20,6 +20,8 @@
 
 use crate::{Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo, DEFAULT_TILE_BUDGET};
 
+mod jelly;
+
 /// A parsed triple as three canonical term tokens.
 pub type RawTriple = (String, String, String);
 
@@ -131,8 +133,12 @@ pub enum IngestError {
     #[error("rdf/xml: {0}")]
     RdfXml(String),
     /// The requested format is not one this crate can parse.
-    #[error("unknown input format: {0} (expected nt, nq, ttl, trig, or rdf/xml)")]
+    #[error("unknown input format: {0} (expected nt, nq, ttl, trig, rdf/xml, or jelly)")]
     UnknownFormat(String),
+    /// A Jelly file that is malformed, uses a feature this reader refuses, or
+    /// breaks a rule of the specification.
+    #[error("jelly: {0}")]
+    Jelly(String),
     /// [`QuotedTripleSurface::Rdf12`] was asked for on a Turtle/TriG input, but
     /// this build of `rete-core` has the `rdf12-turtle` feature off, so the
     /// RDF 1.2 reader was not compiled in. Refused by name rather than read as
@@ -453,6 +459,7 @@ pub fn stream_reader_audited_surface<R: std::io::BufRead>(
         }
         "ttl" => turtle_star(reader, audit, f),
         "trig" => trig_star(reader, audit, f),
+        "jelly" => jelly::stream(reader, audit, f),
         "rdfxml" => {
             for r in oxrdfxml::RdfXmlParser::new().for_reader(reader) {
                 let t = r.map_err(|e| IngestError::RdfXml(e.to_string()))?;
@@ -798,6 +805,13 @@ pub fn parse_statements_audited_surface(
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
             .collect(),
+        "jelly" => {
+            return Err(IngestError::Jelly(
+                "Jelly is a binary format, so it cannot come in as text; \
+                 use parse_jelly_bytes or stream_reader"
+                    .into(),
+            ))
+        }
         other => return Err(IngestError::UnknownFormat(other.to_string())),
     };
     for (s, p, o, g) in &quads {
@@ -806,6 +820,23 @@ pub fn parse_statements_audited_surface(
         })?;
     }
     Ok(quads)
+}
+
+/// Parse a whole Jelly file held in memory (`"jelly"` is binary, so it has no
+/// text entry point). The streaming path is [`stream_reader`] with `"jelly"`;
+/// this is for callers that already hold the bytes, such as the browser engine.
+pub fn parse_jelly_bytes(bytes: &[u8]) -> Result<Vec<RawQuad>, IngestError> {
+    parse_jelly_bytes_audited(bytes, None)
+}
+
+/// [`parse_jelly_bytes`] with an optional [`IriAudit`].
+pub fn parse_jelly_bytes_audited(
+    bytes: &[u8],
+    audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
+    let mut out = Vec::new();
+    jelly::stream(bytes, audit, &mut |q| out.push(q))?;
+    Ok(out)
 }
 
 /// Take one term from the front of `s`, returning `(term, remainder)`.

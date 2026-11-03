@@ -17,7 +17,8 @@ rete_build(
 \arguments{
 \item{text}{RDF text: N-Triples (\code{"nt"}), N-Quads (\code{"nq"} — named graphs
 become a dataset), Turtle (\code{"ttl"}), TriG (\code{"trig"}), or RDF/XML
-(\code{"rdfxml"}).}
+(\code{"rdfxml"}). Jelly (\code{"jelly"}), a binary format, takes the file's bytes
+as a raw vector instead: \code{readBin(path, "raw", file.size(path))}.}
 
 \item{format}{The RDF serialization of \code{text}.}
 

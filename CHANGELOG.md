@@ -5,6 +5,22 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **Jelly RDF input** (`rete build file.jelly`). [Jelly](https://jelly-rdf.github.io/) is a
+  binary RDF stream format; `.jelly` and `.jelly.gz` files, or `--format jelly`, now build
+  like any other input, in memory, two-pass, or under `--memory-budget-mb`, one frame at a
+  time, with no protobuf build step. Both layouts are read: Jelly 1.0/1.1 (row layout,
+  triples, quads and graphs, quoted triples) and 1.2 (column layout, triple terms, base
+  directions). Named graphs go to the quad index. Malformed input is refused with the frame
+  number; generalized RDF and streams of RDF Messages are refused by name. `rete validate`
+  and `rete estimate` read it too. Checked against the Jelly conformance suite and against
+  `jelly-cli` on the nanopub registry stream (4,046,199 quads, identical). The clients
+  take it as bytes (Jelly is binary): Python `build(bytes, "jelly")` and `Builder.add_file`,
+  JavaScript `build(Uint8Array, "jelly")` (new wasm export `build_bytes`), R
+  `rete_build(raw, "jelly")`, Java `Rete.build(byte[], "jelly")`, and the Claude Desktop
+  extension's `load_rdf` / `build_rete` by `path`. Writing Jelly is not part of this.
+
 ## [0.5.2] - 2026-11-03
 
 ### Fixed

@@ -958,7 +958,7 @@ rete build dump.nq -o out.rete
 <li>Hundreds of millions of triples are routine builds (data.bnf.fr: 716 M;
 one 726 M-triple file). If RAM is the constraint, <code>rete build --memory-budget-mb</code> runs the chunked external build — same byte-identical
 file, bounded memory. It takes the dump <strong>in the form it ships</strong>: N-Triples,
-N-Quads, Turtle or TriG, gzipped or not, decompressed while streaming. So a
+N-Quads, Turtle, TriG or Jelly, gzipped or not, decompressed while streaming. So a
 public <code>dump.ttl.gz</code> needs no conversion pass and no room for the expanded
 copy, which is usually the larger of the two costs — SemOpenAlex measures
 146.8 N-Quads bytes per triple, so its 8.5 GiB author dump would land as

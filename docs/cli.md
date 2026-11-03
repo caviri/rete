@@ -16,9 +16,9 @@ maintained as hand-written copies of the CLI definition.
 
 ## Building
 
-### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml] [--quoted-triple-syntax rdf12|rdf-star]`
+### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml|jelly] [--quoted-triple-syntax rdf12|rdf-star]`
 Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig`, plus `.rdf` /
+Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig` / `.jelly`, plus `.rdf` /
 `.owl` / `.rdfxml` for RDF/XML — how most OWL ontologies ship); `-` reads stdin and
 defaults to N-Triples; `--format` forces a format for all inputs (use `--format
 rdfxml` for an RDF/XML file with a non-standard extension). N-Quads inputs produce
@@ -28,6 +28,17 @@ a dataset with named graphs.
 rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
 ```
+
+**Jelly.** `.jelly` and `.jelly.gz` files are [Jelly](https://jelly-rdf.github.io/)
+RDF streams, a binary format. Both layouts are read: Jelly 1.0 and 1.1 (the row
+layout) and Jelly 1.2 (the column layout), triples or quads, with RDF-star quoted
+triples and RDF 1.2 triple terms. A file has no magic number, so only the
+extension or `--format jelly` says it is Jelly. It streams one frame at a time, so
+a large file is read like an `.nq` one, including under `--memory-budget-mb`;
+named graphs land in the quad index. A malformed file is refused with the frame
+number. Not read: generalized RDF (a literal as subject, predicate or graph),
+streams of RDF Messages (the optional 1.2 stream type), lookup tables above
+1,048,576 entries, and writing Jelly (`rete export` has no Jelly format).
 
 A long build shows where it is with `--progress` (a live bar on a terminal by
 default; `plain` lines for logs): see [Progress](#progress).

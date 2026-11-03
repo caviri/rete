@@ -743,8 +743,8 @@ def open(
 _RDFLIB_DEFAULT_GRAPH = "<urn:x-rdflib:default>"
 
 
-def _as_text_source(source: Any, format: str) -> Tuple[str, str]:
-    """Normalize a source to ``(rdf_text, format)``.
+def _as_text_source(source: Any, format: str) -> Tuple[Union[str, bytes], str]:
+    """Normalize a source to ``(rdf_text_or_bytes, format)``.
 
     Text passes through with its declared ``format``. A **graph object from
     another RDF library** — anything with a ``.serialize(format=...)`` method
@@ -801,7 +801,9 @@ def build(source: Any, format: str = "nt", *, quoted_triple_syntax: str = "rdf-s
 
     ``source`` is either RDF **text** (``format`` = ``"nt"``, ``"nq"`` —
     named graphs become a dataset — ``"ttl"``, ``"trig"``, or ``"rdfxml"``),
-    or a graph object from another RDF library (see :func:`_as_text_source`).
+    a Jelly file's **bytes** (``format="jelly"``; Jelly is binary, so it is
+    never text), or a graph object from another RDF library (see
+    :func:`_as_text_source`).
 
     ``quoted_triple_syntax`` decides what Turtle/TriG ``<< s p o >>`` means,
     with the values and default of ``rete build --quoted-triple-syntax``:
@@ -833,6 +835,7 @@ _FORMAT_BY_SUFFIX = {
     ".rdf": "rdfxml",
     ".owl": "rdfxml",
     ".xml": "rdfxml",
+    ".jelly": "jelly",
 }
 
 
@@ -863,7 +866,7 @@ class Builder:
     """
 
     def __init__(self) -> None:
-        self._sources: List[Tuple[str, str, str]] = []
+        self._sources: List[Tuple[Union[str, bytes], str, str]] = []
         self._card: Optional[Dict[str, Any]] = None
         self._pyramid: bool = True
         self._pyramid_algo: str = "louvain"
@@ -884,8 +887,9 @@ class Builder:
     def add(
         self, source: Any, format: str = "nt", *, quoted_triple_syntax: str = "rdf-star"
     ) -> "Builder":
-        """Queue RDF text (``"nt"``/``"nq"``/``"ttl"``/``"trig"``/``"rdfxml"``)
-        or a graph object from another RDF library. May be called many times;
+        """Queue RDF text (``"nt"``/``"nq"``/``"ttl"``/``"trig"``/``"rdfxml"``),
+        the bytes of a Jelly file (``"jelly"``), or a graph object from another
+        RDF library. May be called many times;
         all sources merge into one graph (named graphs from N-Quads/TriG
         sources survive). ``quoted_triple_syntax`` is per source, as in
         :func:`build`."""
@@ -901,16 +905,20 @@ class Builder:
         quoted_triple_syntax: str = "rdf-star",
     ) -> "Builder":
         """Queue an RDF file; the format is inferred from the suffix
-        (``.nt``, ``.nq``, ``.ttl``, ``.trig``, ``.rdf``/``.owl``/``.xml``)
-        unless given. ``quoted_triple_syntax`` as in :func:`build`."""
+        (``.nt``, ``.nq``, ``.ttl``, ``.trig``, ``.rdf``/``.owl``/``.xml``,
+        ``.jelly``) unless given. ``quoted_triple_syntax`` as in :func:`build`."""
         fspath = os.fspath(path)
         fmt = format or _FORMAT_BY_SUFFIX.get(os.path.splitext(fspath)[1].lower())
         if fmt is None:
             raise ValueError(
-                f"cannot infer RDF format from {fspath!r}; pass format='nt'|'nq'|'ttl'|'trig'|'rdfxml'"
+                f"cannot infer RDF format from {fspath!r}; pass format='nt'|'nq'|'ttl'|'trig'|'rdfxml'|'jelly'"
             )
-        with io.open(fspath, "r", encoding="utf-8") as fh:
-            self._sources.append((fh.read(), fmt, quoted_triple_syntax))
+        if fmt == "jelly":  # binary: the file's bytes, not text
+            with io.open(fspath, "rb") as fb:
+                self._sources.append((fb.read(), fmt, quoted_triple_syntax))
+        else:
+            with io.open(fspath, "r", encoding="utf-8") as fh:
+                self._sources.append((fh.read(), fmt, quoted_triple_syntax))
         self._invalidate()
         return self
 

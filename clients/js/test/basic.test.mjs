@@ -143,3 +143,28 @@ test("card, examples and shacl over a lazily opened file", async () => {
   assert.equal(failing.conforms, false);
   assert.equal(failing.results.length, 2);
 });
+
+// A tiny Jelly 1.1 file (3 quads, one in the default graph), written by hand
+// and checked against jelly-cli; the other clients use the same bytes.
+const JELLY = Uint8Array.from(
+  "bb010a0e0a0c1002481050085808700278020a1752151213687474703a2f2f6578616d706c652e6f72672f0a094a071205616c6963650a094a0712056b6e6f77730a074a051203626f620a084a0612046e616d650a064a04120267310a2c5a2a1228687474703a2f2f7777772e77332e6f72672f323030312f584d4c536368656d6123696e74656765720a0c1a0a0a0208012a004a007a000a171a152a0210045a0b0a05416c6963651202656e6a0210050a0a1a085a060a0234321801".match(/../g),
+  (h) => parseInt(h, 16),
+);
+
+test("build from Jelly bytes", async () => {
+  const g = await open(await build(JELLY, "jelly"));
+  assert.equal(g.quads, 3);
+  assert.deepEqual(g.graphNames(), ["http://example.org/g1"]);
+  const rows = g.query(
+    "SELECT ?o WHERE { GRAPH <http://example.org/g1> { <http://example.org/alice> <http://example.org/name> ?o } }",
+  );
+  assert.deepEqual(
+    rows.map((r) => r.o.n3).sort(),
+    ['"42"^^<http://www.w3.org/2001/XMLSchema#integer>', '"Alice"@en'],
+  );
+});
+
+test("Jelly is binary: text and truncated input are refused", async () => {
+  await assert.rejects(() => build("not bytes", "jelly"), /binary/);
+  await assert.rejects(() => build(JELLY.slice(0, -5), "jelly"), /truncated/);
+});

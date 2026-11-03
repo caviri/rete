@@ -84,7 +84,14 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
     }
     let read = quads.len() as u64;
     let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
-    finish_build(bytes, "build", format, text, &stats, read)
+    finish_build(
+        bytes,
+        "build",
+        format,
+        ("string", text.as_bytes()),
+        &stats,
+        read,
+    )
 }
 
 /// The file every browser build returns: the in-RAM `0x05` image laid out as
@@ -97,7 +104,7 @@ fn finish_build(
     bytes: Vec<u8>,
     command: &str,
     format: &str,
-    text: &str,
+    input: (&str, &[u8]),
     stats: &rete_core::ingest::BuildStats,
     read: u64,
 ) -> Result<Vec<u8>, JsValue> {
@@ -118,7 +125,7 @@ fn finish_build(
                 pyramid_algo: Some("louvain".into()),
                 ..Default::default()
             },
-            inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+            inputs: vec![br::Input::from_bytes(input.0, format, input.1)],
             statements_read: Some(read),
         },
         Some(stats),
@@ -203,6 +210,17 @@ fn build_card_surface(
 ) -> Result<Vec<u8>, JsValue> {
     let quads = rete_core::ingest::parse_statements_audited_surface(text, format, None, surface)
         .map_err(err)?;
+    build_card_quads(quads, ("string", text.as_bytes()), format, card_json)
+}
+
+/// The tail of [`build_card_surface`], after the input is parsed: shared with
+/// [`build_bytes`], whose Jelly input has no text form.
+fn build_card_quads(
+    quads: Vec<rete_core::ingest::RawQuad>,
+    input: (&str, &[u8]),
+    format: &str,
+    card_json: &str,
+) -> Result<Vec<u8>, JsValue> {
     if quads.is_empty() {
         return Err(js_error(
             "no statements parsed (empty input or only comments)",
@@ -211,7 +229,7 @@ fn build_card_surface(
     if card_json.trim().is_empty() {
         let read = quads.len() as u64;
         let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
-        return finish_build(bytes, "build_with_card", format, text, &stats, read);
+        return finish_build(bytes, "build_with_card", format, input, &stats, read);
     }
     let curated = validated_card(card_json)?;
     let read = quads.len() as u64;
@@ -228,7 +246,29 @@ fn build_card_surface(
         );
         serde_json::to_vec(&card).expect("card serializes")
     });
-    finish_build(bytes, "build_with_card", format, text, &stats, read)
+    finish_build(bytes, "build_with_card", format, input, &stats, read)
+}
+
+/// [`build_with_card_syntax`] for input held as **bytes**: any text format
+/// (UTF-8, as `text` would be) or `"jelly"`, the binary Jelly RDF stream
+/// format, which has no text form and so cannot go through the `&str`
+/// builders. Same card and quoted-triple rules, same file out. The Jelly
+/// reader is the one `rete build` uses ([`rete_core::ingest::parse_jelly_bytes`]);
+/// the whole file must be in memory, as every browser build is.
+#[wasm_bindgen]
+pub fn build_bytes(
+    bytes: &[u8],
+    format: &str,
+    card_json: &str,
+    quoted_triple_syntax: &str,
+) -> Result<Vec<u8>, JsValue> {
+    if format != "jelly" {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|e| js_error(format!("input is not valid UTF-8 text: {e}")))?;
+        return build_with_card_syntax(text, format, card_json, quoted_triple_syntax);
+    }
+    let quads = rete_core::ingest::parse_jelly_bytes(bytes).map_err(err)?;
+    build_card_quads(quads, ("bytes", bytes), format, card_json)
 }
 
 /// [`build_with_card`], but the card also carries the **auto-derived profile**
@@ -295,7 +335,14 @@ pub fn build_with_derived_card(
                 card.with_final_counts(counts).to_json_bytes()
             })
         });
-    finish_build(bytes, "build_with_derived_card", format, text, &stats, read)
+    finish_build(
+        bytes,
+        "build_with_derived_card",
+        format,
+        ("string", text.as_bytes()),
+        &stats,
+        read,
+    )
 }
 
 /// Check a curated card document without building anything — so an editor can

@@ -767,6 +767,11 @@ predicates, classes, vocabularies, datatypes, languages, hubs, signals and the
 tiered starter-query library — from the same code <code>rete build --card</code> runs, so
 the same graph yields a byte-identical card. It is opt-in: derivation walks the
 graph twice more, and the default keeps writing exactly the bytes it always did.</p>
+<h3 id="jelly">Jelly</h3>
+<p>Jelly (<code>.jelly</code>) is a binary RDF format, so it goes in as <code>bytes</code>, not text:
+<code>rete.build(open("data.jelly", "rb").read(), "jelly")</code>. <code>Builder.add_file</code> does
+that for you and knows the <code>.jelly</code> suffix. A text argument with <code>"jelly"</code> is a
+<code>ValueError</code>.</p>
 <h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
 <p>The same <code>--quoted-triple-syntax</code> vocabulary and defaults as the CLI (see
 <a href="interop.html">Interop</a>), in both directions.</p>

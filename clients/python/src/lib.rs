@@ -18,7 +18,7 @@ mod readers;
 use std::io::Read;
 use std::sync::Arc;
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rete_core::{
@@ -465,16 +465,68 @@ fn quoted_triple_surface(syntax: &str) -> PyResult<rete_core::ingest::QuotedTrip
     })
 }
 
+/// RDF input as Python hands it over: text (`str`), or `bytes`. Jelly is a
+/// binary format, so it can only come as bytes; the text formats take either.
+enum Source {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+impl Source {
+    fn extract(obj: &Bound<'_, PyAny>) -> PyResult<Source> {
+        if let Ok(text) = obj.extract::<String>() {
+            return Ok(Source::Text(text));
+        }
+        if let Ok(data) = obj.extract::<Vec<u8>>() {
+            return Ok(Source::Bytes(data));
+        }
+        Err(PyTypeError::new_err(
+            "RDF input must be str (text) or bytes (e.g. a .jelly file)",
+        ))
+    }
+
+    fn data(&self) -> &[u8] {
+        match self {
+            Source::Text(t) => t.as_bytes(),
+            Source::Bytes(b) => b,
+        }
+    }
+
+    /// The build record's name for this input.
+    fn kind(&self) -> &'static str {
+        match self {
+            Source::Text(_) => "string",
+            Source::Bytes(_) => "bytes",
+        }
+    }
+}
+
 /// Parse one source in the given quoted-triple surface. The surface reaches
-/// only Turtle and TriG; N-Triples, N-Quads and RDF/XML ignore it.
+/// only Turtle and TriG; N-Triples, N-Quads, RDF/XML and Jelly ignore it.
 fn parse_source(
-    text: &str,
+    src: &Source,
     format: &str,
     syntax: &str,
 ) -> PyResult<Vec<rete_core::ingest::RawQuad>> {
     let surface = quoted_triple_surface(syntax)?;
-    rete_core::ingest::parse_statements_audited_surface(text, format, None, surface)
-        .map_err(|e| PyValueError::new_err(e.to_string()))
+    let bad = |e: rete_core::ingest::IngestError| PyValueError::new_err(e.to_string());
+    match (src, format) {
+        (Source::Bytes(data), "jelly") => rete_core::ingest::parse_jelly_bytes(data).map_err(bad),
+        (Source::Text(_), "jelly") => Err(PyValueError::new_err(
+            "jelly is a binary format: pass the file's bytes, not text",
+        )),
+        (Source::Bytes(data), _) => {
+            let text = std::str::from_utf8(data).map_err(|e| {
+                PyValueError::new_err(format!("input is not valid UTF-8 text: {e}"))
+            })?;
+            rete_core::ingest::parse_statements_audited_surface(text, format, None, surface)
+                .map_err(bad)
+        }
+        (Source::Text(text), _) => {
+            rete_core::ingest::parse_statements_audited_surface(text, format, None, surface)
+                .map_err(bad)
+        }
+    }
 }
 
 /// A quoted-triple token rewritten into the RDF 1.2 triple-term surface
@@ -497,7 +549,7 @@ fn finish_build(
     bytes: Vec<u8>,
     stats: &rete_core::ingest::BuildStats,
     command: &str,
-    sources: &[(&str, &str)],
+    sources: &[(&Source, &str)],
     no_pyramid: Option<bool>,
     text_index: bool,
     pyramid_algo: Option<&str>,
@@ -522,7 +574,7 @@ fn finish_build(
             },
             inputs: sources
                 .iter()
-                .map(|(text, format)| br::Input::from_bytes("string", format, text.as_bytes()))
+                .map(|(src, format)| br::Input::from_bytes(src.kind(), format, src.data()))
                 .collect(),
             // What the parser handed over: the record's duplicates dropped are
             // this less the unique count.
@@ -533,17 +585,19 @@ fn finish_build(
     br::finish_in_ram(bytes, Some(&record)).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-/// Build a complete `.rete` file image from RDF text. `format` is `"nt"`,
-/// `"nq"` (named graphs become a dataset), `"ttl"`, `"trig"` or `"rdfxml"`;
+/// Build a complete `.rete` file image from RDF text (or bytes). `format` is
+/// `"nt"`, `"nq"` (named graphs become a dataset), `"ttl"`, `"trig"`,
+/// `"rdfxml"` or `"jelly"` (binary, so `text` must then be `bytes`);
 /// `quoted_triple_syntax` is how Turtle/TriG `<< … >>` is read.
 #[pyfunction]
 #[pyo3(signature = (text, format="nt", quoted_triple_syntax="rdf-star"))]
 fn build(
     py: Python<'_>,
-    text: String,
+    text: &Bound<'_, PyAny>,
     format: &str,
     quoted_triple_syntax: &str,
 ) -> PyResult<Py<PyBytes>> {
+    let text = Source::extract(text)?;
     let bytes = py.detach(|| -> PyResult<Vec<u8>> {
         let quads = parse_source(&text, format, quoted_triple_syntax)?;
         if quads.is_empty() {
@@ -557,7 +611,7 @@ fn build(
             bytes,
             &stats,
             "build",
-            &[(text.as_str(), format)],
+            &[(&text, format)],
             Some(false),
             false,
             Some("louvain"),
@@ -648,7 +702,7 @@ fn curated_for_derivation(
 }
 
 /// Full-option build behind `rete_graph.Builder`: multiple parsed sources
-/// (`(text, format, quoted_triple_syntax)` each), an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
+/// (`(text_or_bytes, format, quoted_triple_syntax)` each), an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
 /// a forced type predicate, and opt-in card derivation. Returns
 /// `(file_bytes, stats_json)`.
 ///
@@ -664,7 +718,7 @@ fn curated_for_derivation(
 #[pyo3(signature = (sources, card=None, pyramid=true, pyramid_algo="louvain", text_index=false, type_predicate=None, derive_card=false))]
 fn build_dataset(
     py: Python<'_>,
-    sources: Vec<(String, String, String)>,
+    sources: Vec<(Bound<'_, PyAny>, String, String)>,
     card: Option<String>,
     pyramid: bool,
     pyramid_algo: &str,
@@ -699,19 +753,23 @@ fn build_dataset(
     } else {
         None
     };
+    let sources = sources
+        .iter()
+        .map(|(src, format, syntax)| Ok((Source::extract(src)?, format.clone(), syntax.clone())))
+        .collect::<PyResult<Vec<(Source, String, String)>>>()?;
     let (bytes, stats) = py.detach(|| -> PyResult<_> {
         let mut quads = Vec::new();
-        for (text, format, syntax) in &sources {
-            quads.extend(parse_source(text, format, syntax)?);
+        for (src, format, syntax) in &sources {
+            quads.extend(parse_source(src, format, syntax)?);
         }
         if quads.is_empty() {
             return Err(PyValueError::new_err(
                 "no statements parsed (empty input or only comments)",
             ));
         }
-        let refs: Vec<(&str, &str)> = sources
+        let refs: Vec<(&Source, &str)> = sources
             .iter()
-            .map(|(t, f, _)| (t.as_str(), f.as_str()))
+            .map(|(src, f, _)| (src, f.as_str()))
             .collect();
         let read = quads.len() as u64;
         if let Some((input, examples)) = derived_input {

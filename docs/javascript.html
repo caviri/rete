@@ -716,6 +716,10 @@ for (let i = 0; i &lt; keys.length; i += 200) {
 </code></pre>
 <p>Each chunk's rows are term tokens, as in <code>queryRaw</code>. The Claude Desktop
 extension's <code>partition_by</code> does this with checkpoints on disk.</p>
+<h3 id="jelly">Jelly</h3>
+<p>Jelly is a binary RDF format, so it goes in as bytes:
+<code>build(await readFile("data.jelly"), "jelly")</code>. <code>build</code> takes a <code>Uint8Array</code>
+or <code>ArrayBuffer</code> for any format (text formats are read as UTF-8).</p>
 <h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
 <p>The CLI's <code>--quoted-triple-syntax</code> vocabulary and defaults, in both directions.
 <code>build(text, "ttl" | "trig", { quotedTripleSyntax })</code> reads Turtle/TriG

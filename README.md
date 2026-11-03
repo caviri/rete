@@ -78,8 +78,8 @@ Windows rewrites paths.
 
 ## Quick start
 
-Build a file from an RDF dump. N-Triples, N-Quads, Turtle, TriG and RDF/XML
-are detected by extension, and several inputs merge into one file.
+Build a file from an RDF dump. N-Triples, N-Quads, Turtle, TriG, RDF/XML and
+Jelly are detected by extension, and several inputs merge into one file.
 `--card` embeds a Dataset Card.
 
 ```sh

@@ -433,7 +433,23 @@ public final class Rete implements AutoCloseable {
      * @throws ReteException if the RDF cannot be parsed or is empty
      */
     public byte[] build(String rdf, String format) {
-        byte[] textBytes = rdf.getBytes(StandardCharsets.UTF_8);
+        return build(rdf.getBytes(StandardCharsets.UTF_8), format);
+    }
+
+    /**
+     * {@link #build(String, String)} for input held as bytes: any text format
+     * (UTF-8) or {@code "jelly"}, the binary Jelly RDF stream format, which
+     * has no text form (read a {@code .jelly} file with
+     * {@code Files.readAllBytes}). The whole file must fit in memory.
+     *
+     * @param rdf    the RDF source bytes
+     * @param format {@code "nt"}, {@code "nq"}, {@code "ttl"}, {@code "trig"}
+     *               or {@code "jelly"}
+     * @return the raw {@code .rete} file bytes
+     * @throws ReteException if the input cannot be parsed or is empty
+     */
+    public byte[] build(byte[] rdf, String format) {
+        byte[] textBytes = rdf;
         byte[] fmtBytes = format.getBytes(StandardCharsets.UTF_8);
         int textPtr = writeInput(textBytes);
         int fmtPtr = writeInput(fmtBytes);
@@ -471,7 +487,12 @@ public final class Rete implements AutoCloseable {
      *     syntax is not one of the values above
      */
     public byte[] build(String rdf, String format, String quotedTripleSyntax) {
-        byte[] textBytes = rdf.getBytes(StandardCharsets.UTF_8);
+        return build(rdf.getBytes(StandardCharsets.UTF_8), format, quotedTripleSyntax);
+    }
+
+    /** {@link #build(String, String, String)} for input held as bytes; see {@link #build(byte[], String)}. */
+    public byte[] build(byte[] rdf, String format, String quotedTripleSyntax) {
+        byte[] textBytes = rdf;
         byte[] fmtBytes = format.getBytes(StandardCharsets.UTF_8);
         byte[] synBytes = quotedTripleSyntax.getBytes(StandardCharsets.UTF_8);
         int textPtr = writeInput(textBytes);

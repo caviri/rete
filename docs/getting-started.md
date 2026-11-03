@@ -89,8 +89,8 @@ building another file. Check [Compatibility](compatibility.md) before exchanging
 readers; the file-format generation and project release version are separate.
 
 <a id="a-full-ontology-rdfxml--an-optimized-rete"></a>
-For your own data, the CLI also accepts N-Quads, Turtle, TriG and RDF/XML
-(including RDF/XML `.owl` files). N-Quads can preserve named graphs.
+For your own data, the CLI also accepts N-Quads, Turtle, TriG, RDF/XML
+(including RDF/XML `.owl` files) and Jelly (`.jelly`). N-Quads can preserve named graphs.
 OWL/XML and Functional Syntax require conversion to RDF first. See
 [CLI build options](cli.md) for input formats, merged inputs, streaming,
 compression, memory limits and optional indexes.

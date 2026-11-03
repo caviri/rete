@@ -192,6 +192,13 @@ tiered starter-query library — from the same code `rete build --card` runs, so
 the same graph yields a byte-identical card. It is opt-in: derivation walks the
 graph twice more, and the default keeps writing exactly the bytes it always did.
 
+### Jelly
+
+Jelly (`.jelly`) is a binary RDF format, so it goes in as `bytes`, not text:
+`rete.build(open("data.jelly", "rb").read(), "jelly")`. `Builder.add_file` does
+that for you and knows the `.jelly` suffix. A text argument with `"jelly"` is a
+`ValueError`.
+
 ### RDF 1.2 and quoted triples
 
 The same `--quoted-triple-syntax` vocabulary and defaults as the CLI (see

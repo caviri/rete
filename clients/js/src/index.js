@@ -7,6 +7,7 @@ import initWasm, {
   Graph as WasmGraph,
   RemoteGraph as WasmRemoteGraph,
   build_with_card_syntax as wasmBuildSyntax,
+  build_bytes as wasmBuildBytes,
   heap_bytes as wasmHeapBytes,
 } from "../vendor/pkg/rete_wasm.js";
 
@@ -591,6 +592,10 @@ export async function open(source, { headers } = {}) {
  * `"trig"`) — ready for open(), saving, or uploading. In-wasm builds are
  * uncompressed; use the `rete build` CLI for big datasets.
  *
+ * Jelly (`format: "jelly"`) is binary, so it takes the file's bytes (a
+ * `Uint8Array` or `ArrayBuffer`) instead of text. Bytes are accepted for the
+ * text formats too, as UTF-8.
+ *
  * `quotedTripleSyntax` decides what Turtle/TriG `<< s p o >>` means, with the
  * values and default of `rete build --quoted-triple-syntax`: `"rdf-star"`
  * (default) reads a quoted triple, as every earlier release did; `"rdf12"`
@@ -599,6 +604,13 @@ export async function open(source, { headers } = {}) {
  */
 export async function build(text, format = "nt", { quotedTripleSyntax = "rdf-star" } = {}) {
   await init();
+  if (typeof text !== "string") {
+    if (!isBytes(text)) {
+      throw new TypeError("build() takes a string, or bytes (a Uint8Array/ArrayBuffer) for Jelly");
+    }
+    const bytes = text instanceof Uint8Array ? text : new Uint8Array(text instanceof ArrayBuffer ? text : text.buffer);
+    return wasmBuildBytes(bytes, format, "", quotedTripleSyntax);
+  }
   // An empty card is byte-identical to the plain build.
   return wasmBuildSyntax(text, format, "", quotedTripleSyntax);
 }
