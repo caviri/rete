@@ -60,7 +60,7 @@ struct Grouping {
 }
 
 /// How to run one query over several sources and merge their rows: see the
-/// [module](self).
+/// module docs.
 #[derive(Debug, Clone)]
 pub struct FederationPlan {
     /// A SELECT (the only form the modifiers apply to).
