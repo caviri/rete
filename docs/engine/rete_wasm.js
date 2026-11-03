@@ -1371,6 +1371,37 @@ export function build(text, format) {
 }
 
 /**
+ * [`build_with_card_syntax`] for input held as **bytes**: any text format
+ * (UTF-8, as `text` would be) or `"jelly"`, the binary Jelly RDF stream
+ * format, which has no text form and so cannot go through the `&str`
+ * builders. Same card and quoted-triple rules, same file out. The Jelly
+ * reader is the one `rete build` uses ([`rete_core::ingest::parse_jelly_bytes`]);
+ * the whole file must be in memory, as every browser build is.
+ * @param {Uint8Array} bytes
+ * @param {string} format
+ * @param {string} card_json
+ * @param {string} quoted_triple_syntax
+ * @returns {Uint8Array}
+ */
+export function build_bytes(bytes, format, card_json, quoted_triple_syntax) {
+    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(quoted_triple_syntax, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.build_bytes(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v5 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v5;
+}
+
+/**
  * [`build`], but the file carries a **Dataset Card** written from
  * `card_json` — the same document `rete build --card-file` takes, validated
  * by the same rules ([`rete_core::card::validate_curated_card`]), so a card
