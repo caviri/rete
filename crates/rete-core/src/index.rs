@@ -209,6 +209,137 @@ impl LeafedTiles {
         }
     }
 
+    /// How many tiles hold leading id `a`, from the root alone and without
+    /// reading anything (the `rete cost` preview). A resident leaf is counted
+    /// exactly; one that is not is estimated from what the root records of it:
+    /// a leaf whose whole range is `a` holds `n` such tiles, and a leaf shared
+    /// with other ids holds its tiles' share of the range (at least one). Skewed
+    /// ids make the shared-leaf figure rough; [`Self::admitted_estimate`] reads
+    /// instead.
+    pub(crate) fn admitted_unfaulted(&self, a: u32) -> f64 {
+        let mut tiles = 0.0;
+        for (li, lf) in self.leaves.iter().enumerate() {
+            if a < lf.min_a || a > lf.max_a {
+                continue;
+            }
+            tiles += match self.cells[li].get() {
+                Some(v) => v
+                    .iter()
+                    .filter(|(t, _)| t.min_a <= a && a <= t.max_a)
+                    .count() as f64,
+                None if lf.min_a == lf.max_a => lf.n as f64,
+                None => {
+                    let width = (lf.max_a as f64 - lf.min_a as f64) + 1.0;
+                    (lf.n as f64 / width).max(1.0)
+                }
+            };
+        }
+        tiles
+    }
+
+    /// The `(first tile's min_b, last tile's max_b)` of leaf `li`, faulting it;
+    /// `None` when the leaf cannot be read or a tile carries no synopsis.
+    fn leaf_b_span(&self, li: usize) -> Option<(u32, u32)> {
+        self.ensure_leaves(&[li]);
+        let v = self.cells[li].get()?;
+        let first = v.first()?.0.syn?;
+        let last = v.last()?.0.syn?;
+        Some((first.0, last.1))
+    }
+
+    /// Exact count of leaf `li`'s tiles that hold `a` and admit `pb`/`pc`,
+    /// faulting the leaf; the unfaulted figure if it cannot be read.
+    fn count_in_leaf(&self, li: usize, a: u32, pb: Option<u32>, pc: Option<u32>) -> f64 {
+        self.ensure_leaves(&[li]);
+        match self.cells[li].get() {
+            Some(v) => v
+                .iter()
+                .filter(|(t, _)| t.min_a <= a && a <= t.max_a && t.syn_admits(pb, pc))
+                .count() as f64,
+            None => {
+                let lf = &self.leaves[li];
+                let width = (lf.max_a as f64 - lf.min_a as f64) + 1.0;
+                (lf.n as f64 / width).max(1.0)
+            }
+        }
+    }
+
+    /// The tiles that hold leading id `a` and admit the bound second and third
+    /// keys `pb`/`pc`, counted from the root plus a few leaf reads (all kept
+    /// for the session; the lookup that follows needs them anyway).
+    ///
+    /// The planner's row estimates stand on this, so it must neither say "one
+    /// tile" for a predicate that fills a leaf nor ignore a bound class:
+    /// `?s rdf:type <small class>` is a few tiles of an 851 M-row predicate.
+    /// - A leaf shared with other ids (at most two per id) is read and counted
+    ///   exactly, synopsis included.
+    /// - Leaves wholly inside `a` cost nothing when only `a` is bound (each is
+    ///   `n` tiles). With `pb` bound they are ordered by `pb` (tiles are cut in
+    ///   `(a, b, c)` order), so the admitted tiles are a contiguous run that two
+    ///   binary searches over the leaves' `b` spans bound: O(log leaves) reads,
+    ///   then the run's end leaves are counted exactly and the leaves between
+    ///   them are all `n`.
+    pub(crate) fn admitted_estimate(&self, a: u32, pb: Option<u32>, pc: Option<u32>) -> f64 {
+        let first = self.leaves.partition_point(|lf| lf.max_a < a);
+        let mut last = first;
+        while last < self.leaves.len() && self.leaves[last].min_a <= a {
+            last += 1;
+        }
+        if first >= last {
+            return 0.0;
+        }
+        let mut tiles = 0.0;
+        // Pure leaves are contiguous: every shared one is first or last.
+        let pure = |li: usize| self.leaves[li].min_a == a && self.leaves[li].max_a == a;
+        let (mut p0, mut p1) = (first, last);
+        if !pure(first) {
+            tiles += self.count_in_leaf(first, a, pb, pc);
+            p0 += 1;
+        }
+        if p1 > p0 && !pure(p1 - 1) {
+            tiles += self.count_in_leaf(p1 - 1, a, pb, pc);
+            p1 -= 1;
+        }
+        if p0 >= p1 {
+            return tiles;
+        }
+        // Wholly-`a` leaves p0..p1.
+        let Some(b) = pb else {
+            return tiles + self.leaves[p0..p1].iter().map(|l| l.n as f64).sum::<f64>();
+        };
+        // First leaf whose last tile reaches `b`; first leaf that starts past it.
+        let search = |past: bool| -> Option<usize> {
+            let (mut lo, mut hi) = (p0, p1);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                let (min_b, max_b) = self.leaf_b_span(mid)?;
+                if if past { min_b > b } else { max_b >= b } {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            Some(lo)
+        };
+        let (Some(f), Some(g)) = (search(false), search(true)) else {
+            // A leaf could not be read: no narrowing, count them all.
+            return tiles + self.leaves[p0..p1].iter().map(|l| l.n as f64).sum::<f64>();
+        };
+        if f >= g {
+            return tiles;
+        }
+        // Leaves f..g may hold `b`; those strictly between the ends are all `b`.
+        tiles += self.count_in_leaf(f, a, pb, pc);
+        if g - 1 > f {
+            tiles += self.count_in_leaf(g - 1, a, pb, pc);
+            tiles += self.leaves[f + 1..g - 1]
+                .iter()
+                .map(|l| l.n as f64)
+                .sum::<f64>();
+        }
+        tiles
+    }
+
     fn leaf_of(&self, ti: usize) -> usize {
         self.leaves
             .partition_point(|l| l.first <= ti)
@@ -405,13 +536,35 @@ impl TileList {
                     return l.total;
                 }
                 let lf = &l.leaves[li];
-                let mut i = lf.first;
-                let end = lf.first + lf.n;
                 l.ensure_leaves(&[li]);
-                while i < end && self[i].max_a < a {
-                    i += 1;
+                // Binary search inside the faulted leaf: stepping with `self[i]`
+                // costs a leaf lookup per tile, and a lookup runs this per probe
+                // row (94,700 probes x a leaf of thousands of tiles was 126 s).
+                match l.cells[li].get() {
+                    Some(v) => lf.first + v.partition_point(|(t, _)| t.max_a < a),
+                    None => lf.first,
                 }
-                i
+            }
+        }
+    }
+
+    /// Index of the first tile whose `min_a > a` (`len()` if none): the end of
+    /// the run of tiles that can hold leading id `a`. Faults one leaf at most.
+    pub fn first_min_gt(&self, a: u32) -> usize {
+        match self {
+            TileList::Full(v) => v.partition_point(|t| t.min_a <= a),
+            TileList::Leafed(l) => {
+                let next = l.leaves.partition_point(|lf| lf.min_a <= a);
+                if next == 0 {
+                    return 0;
+                }
+                let li = next - 1;
+                let lf = &l.leaves[li];
+                l.ensure_leaves(&[li]);
+                match l.cells[li].get() {
+                    Some(v) => lf.first + v.partition_point(|(t, _)| t.min_a <= a),
+                    None => lf.first,
+                }
             }
         }
     }
@@ -425,8 +578,8 @@ impl TileList {
     }
 
     /// Stored bytes of the tiles whose leading range holds `a`, **without
-    /// faulting**: exact where the leaf is resident, else the mean tile size
-    /// (a bound leading id is one tile, rarely two) — the planner's cost
+    /// faulting**: exact where the leaf is resident, else the mean tile size times the
+    /// tiles the root says hold it — the planner's cost
     /// estimate must not cost a round trip.
     pub fn routed_bytes(&self, a: u32) -> u64 {
         match self {
@@ -453,7 +606,10 @@ impl TileList {
                         .map(|(t, _)| t.encoded_len())
                         .sum()
                 } else {
-                    l.total_bytes / l.total.max(1) as u64
+                    // The mean tile size times the tiles the root says hold
+                    // `a`: a predicate filling many tiles is many tiles' bytes.
+                    let mean = l.total_bytes as f64 / l.total.max(1) as f64;
+                    (l.admitted_unfaulted(a).max(1.0) * mean) as u64
                 }
             }
         }
@@ -1970,8 +2126,13 @@ impl GraphIndex {
                 return 0.0;
             }
             let per_tile = total as f64 / tiles.len() as f64;
-            // A leafed list whose leaf is not resident estimates one admitted
-            // tile rather than fault it: a cost estimate must not cost a read.
+            // A leafed list whose leaf is not resident must still be estimated
+            // from the root alone (a cost estimate must not cost a read), and
+            // must give the figure the same directory gives when laid out flat
+            // (format 0x05) to within the unavoidable: a predicate that fills
+            // thousands of tiles is thousands of tiles whichever layout stores
+            // them. Counting "one tile" here made the planner see a 2 M-row
+            // predicate as 7 k rows and hash-join it (see [`LeafedTiles::admitted_estimate`]).
             let admitted = match (tiles, pa) {
                 (TileList::Leafed(l), Some(a))
                     if !l
@@ -1981,19 +2142,19 @@ impl GraphIndex {
                         .filter(|(_, lf)| lf.min_a <= a && a <= lf.max_a)
                         .all(|(li, _)| l.cells[li].get().is_some()) =>
                 {
-                    1
+                    l.admitted_estimate(a, pb, pc)
                 }
                 _ => {
                     let (start, end) = self.tile_span(si, pa);
                     (start..end)
                         .filter(|&ti| tiles[ti].syn_admits(pb, pc))
-                        .count()
+                        .count() as f64
                 }
             };
-            let est = if admitted == 0 {
+            let est = if admitted <= 0.0 {
                 0.0
             } else {
-                (admitted as f64 - 0.5) * per_tile
+                (admitted - 0.5).max(0.5) * per_tile
             };
             best = best.min(est);
         }
@@ -2040,10 +2201,10 @@ impl GraphIndex {
             }
             Some(a) => {
                 let i = tiles.first_max_ge(a);
-                let mut j = i;
-                while j < tiles.len() && tiles[j].min_a <= a {
-                    j += 1;
-                }
+                let j = tiles.first_min_gt(a).max(i);
+                // The callers walk the run: fault its leaves in one batch, as
+                // the tile-by-tile walk this replaced did one by one.
+                tiles.ensure_span(i, j);
                 (i, j)
             }
         }

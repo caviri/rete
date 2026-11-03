@@ -147,6 +147,8 @@ pub fn listen() -> Listener {
         }
         SEQ.store(0, Ordering::Release);
         LISTENERS.fetch_add(1, Ordering::AcqRel);
+        #[cfg(test)]
+        THIS_THREAD_LISTENS.with(|c| c.set(true));
     }
     Listener { _private: () }
 }
@@ -155,7 +157,14 @@ impl Drop for Listener {
     fn drop(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         state::LISTENERS.fetch_sub(1, Ordering::AcqRel);
+        #[cfg(test)]
+        THIS_THREAD_LISTENS.with(|c| c.set(false));
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static THIS_THREAD_LISTENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// True while a [`Listener`] lives.
@@ -163,6 +172,14 @@ impl Drop for Listener {
 pub fn listening() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // In this crate's own tests only the thread that listens publishes:
+        // the state is process-wide, and every other test that builds a graph
+        // (they run in parallel) would otherwise advance a listening test's
+        // figures under it.
+        #[cfg(test)]
+        if !THIS_THREAD_LISTENS.with(|c| c.get()) {
+            return false;
+        }
         state::LISTENERS.load(Ordering::Relaxed) > 0
     }
     #[cfg(target_arch = "wasm32")]

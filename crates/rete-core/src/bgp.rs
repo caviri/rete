@@ -2044,6 +2044,167 @@ mod tests {
         }
     }
 
+    /// A fat predicate must look fat whichever layout stores the directory.
+    /// On format 0x06 the tile directory is two-level and a leaf that is not
+    /// resident is estimated from the root alone; it used to count as ONE
+    /// tile, so a 2-million-row `rdfs:label` read as ~7 thousand rows on 0x06
+    /// and 2 million on 0x05 — and the OPTIONAL joined to a 1000-row left side
+    /// was hash-joined (the whole predicate materialized: 14.5 GB on a 8 B
+    /// triple file) instead of probed per row. The same file in both layouts
+    /// must give estimates of the same order, and the probe decision must be
+    /// the same one.
+    #[test]
+    fn a_fat_predicate_estimates_alike_in_both_layouts() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..120_000 {
+            let s = format!("<http://ex/s{i:06}>");
+            owned.push((s.clone(), "<http://ex/kind>".into(), "<http://ex/K>".into()));
+            owned.push((s, "<http://ex/value>".into(), format!("\"v {i}\"")));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = write_file(&dict, &ib.build(), false, &[], 0);
+        let v6: &'static [u8] = Box::leak(
+            crate::v06::write::convert_image(&v5, Default::default())
+                .unwrap()
+                .into_boxed_slice(),
+        );
+        let leaked5: &'static [u8] = Box::leak(v5.clone().into_boxed_slice());
+        let flat = Rete::open_ranged_lazy(crate::reader::SliceReader::new(leaked5)).unwrap();
+        let leafed = Rete::open_ranged_lazy(crate::reader::SliceReader::new(v6)).unwrap();
+        let q = [pat("?s", "<http://ex/value>", "?v")];
+        let figures = |rete: &Rete| {
+            let mut slots = Slots::new();
+            collect_pattern_slots(&q, &mut slots);
+            let ctx = Ctx::new(rete, slots);
+            let index = rete.default_index();
+            let total = bgp_total_estimate(&ctx, index, &q).unwrap();
+            (total, probe_row_budget(total))
+        };
+        let (est5, budget5) = figures(&flat);
+        let (est6, budget6) = figures(&leafed);
+        assert!(est5 >= 70_000.0, "flat estimate {est5}");
+        assert!(
+            est6 >= est5 / 2.0 && est6 <= est5 * 2.0,
+            "0x06 estimates {est6} where 0x05 estimates {est5}"
+        );
+        // The decision: a 1000-row left side probes in both.
+        assert!(budget5.is_some_and(|b| b >= 1000), "{budget5:?}");
+        assert!(budget6.is_some_and(|b| b >= 1000), "{budget6:?}");
+    }
+
+    /// A selective object on a fat leading predicate must estimate small in
+    /// both layouts: `?s rdf:type <rare class>` is a few tiles of a predicate
+    /// that fills thousands, and the planner seeds the join from it. On 0x06 a
+    /// leaf that is not resident used to be estimated without the bound object
+    /// (the whole of `rdf:type`) or by the ids' average share of its leaf
+    /// (skewed ids put a rare class beside a huge one).
+    #[test]
+    fn a_rare_object_of_a_fat_predicate_estimates_small_in_both_layouts() {
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..120_000 {
+            let s = format!("<http://ex/s{i:06}>");
+            owned.push((s.clone(), ty.into(), "<http://ex/Common>".into()));
+            owned.push((s.clone(), "<http://ex/other>".into(), format!("\"o {i}\"")));
+            if i % 3000 == 0 {
+                owned.push((s, ty.into(), "<http://ex/Rare>".into()));
+            }
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = write_file(&dict, &ib.build(), false, &[], 0);
+        let v6: &'static [u8] = Box::leak(
+            crate::v06::write::convert_image(&v5, Default::default())
+                .unwrap()
+                .into_boxed_slice(),
+        );
+        let leaked5: &'static [u8] = Box::leak(v5.into_boxed_slice());
+        let figures = |rete: &Rete| {
+            let est = |q: &[TriplePattern]| {
+                let mut slots = Slots::new();
+                collect_pattern_slots(q, &mut slots);
+                let ctx = Ctx::new(rete, slots);
+                bgp_min_estimate(&ctx, rete.default_index(), q).unwrap()
+            };
+            (
+                est(&[pat("?s", ty, "<http://ex/Rare>")]),
+                est(&[pat("?s", ty, "<http://ex/Common>")]),
+                est(&[pat("?s", "<http://ex/other>", "?x")]),
+            )
+        };
+        for (name, bytes) in [("0x05", leaked5), ("0x06", v6)] {
+            let rete = Rete::open_ranged_lazy(crate::reader::SliceReader::new(bytes)).unwrap();
+            let (rare, common, other) = figures(&rete);
+            assert!(rare * 20.0 < other, "{name}: rare {rare} vs other {other}");
+            assert!(
+                rare * 20.0 < common,
+                "{name}: rare {rare} vs common {common}"
+            );
+        }
+    }
+
+    /// The run of tiles holding a leading id is the same in both layouts, for
+    /// every id and every permutation, and a leafed lookup does not walk the
+    /// leaf tile by tile (a probe join runs it per row: 94,700 probes took 126 s
+    /// on a 0x06 file against 1.3 s on its 0x05 copy).
+    #[test]
+    fn a_tile_span_is_the_same_in_both_layouts() {
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..30_000 {
+            let s = format!("<http://ex/s{i:06}>");
+            owned.push((s.clone(), ty.into(), format!("<http://ex/C{}>", i % 7)));
+            owned.push((s, "<http://ex/other>".into(), format!("\"o {}\"", i % 5000)));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = write_file(&dict, &ib.build(), false, &[], 0);
+        let v6 = crate::v06::write::convert_image(&v5, Default::default()).unwrap();
+        let (v5, v6): (&'static [u8], &'static [u8]) = (
+            Box::leak(v5.into_boxed_slice()),
+            Box::leak(v6.into_boxed_slice()),
+        );
+        let flat = Rete::open_ranged_lazy(crate::reader::SliceReader::new(v5)).unwrap();
+        let leafed = Rete::open_ranged_lazy(crate::reader::SliceReader::new(v6)).unwrap();
+        let (fi, li) = (flat.default_index(), leafed.default_index());
+        let mut checked = 0;
+        for perm in fi.perms().iter() {
+            let si = perm.section_index();
+            for a in (0..dict.term_count() + 2).step_by(97) {
+                assert_eq!(
+                    fi.tile_span(si, Some(a)),
+                    li.tile_span(si, Some(a)),
+                    "section {si}, id {a}"
+                );
+                checked += 1;
+            }
+            assert_eq!(fi.tile_span(si, None), li.tile_span(si, None));
+        }
+        assert!(checked > 100);
+    }
+
     /// Every join path the planner can pick — materialized prefix, probed last
     /// pattern, streamed seed with hashed or probed later patterns, streaming
     /// merge join — returns the same solution multiset. The thresholds are
