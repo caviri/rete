@@ -120,6 +120,26 @@ const QUERIES: &[&str] = &[
     "SELECT ?s ?p ?o FROM <http://ex/br/5/prov/> FROM <http://ex/br/6/prov/> WHERE { ?s ?p ?o }",
     "SELECT ?g ?s FROM NAMED <http://ex/br/1/prov/> FROM NAMED <http://ex/big> WHERE { GRAPH ?g { ?s <http://ex/specializationOf> ?e } }",
     "ASK { GRAPH <http://ex/big> { <http://ex/big/29999> <http://ex/p> ?o } }",
+    // G48: a graph variable with constants inside it (one streaming pass over
+    // the quad tiles), with several patterns (that pass picks the graphs), and
+    // bound by an earlier pattern (a lookup of that graph, never a walk).
+    "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex/specializationOf> <http://ex/br/7> } }",
+    "SELECT ?g ?s ?t WHERE { GRAPH ?g { ?s <http://ex/specializationOf> <http://ex/br/7> ; <http://ex/generatedAtTime> ?t } }",
+    "SELECT ?g ?s ?prev WHERE { GRAPH ?g { ?s <http://ex/wasDerivedFrom> ?prev . ?prev <http://ex/generatedAtTime> ?t } }",
+    "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s <http://ex/generatedAtTime> ?t } } GROUP BY ?g",
+    "SELECT (COUNT(?s) AS ?n) WHERE { GRAPH ?g { ?s <http://ex/p> ?o } }",
+    "SELECT ?g ?o WHERE { GRAPH ?g { <http://ex/a> <http://ex/p> <http://ex/b> } }",
+    "SELECT ?g WHERE { GRAPH ?g { <http://ex/nope> ?p ?o } }",
+    "SELECT ?g WHERE { GRAPH ?g { ?s <http://ex/nope> ?o } }",
+    "SELECT ?g ?p WHERE { GRAPH ?g { ?g ?p ?o } }",
+    "SELECT ?g ?s WHERE { GRAPH ?g { ?s ?p ?s } }",
+    "SELECT ?g ?t WHERE { GRAPH ?g { <http://ex/br/9/prov/se/1> <http://ex/generatedAtTime> ?t } } LIMIT 1",
+    "SELECT ?g ?s ?t WHERE { VALUES ?g { <http://ex/br/7/prov/> <http://ex/br/8/prov/> <http://ex/nope/> \"lit\" } GRAPH ?g { ?s <http://ex/generatedAtTime> ?t } }",
+    "SELECT ?g ?s ?o WHERE { VALUES ?g { <http://ex/br/3/prov/> <http://ex/big> } GRAPH ?g { ?s <http://ex/p> ?o . FILTER(?o = \"v5\") } }",
+    "SELECT ?e ?s ?t WHERE { ?e <http://ex/cites> <http://ex/br/14> . BIND(IRI(CONCAT(STR(?e), \"/prov/\")) AS ?g) GRAPH ?g { ?s <http://ex/specializationOf> ?e ; <http://ex/generatedAtTime> ?t } }",
+    "SELECT ?e ?g ?t WHERE { VALUES ?e { <http://ex/br/14> <http://ex/br/15> } BIND(IRI(CONCAT(STR(?e), \"/prov/\")) AS ?g) OPTIONAL { GRAPH ?g { ?s <http://ex/wasDerivedFrom> ?t } } }",
+    "SELECT ?g ?s WHERE { GRAPH <http://ex/br/7/prov/> { ?x <http://ex/specializationOf> ?e } VALUES ?g { <http://ex/br/7/prov/> } GRAPH ?g { ?s <http://ex/generatedAtTime> ?t } }",
+    "SELECT ?g ?x WHERE { { GRAPH ?g { ?x <http://ex/generatedAtTime> \"2020-01-05\" } } UNION { GRAPH ?g { ?x <http://ex/wasDerivedFrom> <http://ex/br/9/prov/se/0> } } }",
     // Blank-node graph name.
     "SELECT ?g ?o WHERE { GRAPH ?g { <http://ex/a> <http://ex/p> ?o } }",
 ];

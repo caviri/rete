@@ -21,6 +21,25 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `rete_build(raw, "jelly")`, Java `Rete.build(byte[], "jelly")`, and the Claude Desktop
   extension's `load_rdf` / `build_rete` by `path`. Writing Jelly is not part of this.
 
+### Fixed
+
+- **A graph variable over many named graphs no longer runs out of memory** (G48). On a quad-index
+  file of 43 M tiny graphs (the 2018 nanopub dump, 378.7 M quads) every query with `GRAPH ?g`
+  was killed at 4 GiB. Three causes: a graph variable bound by an earlier pattern was still
+  evaluated over every graph and hash-joined afterwards; the walk over graphs kept a name and a
+  cell per graph it passed (about 120 bytes each), and the directory blocks of every graph;
+  and each graph was opened as its own view even when the pattern could be answered from the
+  tiles. Now `GRAPH ?g { pattern }` with one triple pattern is one streaming pass over the
+  best graph-leading order's tiles (skipping tiles by their synopsis), a multi-pattern block
+  uses that pass to pick the graphs worth evaluating, `l . GRAPH ?g { ... }` with `?g` bound by
+  the left looks that one graph up for each left row, and a walk keeps nothing per graph
+  (the directory blocks of a file with more than 2 M graphs are held as one read-ahead window).
+  On the nanopub dump: `COUNT` of `GRAPH ?h { ?np a np:Nanopublication }` 4 s and 0.42 GB
+  (was killed after 75 s); the bound-graph join 0.02 s and 46 MB (killed after 14 s);
+  `GRAPH ?h { <s> np:hasAssertion ?a } LIMIT 1` 4 s and 0.43 GB (killed after 107-263 s). No format
+  change. With only graph-leading orders a bound subject or object under an unbound graph is
+  a pass over the order's tiles, not a seek.
+
 ## [0.5.2] - 2026-11-03
 
 ### Fixed

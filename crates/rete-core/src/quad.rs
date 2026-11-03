@@ -760,6 +760,12 @@ fn parse_preamble(head: &[u8], base: u64, len: u64, perms: PermSet) -> Result<Pr
 /// A decoded directory block, filled on first touch: `(graph id, quad count)`.
 type BlockCell = OnceLock<Arc<[(u32, u64)]>>;
 
+/// A run of decoded directory blocks and the ordinal of the first.
+type BlockWindow = (usize, Vec<Arc<[(u32, u64)]>>);
+
+/// Past this many graphs the directory blocks are not all kept (see `QuadCore::block`).
+const BLOCK_MEMO_MAX_GRAPHS: u64 = 1 << 21;
+
 /// A lazily-allocated slab of per-graph cells.
 type EntrySlab = OnceLock<Box<[QuadEntry]>>;
 
@@ -815,6 +821,11 @@ struct QuadCore {
     pre: OnceLock<Preamble>,
     blocks_index: OnceLock<Arc<[BlockRef]>>,
     blocks: OnceLock<Box<[BlockCell]>>,
+    /// The last read-ahead window of directory blocks, for a file with more
+    /// than [`BLOCK_MEMO_MAX_GRAPHS`] graphs: `(first block, blocks)`.
+    window: Mutex<Option<BlockWindow>>,
+    /// The graph count past which blocks are not all memoised.
+    memo_max_graphs: u64,
     dirs: [OnceLock<Arc<[QTile]>>; NUM_PERMS],
     /// Decompressed tiles, keyed `(order section index, tile)`, shared by every
     /// view: one decompression serves all the graphs a tile holds.
@@ -1073,13 +1084,27 @@ impl QuadCore {
     }
 
     /// Directory block `b` (decoded), with read-ahead over the blocks after it.
+    ///
+    /// Blocks are memoised for the life of the open, 16 bytes per graph, up to
+    /// [`BLOCK_MEMO_MAX_GRAPHS`] graphs. Past that a walk over every graph
+    /// would hold a directory proportional to the file (690 MB at 43 M graphs),
+    /// so the blocks are kept only as the last read-ahead window and a block
+    /// outside it is read again.
     fn block(&self, b: usize, exhaustive: bool) -> Option<Arc<[(u32, u64)]>> {
         let index = self.blocks_index()?.clone();
         let cells = self.blocks.get()?;
-        if let Some(v) = cells.get(b)?.get() {
+        let pre = self.pre()?.clone();
+        let bounded = pre.graph_count > self.memo_max_graphs;
+        if bounded {
+            let win = self.window.lock().unwrap();
+            if let Some((start, blocks)) = win.as_ref() {
+                if let Some(v) = b.checked_sub(*start).and_then(|k| blocks.get(k)) {
+                    return Some(v.clone());
+                }
+            }
+        } else if let Some(v) = cells.get(b)?.get() {
             return Some(v.clone());
         }
-        let pre = self.pre()?.clone();
         let w = {
             let mut ramps = self.ramps.lock().unwrap();
             let w = ramps[NUM_PERMS].window_for(b, exhaustive);
@@ -1097,13 +1122,15 @@ impl QuadCore {
                 return None;
             }
         };
+        let mut window: Vec<Arc<[(u32, u64)]>> = Vec::new();
         for (i, r) in index.iter().enumerate().take(end).skip(b) {
-            if cells[i].get().is_some() {
+            if !bounded && cells[i].get().is_some() {
                 continue;
             }
             let lo = (r.range.offset - span_start) as usize;
             let stored = span.get(lo..lo + r.range.len as usize)?;
             match self.decode_block(i, r, stored, pre.graph_count, pre.block_graphs) {
+                Some(v) if bounded => window.push(v),
                 Some(v) => {
                     let _ = cells[i].set(v);
                 }
@@ -1112,6 +1139,11 @@ impl QuadCore {
                     return None;
                 }
             }
+        }
+        if bounded {
+            let first = window.first().cloned();
+            *self.window.lock().unwrap() = Some((b, window));
+            return first;
         }
         cells[b].get().cloned()
     }
@@ -1743,6 +1775,8 @@ impl QuadNamed {
                 pre: OnceLock::new(),
                 blocks_index: OnceLock::new(),
                 blocks: OnceLock::new(),
+                window: Mutex::new(None),
+                memo_max_graphs: BLOCK_MEMO_MAX_GRAPHS,
                 dirs: Default::default(),
                 tiles: ChunkCache::unlimited(),
                 ramps: Mutex::new(Default::default()),
@@ -1885,6 +1919,76 @@ impl QuadNamed {
             .collect()
     }
 
+    /// The `i`-th graph's name **without memoising it**, for a walk over many
+    /// graphs: [`name_at`](Self::name_at) keeps every name it returns for the
+    /// life of the open, which over 43 M graphs is gigabytes. A name already
+    /// memoised is cloned from its cell.
+    pub(crate) fn name_owned(
+        &self,
+        dict: &Dictionary,
+        i: usize,
+        exhaustive: bool,
+    ) -> Option<String> {
+        // Look at the cell only where its slab exists: creating the slab of
+        // every graph the walk passes would be 48 bytes per graph again.
+        let memo = self
+            .entries
+            .get()
+            .and_then(|t| t.get(i / ENTRY_SLAB)?.get())
+            .and_then(|slab| slab.get(i % ENTRY_SLAB)?.name.get());
+        if let Some(n) = memo {
+            return Some(n.clone());
+        }
+        let (g, _) = self.core.graph_at(i, exhaustive)?;
+        match dict.subject_term(g) {
+            Some(name) => Some(name),
+            None => {
+                self.core.fail();
+                None
+            }
+        }
+    }
+
+    /// The ordinal of the graph named `iri` (dictionary lookup, then directory
+    /// binary search), or `None` when the file has no such graph.
+    pub(crate) fn ordinal_of_iri(&self, dict: &Dictionary, iri: &str) -> Option<usize> {
+        self.ordinal_of_name(dict, iri)
+    }
+
+    /// A streaming scan of every quad matching a triple pattern, over all
+    /// graphs, in graph order: see [`QuadScan`]. `None` when the section is
+    /// unreadable.
+    pub(crate) fn scan(&self, pat: (Option<u32>, Option<u32>, Option<u32>)) -> Option<QuadScan> {
+        // The order whose leading columns the pattern binds the longest; every
+        // legal file stores SPO, POS and OSP, which cover all eight shapes.
+        let perm = self.core.perms.iter().max_by_key(|p| {
+            let lead = p
+                .order_pattern(pat)
+                .iter()
+                .take_while(|c| c.is_some())
+                .count();
+            (lead, std::cmp::Reverse(p.section_index()))
+        })?;
+        let si = perm.section_index();
+        let dir = self.core.dir(si)?;
+        Some(QuadScan {
+            core: Arc::clone(&self.core),
+            dir,
+            perm,
+            si,
+            abc: perm.order_pattern(pat),
+            cols: subject_columns(perm),
+            next_tile: 0,
+            buf: Vec::new().into_iter(),
+        })
+    }
+
+    /// The ordinal of the graph with subject id `g`, or `None` when the file
+    /// lists no such graph.
+    pub(crate) fn ordinal_of_id(&self, g: u32) -> Option<usize> {
+        self.core.ordinal_of(g)
+    }
+
     fn ordinal_of_name(&self, dict: &Dictionary, iri: &str) -> Option<usize> {
         let g = dict.subject_id(iri)?;
         self.core.ordinal_of(g)
@@ -1976,6 +2080,110 @@ impl QuadNamed {
             }
         }
         bytes
+    }
+}
+
+/// A streaming scan of the quads matching a triple pattern over **every**
+/// graph of a quad index, yielding `(graph id, (s, p, o))` in graph order.
+///
+/// It walks one graph-leading order's tiles, skipping those whose directory
+/// entry (graph/first-column range, column synopsis) cannot hold a match, and
+/// decodes one tile at a time, so memory is a tile and its matches, never
+/// proportional to the number of graphs or quads. With only graph-leading
+/// orders, the cost of a pattern whose graph is unbound is a pass over the
+/// tiles the synopses cannot rule out: the graph column cannot be skipped to.
+pub(crate) struct QuadScan {
+    core: Arc<QuadCore>,
+    dir: Arc<[QTile]>,
+    perm: IndexPermutation,
+    si: usize,
+    /// The pattern's bound values in this order's column order.
+    abc: [Option<u32>; 3],
+    cols: (bool, bool),
+    next_tile: usize,
+    buf: std::vec::IntoIter<(u32, Triple)>,
+}
+
+impl QuadScan {
+    fn tile_may_match(&self, t: &QTile) -> bool {
+        let (min_b, max_b, min_c, max_c) = t.syn;
+        if self.abc[1].is_some_and(|b| b < min_b || b > max_b) {
+            return false;
+        }
+        if self.abc[2].is_some_and(|c| c < min_c || c > max_c) {
+            return false;
+        }
+        // Inside one graph the first column ascends from `first_a` to `last_a`.
+        if t.first_g == t.last_g && self.abc[0].is_some_and(|a| a < t.first_a || a > t.last_a) {
+            return false;
+        }
+        true
+    }
+
+    /// Decode the next tile that holds a match into `buf`; `false` at the end
+    /// (or on a failed read, which the core has recorded).
+    fn fill(&mut self) -> bool {
+        while self.next_tile < self.dir.len() {
+            let ti = self.next_tile;
+            self.next_tile += 1;
+            let t = self.dir[ti];
+            if !self.tile_may_match(&t) {
+                continue;
+            }
+            let Some(entry) = self.core.tile(self.si, &self.dir, ti) else {
+                self.next_tile = self.dir.len();
+                return false;
+            };
+            let [wa, wb, wc] = self.abc;
+            let mut out: Vec<(u32, Triple)> = Vec::new();
+            let mut rows: Vec<Triple> = Vec::new();
+            let mut ok = true;
+            let walked = walk_segments(entry.body(), t.first_g, |g, first_a, seg| {
+                // Every row of a segment has a first column of at least `first_a`.
+                if wa.is_some_and(|a| a < first_a) {
+                    return true;
+                }
+                rows.clear();
+                if decode_segment_body(seg, first_a, self.cols, &mut rows).is_none() {
+                    ok = false;
+                    return false;
+                }
+                for &(a, b, c) in &rows {
+                    if wa.is_none_or(|x| x == a)
+                        && wb.is_none_or(|x| x == b)
+                        && wc.is_none_or(|x| x == c)
+                    {
+                        out.push((g, self.perm.back((a, b, c))));
+                    }
+                }
+                true
+            });
+            if walked.is_none() || !ok {
+                self.core.fail();
+                self.next_tile = self.dir.len();
+                return false;
+            }
+            if !out.is_empty() {
+                self.buf = out.into_iter();
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl Iterator for QuadScan {
+    type Item = (u32, Triple);
+
+    fn next(&mut self) -> Option<(u32, Triple)> {
+        loop {
+            if let Some(q) = self.buf.next() {
+                return Some(q);
+            }
+            if !self.fill() {
+                return None;
+            }
+        }
     }
 }
 
@@ -2259,5 +2467,87 @@ mod tests {
     fn five_permutations_are_refused() {
         let five = PermSet::from_bits(0b0001_1111).unwrap();
         assert!(encode_quad_index(vec![[1, 1, 1, 1]], five, CODEC_NONE).is_err());
+    }
+
+    /// Every pattern shape, over every order set: the scan yields exactly the
+    /// quads a filter over the input keeps, in graph order, and prunes tiles.
+    #[test]
+    fn a_quad_scan_finds_exactly_the_matching_quads() {
+        let q = quads(5000, 10);
+        let mut all: Vec<(u32, Triple)> = q.iter().map(|r| (r[0], (r[1], r[2], r[3]))).collect();
+        all.sort_unstable();
+        all.dedup();
+        for perms in [PermSet::ALL, PermSet::CORE] {
+            let enc = encode_quad_index(q.clone(), perms, writer_codec()).unwrap();
+            let named = QuadNamed::resident(enc.bytes, writer_codec(), perms);
+            let (_, (s, p, o)) = all[1234];
+            for pat in [
+                (None, None, None),
+                (Some(s), None, None),
+                (None, Some(p), None),
+                (None, None, Some(o)),
+                (Some(s), Some(p), None),
+                (None, Some(p), Some(o)),
+                (Some(s), None, Some(o)),
+                (Some(s), Some(p), Some(o)),
+                (Some(u32::MAX), None, None),
+                (None, Some(999), None),
+            ] {
+                let want: Vec<(u32, Triple)> = all
+                    .iter()
+                    .copied()
+                    .filter(|(_, (a, b, c))| {
+                        pat.0.is_none_or(|x| x == *a)
+                            && pat.1.is_none_or(|x| x == *b)
+                            && pat.2.is_none_or(|x| x == *c)
+                    })
+                    .collect();
+                let got: Vec<(u32, Triple)> = named.scan(pat).unwrap().collect();
+                let graphs: Vec<u32> = got.iter().map(|r| r.0).collect();
+                assert!(graphs.is_sorted(), "graph order for {pat:?}");
+                let mut got = got;
+                got.sort_unstable();
+                assert_eq!(got, want, "{pat:?} over {} orders", perms.len());
+            }
+            assert!(!named.load_incomplete());
+        }
+    }
+
+    /// Past the memo threshold the directory blocks are not all kept, and
+    /// every lookup still answers the same.
+    #[test]
+    fn a_bounded_block_memo_answers_like_the_full_one() {
+        let q = quads(6000, 3);
+        let enc = encode_quad_index(q, PermSet::ALL, writer_codec()).unwrap();
+        let full = QuadNamed::resident(enc.bytes.clone(), writer_codec(), PermSet::ALL);
+        let mut bounded = QuadNamed::resident(enc.bytes, writer_codec(), PermSet::ALL);
+        Arc::get_mut(&mut bounded.core).unwrap().memo_max_graphs = 0;
+        assert_eq!(bounded.count(), full.count());
+        for i in (0..full.count()).chain((0..full.count()).rev().step_by(97)) {
+            assert_eq!(
+                bounded.core.graph_at(i, false),
+                full.core.graph_at(i, false),
+                "ordinal {i}"
+            );
+        }
+        for g in [2u32, 5000, 12000] {
+            assert_eq!(bounded.core.ordinal_of(g), full.core.ordinal_of(g));
+        }
+        let kept = bounded
+            .core
+            .blocks
+            .get()
+            .unwrap()
+            .iter()
+            .filter(|c| c.get().is_some())
+            .count();
+        assert_eq!(kept, 0, "a bounded walk memoises no block");
+        assert!(full
+            .core
+            .blocks
+            .get()
+            .unwrap()
+            .iter()
+            .any(|c| c.get().is_some()));
     }
 }

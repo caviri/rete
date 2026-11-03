@@ -1379,14 +1379,155 @@ pub(crate) fn eval_plan_iter<'q>(
             Some(gi) if visible(iri) => eval_plan_iter(ctx, gi, named_filter, inner),
             _ => Box::new(std::iter::empty()),
         },
-        Plan::Graph(GraphTarget::Var(var), inner) => graph_var_walk(
-            ctx,
-            named_filter,
-            var,
-            inner,
-            0..ctx.rete.named_graph_count(),
-            true,
-        ),
+        Plan::Graph(GraphTarget::Var(var), inner) => {
+            // A quad-index file answers a graph-variable pattern with one
+            // streaming pass over its tiles, not a view per graph.
+            if named_filter.is_none() {
+                if let Some(rows) = graph_var_scan(ctx, var, inner) {
+                    return rows;
+                }
+            }
+            graph_var_walk(
+                ctx,
+                named_filter,
+                var,
+                inner,
+                0..ctx.rete.named_graph_count(),
+                true,
+            )
+        }
+    }
+}
+
+/// `GRAPH ?var { patterns }` over a quad-index file, without a view per graph.
+///
+/// - One triple pattern: a single streaming pass over the best graph-leading
+///   order's tiles ([`Rete::named_quad_scan`]), each match a row that binds
+///   `?var` to its graph. Memory is one tile, whatever the graph count.
+/// - Several patterns, one of them with a constant: the same pass over that
+///   pattern only finds the graphs that can match, and each of those is
+///   evaluated as the whole walk would evaluate it.
+///
+/// `None` when the shape or the file does not allow it (another layout, no
+/// constant to scan on, a graph variable that also occurs inside the pattern):
+/// the caller walks every graph instead. Only for a query without FROM NAMED.
+fn graph_var_scan<'q>(ctx: &'q Ctx<'q>, var: &'q str, inner: &'q Plan) -> Option<RowIter<'q>> {
+    let slot = ctx.slots.slot(var)?;
+    let Plan::Bgp(patterns) = inner else {
+        return None;
+    };
+    if patterns.is_empty() {
+        return None;
+    }
+    if let Some(rows) = crate::bgp::quad_scan_rows(ctx, patterns, slot) {
+        return Some(rows);
+    }
+    if patterns.len() < 2 {
+        return None;
+    }
+    // Several patterns: the graphs holding a match of the most constrained one.
+    let driver = crate::bgp::driver_pattern(ctx, patterns)?;
+    let scan = ctx.rete.named_quad_scan(driver)?;
+    let mut last: Option<u32> = None;
+    let ordinals = scan.filter_map(move |(g, _)| {
+        if last == Some(g) {
+            return None;
+        }
+        last = Some(g);
+        // A graph the directory does not list cannot hold a quad: skipped.
+        ctx.rete.named_graph_ordinal_of_id(g)
+    });
+    Some(graph_var_walk(ctx, None, var, inner, ordinals, false))
+}
+
+/// `l ⋈ GRAPH ?g { inner }` where the left side may bind `?g`: stream the left
+/// and, per row that binds it, evaluate `inner` over that one graph (a
+/// dictionary lookup and a directory search), never over every graph. For a
+/// single BGP the row's bindings are substituted into its patterns. A row that
+/// leaves `?g` unbound (a `BIND` that erred) joins with every graph, as the
+/// hash join does: the whole walk, evaluated once and only if such a row comes.
+/// Same rows as the hash join of the left with the graph-variable walk.
+#[allow(clippy::too_many_arguments)]
+fn graph_bound_join<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    l: &'q Plan,
+    r: &'q Plan,
+    slot: usize,
+    inner: &'q Plan,
+    optional: bool,
+    cond: Option<&'q FExpr>,
+) -> RowIter<'q> {
+    let lcert = certain_bound(ctx, l, ctx.slots.len());
+    let mut cache = ExistsCache::new();
+    let mut everywhere: Option<Vec<Row>> = None;
+    Box::new(
+        eval_plan_iter(ctx, index, nf, l).flat_map(move |lrow| -> Vec<Row> {
+            let merged: Vec<Row> = if lrow[slot].is_some() {
+                rows_in_bound_graph(ctx, nf, &lrow, slot, inner, &lcert)
+            } else {
+                everywhere
+                    .get_or_insert_with(|| eval_plan_iter(ctx, index, nf, r).collect())
+                    .iter()
+                    .filter_map(|rrow| merge_rows(&lrow, rrow))
+                    .collect()
+            };
+            let mut out: Vec<Row> = merged
+                .into_iter()
+                .filter(|m| cond.is_none_or(|f| f.boolean(ctx, index, m, &mut cache)))
+                .collect();
+            if optional && out.is_empty() {
+                out.push(lrow);
+            }
+            out
+        }),
+    )
+}
+
+/// The rows of `inner` over the graph that `lrow` binds in `slot`, merged with
+/// `lrow`. Empty when the value names no (visible) graph.
+fn rows_in_bound_graph(
+    ctx: &Ctx,
+    nf: Option<&[String]>,
+    lrow: &Row,
+    slot: usize,
+    inner: &Plan,
+    lcert: &[bool],
+) -> Vec<Row> {
+    let Some(name) = lrow[slot].as_ref().and_then(|v| ctx.resolver.str_of(v)) else {
+        return Vec::new();
+    };
+    if nf.is_some_and(|f| !f.iter().any(|g| g.as_str() == &*name)) {
+        return Vec::new();
+    }
+    let run = |gi: &GraphIndex| -> Vec<Row> {
+        if let Plan::Bgp(patterns) = inner {
+            if !patterns.is_empty() {
+                return match ProbePlan::new(ctx, gi, patterns, lcert) {
+                    Some(plan) => ProbeJoin::from_plan(ctx, gi, &plan, lrow.clone()).collect(),
+                    None => Vec::new(),
+                };
+            }
+        }
+        eval_plan_iter(ctx, gi, nf, inner)
+            .filter_map(|r| merge_rows(lrow, &r))
+            .collect()
+    };
+    match ctx.rete.named_graph_ordinal(&name) {
+        Some(i) => {
+            if let Some(view) = ctx.rete.named_graph_transient(i) {
+                return run(&view);
+            }
+            match ctx.rete.named_graph_at(i) {
+                Some((_, gi)) => run(gi),
+                None => Vec::new(),
+            }
+        }
+        None => match ctx.rete.graph_index(&name) {
+            Some(gi) => run(gi),
+            None => Vec::new(),
+        },
     }
 }
 
@@ -1445,15 +1586,17 @@ fn graph_var_walk<'q>(
     // graph (`Rete::named_graph_transient`).
     let graphs = ordinals.filter_map(move |i| {
         let exhaustive = may_be_exhaustive && named_filter.is_none() && ctx.exhaustive.get();
-        let name = ctx.rete.named_graph_name_at_demand(i, exhaustive)?;
-        if !visible(name) {
+        // The name is not kept by the file: a walk over 43 M graphs must not
+        // hold one string per graph it has passed.
+        let name = ctx.rete.named_graph_name_owned_demand(i, exhaustive)?;
+        if !visible(&name) {
             return None;
         }
         Some((i, name, exhaustive))
     });
     Box::new(graphs.flat_map(
         move |(i, name, exhaustive)| -> Box<dyn Iterator<Item = Row> + 'q> {
-            let gval = ctx.resolver.canon_term(name);
+            let gval = ctx.resolver.canon_term(&name);
             let bind = move |mut sol: Row| match &sol[slot] {
                 Some(existing) if *existing != gval => None,
                 _ => {
@@ -2549,6 +2692,15 @@ fn join_iter<'q>(
     //     2.9 B-triple file and took 40 s and 3.2 GB; the three probe instead.
     //     Past the budget the rows already pulled feed the hash join.
     let mut left_pulled: Option<RowIter<'q>> = None;
+    // `l ⋈ GRAPH ?g { … }` with `?g` bound on the left: a lookup of that graph
+    // per left row, never a walk of every graph.
+    if let Plan::Graph(GraphTarget::Var(gv), inner) = r {
+        if let Some(slot) = ctx.slots.slot(gv) {
+            if possible_bound(ctx, l, ctx.slots.len())[slot] {
+                return graph_bound_join(ctx, index, nf, l, r, slot, inner, optional, cond);
+            }
+        }
+    }
     if let Plan::Bgp(patterns) = r {
         if !patterns.is_empty() {
             let lcert = certain_bound(ctx, l, ctx.slots.len());
