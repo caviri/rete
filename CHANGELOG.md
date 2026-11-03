@@ -23,6 +23,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   and `card-audit --write-costs` measure the file as it is, so they replace the figures a
   conversion recorded.
 
+- **An IRI with an IPv6 host after userinfo is no longer refused** (G47). The IRI check
+  did not look past `user@` for the host's brackets, so `http://u@[::1]:/p` was reported
+  as an unclassified defect and blocked a build, though it is a valid IRI.
+
 ## [0.5.1] - 2026-11-03
 
 ### Fixed

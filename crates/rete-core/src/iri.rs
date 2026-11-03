@@ -252,16 +252,22 @@ fn ip_literal_brackets(s: &str, colon: usize) -> Option<(usize, usize)> {
     if b.get(colon + 1) != Some(&b'/') || b.get(colon + 2) != Some(&b'/') {
         return None;
     }
-    let start = colon + 3;
-    if b.get(start) != Some(&b'[') {
-        return None;
-    }
+    let auth = colon + 3;
     // The authority ends at the first '/', '?' or '#'; the ']' must be inside it.
-    let end = b[start..]
+    let end = b[auth..]
         .iter()
         .position(|&c| c == b'/' || c == b'?' || c == b'#')
-        .map(|p| start + p)
+        .map(|p| auth + p)
         .unwrap_or(b.len());
+    // The host follows the userinfo, if any (`user:pw@[::1]`; either part may be
+    // empty). '@' is not legal inside userinfo, so the first one ends it.
+    let start = match b[auth..end].iter().position(|&c| c == b'@') {
+        Some(p) => auth + p + 1,
+        None => auth,
+    };
+    if b.get(start) != Some(&b'[') || start >= end {
+        return None;
+    }
     let close = b[start..end].iter().position(|&c| c == b']')? + start;
     Some((start, close))
 }
