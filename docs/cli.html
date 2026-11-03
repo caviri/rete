@@ -629,15 +629,25 @@ the <code>rete(1)</code> man page. Maintainers generate these from the exact bin
 hidden <code>rete generate --output &lt;directory&gt;</code> packaging command; they are never
 maintained as hand-written copies of the CLI definition.</p>
 <h2 id="building">Building</h2>
-<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml---quoted-triple-syntax-rdf12rdf-star"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
+<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxmljelly---quoted-triple-syntax-rdf12rdf-star"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml|jelly] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code>, plus <code>.rdf</code> /
+Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code> / <code>.jelly</code>, plus <code>.rdf</code> /
 <code>.owl</code> / <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
 defaults to N-Triples; <code>--format</code> forces a format for all inputs (use <code>--format rdfxml</code> for an RDF/XML file with a non-standard extension). N-Quads inputs produce
 a dataset with named graphs.</p>
 <pre><code class="language-sh">rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
 </code></pre>
+<p><strong>Jelly.</strong> <code>.jelly</code> and <code>.jelly.gz</code> files are <a href="https://jelly-rdf.github.io/">Jelly</a>
+RDF streams, a binary format. Both layouts are read: Jelly 1.0 and 1.1 (the row
+layout) and Jelly 1.2 (the column layout), triples or quads, with RDF-star quoted
+triples and RDF 1.2 triple terms. A file has no magic number, so only the
+extension or <code>--format jelly</code> says it is Jelly. It streams one frame at a time, so
+a large file is read like an <code>.nq</code> one, including under <code>--memory-budget-mb</code>;
+named graphs land in the quad index. A malformed file is refused with the frame
+number. Not read: generalized RDF (a literal as subject, predicate or graph),
+streams of RDF Messages (the optional 1.2 stream type), lookup tables above
+1,048,576 entries, and writing Jelly (<code>rete export</code> has no Jelly format).</p>
 <p>A long build shows where it is with <code>--progress</code> (a live bar on a terminal by
 default; <code>plain</code> lines for logs): see <a href="#progress">Progress</a>.</p>
 <p><code>--materialize</code> bakes RDFS/OWL-RL entailments into the file at build time (see

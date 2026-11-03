@@ -511,9 +511,7 @@ fn parse_source(
     let surface = quoted_triple_surface(syntax)?;
     let bad = |e: rete_core::ingest::IngestError| PyValueError::new_err(e.to_string());
     match (src, format) {
-        (Source::Bytes(data), "jelly") => {
-            rete_core::ingest::parse_jelly_bytes(data).map_err(bad)
-        }
+        (Source::Bytes(data), "jelly") => rete_core::ingest::parse_jelly_bytes(data).map_err(bad),
         (Source::Text(_), "jelly") => Err(PyValueError::new_err(
             "jelly is a binary format: pass the file's bytes, not text",
         )),

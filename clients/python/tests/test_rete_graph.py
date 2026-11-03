@@ -167,9 +167,9 @@ def test_build_from_jelly_bytes():
     assert g.graph_names() == ["http://example.org/g1"]
     rows = g.query(
         "SELECT ?o WHERE { GRAPH <http://example.org/g1> { <http://example.org/alice> "
-        "<http://example.org/name> ?o } } ORDER BY ?o"
+        "<http://example.org/name> ?o } }"
     )
-    assert [r["o"].n3 for r in rows] == [
+    assert sorted(r["o"].n3 for r in rows) == [
         '"42"^^<http://www.w3.org/2001/XMLSchema#integer>',
         '"Alice"@en',
     ]

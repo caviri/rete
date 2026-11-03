@@ -736,6 +736,10 @@ languages, hubs, signals and the tiered starter-query library — from the same
 code <code>rete build --card</code> runs, so the same graph yields a byte-identical card.
 It is opt-in: derivation walks the graph twice more, and the default keeps
 writing exactly the bytes it always did.</p>
+<h3 id="jelly">Jelly</h3>
+<p>Jelly is a binary RDF format, so it goes in as a raw vector:
+<code>rete_build(readBin("data.jelly", "raw", file.size("data.jelly")), "jelly")</code>.
+Text with <code>"jelly"</code> is an error.</p>
 <h3 id="rdf-12-turtle-and-trig">RDF 1.2 Turtle and TriG</h3>
 <p>In Turtle and TriG, <code>&lt;&lt; s p o &gt;&gt;</code> is a quoted triple under RDF-star and a
 <em>reifier</em> under RDF 1.2 — the same bytes, two graphs — so <code>rete_build()</code> takes

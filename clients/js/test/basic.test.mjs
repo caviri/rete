@@ -156,10 +156,10 @@ test("build from Jelly bytes", async () => {
   assert.equal(g.quads, 3);
   assert.deepEqual(g.graphNames(), ["http://example.org/g1"]);
   const rows = g.query(
-    "SELECT ?o WHERE { GRAPH <http://example.org/g1> { <http://example.org/alice> <http://example.org/name> ?o } } ORDER BY ?o",
+    "SELECT ?o WHERE { GRAPH <http://example.org/g1> { <http://example.org/alice> <http://example.org/name> ?o } }",
   );
   assert.deepEqual(
-    rows.map((r) => r.o.n3),
+    rows.map((r) => r.o.n3).sort(),
     ['"42"^^<http://www.w3.org/2001/XMLSchema#integer>', '"Alice"@en'],
   );
 });
