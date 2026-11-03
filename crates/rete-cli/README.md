@@ -8,7 +8,7 @@ the CLI surface carries no semantic-versioning promise until 1.0.0. Pin the
 exact version while the crates are 0.x:
 
 ```sh
-cargo install rete-cli --version 0.5.1 --locked
+cargo install rete-cli --version 0.5.2 --locked
 ```
 
 ## Build and query

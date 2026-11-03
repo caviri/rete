@@ -5,6 +5,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-03
+
 ### Fixed
 
 - **`rete convert` measures the starter queries again on the converted file** (G46). The
