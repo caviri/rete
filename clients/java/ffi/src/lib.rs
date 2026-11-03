@@ -257,8 +257,9 @@ fn guard_complete(rete: &Rete) -> Result<(), String> {
 
 /// Assemble a complete `.rete` file image from RDF text, entirely in-module.
 ///
-/// `format` is `"nt"` (N-Triples), `"nq"` (N-Quads) or `"ttl"` (Turtle). The
-/// success payload is the raw `.rete` **bytes** (not JSON) — hand them straight
+/// `format` is `"nt"` (N-Triples), `"nq"` (N-Quads), `"ttl"` (Turtle) or
+/// `"jelly"` (the binary Jelly RDF stream format, so the input is bytes, not
+/// text; every other format must be UTF-8). The success payload is the raw `.rete` **bytes** (not JSON) — hand them straight
 /// back to [`rete_info`] / [`rete_query`]. As in the browser build there is no
 /// zstd *encoder* here, so sections are written uncompressed (codec `NONE`);
 /// every reader accepts them, and `rete build` produces a compressed file.
@@ -272,21 +273,12 @@ pub unsafe extern "C" fn rete_build(
     fmt_ptr: *const u8,
     fmt_len: u32,
 ) -> *mut u8 {
-    let text = match std::str::from_utf8(borrow(text_ptr, text_len)) {
-        Ok(t) => t,
-        Err(e) => {
-            return pack(
-                STATUS_ERR,
-                format!("input text is not utf-8: {e}").as_bytes(),
-            )
-        }
-    };
     let format = match std::str::from_utf8(borrow(fmt_ptr, fmt_len)) {
         Ok(f) => f,
         Err(e) => return pack(STATUS_ERR, format!("format is not utf-8: {e}").as_bytes()),
     };
     build_surface(
-        text,
+        borrow(text_ptr, text_len),
         format,
         rete_core::ingest::QuotedTripleSurface::default(),
     )
@@ -309,13 +301,12 @@ pub unsafe extern "C" fn rete_build_syntax(
     syntax_ptr: *const u8,
     syntax_len: u32,
 ) -> *mut u8 {
-    let (text, format, syntax) = match (
-        std::str::from_utf8(borrow(text_ptr, text_len)),
+    let (format, syntax) = match (
         std::str::from_utf8(borrow(fmt_ptr, fmt_len)),
         std::str::from_utf8(borrow(syntax_ptr, syntax_len)),
     ) {
-        (Ok(t), Ok(f), Ok(s)) => (t, f, s),
-        _ => return pack(STATUS_ERR, b"input text, format or syntax is not utf-8"),
+        (Ok(f), Ok(s)) => (f, s),
+        _ => return pack(STATUS_ERR, b"format or syntax is not utf-8"),
     };
     let surface = if syntax.is_empty() {
         rete_core::ingest::QuotedTripleSurface::default()
@@ -333,19 +324,33 @@ pub unsafe extern "C" fn rete_build_syntax(
             }
         }
     };
-    build_surface(text, format, surface)
+    build_surface(borrow(text_ptr, text_len), format, surface)
 }
 
 fn build_surface(
-    text: &str,
+    data: &[u8],
     format: &str,
     surface: rete_core::ingest::QuotedTripleSurface,
 ) -> *mut u8 {
-    let quads =
-        match rete_core::ingest::parse_statements_audited_surface(text, format, None, surface) {
-            Ok(q) => q,
-            Err(e) => return pack(STATUS_ERR, e.to_string().as_bytes()),
-        };
+    let parsed = if format == "jelly" {
+        rete_core::ingest::parse_jelly_bytes(data)
+    } else {
+        match std::str::from_utf8(data) {
+            Ok(text) => {
+                rete_core::ingest::parse_statements_audited_surface(text, format, None, surface)
+            }
+            Err(e) => {
+                return pack(
+                    STATUS_ERR,
+                    format!("input text is not utf-8: {e}").as_bytes(),
+                )
+            }
+        }
+    };
+    let quads = match parsed {
+        Ok(q) => q,
+        Err(e) => return pack(STATUS_ERR, e.to_string().as_bytes()),
+    };
     if quads.is_empty() {
         return pack(
             STATUS_ERR,
@@ -368,7 +373,11 @@ fn build_surface(
                 pyramid_algo: Some("louvain".into()),
                 ..Default::default()
             },
-            inputs: vec![br::Input::from_bytes("string", format, text.as_bytes())],
+            inputs: vec![br::Input::from_bytes(
+                if format == "jelly" { "bytes" } else { "string" },
+                format,
+                data,
+            )],
             statements_read: Some(read),
         },
         Some(&stats),

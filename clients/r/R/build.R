@@ -7,7 +7,8 @@
 #'
 #' @param text RDF text: N-Triples (`"nt"`), N-Quads (`"nq"` — named graphs
 #'   become a dataset), Turtle (`"ttl"`), TriG (`"trig"`), or RDF/XML
-#'   (`"rdfxml"`).
+#'   (`"rdfxml"`). Jelly (`"jelly"`), a binary format, takes the file's bytes
+#'   as a raw vector instead: `readBin(path, "raw", file.size(path))`.
 #' @param format The RDF serialization of `text`.
 #' @param card Optional Dataset Card as a named list (curated fields such as
 #'   `title`, `description`, `license`, `created`, `example_queries`; counts

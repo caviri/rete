@@ -149,3 +149,23 @@ test_that("remote graph over HTTP range (live)", {
   expect_lt(s$bytes, s$fileLength) # lazy, not a download
   expect_gt(nrow(rete_examples(g)), 0) # boe ships starter queries
 })
+
+# A tiny Jelly 1.1 file (3 quads, one in the default graph), written by hand and
+# checked against jelly-cli; the other clients use the same bytes.
+JELLY_HEX <- "bb010a0e0a0c1002481050085808700278020a1752151213687474703a2f2f6578616d706c652e6f72672f0a094a071205616c6963650a094a0712056b6e6f77730a074a051203626f620a084a0612046e616d650a064a04120267310a2c5a2a1228687474703a2f2f7777772e77332e6f72672f323030312f584d4c536368656d6123696e74656765720a0c1a0a0a0208012a004a007a000a171a152a0210045a0b0a05416c6963651202656e6a0210050a0a1a085a060a0234321801"
+JELLY <- as.raw(strtoi(substring(JELLY_HEX, seq(1, nchar(JELLY_HEX), 2), seq(2, nchar(JELLY_HEX), 2)), 16L))
+
+test_that("a Jelly file (raw bytes) builds a dataset", {
+  g <- rete_open(rete_build(JELLY, "jelly"))
+  expect_equal(rete_info(g)$quads, 3)
+  df <- rete_query(g, paste(
+    "SELECT ?o WHERE { GRAPH <http://example.org/g1> {",
+    "<http://example.org/alice> <http://example.org/name> ?o } FILTER(LANG(?o) = 'en') }"
+  ))
+  expect_equal(df$o, "Alice")
+})
+
+test_that("Jelly is binary: text and truncated input are refused", {
+  expect_error(rete_build("not bytes", "jelly"), "binary")
+  expect_error(rete_build(JELLY[seq_len(length(JELLY) - 5)], "jelly"), "truncated")
+})

@@ -371,6 +371,7 @@ fn media_type(format: &str) -> Option<&'static str> {
         "ttl" => "text/turtle",
         "trig" => "application/trig",
         "rdfxml" => "application/rdf+xml",
+        "jelly" => "application/x-jelly-rdf",
         "rete" => "application/x-rete",
         _ => return None,
     })

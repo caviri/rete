@@ -154,6 +154,41 @@ def test_build_rejects_garbage():
         rete.build("")
 
 
+# A tiny Jelly 1.1 file (3 quads, one in the default graph), written by hand and
+# checked against jelly-cli: the same fixture the other clients use.
+JELLY = bytes.fromhex(
+    "bb010a0e0a0c1002481050085808700278020a1752151213687474703a2f2f6578616d706c652e6f72672f0a094a071205616c6963650a094a0712056b6e6f77730a074a051203626f620a084a0612046e616d650a064a04120267310a2c5a2a1228687474703a2f2f7777772e77332e6f72672f323030312f584d4c536368656d6123696e74656765720a0c1a0a0a0208012a004a007a000a171a152a0210045a0b0a05416c6963651202656e6a0210050a0a1a085a060a0234321801"
+)
+
+
+def test_build_from_jelly_bytes():
+    g = rete.open(rete.build(JELLY, "jelly"))
+    assert g.quads == 3
+    assert g.graph_names() == ["http://example.org/g1"]
+    rows = g.query(
+        "SELECT ?o WHERE { GRAPH <http://example.org/g1> { <http://example.org/alice> "
+        "<http://example.org/name> ?o } } ORDER BY ?o"
+    )
+    assert [r["o"].n3 for r in rows] == [
+        '"42"^^<http://www.w3.org/2001/XMLSchema#integer>',
+        '"Alice"@en',
+    ]
+
+
+def test_build_jelly_needs_bytes_and_valid_input():
+    with pytest.raises(ValueError, match="binary"):
+        rete.build("not text", "jelly")
+    with pytest.raises(ValueError, match="truncated"):
+        rete.build(JELLY[:-5], "jelly")
+
+
+def test_builder_add_file_reads_jelly(tmp_path):
+    path = tmp_path / "tiny.jelly"
+    path.write_bytes(JELLY)
+    builder = rete.Builder().add_file(path)
+    assert rete.open(builder.run()).quads == 3
+
+
 def test_build_from_rdflib_graph():
     rdflib = pytest.importorskip("rdflib")
     g = rdflib.Graph()

@@ -80,9 +80,9 @@ pub(crate) fn estimate(
 
     for path in inputs {
         let fmt = super::build::input_format(path, format);
-        if !matches!(fmt, "nt" | "nq" | "ttl" | "trig") {
+        if !matches!(fmt, "nt" | "nq" | "ttl" | "trig" | "jelly") {
             anyhow::bail!(
-                "estimate reads N-Triples/N-Quads/Turtle/TriG (got {fmt} for {path}); \
+                "estimate reads N-Triples/N-Quads/Turtle/TriG/Jelly (got {fmt} for {path}); \
                  pipe a converter's output with --format nt"
             );
         }

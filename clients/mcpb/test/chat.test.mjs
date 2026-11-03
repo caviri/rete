@@ -122,3 +122,32 @@ test("a chat graph can be saved, and an RDF file in a granted folder loaded by p
 
   assert.match(refusal(await call("load_rdf", { name: "x", path: "../outside.ttl" })), /outside the directories/);
 });
+
+// A tiny Jelly 1.1 file (3 quads, one in the default graph), written by hand
+// and checked against jelly-cli; the other clients use the same bytes.
+const JELLY = Buffer.from(
+  "bb010a0e0a0c1002481050085808700278020a1752151213687474703a2f2f6578616d706c652e6f72672f0a094a071205616c6963650a094a0712056b6e6f77730a074a051203626f620a084a0612046e616d650a064a04120267310a2c5a2a1228687474703a2f2f7777772e77332e6f72672f323030312f584d4c536368656d6123696e74656765720a0c1a0a0a0208012a004a007a000a171a152a0210045a0b0a05416c6963651202656e6a0210050a0a1a085a060a0234321801",
+  "hex",
+);
+
+test("a Jelly file in a granted folder loads by path, and can be built into a .rete", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "rete-mcpb-jelly-"));
+  await writeFile(join(dir, "tiny.jelly"), JELLY);
+  const call = await connect(t, dir);
+
+  // The syntax comes from the extension; Jelly has named graphs here.
+  const loaded = payload(await call("load_rdf", { name: "tiny", path: "tiny.jelly" }));
+  assert.equal(loaded.format, "jelly");
+  assert.equal(loaded.statements, 3);
+  assert.equal(loaded.info.namedGraphs, 1);
+
+  const built = payload(await call("build_rete", { path: "tiny.jelly", output_path: "tiny-built" }));
+  assert.equal(built.info.quads, 3);
+
+  // Binary: it cannot be sent as text, and a part cannot be appended to it.
+  assert.match(refusal(await call("load_rdf", { name: "t.jelly", rdf: "text", format: "jelly" })), /binary/);
+  assert.match(
+    refusal(await call("load_rdf", { name: "tiny", path: "tiny.jelly", append: true })),
+    /cannot be appended/,
+  );
+});

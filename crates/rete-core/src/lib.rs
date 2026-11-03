@@ -120,9 +120,10 @@ pub mod format {
     pub use crate::ingest::{
         assemble_dataset, assemble_dataset_with, assemble_dataset_with_layout,
         assemble_dataset_with_opts, assemble_dataset_with_opts_algo, assemble_dataset_with_perms,
-        parse, parse_quads, parse_rdfxml, parse_statements, parse_statements_audited_surface,
-        parse_turtle, parse_turtle_surface, BuildStats, DeferredMetadata, FinalCounts, GraphLayout,
-        IngestError, IntoMetadata, QuotedTripleSurface, RawQuad, RawTriple,
+        parse, parse_jelly_bytes, parse_jelly_bytes_audited, parse_quads, parse_rdfxml,
+        parse_statements, parse_statements_audited_surface, parse_turtle, parse_turtle_surface,
+        BuildStats, DeferredMetadata, FinalCounts, GraphLayout, IngestError, IntoMetadata,
+        QuotedTripleSurface, RawQuad, RawTriple,
     };
     #[cfg(not(target_arch = "wasm32"))]
     pub use crate::recard::commit_card_append;

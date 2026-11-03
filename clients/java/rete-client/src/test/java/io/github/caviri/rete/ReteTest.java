@@ -46,6 +46,35 @@ class ReteTest {
         }
     }
 
+    /**
+     * A tiny Jelly 1.1 file (3 quads, one in the default graph), written by hand
+     * and checked against jelly-cli; the other clients use the same bytes.
+     */
+    private static final String JELLY_HEX =
+            "bb010a0e0a0c1002481050085808700278020a1752151213687474703a2f2f6578616d706c652e6f72672f0a094a071205616c6963650a094a0712056b6e6f77730a074a051203626f620a084a0612046e616d650a064a04120267310a2c5a2a1228687474703a2f2f7777772e77332e6f72672f323030312f584d4c536368656d6123696e74656765720a0c1a0a0a0208012a004a007a000a171a152a0210045a0b0a05416c6963651202656e6a0210050a0a1a085a060a0234321801";
+
+    private static byte[] jelly() {
+        byte[] out = new byte[JELLY_HEX.length() / 2];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = (byte) Integer.parseInt(JELLY_HEX.substring(2 * i, 2 * i + 2), 16);
+        }
+        return out;
+    }
+
+    @Test
+    void buildsFromJellyBytes() {
+        try (Rete rete = Rete.load()) {
+            byte[] file = rete.build(jelly(), "jelly");
+            String info = rete.info(file);
+            assertTrue(info.contains("\"quads\":3"), info);
+            assertTrue(info.contains("\"namedGraphs\":1"), info);
+            // Jelly is binary: text is refused, and so is a truncated file.
+            assertThrows(ReteException.class, () -> rete.build("not bytes", "jelly"));
+            byte[] cut = java.util.Arrays.copyOf(jelly(), jelly().length - 5);
+            assertThrows(ReteException.class, () -> rete.build(cut, "jelly"));
+        }
+    }
+
     @Test
     void buildsAndInspectsAGraph() {
         try (Rete rete = Rete.load()) {

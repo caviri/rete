@@ -1049,18 +1049,22 @@ server.registerTool(
   {
     title: "Build a .rete graph",
     description:
-      "Turn RDF text (Turtle, TriG, N-Triples or N-Quads) into a new .rete knowledge-graph " +
-      "file in one of the granted folders — entirely on this machine, no network. The result " +
+      "Turn RDF text (Turtle, TriG, N-Triples or N-Quads), or a Jelly (.jelly) file from a granted " +
+      "folder, into a new .rete knowledge-graph file in one of the granted folders — entirely on this machine, no network. The result " +
       "is queryable immediately: pass the returned file name as `dataset` to any other tool.",
     inputSchema: {
-      rdf: z.string().describe("the RDF source text"),
+      rdf: z.string().optional().describe("the RDF source text (or `path`)"),
+      path: z
+        .string()
+        .optional()
+        .describe("instead of rdf: an RDF file in a granted folder — the only way to give a Jelly (.jelly) file"),
       output_path: z
         .string()
         .describe("where to write it; a bare name lands in the first granted folder"),
       format: z
-        .enum(["ttl", "trig", "nt", "nq"])
+        .enum(["ttl", "trig", "nt", "nq", "jelly"])
         .optional()
-        .describe("RDF syntax of `rdf` (default ttl)"),
+        .describe("RDF syntax (default: from the file's extension, else ttl). jelly is binary: it needs `path`"),
       quoted_triple_syntax: z
         .enum(["rdf-star", "rdf12"])
         .optional()
@@ -1072,14 +1076,16 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  guard(async ({ rdf, output_path, format = "ttl", quoted_triple_syntax = "rdf-star" }) => {
+  guard(async ({ rdf, path, output_path, format, quoted_triple_syntax = "rdf-star" }) => {
+    format ??= (path === undefined ? undefined : formatOf(path)) ?? "ttl";
+    const input = await rdfInput(rdf, path, format);
     if (dirs.length === 0) {
       throw new UsageError(
         "no folder granted — add one in the extension's settings (Graph folders) before building",
       );
     }
     const target = grantedPath(output_path.toLowerCase().endsWith(".rete") ? output_path : `${output_path}.rete`);
-    const bytes = await build(rdf, format, { quotedTripleSyntax: quoted_triple_syntax });
+    const bytes = await build(input, format, { quotedTripleSyntax: quoted_triple_syntax });
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, bytes);
     store.changed(target);
@@ -1114,9 +1120,9 @@ server.registerTool(
       rdf: z.string().optional().describe("the RDF text, exactly as shared (or one part of it)"),
       path: z.string().optional().describe("instead of rdf: an RDF text file in a granted folder"),
       format: z
-        .enum(["ttl", "trig", "nt", "nq"])
+        .enum(["ttl", "trig", "nt", "nq", "jelly"])
         .optional()
-        .describe("RDF syntax (default: from the file's extension, else ttl)"),
+        .describe("RDF syntax (default: from the file's extension, else ttl). jelly needs `path`"),
       append: z
         .boolean()
         .optional()
@@ -1133,12 +1139,10 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   guard(async ({ name, rdf, path, format, append = false, quoted_triple_syntax = "rdf-star", save_as }) => {
-    if ((rdf === undefined) === (path === undefined)) {
-      throw new UsageError("pass the RDF as `rdf` (its text) or as `path` (a file in a granted folder) — one of the two");
-    }
-    const text = rdf ?? (await store.readGrantedText(path));
+    format ??= path === undefined ? undefined : (formatOf(name) ?? formatOf(path));
+    const text = await rdfInput(rdf, path, format);
     const loaded = await store.loadChat(name, text, {
-      format: format ?? (path === undefined ? undefined : (formatOf(name) ?? formatOf(path))),
+      format,
       append,
       quotedTripleSyntax: quoted_triple_syntax,
     });
@@ -1162,6 +1166,23 @@ server.registerTool(
     });
   }),
 );
+
+/**
+ * The RDF a tool call names: its text (`rdf`) or a file in a granted folder
+ * (`path`). Jelly is binary, so it only ever comes as a file.
+ */
+async function rdfInput(rdf, path, format) {
+  if ((rdf === undefined) === (path === undefined)) {
+    throw new UsageError("pass the RDF as `rdf` (its text) or as `path` (a file in a granted folder) — one of the two");
+  }
+  if (format === "jelly") {
+    if (path === undefined) {
+      throw new UsageError("Jelly is a binary format and cannot be sent as text: save the .jelly file in a granted folder and pass its `path`");
+    }
+    return store.readGrantedBytes(path);
+  }
+  return rdf ?? (await store.readGrantedText(path));
+}
 
 /** Write a chat graph's file image into a granted folder, beside any file of that name. */
 async function saveChat(loaded, outputPath) {

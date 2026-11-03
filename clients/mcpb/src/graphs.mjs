@@ -28,6 +28,7 @@ const CHAT_FORMATS = {
   ".nq": "nq",
   ".nquads": "nq",
   ".trig": "trig",
+  ".jelly": "jelly", // binary: only ever read from a file, never passed as text
 };
 
 const WHERE = {
@@ -160,8 +161,11 @@ export class GraphStore {
     if (base && format !== base.format) {
       throw new UsageError(`${key} holds ${base.format}; a part appended to it must be ${base.format} too, not ${format}`);
     }
+    if (format === "jelly" && append) {
+      throw new UsageError("a Jelly file cannot be appended to: its lookup tables and options belong to one stream. Load it whole, from a file in a granted folder");
+    }
     const all = base ? `${base.text}\n${text}` : text;
-    const size = Buffer.byteLength(all);
+    const size = typeof all === "string" ? Buffer.byteLength(all) : all.length;
     if (size > CHAT_MAX_BYTES) {
       throw new UsageError(
         `${key} would hold ${size} bytes of RDF text — more than the ${CHAT_MAX_BYTES} a graph shared ` +
@@ -185,7 +189,7 @@ export class GraphStore {
     bytes.set(built);
     if (previous) this.#cache.delete(previous.source.cacheKey);
     const source = new Source({ kind: "chat", key, bytes, generation: (previous?.source.generation ?? 0) + 1 });
-    const entry = { source, text: all, size, format, parts: (base?.parts ?? 0) + 1, loadedAt: new Date().toISOString() };
+    const entry = { source, text: typeof all === "string" ? all : "", size, format, parts: (base?.parts ?? 0) + 1, loadedAt: new Date().toISOString() };
     this.#chat.set(key, entry);
     return entry;
   }
@@ -201,6 +205,15 @@ export class GraphStore {
    * looked for in each granted folder.
    */
   async readGrantedText(path) {
+    return this.#readGranted(path, "utf8");
+  }
+
+  /** The bytes of a binary RDF file (Jelly) under a granted folder; see readGrantedText. */
+  async readGrantedBytes(path) {
+    return this.#readGranted(path, null);
+  }
+
+  async #readGranted(path, encoding) {
     if (this.allowedDirs.length === 0) {
       throw new UsageError("no folder granted — add one in the extension's settings (Graph folders), or pass the RDF as `rdf`");
     }
@@ -217,7 +230,7 @@ export class GraphStore {
             "here may hold. Build it with the `rete build` CLI into a granted folder instead.",
         );
       }
-      return readFile(full, "utf8");
+      return readFile(full, encoding);
     }
     throw new UsageError(`no such file in the granted folders: ${path}`);
   }

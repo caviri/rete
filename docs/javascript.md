@@ -128,6 +128,12 @@ for (let i = 0; i < keys.length; i += 200) {
 Each chunk's rows are term tokens, as in `queryRaw`. The Claude Desktop
 extension's `partition_by` does this with checkpoints on disk.
 
+### Jelly
+
+Jelly is a binary RDF format, so it goes in as bytes:
+`build(await readFile("data.jelly"), "jelly")`. `build` takes a `Uint8Array`
+or `ArrayBuffer` for any format (text formats are read as UTF-8).
+
 ### RDF 1.2 and quoted triples
 
 The CLI's `--quoted-triple-syntax` vocabulary and defaults, in both directions.

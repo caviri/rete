@@ -427,6 +427,7 @@ pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static s
             "nq" => "nq",
             "ttl" => "ttl",
             "trig" => "trig",
+            "jelly" => "jelly",
             "rdfxml" | "rdf" | "owl" | "xml" => "rdfxml",
             _ => "nt",
         };
@@ -442,6 +443,9 @@ pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static s
         "ttl"
     } else if p.ends_with(".trig") {
         "trig"
+    } else if p.ends_with(".jelly") {
+        // Jelly has no magic number, so only the extension (or `--format jelly`) says so.
+        "jelly"
     } else if p.ends_with(".rdf") || p.ends_with(".owl") || p.ends_with(".rdfxml") {
         // RDF/XML — the common OWL serialization (an `rdf:RDF` root). `.xml` is left
         // to default to N-Triples since it's ambiguous; pass `--format rdfxml` for it.
@@ -519,7 +523,7 @@ fn parse_inputs(
         // (~64 B/line) to avoid Vec doublings; for a compressed input that hint is
         // the *compressed* length, which under-shoots harmlessly. stdin and the
         // structured syntaxes take the text path below.
-        let parsed = if input != "-" && (fmt == "nt" || fmt == "nq") {
+        let parsed = if fmt == "jelly" || (input != "-" && (fmt == "nt" || fmt == "nq")) {
             let cap = std::fs::metadata(input)
                 .map(|m| (m.len() / 64) as usize)
                 .unwrap_or(0);
@@ -666,7 +670,7 @@ pub(crate) fn build(
         && !reason
         && inputs
             .iter()
-            .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq"));
+            .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq" | "jelly"));
     progress::plan(in_ram_plan(
         streamable,
         materialize || reason,
@@ -777,7 +781,7 @@ pub(crate) fn build(
     // is a line-based file, parsed as it is read.
     let line_files = inputs
         .iter()
-        .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq"));
+        .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq" | "jelly"));
     live::begin(
         Phase::Parse,
         if line_files {
@@ -1073,7 +1077,7 @@ pub(crate) fn build_external_cmd(
     if uses_stdin && (inputs.len() != 1 || format.is_none()) {
         anyhow::bail!(
             "--memory-budget-mb with stdin: `-` must be the only input and \
-             requires an explicit --format nt|nq|ttl|trig"
+             requires an explicit --format nt|nq|ttl|trig|jelly"
         );
     }
     // Every syntax except RDF/XML streams from a reader, so the external build
@@ -1082,10 +1086,10 @@ pub(crate) fn build_external_cmd(
     // enough to be worth the surprise on a multi-GB input).
     if let Some((bad, fmt)) = inputs_fmt
         .iter()
-        .find(|(i, f)| *i != "-" && !matches!(*f, "nt" | "nq" | "ttl" | "trig"))
+        .find(|(i, f)| *i != "-" && !matches!(*f, "nt" | "nq" | "ttl" | "trig" | "jelly"))
     {
         anyhow::bail!(
-            "--memory-budget-mb streams N-Triples/N-Quads/Turtle/TriG only \
+            "--memory-budget-mb streams N-Triples/N-Quads/Turtle/TriG/Jelly only \
              ({bad} is {fmt}); convert RDF/XML inputs to .ttl or .nt first"
         );
     }
@@ -1126,7 +1130,10 @@ pub(crate) fn build_external_cmd(
     };
     let out_path = std::path::Path::new(output).to_path_buf();
     // Named graphs come from N-Quads and TriG unless they are folded away.
-    let named = !collapse_graphs && inputs_fmt.iter().any(|(_, f)| matches!(*f, "nq" | "trig"));
+    let named = !collapse_graphs
+        && inputs_fmt
+            .iter()
+            .any(|(_, f)| matches!(*f, "nq" | "trig" | "jelly"));
     progress::plan(external_plan(
         progress::Kind::Bounded,
         false,

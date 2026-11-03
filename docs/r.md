@@ -146,6 +146,12 @@ code `rete build --card` runs, so the same graph yields a byte-identical card.
 It is opt-in: derivation walks the graph twice more, and the default keeps
 writing exactly the bytes it always did.
 
+### Jelly
+
+Jelly is a binary RDF format, so it goes in as a raw vector:
+`rete_build(readBin("data.jelly", "raw", file.size("data.jelly")), "jelly")`.
+Text with `"jelly"` is an error.
+
 ### RDF 1.2 Turtle and TriG
 
 In Turtle and TriG, `<< s p o >>` is a quoted triple under RDF-star and a

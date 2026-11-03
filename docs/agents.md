@@ -155,6 +155,8 @@ graph in memory, queryable by every tool as `chat:<name>` until the extension
 restarts — no granted folder needed. Long files go in several parts; `save_as`
 keeps the result as a `.rete` in a granted folder. A `.rete` itself is binary
 and cannot travel through the chat: put it in a granted folder or give its URL.
+The same goes for a Jelly (`.jelly`) file: `load_rdf` and `build_rete` read it by
+`path` from a granted folder.
 
 **Long queries do not time out.** Claude gives up on a tool call after 60 s,
 and a query that visits thousands of scattered entities in a large published

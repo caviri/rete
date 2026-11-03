@@ -54,7 +54,7 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | `describe_entity` | Every statement about one IRI, both directions |
 | `validate_shacl` | SHACL Core report; only the shapes' targets are read |
 | `build_rete` | RDF text (Turtle, TriG, N-Triples, N-Quads) → a new `.rete` in a granted folder, offline; `quoted_triple_syntax: "rdf12"` reads RDF 1.2 Turtle/TriG (default `rdf-star`, as `rete build`) |
-| `load_rdf` | RDF shared in the chat → a graph held in memory, `chat:<name>`, no folder needed; `append` adds a part, `path` reads a file in a granted folder, `save_as` keeps it as a `.rete` |
+| `load_rdf` | RDF shared in the chat → a graph held in memory, `chat:<name>`, no folder needed; `append` adds a part, `path` reads a file in a granted folder (also a binary `.jelly` file), `save_as` keeps it as a `.rete` |
 
 Every `dataset` argument accepts a local file name or path, a catalogue key,
 an `https://` URL to any published `.rete`, or `chat:<name>`. Local files win

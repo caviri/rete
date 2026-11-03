@@ -95,7 +95,7 @@ enum Command {
     },
     /// Build a `.rete` file from one or more RDF inputs (merged into one file).
     ///
-    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`, plus
+    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`/`.jelly`, plus
     /// `.rdf`/`.owl`/`.rdfxml` (RDF/XML — how most OWL ontologies ship). Any input
     /// may be **gzipped** (`.ttl.gz`, `.trig.gz`, …) — compression is detected from
     /// the bytes and decompressed while streaming, so a dump never has to be
@@ -109,8 +109,8 @@ enum Command {
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly"])]
         format: Option<String>,
         /// Fold every named graph into the **default graph**, dropping the graph
         /// term. Dumps that put all their data inside named graphs — TriG
@@ -344,8 +344,8 @@ enum Command {
         /// Input files (or `-` for stdin).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly"])]
         format: Option<String>,
         /// Fail on the first invalid IRI instead of counting them (same rule as
         /// `rete build --strict`).
@@ -373,8 +373,8 @@ enum Command {
         /// Input files (N-Triples / N-Quads / Turtle / TriG, gzipped or not).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq | ttl | trig.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | jelly.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "jelly"])]
         format: Option<String>,
         /// Read only this many MiB and extrapolate (default: read everything).
         #[arg(long)]
