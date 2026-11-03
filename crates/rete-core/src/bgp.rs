@@ -2055,9 +2055,6 @@ mod tests {
     /// the same one.
     #[test]
     fn a_fat_predicate_estimates_alike_in_both_layouts() {
-        let _serial = crate::build_progress::tests::SERIAL
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let mut owned: Vec<(String, String, String)> = Vec::new();
         for i in 0..120_000 {
             let s = format!("<http://ex/s{i:06}>");
@@ -2111,9 +2108,6 @@ mod tests {
     /// (skewed ids put a rare class beside a huge one).
     #[test]
     fn a_rare_object_of_a_fat_predicate_estimates_small_in_both_layouts() {
-        let _serial = crate::build_progress::tests::SERIAL
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
         let mut owned: Vec<(String, String, String)> = Vec::new();
         for i in 0..120_000 {
@@ -2170,9 +2164,6 @@ mod tests {
     /// on a 0x06 file against 1.3 s on its 0x05 copy).
     #[test]
     fn a_tile_span_is_the_same_in_both_layouts() {
-        let _serial = crate::build_progress::tests::SERIAL
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
         let mut owned: Vec<(String, String, String)> = Vec::new();
         for i in 0..30_000 {
