@@ -23,7 +23,7 @@ Until the 1.0.0 release, pin the exact 0.x version:
 
 ```toml
 [dependencies]
-rete-core = "=0.5.0"
+rete-core = "=0.5.1"
 ```
 
 The default feature set supports compressed `.rete` files. Optional parallel or

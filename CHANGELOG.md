@@ -5,6 +5,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-03
+
 ### Fixed
 
 - **The card's cost measurement stays inside `--memory-budget-mb`** (G37). With a
