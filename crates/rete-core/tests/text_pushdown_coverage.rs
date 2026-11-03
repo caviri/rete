@@ -399,7 +399,9 @@ fn graph_var_walk_visits_only_graphs_with_candidates() {
     let (d0, d1) = (h.dictionary_offset, h.dictionary_offset + h.dictionary_len);
     let plain = Rete::open(&build_with(20_000, GraphLayout::Quad, None)).unwrap();
     let q = "SELECT ?s ?o ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(CONTAINS(?o, \"created\")) }";
-    let walk = "SELECT ?s ?o ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(?o, \"created\")) }";
+    // The filter sits inside the GRAPH block, which keeps the pattern off the
+    // quad-tile scan (a bare `?s ?p ?o` streams from the tiles and reads no names).
+    let walk = "SELECT ?s ?o ?g WHERE { GRAPH ?g { ?s ?p ?o FILTER(STRSTARTS(?o, \"created\")) } }";
     // Dictionary bytes a fresh lazy open reads to answer `query`.
     let dict_bytes = |query: &str| {
         let rec = Recorded::new(bytes.clone());

@@ -4010,6 +4010,15 @@ impl NamedGraphsSlot {
         }
     }
 
+    /// [`name_at`](Self::name_at) without keeping the name: a quad-index walk
+    /// over many graphs must not memoise one string per graph it passes.
+    fn name_owned(&self, dict: &Dictionary, i: usize, exhaustive: bool) -> Option<String> {
+        match self {
+            NamedGraphsSlot::Quad(q) => q.name_owned(dict, i, exhaustive),
+            _ => self.name_at(dict, i, exhaustive).map(str::to_owned),
+        }
+    }
+
     fn graph_at<'a>(
         &'a self,
         dict: &Dictionary,
@@ -5187,17 +5196,56 @@ impl Rete {
         self.named_graphs.graph_at(&self.dict, i, false)
     }
 
-    /// [`named_graph_name_at`](Self::named_graph_name_at) under a declared
-    /// demand: `exhaustive = true` tells a lazy walk the caller will visit
-    /// every graph, so it may read the section in bulk chunks. Purely a fetch
-    /// strategy — results are identical either way. Only the SPARQL evaluator
-    /// sets it, from shapes where full consumption is provable.
-    pub(crate) fn named_graph_name_at_demand(&self, i: usize, exhaustive: bool) -> Option<&str> {
-        self.named_graphs.name_at(&self.dict, i, exhaustive)
+    /// The `i`-th graph's name as an owned string that the file does **not**
+    /// keep: what a walk over millions of graphs uses, so the names it has
+    /// passed are not all held at once. `exhaustive = true` tells a lazy walk
+    /// the caller will visit every graph, so it may read the section in bulk
+    /// chunks; purely a fetch strategy, results are identical either way. Only
+    /// the SPARQL evaluator sets it, from shapes where full consumption is
+    /// provable.
+    pub(crate) fn named_graph_name_owned_demand(
+        &self,
+        i: usize,
+        exhaustive: bool,
+    ) -> Option<String> {
+        self.named_graphs.name_owned(&self.dict, i, exhaustive)
+    }
+
+    /// The ordinal of the quad-index graph named `iri`: a dictionary lookup and
+    /// a directory binary search. `None` for another file layout, or no such
+    /// graph.
+    pub(crate) fn named_graph_ordinal(&self, iri: &str) -> Option<usize> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.ordinal_of_iri(&self.dict, iri),
+            _ => None,
+        }
+    }
+
+    /// The ordinal of the quad-index graph whose subject id is `g` (as
+    /// [`named_quad_scan`](Self::named_quad_scan) yields it).
+    pub(crate) fn named_graph_ordinal_of_id(&self, g: u32) -> Option<usize> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.ordinal_of_id(g),
+            _ => None,
+        }
+    }
+
+    /// A streaming scan of the quads matching `pat` (dictionary ids: subject,
+    /// predicate, object) over every named graph of a quad-index file, as
+    /// `(graph subject id, (s, p, o))`; see [`crate::quad::QuadScan`]. `None`
+    /// for another layout, or when the section cannot be read.
+    pub(crate) fn named_quad_scan(
+        &self,
+        pat: (Option<u32>, Option<u32>, Option<u32>),
+    ) -> Option<crate::quad::QuadScan> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.scan(pat),
+            _ => None,
+        }
     }
 
     /// [`named_graph_at`](Self::named_graph_at) under a declared demand: see
-    /// [`named_graph_name_at_demand`](Self::named_graph_name_at_demand).
+    /// [`named_graph_name_owned_demand`](Self::named_graph_name_owned_demand).
     pub(crate) fn named_graph_at_demand(
         &self,
         i: usize,

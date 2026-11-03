@@ -832,6 +832,72 @@ fn scan_rows<'q>(
     )
 }
 
+/// `GRAPH ?g { one pattern }` over a quad-index file: every match of the
+/// pattern in any graph as a row that also binds slot `gslot` to the graph,
+/// streamed from one pass over the tiles (no view per graph). `None` when this
+/// does not apply (not a single pattern, the graph variable also inside the
+/// pattern, a file without a quad index): the caller falls back to walking the
+/// graphs. A constant the dictionary cannot place gives an empty stream.
+pub(crate) fn quad_scan_rows<'q>(
+    ctx: &'q Ctx<'q>,
+    patterns: &[TriplePattern],
+    gslot: usize,
+) -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
+    let [p] = patterns else {
+        return None;
+    };
+    if [&p.s, &p.p, &p.o]
+        .iter()
+        .any(|t| matches!(t, PatternTerm::Var(v) if ctx.slots.slot(v) == Some(gslot)))
+    {
+        return None;
+    }
+    let dict = ctx.rete.dictionary();
+    let Some(lowered) = lower(patterns, ctx) else {
+        return Some(Box::new(std::iter::empty()));
+    };
+    let t = lowered[0];
+    let (Some(sid), Some(pid), Some(oid)) = (
+        const_subject(&t.0, dict),
+        const_predicate(&t.1),
+        const_object(&t.2, dict),
+    ) else {
+        return Some(Box::new(std::iter::empty()));
+    };
+    let scan = ctx.rete.named_quad_scan((sid, pid, oid))?;
+    Some(Box::new(scan.filter_map(move |(g, triple)| {
+        let mut row = triple_row(ctx, &t, triple)?;
+        row[gslot] = Some(Val::Id(dict.subject_node(g) as i64));
+        Some(row)
+    })))
+}
+
+/// A triple pattern as the dictionary ids of its constants (subject, predicate, object).
+pub(crate) type ScanPattern = (Option<u32>, Option<u32>, Option<u32>);
+
+/// The pattern of a BGP that best narrows a scan over every graph, as the
+/// dictionary ids of its constants: the one with the most constants, a bound
+/// subject or object weighing more than a bound predicate. `None` when no
+/// pattern has a constant, or one cannot be placed in the dictionary.
+pub(crate) fn driver_pattern(ctx: &Ctx, patterns: &[TriplePattern]) -> Option<ScanPattern> {
+    let dict = ctx.rete.dictionary();
+    let lowered = lower(patterns, ctx)?;
+    let mut best: Option<(u32, ScanPattern)> = None;
+    for t in &lowered {
+        let (sid, pid, oid) = (
+            const_subject(&t.0, dict)?,
+            const_predicate(&t.1)?,
+            const_object(&t.2, dict)?,
+        );
+        let score =
+            3 * u32::from(sid.is_some()) + u32::from(pid.is_some()) + 3 * u32::from(oid.is_some());
+        if score > 0 && best.is_none_or(|(b, _)| score > b) {
+            best = Some((score, (sid, pid, oid)));
+        }
+    }
+    best.map(|(_, pat)| pat)
+}
+
 /// Scan one lowered pattern into a materialized relation, returning the rows
 /// and the slots the pattern binds. `None` = a constant is unsatisfiable.
 fn pattern_rows(
