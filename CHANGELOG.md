@@ -5,6 +5,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-03
+
 ### Added
 
 - **Jelly RDF input** (`rete build file.jelly`). [Jelly](https://jelly-rdf.github.io/) is a
