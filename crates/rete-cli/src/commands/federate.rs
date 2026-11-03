@@ -2,7 +2,7 @@
 //! `.rete` sources (local paths and/or http(s) URLs), with summary-based routing
 //! and a term-level merge of the per-source results.
 
-use rete_core::{eval_query, query_predicates, QueryOutput, SummaryView};
+use rete_core::{eval_query, query_predicates, FederationPlan, QueryOutput, SummaryView};
 
 use crate::commands::range_source::{open_local_budget, query_budget};
 use crate::commands::render::print_query_output;
@@ -77,14 +77,20 @@ fn eval_source(source: &str, query: &str) -> anyhow::Result<(QueryOutput, Option
 ///   the query's concrete predicates (read from each summary; index untouched).
 /// - **Merge**: SELECT → union + dedup rows (stable order); ASK → logical OR;
 ///   CONSTRUCT → union + dedup triples.
+/// - **Solution modifiers** (more than one source queried): ORDER BY, OFFSET and
+///   LIMIT apply to the merged rows (LIMIT+OFFSET also goes to each source as an
+///   upper bound); `COUNT`/`SUM` (with `disjoint`), `MIN` and `MAX` merge across
+///   sources, grouped by the GROUP BY variables; anything else that cannot merge
+///   is refused. See [`FederationPlan`].
 ///
-/// This is UNION federation (no cross-file joins); aggregates/LIMIT are per
-/// source then unioned. Per-source diagnostics go to stderr.
+/// This is UNION federation (no cross-file joins). Per-source diagnostics go to
+/// stderr.
 pub(crate) fn federate(
     sources: &[String],
     query: &str,
     json: bool,
     route: bool,
+    disjoint: bool,
 ) -> anyhow::Result<()> {
     use std::collections::BTreeSet;
     use std::time::Instant;
@@ -117,11 +123,27 @@ pub(crate) fn federate(
         }
     }
 
+    // With several sources queried, the solution modifiers are applied to the
+    // merged rows and each source runs the query the plan gives it. One source
+    // answers the whole query itself.
+    let plan = if queried.len() > 1 {
+        Some(FederationPlan::new(query, disjoint).map_err(|e| anyhow::anyhow!("{e}"))?)
+    } else {
+        None
+    };
+    let source_query = match &plan {
+        Some(p) => p.source_query(query).map_err(|e| anyhow::anyhow!("{e}"))?,
+        None => query.to_string(),
+    };
+
     // Evaluate each queried source and merge (union + dedup) into one output.
-    let mut acc = MergeAcc::default();
+    let mut acc = MergeAcc {
+        keep_duplicates: plan.as_ref().is_some_and(|p| !p.dedup_rows()),
+        ..MergeAcc::default()
+    };
     for source in &queried {
         let start = Instant::now();
-        let (out, fetched) = eval_source(source, query)?;
+        let (out, fetched) = eval_source(source, &source_query)?;
         let contributed = acc.absorb(out);
         match fetched {
             Some((bytes, requests)) => eprintln!(
@@ -134,7 +156,10 @@ pub(crate) fn federate(
             ),
         }
     }
-    let result = acc.into_output();
+    let mut result = acc.into_output();
+    if let (Some(plan), QueryOutput::Select(_, rows)) = (&plan, &mut result) {
+        *rows = plan.finish(std::mem::take(rows));
+    }
 
     print_query_output(&result, json);
 
@@ -166,6 +191,8 @@ pub(crate) struct MergeAcc {
     select_vars: Vec<String>,
     select_rows: Vec<rete_core::Binding>,
     select_seen: std::collections::BTreeSet<String>,
+    /// Keep equal rows from different sources (an aggregate's partial answers).
+    keep_duplicates: bool,
     ask_any: bool,
     construct: Vec<(String, String, String)>,
     construct_seen: std::collections::BTreeSet<(String, String, String)>,
@@ -192,7 +219,9 @@ impl MergeAcc {
                 for row in rows {
                     // Canonical key over the projected vars so identical rows
                     // dedup across sources regardless of map iteration order.
-                    if self.select_seen.insert(row_key(&self.select_vars, &row)) {
+                    if self.keep_duplicates
+                        || self.select_seen.insert(row_key(&self.select_vars, &row))
+                    {
                         self.select_rows.push(row);
                     }
                 }

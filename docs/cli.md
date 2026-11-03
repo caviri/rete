@@ -2069,7 +2069,7 @@ rete sparql-url https://host/data.rete --query-file lookup.rq   # a long query
 
 ## Federation
 
-### `rete federate <sources…> (--query "<SPARQL>" | --query-file <path>) [--json] [--no-route]`
+### `rete federate <sources…> (--query "<SPARQL>" | --query-file <path>) [--json] [--no-route] [--disjoint]`
 Run one SPARQL query across several `.rete` **sources** — local file paths and/or
 `http(s)://` URLs, mixed — and merge the results at the **term (string) level**:
 `SELECT` rows are unioned + deduped, `ASK` is OR'd across sources, `CONSTRUCT`
@@ -2088,9 +2088,12 @@ silently dropping that source's rows. URL sources used to be read eagerly
 published files in one federated query ran a 4 GiB container out of memory.
 
 This is **union** federation — correct for sharded data where each file
-independently yields complete rows. It does **not** do cross-file joins, and
-aggregates (`COUNT`/`GROUP BY`) and `LIMIT` are evaluated **per source** then
-unioned (a federated `COUNT(*)` returns per-source counts, not a global sum). See
+independently yields complete rows. It does **not** do cross-file joins. With
+several sources queried, `ORDER BY`, `OFFSET` and `LIMIT` apply to the merged rows
+(`LIMIT` is also sent to each source as an upper bound), and `MIN`, `MAX` and, with
+`--disjoint` (no triple is stored in two sources), `COUNT` and `SUM` merge across
+sources, per `GROUP BY` key; `AVG`, `GROUP_CONCAT`, `HAVING` and the like are refused
+with the reason instead of being answered per source. See
 [Federated queries](federation.md) for the full model, limitations, and a real
 OpenCitations multi-shard example.
 

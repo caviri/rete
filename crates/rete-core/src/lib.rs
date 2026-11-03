@@ -296,9 +296,9 @@ pub use sparql::{
     eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
     eval_query_with_warnings, eval_select_communities, eval_sparql, eval_sparql_reasoned,
     parse_select, partition_plan, query_predicates, routed_triple_pattern, summary_query_shape,
-    warnings_json, Agg, CommunityPartial, CommunitySelect, FExpr, GraphTarget, GroupSpec, Op,
-    PartitionPlan, PathAst, Plan, QueryOpts, QueryOutput, QueryWarning, Rep, RoutedTriplePattern,
-    Select, SparqlError, SummaryQueryShape, WarningSeverity,
+    warnings_json, Agg, CommunityPartial, CommunitySelect, FExpr, FederationPlan, GraphTarget,
+    GroupSpec, Op, PartitionPlan, PathAst, Plan, QueryOpts, QueryOutput, QueryWarning, Rep,
+    RoutedTriplePattern, Select, SparqlError, SummaryQueryShape, WarningSeverity,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use sysmem::{
