@@ -558,7 +558,7 @@ fn a_small_left_side_probes_a_fat_optional_in_both_layouts() {
         assert_eq!(select(&rete, q), want, "{name}");
         let i = inside(&rec.take(), idx);
         assert!(
-            i < (idx.1 - idx.0) / 8,
+            i < (idx.1 - idx.0) / if idx_kind.is_some() { 8 } else { 4 },
             "{name}: {i} of {} bytes read for 1000 probes of a 100,000-row predicate",
             idx.1 - idx.0
         );
@@ -568,7 +568,9 @@ fn a_small_left_side_probes_a_fat_optional_in_both_layouts() {
 /// `?s a <rare class> . ?s <other> ?x`: the rare class is a handful of rows of
 /// a predicate that fills thousands of tiles, so the join seeds from it and
 /// probes `other` per subject. Seeding from `other` (100,000 rows) reads a large
-/// part of the index. Both layouts must read a sliver of it.
+/// part of the index. Both layouts must read a sliver of it (a 0x05 file has no
+/// separate index region, so its figure is the whole file, dictionary reads
+/// included, and its bound is looser).
 #[test]
 fn a_rare_class_seeds_the_join_in_both_layouts() {
     let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
@@ -611,7 +613,7 @@ fn a_rare_class_seeds_the_join_in_both_layouts() {
         assert_eq!(select(&rete, &q), want, "{name}");
         let i = inside(&rec.take(), idx);
         assert!(
-            i < (idx.1 - idx.0) / 8,
+            i < (idx.1 - idx.0) / if idx_kind.is_some() { 8 } else { 4 },
             "{name}: {i} of {} index bytes for a 20-row join",
             idx.1 - idx.0
         );
