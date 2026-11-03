@@ -21,6 +21,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `rete_build(raw, "jelly")`, Java `Rete.build(byte[], "jelly")`, and the Claude Desktop
   extension's `load_rdf` / `build_rete` by `path`. Writing Jelly is not part of this.
 
+## [0.5.2] - 2026-11-03
+
 ### Fixed
 
 - **`rete convert` measures the starter queries again on the converted file** (G46). The
