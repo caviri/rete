@@ -22,6 +22,7 @@
 //! characters that delimit an IRI's parts.
 
 use proptest::prelude::*;
+use proptest::test_runner::FileFailurePersistence;
 use rete_core::iri::iri_content_defect;
 
 /// What Oxigraph's N-Triples reader makes of `<content>` in subject position.
@@ -124,6 +125,40 @@ fn the_cases_the_design_turns_on() {
     }
 }
 
+/// G47: an empty port (`port = *DIGIT`) and empty userinfo are legal, after an
+/// IP-literal as after any other host. These were the shrunk proptest failures,
+/// plus the neighbours that must keep agreeing in both directions.
+#[test]
+fn empty_port_and_partial_userinfo_agree() {
+    for s in [
+        // The shrunk cases.
+        "http://@[::]:/path",
+        "http://y@[1::]:/path",
+        "http://:y@[1::]:/path",
+        // Empty port after each host kind.
+        "http://[::1]:/path",
+        "http://example.org:/path",
+        "http://192.168.0.1:/path",
+        "http://[v1.x]:/path",
+        "http://[v1.x]/path",
+        // Userinfo shapes.
+        "http://@example.org/path",
+        "http://:@example.org/path",
+        "http://u:@example.org:/path",
+        "http://u:@[::1]:8080/path",
+        "http://:@[::1]:/path",
+        "http://u:p@[v1.x]:80/path",
+        // Near misses that must still be rejected.
+        "http://[::1]:x/path",
+        "http://[::1]x/path",
+        "http://[]:/path",
+        "http://@[::1:/path",
+        "http://[v1.x:/path",
+    ] {
+        assert_agrees(s);
+    }
+}
+
 /// Every ASCII character, dropped into every structural position of an IRI.
 ///
 /// This is the sweep that would have caught `<https://::1>` before it shipped:
@@ -204,7 +239,14 @@ const ALPHABET: &[char] = &[
 ];
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(4096))]
+    // Integration tests have no lib.rs/main.rs beside them, so the default
+    // (`SourceParallel`) persists nothing; `WithSource` writes
+    // `iri_differential.proptest-regressions` next to this file.
+    #![proptest_config(ProptestConfig {
+        cases: 4096,
+        failure_persistence: Some(Box::new(FileFailurePersistence::WithSource("proptest-regressions"))),
+        ..ProptestConfig::default()
+    })]
 
     /// Free-form strings over that alphabet.
     #[test]
