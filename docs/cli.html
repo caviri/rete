@@ -1121,7 +1121,7 @@ one), and writes the SCHEMA section and the community-only pyramid-meta <code>re
 writes. The named-graph layout is kept the same way: a quad-index input
 (<code>--named-graphs quad</code>) comes out as a quad-index file, and <code>merge</code> writes one
 when any of its inputs is one.</p>
-<h3 id="rete-convert-inrete--o-outrete---quad-clustering-autographorder---no-label-index"><code>rete convert &lt;in.rete&gt; -o &lt;out.rete&gt; [--quad-clustering auto|graph|order] [--no-label-index]</code></h3>
+<h3 id="rete-convert-inrete--o-outrete---quad-clustering-autographorder---no-label-index---no-card-costs---memory-budget-mb-n"><code>rete convert &lt;in.rete&gt; -o &lt;out.rete&gt; [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]</code></h3>
 <p>Turn a format <code>0x05</code> file into format <code>0x06</code> (<a href="SPEC.html#4-file-layout">SPEC §4</a>)
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
@@ -1135,7 +1135,14 @@ without a record gets one holding just that). The output has the content hash
 <code>rete build</code> gives the same data and flags — not the <code>0x05</code> file's, since the
 format is part of the identity — and, record apart, the same bytes; the record
 is outside the hash. <code>RETE_BUILD_RECORD=reproducible</code> makes two conversions of
-one file byte-identical. Two inputs take more than a copy:</p>
+one file byte-identical.</p>
+<p>The card's starter queries are run again, cold, on the converted file, and their
+costs are recorded as <code>query_costs</code> in the new <code>conversions</code> entry — the source
+record's own costs were measured on the old layout and are kept as they were,
+but no longer describe this file. <code>rete card</code>, <code>card-audit</code> and
+<code>build_record()</code> show the conversion's. <code>--no-card-costs</code> skips the run;
+<code>--memory-budget-mb</code> bounds it as it does the build's. Two inputs take more than
+a copy:</p>
 <ul>
 <li><strong>Per-graph named graphs</strong> (the <code>0x05</code> NAMED_GRAPHS section) are re-encoded as
 a quad index from the decoded statements, as <code>repyramid</code> would. This reads the

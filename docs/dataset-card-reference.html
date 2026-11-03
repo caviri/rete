@@ -1332,7 +1332,20 @@ refused to ship (below). Absent on a healthy build.</p>
 kept as it was, so <code>engine</code>, <code>inputs</code> and <code>counts</code> still describe the build
 that made the data. A file converted without a record gets one holding just
 this. <code>rete card</code> prints a <code>converted</code> line, <code>--json</code> carries the list, and
-Python's <code>rete_graph.build_record()</code> returns it with the rest.</p>
+Python's <code>rete_graph.build_record()</code> returns it with the rest. An entry also
+carries <code>query_costs</code>, in the shape of the record's own (below): the card's
+starter queries measured cold on the <strong>converted</strong> file, with
+<code>context.layout</code> set to <code>0x06 (converted)</code>. The record's top-level
+<code>query_costs</code> stay as the source's build measured them, on the old layout, and
+a layout change moves the figures a lot (OpenAIRE: 142 MB per query before,
+5-42 MB after). Readers use the newest conversion's costs when it has them,
+else the top-level ones: <code>rete card</code> (its <code>--json</code> puts them in
+<code>build.query_costs</code> and moves the build's own to <code>build.source_query_costs</code>),
+<code>card-audit</code>'s <code>recorded</code>, and <code>build_record()</code> (same swap). The entry has no
+<code>query_costs</code> with <code>--no-card-costs</code>, for a card-less file, or for a card with
+no queries. <code>rete recard</code> and <code>card-audit --write-costs</code> clear the entries'
+costs, being newer. <code>rete convert --memory-budget-mb</code> bounds the measurement
+as it does the build's.</p>
 </li>
 </ul>
 <p><code>rete card</code> prints it as a <code>build:</code> block. This one is the OpenCitations Meta

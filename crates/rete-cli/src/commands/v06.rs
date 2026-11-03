@@ -52,6 +52,15 @@ pub(crate) fn patch_record_in_place(path: &std::path::Path, info: &[u8]) -> anyh
     Ok(true)
 }
 
+/// What `rete convert` does about the card's starter-query costs.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CardCosts {
+    /// `--no-card-costs`: leave the costs unmeasured.
+    pub skip: bool,
+    /// `--memory-budget-mb`: the guard the measurement runs under.
+    pub memory_budget_mb: Option<u64>,
+}
+
 /// `rete convert IN -o OUT`: a `0x05` file to `0x06`, reading its sections
 /// through ranges (never text), payload copied verbatim. A file whose named
 /// graphs are stored per graph (kind 5) is re-encoded as a quad index from its
@@ -61,6 +70,7 @@ pub(crate) fn convert(
     output: &str,
     quad: Option<&str>,
     label_index: bool,
+    costs: CardCosts,
 ) -> anyhow::Result<()> {
     use rete_core::v06::write::QuadClustering;
     if std::path::Path::new(input) == std::path::Path::new(output) {
@@ -88,9 +98,21 @@ pub(crate) fn convert(
     // The record says what happened: the source's own record, as it was, with
     // this conversion appended (or just the conversion, for a file without one).
     let in_len = rete_core::RangeReader::len(&reader);
-    let conversion = conversion_entry(input, &reader, quad, label_index)?;
+    let mut conversion = conversion_entry(input, &reader, quad, label_index)?;
     let source_record = rete_core::v06::write::source_build_record(&reader)
         .map_err(|e| anyhow::anyhow!("reading {input}: {e}"))?;
+    // The card's queries are copied verbatim, so the source's card says which
+    // ones to measure. Their costs depend on the new layout, so they are measured
+    // on the file once written and sealed into a record reserved at its widest.
+    let starters = if costs.skip {
+        None
+    } else {
+        super::card::load_card_ranged(&reader)?.filter(|c| !c.queries.is_empty())
+    };
+    if let Some(card) = &starters {
+        conversion.query_costs = Some(super::buildinfo::widest_conversion_costs(&card.queries));
+    }
+    let measured = starters.is_some();
     let record = super::buildinfo::with_conversion(source_record.as_deref(), &conversion)?;
     let tmp = std::path::PathBuf::from(format!("{output}.convert-tmp"));
     let written = {
@@ -106,7 +128,14 @@ pub(crate) fn convert(
             Err(rete_core::format::FileError::Container(m)) if m.contains("kind 5") => {
                 drop(out);
                 let _ = std::fs::remove_file(&tmp);
-                return convert_per_graph(input, output, label_index, &record);
+                convert_per_graph(input, output, label_index, &record)?;
+                return seal_costs(
+                    output,
+                    measured,
+                    source_record.as_deref(),
+                    conversion,
+                    costs,
+                );
             }
             Err(e) => {
                 drop(out);
@@ -117,6 +146,16 @@ pub(crate) fn convert(
         std::io::Write::flush(&mut out)?;
         w
     };
+    if let Err(e) = seal_costs(
+        &tmp.to_string_lossy(),
+        measured,
+        source_record.as_deref(),
+        conversion,
+        costs,
+    ) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     std::fs::rename(&tmp, output)?;
     eprintln!(
         "convert: wrote {output} — format 0x06, {} bytes ({:+.2}% vs {} bytes), content hash {}, {:.1}s",
@@ -127,6 +166,25 @@ pub(crate) fn convert(
         started.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+/// Measure the starter queries on the converted file at `path` and patch the
+/// record, now with the measured costs in the conversion entry, into the
+/// reservation the widest figures made. Nothing else in the file changes.
+fn seal_costs(
+    path: &str,
+    measured: bool,
+    source_record: Option<&[u8]>,
+    mut conversion: super::buildinfo::Conversion,
+    costs: CardCosts,
+) -> anyhow::Result<()> {
+    if !measured {
+        return Ok(());
+    }
+    conversion.query_costs =
+        super::buildinfo::measure_conversion_costs(path, costs.memory_budget_mb)?;
+    let record = super::buildinfo::with_conversion(source_record, &conversion)?;
+    super::buildinfo::patch_build_info(std::path::Path::new(path), &record)
 }
 
 /// This conversion, for the build record: the engine, the time, the command
@@ -160,6 +218,7 @@ fn conversion_entry(
         source_content_hash: hex16(&h.content_hash),
         source_bytes: len,
         source_name: Some(bi::file_name(input)),
+        query_costs: None,
     })
 }
 

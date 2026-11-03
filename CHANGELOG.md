@@ -5,6 +5,24 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rete convert` measures the starter queries again on the converted file** (G46). The
+  `query_costs` a `0x05` build recorded describe the old layout (OpenAIRE: about 142 MB and
+  139-193 requests per query; on its `0x06` conversion the same queries read 5-42 MB in 5-66
+  requests), so `rete card`, `card-audit` and Python's `build_record()` showed costs of a
+  different file. Convert now runs the card's queries cold on the file it wrote, under the same
+  guard as the build (`--memory-budget-mb`, a query it stops stays, flagged `over_budget`), and
+  records the figures as `query_costs` in the new `conversions` entry, with
+  `context.layout: "0x06 (converted)"`. The source's own record, `query_costs` included, is
+  still kept byte for byte, and the content hash does not change. Readers use the newest
+  conversion's costs when it has them, else the top-level ones: `rete card` (text and `--json`,
+  where the build's own figures move to `build.source_query_costs`), `card-audit`'s `recorded`
+  (so `agrees` is `true` on a converted file) and `rete_graph.build_record()`. `--no-card-costs`
+  skips the measurement; a card-less file or a card with no queries gets no costs. `rete recard`
+  and `card-audit --write-costs` measure the file as it is, so they replace the figures a
+  conversion recorded.
+
 ## [0.5.1] - 2026-11-03
 
 ### Fixed

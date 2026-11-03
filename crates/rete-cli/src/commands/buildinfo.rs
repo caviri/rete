@@ -129,6 +129,36 @@ pub(crate) struct Conversion {
     /// Its file name (no directory).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_name: Option<String>,
+    /// The card's starter queries measured on the **converted** file, in the
+    /// shape of [`BuildInfo::query_costs`] (which still holds the source's own
+    /// figures, measured on the old layout). Absent for a card-less file, a
+    /// card with no queries, and `--no-card-costs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_costs: Option<QueryCosts>,
+}
+
+/// [`CostContext::layout`] of the figures a conversion measured.
+pub(crate) const LAYOUT_CONVERTED: &str = "0x06 (converted)";
+
+impl BuildInfo {
+    /// The starter-query costs that describe this file as it is now: the newest
+    /// conversion's when one measured them, else the top-level ones.
+    pub(crate) fn current_query_costs(&self) -> Option<&QueryCosts> {
+        self.conversions
+            .iter()
+            .rev()
+            .find_map(|c| c.query_costs.as_ref())
+            .or(self.query_costs.as_ref())
+    }
+
+    /// Drop the costs the conversions measured: a command that has just
+    /// measured the file again (`recard`, `card-audit --write-costs`) owns the
+    /// top-level figures, and the older ones must not shadow them.
+    pub(crate) fn clear_conversion_costs(&mut self) {
+        for c in &mut self.conversions {
+            c.query_costs = None;
+        }
+    }
 }
 
 /// `record` (a stored build record, raw JSON, possibly space-padded; `None`
@@ -541,6 +571,10 @@ pub(crate) struct CostContext {
     /// The caveat, stored where the numbers are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The file layout the figures were measured on, when it is not the file's
+    /// own build (`0x06 (converted)` for a conversion's costs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
 }
 
 /// One starter query's measured cost. Each run is **cold**: a fresh lazy open
@@ -1987,6 +2021,7 @@ pub(crate) fn cost_context(transport: &str) -> CostContext {
         engine: Some(builder_version()),
         transport: Some(transport.to_string()),
         note: Some(COST_NOTE.to_string()),
+        layout: None,
     }
 }
 
@@ -2439,11 +2474,14 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
             c.source_content_hash
         );
     }
-    if let Some(costs) = &info.query_costs {
+    if let Some(costs) = info.current_query_costs() {
         let _ = writeln!(
             out,
             "{I}query costs (cold; bytes/requests portable, ms = one machine's debug ref):"
         );
+        if let Some(l) = &costs.context.layout {
+            let _ = writeln!(out, "        measured on   : {l}");
+        }
         // The transport belongs WITH the numbers: "1.4 MB in 76 requests" is
         // only a cost once you know what did the requesting, and these figures
         // can now come either from the build (an in-memory image) or from a
@@ -2491,6 +2529,80 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
         out.pop();
     }
     out
+}
+
+/// The figures to reserve for a conversion's costs: one widest entry per
+/// starter query, so the record can be sealed in place once they are measured.
+pub(crate) fn widest_conversion_costs(queries: &[ExampleQuery]) -> QueryCosts {
+    let info = BuildInfo {
+        query_costs: Some(conversion_costs(
+            queries
+                .iter()
+                .map(|q| QueryCost {
+                    id: q.id.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+        )),
+        ..Default::default()
+    };
+    with_widest_costs(&info)
+        .query_costs
+        .expect("costs were set")
+}
+
+/// How a conversion reads the file it has just written.
+const CONVERT_TRANSPORT: &str =
+    "local file; cold lazy open per query; logical range reads, no block cache";
+
+fn conversion_costs(queries: Vec<QueryCost>) -> QueryCosts {
+    let mut c = query_costs(queries);
+    c.context = cost_context(CONVERT_TRANSPORT);
+    c.context.layout = Some(LAYOUT_CONVERTED.to_string());
+    c
+}
+
+/// Measure the card's starter queries cold on the converted `0x06` file at
+/// `path`, as `rete build` measures its own file. `None` when the file has no
+/// card or the card has no queries.
+pub(crate) fn measure_conversion_costs(
+    path: &str,
+    memory_budget_mb: Option<u64>,
+) -> anyhow::Result<Option<QueryCosts>> {
+    let reader = super::range_source::LocalRangeReader::open(path)?;
+    let Some(card) = super::card::load_card_ranged(&reader)? else {
+        return Ok(None);
+    };
+    if card.queries.is_empty() {
+        return Ok(None);
+    }
+    let source: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
+    let mut costs = conversion_costs(
+        card.queries
+            .iter()
+            .map(|q| QueryCost {
+                id: q.id.clone(),
+                ..Default::default()
+            })
+            .collect(),
+    );
+    let over = remeasure_costs(
+        source,
+        &card.queries,
+        &mut costs,
+        memory_budget_mb.map(MeasureMem::for_budget_mb),
+    );
+    eprintln!(
+        "convert: measured {} starter quer{} on the converted file ({over} over budget)",
+        costs.queries.len(),
+        if costs.queries.len() == 1 { "y" } else { "ies" },
+    );
+    if reproducible() {
+        for q in &mut costs.queries {
+            q.debug_ms = 0;
+        }
+    }
+    Ok(Some(costs))
 }
 
 #[cfg(test)]

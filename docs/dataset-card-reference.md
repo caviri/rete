@@ -807,7 +807,20 @@ card) carrying:
   kept as it was, so `engine`, `inputs` and `counts` still describe the build
   that made the data. A file converted without a record gets one holding just
   this. `rete card` prints a `converted` line, `--json` carries the list, and
-  Python's `rete_graph.build_record()` returns it with the rest.
+  Python's `rete_graph.build_record()` returns it with the rest. An entry also
+  carries `query_costs`, in the shape of the record's own (below): the card's
+  starter queries measured cold on the **converted** file, with
+  `context.layout` set to `0x06 (converted)`. The record's top-level
+  `query_costs` stay as the source's build measured them, on the old layout, and
+  a layout change moves the figures a lot (OpenAIRE: 142 MB per query before,
+  5-42 MB after). Readers use the newest conversion's costs when it has them,
+  else the top-level ones: `rete card` (its `--json` puts them in
+  `build.query_costs` and moves the build's own to `build.source_query_costs`),
+  `card-audit`'s `recorded`, and `build_record()` (same swap). The entry has no
+  `query_costs` with `--no-card-costs`, for a card-less file, or for a card with
+  no queries. `rete recard` and `card-audit --write-costs` clear the entries'
+  costs, being newer. `rete convert --memory-budget-mb` bounds the measurement
+  as it does the build's.
 
 `rete card` prints it as a `build:` block. This one is the OpenCitations Meta
 development sample (1 work in 5,000, with provenance) built in a 4 GiB

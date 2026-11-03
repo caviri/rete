@@ -770,9 +770,24 @@ def build_record(image: bytes) -> Optional[Dict[str, Any]]:
     none. It says how the file came to be: ``front_end`` (``"python"`` for a
     build made here), the ``engine`` (version, commit, target, features), the
     ``params`` of the build, the ``inputs`` (a label, length and BLAKE3 each)
-    and the ``counts``. It is outside the content hash."""
+    and the ``counts``. It is outside the content hash.
+
+    ``query_costs`` describes the file as it is: when ``rete convert`` measured
+    the starter queries on the converted file, its figures (their
+    ``context.layout`` says ``"0x06 (converted)"``) are returned here, and the
+    ones measured on the old layout move to ``source_query_costs``. Each entry
+    of ``conversions`` keeps its own ``query_costs``."""
     raw = _rete.read_build_record(bytes(image))
-    return json.loads(raw) if raw else None
+    if not raw:
+        return None
+    record = json.loads(raw)
+    for conversion in reversed(record.get("conversions") or []):
+        if conversion.get("query_costs"):
+            if "query_costs" in record:
+                record["source_query_costs"] = record["query_costs"]
+            record["query_costs"] = conversion["query_costs"]
+            break
+    return record
 
 
 def verify(image: bytes) -> bool:

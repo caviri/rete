@@ -11450,7 +11450,7 @@ self.onmessage = function (e) {
       // WITH the query it describes — "what will this cost me" is a question you
       // ask while reading the query, not one you go and look up in a table.
       const costs = new Map(
-        (((build || {}).query_costs || {}).queries || []).map((q) => [q.id, q]));
+        ((buildQueryCosts(build) || {}).queries || []).map((q) => [q.id, q]));
       const body = c.queries.map((q, i) =>
         `<div class="card-q"><div class="card-q-head"><b>${esc(String(q.title || q.id || "query"))}</b>` +
         (q.tier ? `<span class="microcopy">${esc(String(q.tier))}</span>` : "") +
@@ -11504,7 +11504,15 @@ self.onmessage = function (e) {
   // same from disk, R2 or Pages — so they lead. `debug_ms` is one machine's
   // wall clock at build time and is labelled as such rather than dropped: paired
   // with the byte figure it is interpretable, alone it is not.
-  function cardCostHtml(cost) {
+  // The starter-query costs that describe the file as it is: the newest
+// conversion's (measured on the converted file) when it has them, else the
+// build's own.
+function buildQueryCosts(b) {
+  const conv = ((b || {}).conversions || []).slice().reverse().find((c) => c && c.query_costs);
+  return conv ? conv.query_costs : (b || {}).query_costs;
+}
+
+function cardCostHtml(cost) {
     if (!cost) return "";
     const parts = [
       cost.bytes != null ? `${formatBytes(cost.bytes)} read` : "",
@@ -11556,8 +11564,8 @@ self.onmessage = function (e) {
       ].join(" · "))) : "",
       b.recarded ? cardRow("Re-carded", buildRecordRecardHtml(b.recarded)) : "",
     ].filter(Boolean).join("");
-    const ctx = (b.query_costs || {}).context || {};
-    const nCosts = ((b.query_costs || {}).queries || []).length;
+    const ctx = (buildQueryCosts(b) || {}).context || {};
+    const nCosts = ((buildQueryCosts(b) || {}).queries || []).length;
     return `<div class="card-build"><h4>Build record</h4>` +
       `<p class="microcopy">How this <em>file</em> came to be — not what the data is. ` +
       `Stored in its own section beside the card and, unlike the card, ` +

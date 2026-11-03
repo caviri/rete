@@ -82,13 +82,26 @@ pub(crate) fn card_json_with_build(
 ) -> serde_json::Value {
     let mut value = card_json(card);
     if let Some(b) = build {
+        let mut record = serde_json::to_value(b).expect("BuildInfo serializes");
+        // `query_costs` is what describes the file as it is: when a conversion
+        // measured its own, those take the place (their `context.layout` says
+        // so), and the build's own figures, measured on the old layout, move to
+        // `source_query_costs`. Each conversion entry keeps its copy too.
+        if let (Some(current), Some(obj)) = (b.current_query_costs(), record.as_object_mut()) {
+            if b.query_costs.as_ref() != Some(current) {
+                if let Some(old) = obj.remove("query_costs") {
+                    obj.insert("source_query_costs".into(), old);
+                }
+                obj.insert(
+                    "query_costs".into(),
+                    serde_json::to_value(current).expect("QueryCosts serializes"),
+                );
+            }
+        }
         value
             .as_object_mut()
             .expect("DatasetCard JSON is an object")
-            .insert(
-                "build".into(),
-                serde_json::to_value(b).expect("BuildInfo serializes"),
-            );
+            .insert("build".into(), record);
     }
     value
 }
@@ -1008,8 +1021,7 @@ fn measure_card(
     // gets to check itself against, query by query.
     let recorded = |id: &str| -> Option<&crate::commands::buildinfo::QueryCost> {
         build?
-            .query_costs
-            .as_ref()?
+            .current_query_costs()?
             .queries
             .iter()
             .find(|c| c.id == id)
@@ -1141,6 +1153,7 @@ fn write_costs(
         context: cost_context(&run.transport),
         queries: run.costs.clone(),
     });
+    info.clear_conversion_costs();
     write_build_info_streaming(std::path::Path::new(path), &info.to_json_bytes())
 }
 
@@ -1576,6 +1589,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     });
     info.params.card_top_n = Some(CARD_TOP_N as u32);
     info.query_costs = full.query_costs;
+    info.clear_conversion_costs();
     info.dropped_queries = full.dropped;
     if rec.is_reproducible() {
         zero_debug_ms(&mut info);
