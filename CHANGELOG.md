@@ -43,7 +43,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   of rows read as a few thousand on `0x06`; the planner then hash-joined it, materializing every
   `rdfs:label` for a 1,000-row left side (the card query `cmp-coverage`: 14.5 GB on an 8 B-triple
   file, against 0.7 GB on its `0x05` copy). `rete cost` byte figures for such a predicate move the
-  same way.
+  same way. A bound class or object of a fat predicate (`?s a <small class>`) is estimated from the
+  tiles that can hold it (a few leaf reads), and a leafed tile lookup no longer walks a leaf tile by
+  tile: a probe join over 94,700 subjects took 126 s on `0x06` against 1.3 s on `0x05`, and takes
+  1.2 s now.
 
 ## [0.5.0] - 2026-11-02
 

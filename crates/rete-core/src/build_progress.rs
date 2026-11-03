@@ -344,14 +344,20 @@ impl Drop for Ticker {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Held by the listening test and by every test that builds a graph large
+    /// enough to overlap it: a build publishes progress into the process-wide
+    /// state the listening test is reading.
+    pub(crate) static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// The one test in this crate that listens: the state is process-wide, so
     /// a second listening test running in parallel would see this one's
     /// figures.
     #[test]
     fn publishes_only_while_listened_to() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         begin(Phase::Parse, Some(10), Unit::Bytes);
         advance(5);
         assert_eq!(snapshot().phase, None, "nothing before a listener");

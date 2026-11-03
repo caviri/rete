@@ -2055,6 +2055,9 @@ mod tests {
     /// the same one.
     #[test]
     fn a_fat_predicate_estimates_alike_in_both_layouts() {
+        let _serial = crate::build_progress::tests::SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut owned: Vec<(String, String, String)> = Vec::new();
         for i in 0..120_000 {
             let s = format!("<http://ex/s{i:06}>");
@@ -2108,6 +2111,9 @@ mod tests {
     /// (skewed ids put a rare class beside a huge one).
     #[test]
     fn a_rare_object_of_a_fat_predicate_estimates_small_in_both_layouts() {
+        let _serial = crate::build_progress::tests::SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
         let mut owned: Vec<(String, String, String)> = Vec::new();
         for i in 0..120_000 {
@@ -2156,6 +2162,56 @@ mod tests {
                 "{name}: rare {rare} vs common {common}"
             );
         }
+    }
+
+    /// The run of tiles holding a leading id is the same in both layouts, for
+    /// every id and every permutation, and a leafed lookup does not walk the
+    /// leaf tile by tile (a probe join runs it per row: 94,700 probes took 126 s
+    /// on a 0x06 file against 1.3 s on its 0x05 copy).
+    #[test]
+    fn a_tile_span_is_the_same_in_both_layouts() {
+        let _serial = crate::build_progress::tests::SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..30_000 {
+            let s = format!("<http://ex/s{i:06}>");
+            owned.push((s.clone(), ty.into(), format!("<http://ex/C{}>", i % 7)));
+            owned.push((s, "<http://ex/other>".into(), format!("\"o {}\"", i % 5000)));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = write_file(&dict, &ib.build(), false, &[], 0);
+        let v6 = crate::v06::write::convert_image(&v5, Default::default()).unwrap();
+        let (v5, v6): (&'static [u8], &'static [u8]) = (
+            Box::leak(v5.into_boxed_slice()),
+            Box::leak(v6.into_boxed_slice()),
+        );
+        let flat = Rete::open_ranged_lazy(crate::reader::SliceReader::new(v5)).unwrap();
+        let leafed = Rete::open_ranged_lazy(crate::reader::SliceReader::new(v6)).unwrap();
+        let (fi, li) = (flat.default_index(), leafed.default_index());
+        let mut checked = 0;
+        for perm in fi.perms().iter() {
+            let si = perm.section_index();
+            for a in (0..dict.term_count() + 2).step_by(97) {
+                assert_eq!(
+                    fi.tile_span(si, Some(a)),
+                    li.tile_span(si, Some(a)),
+                    "section {si}, id {a}"
+                );
+                checked += 1;
+            }
+            assert_eq!(fi.tile_span(si, None), li.tile_span(si, None));
+        }
+        assert!(checked > 100);
     }
 
     /// Every join path the planner can pick — materialized prefix, probed last

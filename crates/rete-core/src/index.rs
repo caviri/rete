@@ -536,13 +536,35 @@ impl TileList {
                     return l.total;
                 }
                 let lf = &l.leaves[li];
-                let mut i = lf.first;
-                let end = lf.first + lf.n;
                 l.ensure_leaves(&[li]);
-                while i < end && self[i].max_a < a {
-                    i += 1;
+                // Binary search inside the faulted leaf: stepping with `self[i]`
+                // costs a leaf lookup per tile, and a lookup runs this per probe
+                // row (94,700 probes x a leaf of thousands of tiles was 126 s).
+                match l.cells[li].get() {
+                    Some(v) => lf.first + v.partition_point(|(t, _)| t.max_a < a),
+                    None => lf.first,
                 }
-                i
+            }
+        }
+    }
+
+    /// Index of the first tile whose `min_a > a` (`len()` if none): the end of
+    /// the run of tiles that can hold leading id `a`. Faults one leaf at most.
+    pub fn first_min_gt(&self, a: u32) -> usize {
+        match self {
+            TileList::Full(v) => v.partition_point(|t| t.min_a <= a),
+            TileList::Leafed(l) => {
+                let next = l.leaves.partition_point(|lf| lf.min_a <= a);
+                if next == 0 {
+                    return 0;
+                }
+                let li = next - 1;
+                let lf = &l.leaves[li];
+                l.ensure_leaves(&[li]);
+                match l.cells[li].get() {
+                    Some(v) => lf.first + v.partition_point(|(t, _)| t.min_a <= a),
+                    None => lf.first,
+                }
             }
         }
     }
@@ -2179,10 +2201,10 @@ impl GraphIndex {
             }
             Some(a) => {
                 let i = tiles.first_max_ge(a);
-                let mut j = i;
-                while j < tiles.len() && tiles[j].min_a <= a {
-                    j += 1;
-                }
+                let j = tiles.first_min_gt(a).max(i);
+                // The callers walk the run: fault its leaves in one batch, as
+                // the tile-by-tile walk this replaced did one by one.
+                tiles.ensure_span(i, j);
                 (i, j)
             }
         }
