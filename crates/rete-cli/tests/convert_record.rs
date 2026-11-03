@@ -244,3 +244,140 @@ fn a_per_graph_source_keeps_its_record_too() {
     );
     rete().arg("verify").arg(&out).assert().success();
 }
+
+/// A `0x05` file whose card has its starter queries measured (as the build does).
+fn legacy_costed(dir: &Path) -> std::path::PathBuf {
+    let src = dir.join("in.nt");
+    std::fs::write(&src, nt()).unwrap();
+    let out = dir.join("costed.rete");
+    let o = rete()
+        .env("RETE_WRITE_FORMAT", "5")
+        .env("RETE_BUILD_RECORD", "reproducible")
+        .env("SOURCE_DATE_EPOCH", "1700000000")
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .args(["--no-pyramid", "--card"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    out
+}
+
+fn convert_with(old: &Path, out: &Path, extra: &[&str]) {
+    let o = rete()
+        .env("RETE_BUILD_RECORD", "reproducible")
+        .env("SOURCE_DATE_EPOCH", "1700000100")
+        .arg("convert")
+        .arg(old)
+        .arg("-o")
+        .arg(out)
+        .args(extra)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}
+
+/// The costs a conversion records are measured on the converted file: rows as
+/// before, the source's own figures untouched, the hash unchanged, and
+/// `card-audit --measure` agrees with what `rete card` shows.
+#[test]
+fn a_conversion_measures_the_starter_queries_on_the_new_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = legacy_costed(dir.path());
+    let a = dir.path().join("a.rete");
+    let b = dir.path().join("b.rete");
+    convert_with(&old, &a, &[]);
+    convert_with(&old, &b, &[]);
+
+    let before = card_json(&old)["build"].clone();
+    let src_costs = before["query_costs"]["queries"].as_array().unwrap().clone();
+    assert!(!src_costs.is_empty(), "the source recorded its costs");
+
+    let after = card_json(&a)["build"].clone();
+    let entry = &after["conversions"][0]["query_costs"];
+    let costs = entry["queries"].as_array().expect("the entry has costs");
+    assert_eq!(costs.len(), src_costs.len());
+    for (n, s) in costs.iter().zip(&src_costs) {
+        assert_eq!(n["id"], s["id"]);
+        assert_eq!(n["rows"], s["rows"], "{}", n["id"]);
+        assert_eq!(n["debug_ms"], 0, "reproducible");
+    }
+    assert_eq!(entry["context"]["layout"], "0x06 (converted)");
+    // The shown costs are the new ones; the source's are kept beside them.
+    assert_eq!(after["query_costs"], *entry);
+    assert_eq!(after["source_query_costs"], before["query_costs"]);
+
+    // The source record is kept byte for byte, and the hash is unchanged.
+    let (rb, ra) = (raw_record(&old), raw_record(&a));
+    assert!(ra.starts_with(rb.strip_suffix('}').unwrap()), "{rb}\n{ra}");
+    // The costs are outside the content hash: the same as without them.
+    let plain = dir.path().join("plain.rete");
+    convert_with(&old, &plain, &["--no-card-costs"]);
+    assert_eq!(hash_of(&plain), hash_of(&a));
+    rete().arg("verify").arg(&a).assert().success();
+
+    // The text card says which layout the figures are for.
+    let text = rete().arg("card").arg(&a).output().unwrap();
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.contains("measured on") && text.contains("0x06 (converted)"),
+        "{text}"
+    );
+
+    // card-audit --measure agrees with the record.
+    let doc = common::json(
+        rete()
+            .arg("card-audit")
+            .arg(&a)
+            .args(["--measure", "--json"]),
+    );
+    let mut checked = 0;
+    for f in doc["findings"].as_array().unwrap() {
+        let rec = &f["observed"]["recorded"];
+        if rec.is_null() {
+            continue;
+        }
+        checked += 1;
+        assert_eq!(rec["agrees"], true, "{f}");
+    }
+    assert!(checked > 0);
+
+    // Reproducible converts are byte-identical.
+    assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+}
+
+#[test]
+fn no_card_costs_leaves_the_entry_without_costs() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = legacy_costed(dir.path());
+    let a = dir.path().join("a.rete");
+    convert_with(&old, &a, &["--no-card-costs"]);
+    let after = card_json(&a)["build"].clone();
+    assert!(
+        after["conversions"][0].get("query_costs").is_none(),
+        "{after}"
+    );
+    // Nothing newer: the source's figures are all there is.
+    assert_eq!(
+        after["query_costs"],
+        card_json(&old)["build"]["query_costs"]
+    );
+    assert!(after.get("source_query_costs").is_none());
+}
+
+#[test]
+fn a_cardless_file_gets_no_costs() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = legacy(dir.path(), false);
+    let a = dir.path().join("a.rete");
+    convert_with(&old, &a, &[]);
+    let b = card_json_or_build(&a);
+    assert!(b["conversions"][0].get("query_costs").is_none(), "{b}");
+}
+
+fn card_json_or_build(file: &Path) -> Value {
+    let raw = raw_record(file);
+    serde_json::from_str(&raw).unwrap()
+}

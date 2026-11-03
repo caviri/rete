@@ -491,6 +491,16 @@ enum Command {
         /// pyramid's legacy label block.
         #[arg(long = "no-label-index")]
         no_label_index: bool,
+        /// Do not measure the card's starter queries on the converted file.
+        /// By default they are measured again (the costs of the old layout no
+        /// longer apply) and recorded in the conversion's entry in the build
+        /// record.
+        #[arg(long = "no-card-costs")]
+        no_card_costs: bool,
+        /// Memory ceiling for the cost measurement (a query that passes it
+        /// stays in the card, flagged `over_budget`), as for `build`.
+        #[arg(long = "memory-budget-mb")]
+        memory_budget_mb: Option<u64>,
     },
     /// Search a `.rete` for entities. Two modes:
     ///
@@ -1741,7 +1751,18 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             output,
             quad_clustering,
             no_label_index,
-        } => commands::v06::convert(&input, &output, quad_clustering.as_deref(), !no_label_index),
+            no_card_costs,
+            memory_budget_mb,
+        } => commands::v06::convert(
+            &input,
+            &output,
+            quad_clustering.as_deref(),
+            !no_label_index,
+            commands::v06::CardCosts {
+                skip: no_card_costs,
+                memory_budget_mb,
+            },
+        ),
         Command::Search {
             file,
             prefix,

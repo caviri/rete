@@ -574,7 +574,7 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete convert <in.rete> -o <out.rete> [--quad-clustering auto|graph|order] [--no-label-index]`
+### `rete convert <in.rete> -o <out.rete> [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
 Turn a format `0x05` file into format `0x06` ([SPEC §4](SPEC.md#4-file-layout))
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
@@ -589,7 +589,15 @@ without a record gets one holding just that). The output has the content hash
 `rete build` gives the same data and flags — not the `0x05` file's, since the
 format is part of the identity — and, record apart, the same bytes; the record
 is outside the hash. `RETE_BUILD_RECORD=reproducible` makes two conversions of
-one file byte-identical. Two inputs take more than a copy:
+one file byte-identical.
+
+The card's starter queries are run again, cold, on the converted file, and their
+costs are recorded as `query_costs` in the new `conversions` entry — the source
+record's own costs were measured on the old layout and are kept as they were,
+but no longer describe this file. `rete card`, `card-audit` and
+`build_record()` show the conversion's. `--no-card-costs` skips the run;
+`--memory-budget-mb` bounds it as it does the build's. Two inputs take more than
+a copy:
 
 - **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section) are re-encoded as
   a quad index from the decoded statements, as `repyramid` would. This reads the
