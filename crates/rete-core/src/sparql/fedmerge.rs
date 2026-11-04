@@ -373,10 +373,15 @@ impl FederationPlan {
             // Each source's first `offset + limit` rows (in the query's order)
             // hold every row the merged result can need. Sources are merged as
             // a set, so the cut must count distinct rows: DISTINCT per source.
-            if !self.distinct {
-                let Some(at) = scan.select_end else {
-                    return unchanged("OFFSET / LIMIT");
-                };
+            let Some(at) = scan.select_end else {
+                return unchanged("OFFSET / LIMIT");
+            };
+            let rest = head[at..].trim_start();
+            if rest.len() >= 7 && rest[..7].eq_ignore_ascii_case("REDUCED") {
+                // REDUCED may keep duplicates, which would eat into the cut.
+                let from = at + (head[at..].len() - rest.len());
+                head.replace_range(from..from + 7, "DISTINCT");
+            } else if !(rest.len() >= 8 && rest[..8].eq_ignore_ascii_case("DISTINCT")) {
                 head.insert_str(at, " DISTINCT");
             }
             limit = format!(" LIMIT {}", self.offset.saturating_add(l));
@@ -804,6 +809,12 @@ mod tests {
         assert_eq!(
             plan(q).source_query(q).unwrap(),
             "select distinct ?x where { ?x ?p ?o } LIMIT 3"
+        );
+        // REDUCED becomes DISTINCT: it may keep duplicates, which eat into the cut.
+        let q = "SELECT REDUCED ?x WHERE { ?x ?p ?o } LIMIT 3";
+        assert_eq!(
+            plan(q).source_query(q).unwrap(),
+            "SELECT DISTINCT ?x WHERE { ?x ?p ?o } LIMIT 3"
         );
         // A sub-SELECT's LIMIT is not the query's: nothing to push.
         let q = "SELECT ?x WHERE { { SELECT ?x WHERE { ?x ?p ?o } LIMIT 2 } }";
