@@ -1333,11 +1333,15 @@ enum Command {
     /// predicates are disjoint from the query's is skipped. `--no-route` queries
     /// every source.
     ///
+    /// With several sources, ORDER BY, OFFSET and LIMIT apply to the merged rows,
+    /// and `COUNT`/`SUM`/`MIN`/`MAX` (with or without GROUP BY) merge across
+    /// sources: `COUNT` and `SUM` only with `--disjoint`. An aggregate or modifier
+    /// that cannot merge (AVG, GROUP_CONCAT, HAVING, an ORDER BY on an expression)
+    /// is refused with the reason.
+    ///
     /// LIMITATIONS (honest prototype): this is UNION federation — it does NOT do
-    /// cross-file joins (a triple in file A joined with a triple in file B).
-    /// Aggregates (COUNT/GROUP BY) and LIMIT are evaluated PER SOURCE then
-    /// unioned, so a federated COUNT(*) returns per-source counts, not a global
-    /// sum — reduce client-side. See `docs/federation.md`.
+    /// cross-file joins (a triple in file A joined with a triple in file B). See
+    /// `docs/federation.md`.
     #[command(group(clap::ArgGroup::new("query_input").required(true)))]
     Federate {
         /// `.rete` sources: local file paths and/or `http(s)://` URLs (≥1).
@@ -1356,6 +1360,11 @@ enum Command {
         /// Disable predicate routing/pruning: query every source.
         #[arg(long)]
         no_route: bool,
+        /// The sources share no triple: lets `COUNT` and `SUM` add the sources'
+        /// totals. Without it they are refused, because a triple stored in two
+        /// sources would be counted twice.
+        #[arg(long)]
+        disjoint: bool,
     },
     /// Run a SPARQL query over HTTP, range-fetching the file (no full download).
     #[command(
@@ -2112,9 +2121,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             query_file,
             json,
             no_route,
+            disjoint,
         } => {
             let query = commands::query_text::read(query, query_file.as_deref())?;
-            commands::federate::federate(&sources, &query, json, !no_route)
+            commands::federate::federate(&sources, &query, json, !no_route, disjoint)
         }
         Command::Manifest { command } => match command {
             ManifestCommand::Init {

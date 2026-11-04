@@ -20,6 +20,7 @@ mod distinct;
 mod distinct_union;
 mod eval;
 mod expr;
+mod fedmerge;
 mod lower;
 mod partition;
 mod path;
@@ -30,6 +31,7 @@ mod value;
 
 pub use diag::{warnings_json, QueryWarning, WarningSeverity};
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
+pub use fedmerge::FederationPlan;
 use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
 pub use partition::PartitionPlan;
@@ -58,6 +60,10 @@ pub enum SparqlError {
     /// the query's answer; the message says why and what to do instead.
     #[error("cannot split this query {0}")]
     Partition(String),
+    /// [`FederationPlan::new`] refused a query whose solution modifiers or aggregates cannot be
+    /// merged from several sources' answers; the message says why and what to do instead.
+    #[error("cannot federate this query: {0}")]
+    Federation(String),
 }
 
 /// A lowered SELECT query: solution modifiers plus the evaluation plan tree.

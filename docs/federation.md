@@ -41,13 +41,30 @@ shard produces whole, self-contained answer rows.
 
 | Query form  | Merge across sources                              |
 |-------------|---------------------------------------------------|
-| `SELECT`    | **Union** of solution rows, **deduped** (identical rows collapse), stable order (source order, then within-source order). |
+| `SELECT`    | **Union** of solution rows, **deduped** (identical rows collapse), then `ORDER BY`, `OFFSET` and `LIMIT` applied to the merged rows; aggregates merged as described [below](#solution-modifiers-and-aggregates). Without `ORDER BY`: source order, then within-source order. |
 | `ASK`       | **Logical OR** — true if any source matches.      |
 | `CONSTRUCT` | **Union** of constructed triples, **deduped**.    |
 
 Dedup is over the projected variables for `SELECT *` it is over all bound
 variables. A row that appears in two shards (e.g. a node that cites the target
 and shows up in two files) is reported once.
+
+## Solution modifiers and aggregates
+
+When more than one source is queried, the query's solution modifiers are applied to the **merged** rows, not per source:
+
+- **`ORDER BY`** sorts the merged rows, in the same order as a single file (numbers by value, unbound first). Each key must be a variable the query projects; an expression is refused (bind it with `(expr AS ?k)` and order by `?k`).
+- **`OFFSET` / `LIMIT`** cut the merged rows. `LIMIT n OFFSET m` is also sent to each source as `LIMIT n+m` (with `DISTINCT`, since rows are merged as a set), an upper bound: no source can contribute more rows than that to the final answer. `OFFSET` without `LIMIT` is applied after the merge only.
+- **`DISTINCT`** (and, as before, every merge) removes rows repeated across sources.
+- **Aggregates**: `MIN` and `MAX` merge exactly. `COUNT(…)` and `SUM(…)` add each source's total per `GROUP BY` key, which counts a triple stored in two sources twice, so they are merged only with **`--disjoint`** (the sources share no triple) and refused without it. `AVG`, `SAMPLE`, `GROUP_CONCAT`, `COUNT(DISTINCT …)`, `HAVING`, and an expression over an aggregate are **refused** with the reason, rather than answered per source. `ORDER BY` and `LIMIT` over the merged groups work (the sources return whole groups).
+- A `CONSTRUCT` with `OFFSET` or `LIMIT` is refused (they count solutions, not triples).
+- When routing leaves **one** source to query, it answers the whole query itself and none of the above applies.
+
+```sh
+rete federate a.rete b.rete --disjoint --query '
+  SELECT ?kind (COUNT(*) AS ?n) WHERE { ?p <http://e/kind> ?kind }
+  GROUP BY ?kind ORDER BY DESC(?n) LIMIT 3'
+```
 
 ## Routing / pruning (default on)
 
@@ -82,13 +99,13 @@ clear about what it does **not** do.
   another) will **not** be found. Each shard is queried in isolation. Cross-file
   joins need a term-level federated BGP engine that ships intermediate bindings
   between sources — future work.
-- **Aggregates and `LIMIT` are per source, then unioned.** A federated
-  `SELECT (COUNT(*) AS ?n)` returns **one count per source** (unioned), not a
-  global sum and `LIMIT 5` over two shards can return up to **10** rows (5 from
-  each). This keeps the prototype honest rather than silently wrong. Sum / cap
-  client-side, or wait for a future `--reduce` that folds per-source aggregates.
-- **`GROUP BY`** is likewise evaluated per source then unioned, so the same group
-  key can appear once per shard.
+- **Aggregates that cannot be folded are refused**, not answered per source: see
+  [Solution modifiers and aggregates](#solution-modifiers-and-aggregates). A
+  *sub*-SELECT with its own aggregate or `LIMIT` is still evaluated inside each
+  source, like the rest of the query.
+- **Before the fix** applied `ORDER BY`, `LIMIT` and aggregates per source and
+  concatenated the results (`ORDER BY` came back unsorted, `LIMIT 5` over two shards
+  returned 10 rows, `COUNT(*)` one count per source).
 
 ## Real example — OpenCitations, sharded by citing year
 
@@ -111,23 +128,17 @@ rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.r
 ```
   data/opencitations/cites-2021.rete: 5 row(s) in 3.6ms
   data/opencitations/cites-2024.rete: 5 row(s) in 15.6ms
-10 solution(s)
-federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
+5 solution(s)
+federated 2 source(s): 2 queried, 0 pruned (routing on); 5 merged result(s)
 ?citing=<https://doi.org/10.1001/jama.2021.15728>
 ?citing=<https://doi.org/10.1002/2211-5463.13301>
 ?citing=<https://doi.org/10.1002/2211-5463.13316>
 ?citing=<https://doi.org/10.1002/advs.202102592>
 ?citing=<https://doi.org/10.1002/advs.202103807>
-?citing=<https://doi.org/10.1001/jamadermatol.2024.1126>
-?citing=<https://doi.org/10.1001/jamaophthalmol.2024.3829>
-?citing=<https://doi.org/10.1002/1873-3468.14811>
-?citing=<https://doi.org/10.1002/1873-3468.14823>
-?citing=<https://doi.org/10.1002/1873-3468.14836>
 ```
 
-Note the **per-source `LIMIT`** caveat in action: `LIMIT 5` yielded 5 rows from
-*each* shard, so the union holds 10. The first five are 2021 citers, the last
-five 2024 citers.
+`LIMIT 5` is applied to the merged rows (each shard is asked for at most 5, which
+is enough), so five rows come back, not ten. Before the fix it printed 10.
 
 ### Routing in action — a predicate-disjoint shard is pruned
 
@@ -145,8 +156,8 @@ rete federate data/opencitations/cites-2021.rete other-demo.rete data/opencitati
 ```
   data/opencitations/cites-2021.rete: 3 row(s) in 3.4ms
   data/opencitations/cites-2024.rete: 3 row(s) in 15.8ms
-6 solution(s)
-federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
+3 solution(s)
+federated 3 source(s): 2 queried, 1 pruned (routing on); 3 merged result(s)
   pruned (predicate-disjoint): other-demo.rete
 …
 ```

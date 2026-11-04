@@ -647,13 +647,27 @@ the citation data below, sharded by citing year, is precisely this shape: each
 shard produces whole, self-contained answer rows.</p>
 <h2 id="merge-semantics">Merge semantics</h2>
 <table><thead><tr><th>Query form</th><th>Merge across sources</th></tr></thead><tbody>
-<tr><td><code>SELECT</code></td><td><strong>Union</strong> of solution rows, <strong>deduped</strong> (identical rows collapse), stable order (source order, then within-source order).</td></tr>
+<tr><td><code>SELECT</code></td><td><strong>Union</strong> of solution rows, <strong>deduped</strong> (identical rows collapse), then <code>ORDER BY</code>, <code>OFFSET</code> and <code>LIMIT</code> applied to the merged rows; aggregates merged as described <a href="#solution-modifiers-and-aggregates">below</a>. Without <code>ORDER BY</code>: source order, then within-source order.</td></tr>
 <tr><td><code>ASK</code></td><td><strong>Logical OR</strong> — true if any source matches.</td></tr>
 <tr><td><code>CONSTRUCT</code></td><td><strong>Union</strong> of constructed triples, <strong>deduped</strong>.</td></tr>
 </tbody></table>
 <p>Dedup is over the projected variables for <code>SELECT *</code> it is over all bound
 variables. A row that appears in two shards (e.g. a node that cites the target
 and shows up in two files) is reported once.</p>
+<h2 id="solution-modifiers-and-aggregates">Solution modifiers and aggregates</h2>
+<p>When more than one source is queried, the query's solution modifiers are applied to the <strong>merged</strong> rows, not per source:</p>
+<ul>
+<li><strong><code>ORDER BY</code></strong> sorts the merged rows, in the same order as a single file (numbers by value, unbound first). Each key must be a variable the query projects; an expression is refused (bind it with <code>(expr AS ?k)</code> and order by <code>?k</code>).</li>
+<li><strong><code>OFFSET</code> / <code>LIMIT</code></strong> cut the merged rows. <code>LIMIT n OFFSET m</code> is also sent to each source as <code>LIMIT n+m</code> (with <code>DISTINCT</code>, since rows are merged as a set), an upper bound: no source can contribute more rows than that to the final answer. <code>OFFSET</code> without <code>LIMIT</code> is applied after the merge only.</li>
+<li><strong><code>DISTINCT</code></strong> (and, as before, every merge) removes rows repeated across sources.</li>
+<li><strong>Aggregates</strong>: <code>MIN</code> and <code>MAX</code> merge exactly. <code>COUNT(…)</code> and <code>SUM(…)</code> add each source's total per <code>GROUP BY</code> key, which counts a triple stored in two sources twice, so they are merged only with <strong><code>--disjoint</code></strong> (the sources share no triple) and refused without it. <code>AVG</code>, <code>SAMPLE</code>, <code>GROUP_CONCAT</code>, <code>COUNT(DISTINCT …)</code>, <code>HAVING</code>, and an expression over an aggregate are <strong>refused</strong> with the reason, rather than answered per source. <code>ORDER BY</code> and <code>LIMIT</code> over the merged groups work (the sources return whole groups).</li>
+<li>A <code>CONSTRUCT</code> with <code>OFFSET</code> or <code>LIMIT</code> is refused (they count solutions, not triples).</li>
+<li>When routing leaves <strong>one</strong> source to query, it answers the whole query itself and none of the above applies.</li>
+</ul>
+<pre><code class="language-sh">rete federate a.rete b.rete --disjoint --query '
+  SELECT ?kind (COUNT(*) AS ?n) WHERE { ?p &lt;http://e/kind&gt; ?kind }
+  GROUP BY ?kind ORDER BY DESC(?n) LIMIT 3'
+</code></pre>
 <h2 id="routing--pruning-default-on">Routing / pruning (default on)</h2>
 <p>Before evaluating, <code>federate</code> reads each source's <strong>predicate set</strong> cheaply from
 its pyramid <strong>summary</strong> — the (large) triple <strong>index is never touched</strong> (the same
@@ -683,13 +697,13 @@ joined with a triple from file B (e.g. <code>?x</code> from one shard joined to 
 another) will <strong>not</strong> be found. Each shard is queried in isolation. Cross-file
 joins need a term-level federated BGP engine that ships intermediate bindings
 between sources — future work.</li>
-<li><strong>Aggregates and <code>LIMIT</code> are per source, then unioned.</strong> A federated
-<code>SELECT (COUNT(*) AS ?n)</code> returns <strong>one count per source</strong> (unioned), not a
-global sum and <code>LIMIT 5</code> over two shards can return up to <strong>10</strong> rows (5 from
-each). This keeps the prototype honest rather than silently wrong. Sum / cap
-client-side, or wait for a future <code>--reduce</code> that folds per-source aggregates.</li>
-<li><strong><code>GROUP BY</code></strong> is likewise evaluated per source then unioned, so the same group
-key can appear once per shard.</li>
+<li><strong>Aggregates that cannot be folded are refused</strong>, not answered per source: see
+<a href="#solution-modifiers-and-aggregates">Solution modifiers and aggregates</a>. A
+<em>sub</em>-SELECT with its own aggregate or <code>LIMIT</code> is still evaluated inside each
+source, like the rest of the query.</li>
+<li><strong>Before the fix</strong> applied <code>ORDER BY</code>, <code>LIMIT</code> and aggregates per source and
+concatenated the results (<code>ORDER BY</code> came back unsorted, <code>LIMIT 5</code> over two shards
+returned 10 rows, <code>COUNT(*)</code> one count per source).</li>
 </ul>
 <h2 id="real-example--opencitations-sharded-by-citing-year">Real example — OpenCitations, sharded by citing year</h2>
 <p>The repo ships a real dataset: citations <strong>of the AlphaFold paper</strong>
@@ -706,22 +720,16 @@ key can appear once per shard.</li>
 </code></pre>
 <pre><code>  data/opencitations/cites-2021.rete: 5 row(s) in 3.6ms
   data/opencitations/cites-2024.rete: 5 row(s) in 15.6ms
-10 solution(s)
-federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
+5 solution(s)
+federated 2 source(s): 2 queried, 0 pruned (routing on); 5 merged result(s)
 ?citing=&lt;https://doi.org/10.1001/jama.2021.15728&gt;
 ?citing=&lt;https://doi.org/10.1002/2211-5463.13301&gt;
 ?citing=&lt;https://doi.org/10.1002/2211-5463.13316&gt;
 ?citing=&lt;https://doi.org/10.1002/advs.202102592&gt;
 ?citing=&lt;https://doi.org/10.1002/advs.202103807&gt;
-?citing=&lt;https://doi.org/10.1001/jamadermatol.2024.1126&gt;
-?citing=&lt;https://doi.org/10.1001/jamaophthalmol.2024.3829&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14811&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14823&gt;
-?citing=&lt;https://doi.org/10.1002/1873-3468.14836&gt;
 </code></pre>
-<p>Note the <strong>per-source <code>LIMIT</code></strong> caveat in action: <code>LIMIT 5</code> yielded 5 rows from
-<em>each</em> shard, so the union holds 10. The first five are 2021 citers, the last
-five 2024 citers.</p>
+<p><code>LIMIT 5</code> is applied to the merged rows (each shard is asked for at most 5, which
+is enough), so five rows come back, not ten. Before the fix it printed 10.</p>
 <h3 id="routing-in-action--a-predicate-disjoint-shard-is-pruned">Routing in action — a predicate-disjoint shard is pruned</h3>
 <p>Add a source that uses a different predicate (here a shard whose only predicate
 is <code>rdfs:label</code>, not <code>cito:cites</code>). The <code>cites</code> query prunes it without ever
@@ -733,8 +741,8 @@ reading its index:</p>
 </code></pre>
 <pre><code>  data/opencitations/cites-2021.rete: 3 row(s) in 3.4ms
   data/opencitations/cites-2024.rete: 3 row(s) in 15.8ms
-6 solution(s)
-federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
+3 solution(s)
+federated 3 source(s): 2 queried, 1 pruned (routing on); 3 merged result(s)
   pruned (predicate-disjoint): other-demo.rete
 …
 </code></pre>
