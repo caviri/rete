@@ -232,6 +232,7 @@ function datasetModel(catalog, key) {
     license: plain(meta.license || "").split(/[;(]/)[0].trim(),
     remote: dataset.kind === "remote-lazy",
     kind: dataset.kind,
+    url: dataset.url || "",
   };
 }
 

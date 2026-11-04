@@ -98,7 +98,7 @@ function jsonLd(model) {
       distribution: [{
         "@type": "DataDownload",
         encodingFormat: "application/octet-stream",
-        contentUrl: `https://data.graphplaza.com/${d.key}/${d.key}.rete`,
+        contentUrl: d.url || `https://data.graphplaza.com/${d.key}/${d.key}.rete`,
       }],
       isAccessibleForFree: true,
     };
