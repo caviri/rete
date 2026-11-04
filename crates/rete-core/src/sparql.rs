@@ -1353,14 +1353,19 @@ mod tests {
         ]);
         let rete = Rete::open(&bytes).unwrap();
         let q = "PREFIX ex: <http://ex/> \
-                 SELECT (GROUP_CONCAT(?f; SEPARATOR=\"|\") AS ?fs) WHERE { ex:Alice ex:knows ?f }";
+                 SELECT (GROUP_CONCAT(STR(?f); SEPARATOR=\"|\") AS ?fs) WHERE { ex:Alice ex:knows ?f }";
         let (_, sols) = eval_sparql(&rete, q).unwrap();
         assert_eq!(sols.len(), 1);
         // GROUP_CONCAT yields a simple literal — strip the quotes before splitting.
         let fs = sols[0]["fs"].trim_matches('"');
         let mut parts: Vec<&str> = fs.split('|').collect();
         parts.sort();
-        assert_eq!(parts, vec!["<http://ex/Bob>", "<http://ex/Carol>"]);
+        assert_eq!(parts, vec!["http://ex/Bob", "http://ex/Carol"]);
+        // The bare IRI is an element CONCAT rejects: unbound, not `<http://ex/Bob>`.
+        let q = "PREFIX ex: <http://ex/> \n                 SELECT (GROUP_CONCAT(?f) AS ?fs) WHERE { ex:Alice ex:knows ?f }";
+        let (_, sols) = eval_sparql(&rete, q).unwrap();
+        assert_eq!(sols.len(), 1);
+        assert_eq!(sols[0].get("fs"), None);
     }
 
     #[test]

@@ -209,22 +209,38 @@ impl Accum {
                 if *err {
                     return;
                 }
-                match slot
+                // GROUP_CONCAT is CONCAT over the elements (SPARQL 1.1
+                // §18.5.1.7), and CONCAT takes string literals only: an IRI, a
+                // blank node, a number or any other typed literal makes the
+                // aggregate an error, as in Oxigraph. (`str_of` itself stays as
+                // it is: MIN and MAX order every kind of term.) The result is a
+                // simple literal, as SPARQL 1.1 says (Oxigraph keeps a language tag
+                // the elements share; the W3C tests agg-groupconcat-4 and -6 want it
+                // plain).
+                let part = slot
                     .and_then(|s| row[s].as_ref())
                     .and_then(|v| ctx.resolver.str_of(v))
-                {
-                    // GROUP_CONCAT is CONCAT over the elements (SPARQL 1.1
-                    // §18.5.1.7), and CONCAT takes string literals: a blank node
-                    // in the group makes the aggregate an error, not its label
-                    // `_:b0` in the text. (`str_of` itself stays as it is: MIN and
-                    // MAX order blank nodes.)
-                    Some(t) if !t.starts_with("_:") => {
-                        let p = lexical(&t);
-                        if !*distinct || seen.insert(p.clone()) {
+                    .and_then(|t| {
+                        let tag = match crate::terms::literal_parts(&t)? {
+                            (_, "") => None,
+                            (_, sfx) if sfx.starts_with('@') => Some(sfx[1..].to_string()),
+                            (_, "^^<http://www.w3.org/2001/XMLSchema#string>") => None,
+                            _ => return None,
+                        };
+                        Some((lexical(&t), tag))
+                    });
+                match part {
+                    Some((p, tag)) => {
+                        // DISTINCT compares whole terms: "a" and "a"@en differ.
+                        let key = match &tag {
+                            Some(l) => format!("{p}@{l}"),
+                            None => p.clone(),
+                        };
+                        if !*distinct || seen.insert(key) {
                             parts.push(p);
                         }
                     }
-                    _ => {
+                    None => {
                         *err = true;
                         parts.clear();
                         seen.clear();
