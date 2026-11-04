@@ -7,14 +7,7 @@ dblp	dblp	https://data.graphplaza.com/dblp/dblp.rete
 zenodo-records	zenodo-records	https://data.graphplaza.com/zenodo-records/zenodo-records.rete
 gotriple	gotriple	https://data.graphplaza.com/gotriple/gotriple.rete
 ror	ror	https://data.graphplaza.com/ror/ror.rete
-openaire-2021	openaire-2021-publication	https://data.graphplaza.com/openaire-2021/openaire-2021-publication.rete
-openaire-2021	openaire-2021-relation	https://data.graphplaza.com/openaire-2021/openaire-2021-relation.rete
-openaire-2021	openaire-2021-dataset	https://data.graphplaza.com/openaire-2021/openaire-2021-dataset.rete
-openaire-2021	openaire-2021-otherresearchproduct	https://data.graphplaza.com/openaire-2021/openaire-2021-otherresearchproduct.rete
-openaire-2021	openaire-2021-project	https://data.graphplaza.com/openaire-2021/openaire-2021-project.rete
-openaire-2021	openaire-2021-software	https://data.graphplaza.com/openaire-2021/openaire-2021-software.rete
-openaire-2021	openaire-2021-organization	https://data.graphplaza.com/openaire-2021/openaire-2021-organization.rete
-openaire-2021	openaire-2021-datasource	https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete
+openaire-2021	openaire-2021	https://data.graphplaza.com/openaire-2021/openaire-2021.rete
 epfl-graph	epfl-graph	https://data.graphplaza.com/epfl-graph/epfl-graph.rete
 biosyslit	biosyslit	https://data.graphplaza.com/biosyslit/biosyslit.rete
 epfl-infoscience	epfl-infoscience	https://data.graphplaza.com/epfl-infoscience/epfl-infoscience.rete

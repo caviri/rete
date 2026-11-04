@@ -51,68 +51,12 @@
       "cardUrl": "https://data.graphplaza.com/hugging-face/hugging-face.rete"
     },
     {
-      "key": "openaire-2021#1",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-publication.rete",
-      "formatVersion": 5,
-      "contentHash": "8a467986c029b7c6f0518e9d7cc40cd6",
-      "size": 76884779039,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-publication.rete"
-    },
-    {
-      "key": "openaire-2021#2",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-relation.rete",
-      "formatVersion": 5,
-      "contentHash": "1a7dfd4190640d068aaded2962455ae8",
-      "size": 9778347773,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-relation.rete"
-    },
-    {
-      "key": "openaire-2021#3",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-dataset.rete",
-      "formatVersion": 5,
-      "contentHash": "15c581ebac66e97452d53e760a648b08",
-      "size": 6691398438,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-dataset.rete"
-    },
-    {
-      "key": "openaire-2021#4",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-otherresearchproduct.rete",
-      "formatVersion": 5,
-      "contentHash": "fea57c0a122c2cbf4e14cfc52e0f3449",
-      "size": 2525962509,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-otherresearchproduct.rete"
-    },
-    {
-      "key": "openaire-2021#5",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-project.rete",
-      "formatVersion": 5,
-      "contentHash": "53840a89bd5824e20f56df1f3cc8ca36",
-      "size": 505773966,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-project.rete"
-    },
-    {
-      "key": "openaire-2021#6",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-software.rete",
-      "formatVersion": 5,
-      "contentHash": "8bf4b2adc4c21fd4c0ea39fdb6d33e14",
-      "size": 65203604,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-software.rete"
-    },
-    {
-      "key": "openaire-2021#7",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-organization.rete",
-      "formatVersion": 5,
-      "contentHash": "1a44f61c29dfd8dedf9ddb3cfe3adad1",
-      "size": 35834261,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-organization.rete"
-    },
-    {
-      "key": "openaire-2021#8",
-      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete",
-      "formatVersion": 5,
-      "contentHash": "70d0b613e0d7c0acff82789c904e5a69",
-      "size": 10551147,
-      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete"
+      "key": "openaire-2021",
+      "url": "https://data.graphplaza.com/openaire-2021/openaire-2021.rete",
+      "formatVersion": 6,
+      "contentHash": "2506c10cd7db3ce8985dacd15dd3fac0",
+      "size": 113059009353,
+      "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021.rete"
     },
     {
       "key": "opencitations-meta",

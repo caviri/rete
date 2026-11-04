@@ -54226,127 +54226,212 @@
    "index": 0,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) · federated 8 source(s) · 1.61 GB ranged · 59902 ms",
+   "qmeta": "25 row(s) | 184 range req · 126.2 MB of 105.29 GB fetched (incl. opening the file) · 125.5 MB cached this session · 48629 ms",
    "count": 25,
    "unit": "row",
-   "columns": [],
+   "columns": [
+    {
+     "label": "Project (OpenAIRE)",
+     "var": "p"
+    },
+    {
+     "label": "Acronym",
+     "var": "acronym"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Started",
+     "var": "start"
+    },
+    {
+     "label": "Funded",
+     "var": "amount"
+    }
+   ],
    "rows": [
     [
      {
-      "text": "OpenAIRE Research Graph v3.0 · this dataset",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::35f59c61c4a5d69e26bcf27337f4c85c",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "EUROfusion",
       "media": false
      },
      {
-      "text": "166.6 MB · 97 req",
+      "text": "Implementation of activities described in the Roadmap to Fusion during Horizon 2020 through a Joint program...",
+      "media": false
+     },
+     {
+      "text": "2014-01-01",
+      "media": false
+     },
+     {
+      "text": "678800000",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 1",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::debee9a4cf7f9839cdb15e9de4e2a12e",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "LPA GAM 2018",
       "media": false
      },
      {
-      "text": "183.0 MB · 116 req",
+      "text": "Large Passenger Aircraft",
+      "media": false
+     },
+     {
+      "text": "2014-01-09",
+      "media": false
+     },
+     {
+      "text": "184972992",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 2",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::acb447e7236127e4862302593b83314f",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "H2020",
       "media": false
      },
      {
-      "text": "197.9 MB · 138 req",
+      "text": "COST at a turning point: A unique framework for pan-European ST cooperation as clear demonstration of Europ...",
+      "media": false
+     },
+     {
+      "text": "2015-05-01",
+      "media": false
+     },
+     {
+      "text": "178168992",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 3",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::c69614b8acc7cbbe89b2187fe09fee22",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "ENG GAM 2018",
       "media": false
      },
      {
-      "text": "207.8 MB · 158 req",
+      "text": "Engine ITD - GAM 2018",
+      "media": false
+     },
+     {
+      "text": "2014-01-03",
+      "media": false
+     },
+     {
+      "text": "171920000",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 4",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::ca4dd6c22d2613d5a2ce3c88c7127040",
       "media": false
      },
      {
-      "text": "25 row(s)",
+      "text": "GAM AIR 2018",
       "media": false
      },
      {
-      "text": "233.2 MB · 195 req",
+      "text": "AIRFRAME ITD",
+      "media": false
+     },
+     {
+      "text": "2014-01-02",
+      "media": false
+     },
+     {
+      "text": "160975008",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 5",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::346dd4f3feed18577fb60d4e6a27e1e4",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "HBP SGA3",
       "media": false
      },
      {
-      "text": "217.1 MB · 185 req",
+      "text": "Human Brain Project Specific Grant Agreement 3",
+      "media": false
+     },
+     {
+      "text": "2020-04-01",
+      "media": false
+     },
+     {
+      "text": "150000000",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 6",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::de432116595fdaaa591cc5eb45a01e70",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "GrapheneCore3",
       "media": false
      },
      {
-      "text": "219.5 MB · 196 req",
+      "text": "Graphene Flagship Core Project 3",
+      "media": false
+     },
+     {
+      "text": "2020-04-01",
+      "media": false
+     },
+     {
+      "text": "150000000",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 7",
+      "text": "https://w3id.org/rete/openaire/40/corda__h2020::5edca37083272210f9eb7d282ac158a4",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "SYS GAM 2018",
       "media": false
      },
      {
-      "text": "221.6 MB · 206 req",
+      "text": "Systems ITD",
+      "media": false
+     },
+     {
+      "text": "2014-01-01",
+      "media": false
+     },
+     {
+      "text": "113185000",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 59934
+   "elapsedMs": 48660
   },
   "openaire-2021:1": {
    "id": "openaire-2021:1",
@@ -54354,127 +54439,104 @@
    "index": 1,
    "view": "table",
    "ok": true,
-   "qmeta": "18 row(s) · federated 8 source(s) · 10.3 MB ranged · 111416 ms",
-   "count": 18,
+   "qmeta": "12 row(s) | 25 range req · 76.5 MB of 105.29 GB fetched · 202.0 MB cached this session · 108858 ms",
+   "count": 12,
    "unit": "row",
-   "columns": [],
+   "columns": [
+    {
+     "label": "Class",
+     "var": "t"
+    },
+    {
+     "label": "Instances",
+     "var": "n"
+    }
+   ],
    "rows": [
     [
      {
-      "text": "OpenAIRE Research Graph v3.0 · this dataset",
+      "text": "https://w3id.org/rete/openaire#AuthorRole",
       "media": false
      },
      {
-      "text": "4 row(s)",
-      "media": false
-     },
-     {
-      "text": "3.0 MB · 6 req",
+      "text": "562859397",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 1",
+      "text": "https://w3id.org/rete/openaire#Subject",
       "media": false
      },
      {
-      "text": "1 row(s)",
-      "media": false
-     },
-     {
-      "text": "0 B · 0 req",
+      "text": "133446583",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 2",
+      "text": "https://w3id.org/rete/openaire#Publication",
       "media": false
      },
      {
-      "text": "3 row(s)",
-      "media": false
-     },
-     {
-      "text": "2.5 MB · 5 req",
+      "text": "124852030",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 3",
+      "text": "https://w3id.org/rete/openaire#Dataset",
       "media": false
      },
      {
-      "text": "3 row(s)",
-      "media": false
-     },
-     {
-      "text": "3.0 MB · 6 req",
+      "text": "14228362",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 4",
+      "text": "https://w3id.org/rete/openaire#OtherResearchProduct",
       "media": false
      },
      {
-      "text": "2 row(s)",
-      "media": false
-     },
-     {
-      "text": "0 B · 0 req",
+      "text": "8760460",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 5",
+      "text": "https://w3id.org/rete/openaire#Project",
       "media": false
      },
      {
-      "text": "3 row(s)",
-      "media": false
-     },
-     {
-      "text": "1.0 MB · 4 req",
+      "text": "2850097",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 6",
+      "text": "https://w3id.org/rete/openaire#Funding",
       "media": false
      },
      {
-      "text": "1 row(s)",
-      "media": false
-     },
-     {
-      "text": "512.0 KB · 2 req",
+      "text": "2849964",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 7",
+      "text": "https://w3id.org/rete/openaire#Agent",
       "media": false
      },
      {
-      "text": "1 row(s)",
-      "media": false
-     },
-     {
-      "text": "256.0 KB · 1 req",
+      "text": "652968",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 111441
+   "elapsedMs": 108887
   },
   "openaire-2021:2": {
    "id": "openaire-2021:2",
@@ -54496,127 +54558,212 @@
    "index": 3,
    "view": "table",
    "ok": true,
-   "qmeta": "30 row(s) · federated 8 source(s) · 15.0 MB ranged · 4434 ms",
+   "qmeta": "30 row(s) | 52 range req · 30.5 MB of 105.29 GB fetched · 232.5 MB cached this session · 16581 ms",
    "count": 30,
    "unit": "row",
-   "columns": [],
+   "columns": [
+    {
+     "label": "Project",
+     "var": "p"
+    },
+    {
+     "label": "Acronym",
+     "var": "acronym"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Start",
+     "var": "start"
+    },
+    {
+     "label": "End",
+     "var": "end"
+    }
+   ],
    "rows": [
     [
      {
-      "text": "OpenAIRE Research Graph v3.0 · this dataset",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::ec5aa0b7846082a2415f0902f0da88f2",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "POCTI/BIA/10251/2002",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "Social modulation of androgen levels in vertebrates: the cichlid fishes as a model for a comparative study",
+      "media": false
+     },
+     {
+      "text": "1999-11-19",
+      "media": false
+     },
+     {
+      "text": "2002-11-18",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 1",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::884d247c6f65a96a7da4d1105d584ddd",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "POSI/EEI/2087/2001",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "Cooperation Among Multiple Autonomous Robots (COOPERA)",
+      "media": false
+     },
+     {
+      "text": "1999-11-19",
+      "media": false
+     },
+     {
+      "text": "2002-12-31",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 2",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::a532400ed62e772b9dc0b86f46e583ff",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "POSI/EEI/2057/2001",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "Automatic Visual Classification of Polished Marble Surfaces",
+      "media": false
+     },
+     {
+      "text": "1999-11-19",
+      "media": false
+     },
+     {
+      "text": "2004-12-31",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 3",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::3988c7f88ebcb58c6ce932b957b6f332",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "POCTI/QUI/60/2001",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "Structure-Reactivity Relationships and their Application to Physicochemical Processes",
+      "media": false
+     },
+     {
+      "text": "1999-11-20",
+      "media": false
+     },
+     {
+      "text": "2003-09-30",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 4",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::b3e3e393c77e35a4a3f3cbd1e429b5dc",
       "media": false
      },
      {
-      "text": "30 row(s)",
+      "text": "POCTI/QUI/305/2001",
       "media": false
      },
      {
-      "text": "15.0 MB · 22 req",
+      "text": "Identification of secondary metabolites of biological activity in alelopatic natural products",
+      "media": false
+     },
+     {
+      "text": "1999-11-20",
+      "media": false
+     },
+     {
+      "text": "2004-01-19",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 5",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::a113c1ecd3cace2237256f4c712f61b5",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "POSI/EEI/10168/2001",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "QoS II - Quality of Service in Computer Communications Systems",
+      "media": false
+     },
+     {
+      "text": "1999-11-29",
+      "media": false
+     },
+     {
+      "text": "2003-12-31",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 6",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::46922a0880a8f11f8f69cbb52b1396be",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "POSI/EEI/1568/2001",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "Reasoning about Change using Commonsense",
+      "media": false
+     },
+     {
+      "text": "1999-12-01",
+      "media": false
+     },
+     {
+      "text": "2003-12-31",
       "media": false
      }
     ],
     [
      {
-      "text": "shard 7",
+      "text": "https://w3id.org/rete/openaire/40/fct_________::8b4066554730ddfaa0266346bdc1b202",
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "POCTI/CTM/10231/2001",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "Poly-silicon by fast CVD for Photovoltaic Applications",
+      "media": false
+     },
+     {
+      "text": "1999-12-14",
+      "media": false
+     },
+     {
+      "text": "2003-12-31",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 4463
+   "elapsedMs": 16616
   },
   "openalex-astrocytes:0": {
    "id": "openalex-astrocytes:0",
