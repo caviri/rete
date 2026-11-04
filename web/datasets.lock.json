@@ -60,11 +60,11 @@
     },
     {
       "key": "opencitations-meta",
-      "url": "https://data.graphplaza.com/opencitations-meta/opencitations-meta-v9.2.1.rete",
+      "url": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete",
       "formatVersion": 6,
       "contentHash": "2631d590b2aee128e828b9cc9432232a",
       "size": 62288523062,
-      "cardUrl": "https://data.graphplaza.com/opencitations-meta/opencitations-meta-v9.2.1.rete"
+      "cardUrl": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete"
     },
     {
       "key": "tree-city-inventory",
