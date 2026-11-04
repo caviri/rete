@@ -65,7 +65,6 @@ struct Grouping {
 pub struct FederationPlan {
     /// A SELECT (the only form the modifiers apply to).
     select: bool,
-    distinct: bool,
     offset: usize,
     limit: Option<usize>,
     /// ORDER BY keys: `(variable, descending)`.
@@ -85,7 +84,6 @@ impl FederationPlan {
             _ => {
                 return Ok(FederationPlan {
                     select: false,
-                    distinct: false,
                     offset: 0,
                     limit: None,
                     order: Vec::new(),
@@ -100,7 +98,6 @@ impl FederationPlan {
         // modifiers are never mistaken for the query's.
         let mut offset = 0;
         let mut limit = None;
-        let mut distinct = false;
         let mut project: Option<&[spargebra::term::Variable]> = None;
         let mut order: Option<&[OrderExpression]> = None;
         let mut extends: Vec<(&str, &Expression)> = Vec::new();
@@ -120,7 +117,6 @@ impl FederationPlan {
                     (1, &**inner)
                 }
                 GraphPattern::Distinct { inner } | GraphPattern::Reduced { inner } if stage < 2 => {
-                    distinct = true;
                     (2, &**inner)
                 }
                 GraphPattern::Project { inner, variables } if stage < 3 => {
@@ -171,7 +167,6 @@ impl FederationPlan {
             }
             return Ok(FederationPlan {
                 select: false,
-                distinct: false,
                 offset: 0,
                 limit: None,
                 order: Vec::new(),
@@ -323,7 +318,6 @@ impl FederationPlan {
 
         Ok(FederationPlan {
             select: true,
-            distinct,
             offset,
             limit,
             order: keys,
