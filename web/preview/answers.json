@@ -55417,7 +55417,7 @@
    "index": 0,
    "view": "table",
    "ok": true,
-   "qmeta": "3 row(s) | 116 range req · 334.8 MB of 58.58 GB fetched (incl. opening the file) · 263.8 MB cached this session · 47818 ms",
+   "qmeta": "3 row(s) | 54 range req · 31.7 MB of 58.01 GB fetched (incl. opening the file) · 31.0 MB cached this session · 12955 ms",
    "count": 3,
    "unit": "row",
    "columns": [
@@ -55512,7 +55512,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 47851
+   "elapsedMs": 12986
   },
   "opencitations-meta:1": {
    "id": "opencitations-meta:1",
@@ -55520,7 +55520,7 @@
    "index": 1,
    "view": "table",
    "ok": true,
-   "qmeta": "2 row(s) | 8 range req · 4.0 MB of 58.58 GB fetched · 267.8 MB cached this session · 1724 ms",
+   "qmeta": "2 row(s) | 9 range req · 5.0 MB of 58.01 GB fetched · 36.0 MB cached this session · 2176 ms",
    "count": 2,
    "unit": "row",
    "columns": [
@@ -55569,7 +55569,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 1741
+   "elapsedMs": 2188
   },
   "opencitations-meta:2": {
    "id": "opencitations-meta:2",
@@ -55577,7 +55577,7 @@
    "index": 2,
    "view": "table",
    "ok": true,
-   "qmeta": "3 row(s) | 4 range req · 2.0 MB of 58.58 GB fetched · 269.8 MB cached this session · 1821 ms",
+   "qmeta": "3 row(s) | 5 range req · 2.5 MB of 58.01 GB fetched · 38.5 MB cached this session · 1134 ms",
    "count": 3,
    "unit": "row",
    "columns": [
@@ -55656,7 +55656,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 1833
+   "elapsedMs": 1150
   },
   "opencitations-meta:3": {
    "id": "opencitations-meta:3",
@@ -55664,7 +55664,7 @@
    "index": 3,
    "view": "table",
    "ok": true,
-   "qmeta": "2 row(s) | 4 range req · 2.0 MB of 58.58 GB fetched · 271.8 MB cached this session · 1911 ms",
+   "qmeta": "2 row(s) | 4 range req · 2.0 MB of 58.01 GB fetched · 40.5 MB cached this session · 1714 ms",
    "count": 2,
    "unit": "row",
    "columns": [
@@ -55725,7 +55725,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 1931
+   "elapsedMs": 1732
   },
   "opencitations-meta:4": {
    "id": "opencitations-meta:4",
@@ -55733,7 +55733,7 @@
    "index": 4,
    "view": "table",
    "ok": true,
-   "qmeta": "1 row(s) | 6 range req · 3.0 MB of 58.58 GB fetched · 274.8 MB cached this session · 3018 ms",
+   "qmeta": "1 row(s) | 7 range req · 3.5 MB of 58.01 GB fetched · 44.0 MB cached this session · 1984 ms",
    "count": 1,
    "unit": "row",
    "columns": [
@@ -55784,7 +55784,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 3032
+   "elapsedMs": 2000
   },
   "opencitations-meta:5": {
    "id": "opencitations-meta:5",
@@ -55792,7 +55792,7 @@
    "index": 5,
    "view": "table",
    "ok": true,
-   "qmeta": "2 row(s) | 0 range req · 0 B of 58.58 GB fetched — 0 new bytes, all served from this session's cache (274.8 MB) · 2 ms",
+   "qmeta": "2 row(s) | 0 range req · 0 B of 58.01 GB fetched — 0 new bytes, all served from this session's cache (44.0 MB) · 6 ms",
    "count": 2,
    "unit": "row",
    "columns": [
@@ -55841,7 +55841,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 17
+   "elapsedMs": 18
   },
   "opencitations-meta:6": {
    "id": "opencitations-meta:6",
@@ -55849,7 +55849,7 @@
    "index": 6,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 238 range req · 135.0 MB of 58.58 GB fetched · 409.8 MB cached this session · 50457 ms",
+   "qmeta": "25 row(s) | 241 range req · 136.0 MB of 58.01 GB fetched · 180.0 MB cached this session · 54097 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -56018,7 +56018,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 50481
+   "elapsedMs": 54112
   },
   "opencitations:0": {
    "id": "opencitations:0",
