@@ -422,11 +422,8 @@ mod tests {
     fn reads_inside_the_inner_prefix_fetch_no_block() {
         let data: Vec<u8> = (0..100_000u32).map(|i| i as u8).collect();
         let prefix: Arc<[u8]> = Arc::from(&data[..4096]);
-        let counting = Arc::new(CountingReader::new(PrefixReader::new(
-            SliceReader::new(&data),
-            prefix,
-        )));
-        let r = BlockCacheReader::new(counting.clone(), 16 * 1024);
+        let counting = Arc::new(CountingReader::new(SliceReader::new(&data)));
+        let r = BlockCacheReader::new(PrefixReader::new(counting.clone(), prefix), 16 * 1024);
         assert_eq!(r.read_at(0, 4096).unwrap(), data[..4096]);
         assert_eq!(r.read_many(&[(10, 100)]).unwrap()[0], data[10..110]);
         assert_eq!(counting.requests(), 0);

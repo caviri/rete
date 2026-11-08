@@ -1,4 +1,4 @@
-//! Range-reading abstraction (SPEC.md §9).
+//! Rang-reading abstraction (SPEC.md §9).
 //!
 //! A client doesn't need the whole file: it reads the 1 KiB header, learns
 //! where each section lives, then fetches only those byte ranges. [`RangeReader`]
@@ -137,14 +137,6 @@ impl<R: RangeReader> CountingReader<R> {
     pub fn bytes_read(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
     }
-
-    /// Is `[offset, offset+len)` already in the inner reader's memory (not a
-    /// request)?
-    fn held(&self, offset: u64, len: u64) -> bool {
-        offset
-            .checked_add(len)
-            .is_some_and(|e| e <= self.inner.resident_prefix())
-    }
 }
 
 impl<R: RangeReader> RangeReader for CountingReader<R> {
@@ -154,10 +146,8 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         let out = self.inner.read_at(offset, len)?;
-        if !self.held(offset, len) {
-            self.requests.fetch_add(1, Ordering::Relaxed);
-            self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
-        }
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
         Ok(out)
     }
 
@@ -166,15 +156,9 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
     /// actually fetched, however the inner reader issues them.
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         let out = self.inner.read_many(ranges)?;
-        let (mut n, mut bytes) = (0u64, 0u64);
-        for (&(o, l), b) in ranges.iter().zip(&out) {
-            if !self.held(o, l) {
-                n += 1;
-                bytes += b.len() as u64;
-            }
-        }
-        self.requests.fetch_add(n, Ordering::Relaxed);
-        self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.requests.fetch_add(out.len() as u64, Ordering::Relaxed);
+        self.bytes
+            .fetch_add(out.iter().map(|b| b.len() as u64).sum(), Ordering::Relaxed);
         Ok(out)
     }
 
