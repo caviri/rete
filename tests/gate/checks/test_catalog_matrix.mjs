@@ -18,17 +18,17 @@ try {
   all = catalogCases("all");
   embedded = catalogCases("embedded");
 
-  // 637 -> 644 -> 651 -> 656 -> 664 -> 669 -> 676 -> 680 -> 681 -> 686 -> 693 -> 695: this literal has to be raised by hand every time
+  // 637 -> 644 -> 651 -> 656 -> 664 -> 669 -> 676 -> 680 -> 681 -> 686 -> 693 -> 695 -> 700: this literal has to be raised by hand every time
   // the catalog grows, and it silently went stale because the `browser` job was
   // SKIPPED on the PRs that grew it (#113 datacite/epfl-graph/opencitations,
   // #122 mirbase) and did not run on the pushes that grew it last (davidrumsey,
   // +7 queries and +1 dataset, landed while the `wasm` job was red so `browser`
   // never started; 681 is the davidrumsey spatial example, +1 query, which landed
   // the same way; 686 is crossref-citations, +5 queries and +1 dataset; 693 is opencitations-meta, +7 queries and
-  // +1 dataset; 695 is datacite's R20 and full-text examples, +2 queries). Keeping it is deliberate — it is the
+  // +1 dataset; 695 is datacite's R20 and full-text examples, +2 queries; 700 is nanopubs, +5 queries and +1 dataset). Keeping it is deliberate — it is the
   // tripwire that makes a catalog change visible — but the number is only ever as fresh as the last
   // run of this gate.
-  t.equal("allQueries", all.length, 695, "every catalog query must be in the exhaustive matrix");
+  t.equal("allQueries", all.length, 700, "every catalog query must be in the exhaustive matrix");
   t.equal("embeddedQueries", embedded.length, 69, "the deterministic tier must cover every embedded query");
   t.equal("uniqueCaseIds", new Set(all.map((entry) => entry.id)).size, all.length, "case ids must be unique");
   t.ok("everyCaseHasSparql", all.every((entry) => entry.query.trim()), "every case must carry executable SPARQL");
@@ -36,7 +36,7 @@ try {
 
   allGroups = catalogDatasetGroups("all");
   embeddedGroups = catalogDatasetGroups("embedded");
-  t.equal("allDatasets", allGroups.length, 102, "the exhaustive tier must cover every dataset");
+  t.equal("allDatasets", allGroups.length, 103, "the exhaustive tier must cover every dataset");
   t.equal("embeddedDatasets", embeddedGroups.length, 10, "the deterministic tier must cover every embedded dataset");
   t.deepEqual(
     "groupingOrder",

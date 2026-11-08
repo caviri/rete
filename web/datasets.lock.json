@@ -51,6 +51,14 @@
       "cardUrl": "https://data.graphplaza.com/hugging-face/hugging-face.rete"
     },
     {
+      "key": "nanopubs",
+      "url": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete",
+      "formatVersion": 6,
+      "contentHash": "64e92589ce204c453c308364a41b59cb",
+      "size": 3881928608,
+      "cardUrl": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete"
+    },
+    {
       "key": "openaire-2021",
       "url": "https://data.graphplaza.com/openaire-2021/openaire-2021.rete",
       "formatVersion": 6,
