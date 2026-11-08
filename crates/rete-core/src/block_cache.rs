@@ -133,6 +133,13 @@ impl<R: RangeReader> BlockCacheReader<R> {
         self.cache.lock().unwrap().used
     }
 
+    /// Does the inner reader already hold `[offset, offset+len)` in memory?
+    fn held(&self, offset: u64, len: u64) -> bool {
+        offset
+            .checked_add(len)
+            .is_some_and(|e| e <= self.inner.resident_prefix())
+    }
+
     fn bounds(&self, offset: u64, len: u64) -> std::io::Result<()> {
         if offset.checked_add(len).is_none_or(|e| e > self.len) {
             // Name the numbers: this fires when a read the file's own layout
@@ -349,11 +356,21 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
         self.inner.concurrency()
     }
 
+    fn resident_prefix(&self) -> u64 {
+        self.inner.resident_prefix()
+    }
+
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
         }
         self.bounds(offset, len)?;
+        // Bytes the inner reader already holds (an HTTP open's first read) are
+        // no fetch: asking it for the block-aligned span around them would
+        // re-read them, and the rest of the block, in a request of its own.
+        if self.held(offset, len) {
+            return self.inner.read_at(offset, len);
+        }
         let want: BTreeSet<u64> = (offset / self.block..=(offset + len - 1) / self.block).collect();
         self.ensure(&want)?;
         let out = self.assemble(offset, len)?;
@@ -368,6 +385,9 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
                 continue;
             }
             self.bounds(o, l)?;
+            if self.held(o, l) {
+                continue;
+            }
             for b in o / self.block..=(o + l - 1) / self.block {
                 want.insert(b);
             }
@@ -378,6 +398,8 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
             .map(|&(o, l)| {
                 if l == 0 {
                     Ok(Vec::new())
+                } else if self.held(o, l) {
+                    self.inner.read_at(o, l)
                 } else {
                     self.assemble(o, l)
                 }
@@ -391,7 +413,25 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reader::PrefixReader;
     use crate::reader::{CountingReader, SliceReader};
+
+    /// An HTTP open already holds the file's first bytes: a read inside them
+    /// is served as it is, not by fetching the block-aligned span around it.
+    #[test]
+    fn reads_inside_the_inner_prefix_fetch_no_block() {
+        let data: Vec<u8> = (0..100_000u32).map(|i| i as u8).collect();
+        let prefix: Arc<[u8]> = Arc::from(&data[..4096]);
+        let counting = Arc::new(CountingReader::new(SliceReader::new(&data)));
+        let r = BlockCacheReader::new(PrefixReader::new(counting.clone(), prefix), 16 * 1024);
+        assert_eq!(r.read_at(0, 4096).unwrap(), data[..4096]);
+        assert_eq!(r.read_many(&[(10, 100)]).unwrap()[0], data[10..110]);
+        assert_eq!(counting.requests(), 0);
+        // Past the prefix the block is fetched whole, as before.
+        assert_eq!(r.read_at(5000, 10).unwrap(), data[5000..5010]);
+        assert_eq!(counting.requests(), 1);
+        assert_eq!(counting.bytes_read(), 16 * 1024);
+    }
 
     #[test]
     fn caches_blocks_and_serves_exact_bytes() {

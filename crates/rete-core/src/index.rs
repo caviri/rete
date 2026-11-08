@@ -157,6 +157,62 @@ impl Tile {
 /// batched read. `None` = the batch failed.
 pub type LeafFetch = Arc<dyn Fn(&[(u64, u64)]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
 
+/// A two-level directory whose leaves fault on demand (a tile directory, a
+/// chunk directory): what [`ensure_leaves_across`] needs to fetch the leaves of
+/// several directories in **one** batched read instead of one read each.
+pub(crate) trait LeafDir {
+    /// Leaf `li`'s absolute stored range, when it exists and is not resident.
+    fn missing_leaf(&self, li: usize) -> Option<(u64, u64)>;
+    /// Decode `stored` as leaf `li` and keep it (recording a failure).
+    fn install_leaf(&self, li: usize, stored: &[u8]);
+    /// Record that a batch carrying this directory's leaves failed.
+    fn fail_leaves(&self);
+    /// The batched reader the directory's leaves come through.
+    fn leaf_fetch(&self) -> &LeafFetch;
+}
+
+/// Fault the not-yet-resident leaves `lis` of each directory in `dirs` in one
+/// batched read, through the first directory's fetcher. Every directory of one
+/// open reads through the same reader, so this is a single round trip where one
+/// read per directory was one per directory in sequence (a lookup that names
+/// terms in three dictionary sections, a pattern estimated on four
+/// permutations). A failed batch marks every directory it carried.
+pub(crate) fn ensure_leaves_across(dirs: &[(&dyn LeafDir, &[usize])]) {
+    let mut ranges: Vec<(u64, u64)> = Vec::new();
+    let mut slots: Vec<(usize, usize)> = Vec::new();
+    for (di, (dir, lis)) in dirs.iter().enumerate() {
+        // The same leaf can come many times over (a join probing 460 k subjects
+        // of one leaf): fetch each once.
+        let mut lis: Vec<usize> = lis.to_vec();
+        lis.sort_unstable();
+        lis.dedup();
+        for li in lis {
+            if let Some(r) = dir.missing_leaf(li) {
+                ranges.push(r);
+                slots.push((di, li));
+            }
+        }
+    }
+    let Some((first, _)) = dirs.first() else {
+        return;
+    };
+    if ranges.is_empty() {
+        return;
+    }
+    match (first.leaf_fetch())(&ranges) {
+        Some(blobs) if blobs.len() == slots.len() => {
+            for (&(di, li), b) in slots.iter().zip(&blobs) {
+                dirs[di].0.install_leaf(li, b);
+            }
+        }
+        _ => {
+            for &(di, _) in &slots {
+                dirs[di].0.fail_leaves();
+            }
+        }
+    }
+}
+
 /// One leaf of a permutation's tile directory, as the `0x06` root describes it.
 #[derive(Debug, Clone)]
 pub struct TileLeaf {
@@ -201,6 +257,32 @@ static UNREADABLE_TILE: Tile = Tile {
     len: 0,
     staged: None,
 };
+
+impl LeafDir for LeafedTiles {
+    fn missing_leaf(&self, li: usize) -> Option<(u64, u64)> {
+        (li < self.cells.len() && self.cells[li].get().is_none()).then(|| self.leaves[li].leaf)
+    }
+
+    fn install_leaf(&self, li: usize, stored: &[u8]) {
+        match self.decode_leaf(li, stored) {
+            Some(v) => {
+                let _ = self.cells[li].set(v);
+            }
+            None => self
+                .failed
+                .store(true, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    fn fail_leaves(&self) {
+        self.failed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn leaf_fetch(&self) -> &LeafFetch {
+        &self.fetch
+    }
+}
 
 impl LeafedTiles {
     /// Bound every leaf decompression at `max` bytes (from the `0x06` root).
@@ -266,6 +348,27 @@ impl LeafedTiles {
         let first = v.first()?.0.syn?;
         let last = v.last()?.0.syn?;
         Some((first.0, last.1))
+    }
+
+    /// The leaves of the run of tiles holding leading id `a` that [`admitted_estimate`](Self::admitted_estimate)
+    /// counts exactly: the first and the last, when shared with other ids.
+    pub(crate) fn run_end_leaves(&self, a: u32) -> Vec<usize> {
+        let first = self.leaves.partition_point(|lf| lf.max_a < a);
+        let mut last = first;
+        while last < self.leaves.len() && self.leaves[last].min_a <= a {
+            last += 1;
+        }
+        let shared = |li: usize| !(self.leaves[li].min_a == a && self.leaves[li].max_a == a);
+        let mut out = Vec::new();
+        if first < last {
+            if shared(first) {
+                out.push(first);
+            }
+            if last - 1 != first && shared(last - 1) {
+                out.push(last - 1);
+            }
+        }
+        out
     }
 
     /// Exact count of leaf `li`'s tiles that hold `a` and admit `pb`/`pc`,
@@ -384,37 +487,7 @@ impl LeafedTiles {
 
     /// Fault every not-yet-resident leaf of `lis` in one batched read.
     pub fn ensure_leaves(&self, lis: &[usize]) {
-        // Callers pass one leaf per pattern or term, so the same leaf can come
-        // many times over (a join probing 460 k subjects of one leaf): fetch
-        // each leaf once.
-        let mut missing: Vec<usize> = lis
-            .iter()
-            .copied()
-            .filter(|&li| li < self.cells.len() && self.cells[li].get().is_none())
-            .collect();
-        missing.sort_unstable();
-        missing.dedup();
-        if missing.is_empty() {
-            return;
-        }
-        let ranges: Vec<(u64, u64)> = missing.iter().map(|&li| self.leaves[li].leaf).collect();
-        match (self.fetch)(&ranges) {
-            Some(blobs) if blobs.len() == missing.len() => {
-                for (&li, b) in missing.iter().zip(blobs) {
-                    match self.decode_leaf(li, &b) {
-                        Some(v) => {
-                            let _ = self.cells[li].set(v);
-                        }
-                        None => self
-                            .failed
-                            .store(true, std::sync::atomic::Ordering::Relaxed),
-                    }
-                }
-            }
-            _ => self
-                .failed
-                .store(true, std::sync::atomic::Ordering::Relaxed),
-        }
+        ensure_leaves_across(&[(self, lis)]);
     }
 
     /// Fault the leaves covering tiles `[start, end)`.
@@ -2183,6 +2256,41 @@ impl GraphIndex {
             }
         }
         true
+    }
+
+    /// Fault, in one batched read across every permutation, the directory leaves
+    /// [`estimate_matches`](Self::estimate_matches) reads for `patterns`: for each
+    /// permutation that leads with a bound id, the leaves its run of tiles starts
+    /// and ends in (a leaf wholly inside the run is counted from the root). The
+    /// estimate then reads them from memory instead of one permutation at a time.
+    /// A no-op on a resident directory.
+    pub(crate) fn prefault_estimate_leaves(&self, patterns: &[Pattern]) {
+        let mut want: [std::collections::BTreeSet<usize>; NUM_PERMS] = Default::default();
+        for &pattern in patterns {
+            for perm in self.perms.iter() {
+                let [Some(a), _, _] = perm.order_pattern(pattern) else {
+                    continue;
+                };
+                let si = perm.section_index();
+                if let TileList::Leafed(l) = &self.sections[si] {
+                    want[si].extend(l.run_end_leaves(a));
+                }
+            }
+        }
+        let wanted: Vec<(usize, Vec<usize>)> = want
+            .into_iter()
+            .enumerate()
+            .filter(|(_, lis)| !lis.is_empty())
+            .map(|(si, lis)| (si, lis.into_iter().collect()))
+            .collect();
+        let across: Vec<(&dyn LeafDir, &[usize])> = wanted
+            .iter()
+            .filter_map(|(si, lis)| match &self.sections[*si] {
+                TileList::Leafed(l) => Some((&**l as &dyn LeafDir, lis.as_slice())),
+                _ => None,
+            })
+            .collect();
+        ensure_leaves_across(&across);
     }
 
     /// A planner estimate of how many triples match `pattern`, read off the

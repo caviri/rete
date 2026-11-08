@@ -327,6 +327,10 @@ pub struct WindowResolver {
 /// list goes out in several batches.
 const PREFETCH_BATCH_CHUNKS: usize = 512;
 
+/// The most chunks the predicate section may have for a query with a variable
+/// predicate to read all of it up front ([`Dictionary::prefetch_lookups_with`]).
+const WHOLE_PREDICATE_CHUNKS: usize = 4;
+
 /// A read-only dictionary mapping terms ↔ role-specific IDs.
 ///
 /// Holds the four sections as [`ChunkedSection`]s — local files keep each
@@ -437,6 +441,24 @@ impl Dictionary {
     pub(crate) fn with_multi_bulk_loader(mut self, loader: MultiChunkBulkLoader) -> Self {
         self.multi_bulk = Some(loader);
         self
+    }
+
+    /// Fault, in one batched read across all four sections, the directory
+    /// leaves `leaves[si]` of each section — the routing step that must precede
+    /// reading a chunk. Routing a term or an id to its chunk faults its leaf, so
+    /// routing them one at a time was one dependent read per leaf and section.
+    /// A no-op on sections whose directory is resident.
+    fn fault_leaves(&self, leaves: &[Vec<usize>; 4]) {
+        let across: Vec<(&dyn crate::index::LeafDir, &[usize])> = leaves
+            .iter()
+            .enumerate()
+            .filter(|(_, lis)| !lis.is_empty())
+            .filter_map(|(si, lis)| {
+                let d: &dyn crate::index::LeafDir = self.sections[si].leaf_dir()?;
+                Some((d, lis.as_slice()))
+            })
+            .collect();
+        crate::index::ensure_leaves_across(&across);
     }
 
     /// Fault the chunks `want[si]` of each section, at most `batch` chunks
@@ -571,6 +593,16 @@ impl Dictionary {
     /// up to thousands of chunks at once, outside every cache cap. A bounded
     /// export batches it so that transient stays a few MB.
     pub fn prefetch_terms_batched(&self, node_ids: &[u32], predicate_ids: &[u32], batch: usize) {
+        let mut leaves: [Vec<usize>; 4] = Default::default();
+        for &n in node_ids {
+            if let Some((si, local)) = self.node_section_id(n) {
+                leaves[si].extend(self.sections[si].leaf_of_id(local));
+            }
+        }
+        for &p in predicate_ids {
+            leaves[3].extend(self.sections[3].leaf_of_id(p));
+        }
+        self.fault_leaves(&leaves);
         let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
         for &n in node_ids {
             if let Some((si, ci)) = self.node_chunk(n) {
@@ -612,9 +644,47 @@ impl Dictionary {
         node_terms: impl IntoIterator<Item = &'a str>,
         pred_terms: impl IntoIterator<Item = &'a str>,
     ) {
+        self.prefetch_lookups_with(node_terms, pred_terms, false);
+    }
+
+    /// [`prefetch_lookups`](Self::prefetch_lookups), and with `all_predicates`
+    /// the whole predicate section too when it is small (at most
+    /// [`WHOLE_PREDICATE_CHUNKS`] chunks, a few hundred bytes to a few KiB on
+    /// real files). A pattern with a variable predicate decodes and
+    /// canonicalizes every predicate it matches: reading them with the
+    /// constants costs no round trip of its own, where reading them when the
+    /// first rows arrive was two (the leaf, then the chunk).
+    pub(crate) fn prefetch_lookups_with<'a>(
+        &self,
+        node_terms: impl IntoIterator<Item = &'a str>,
+        pred_terms: impl IntoIterator<Item = &'a str>,
+        all_predicates: bool,
+    ) {
         if !self.faults_chunks() {
             return;
         }
+        // Both term lists are walked twice (routing needs the leaves, which are
+        // faulted together first), so hold them.
+        let node_terms: Vec<&'a str> = node_terms.into_iter().collect();
+        let pred_terms: Vec<&'a str> = pred_terms.into_iter().collect();
+        let mut leaves: [Vec<usize>; 4] = Default::default();
+        for &term in &node_terms {
+            let alias = crate::terms::string_literal_alias(term);
+            for t in std::iter::once(term).chain(alias.as_deref()) {
+                for (si, ls) in leaves.iter_mut().enumerate().take(3) {
+                    ls.extend(self.sections[si].leaf_for_term(t));
+                }
+            }
+        }
+        for &term in &pred_terms {
+            leaves[3].extend(self.sections[3].leaf_for_term(term));
+        }
+        let whole_preds = all_predicates
+            && (1..=WHOLE_PREDICATE_CHUNKS).contains(&self.sections[3].chunk_total());
+        if whole_preds {
+            leaves[3].extend(self.sections[3].all_leaves());
+        }
+        self.fault_leaves(&leaves);
         let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
         for term in node_terms {
             let alias = crate::terms::string_literal_alias(term);
@@ -631,6 +701,9 @@ impl Dictionary {
                 want[3].insert(ci);
             }
         }
+        if whole_preds {
+            want[3].extend(0..self.sections[3].chunk_total());
+        }
         let want: [Vec<usize>; 4] = want.map(|set| set.into_iter().collect());
         self.prefetch_sections(&want, PREFETCH_BATCH_CHUNKS);
     }
@@ -638,9 +711,16 @@ impl Dictionary {
     /// The `(section, chunk)` holding a unified node id — mirrors the section
     /// routing in [`node_term`](Self::node_term).
     fn node_chunk(&self, node: u32) -> Option<(usize, usize)> {
+        let (si, local) = self.node_section_id(node)?;
+        Some((si, self.sections[si].chunk_of_id(local)?))
+    }
+
+    /// The `(section, section-local id)` of a unified node id — mirrors the
+    /// section routing in [`node_term`](Self::node_term).
+    fn node_section_id(&self, node: u32) -> Option<(usize, u32)> {
         let su = self.subject_only_count();
         let id = node.checked_add(1)?; // `node` may come from a corrupt tile
-        let (si, local) = if node < self.shared_len.saturating_add(su) {
+        Some(if node < self.shared_len.saturating_add(su) {
             // subject_term(id)
             if id <= self.shared_len {
                 (0, id)
@@ -654,8 +734,7 @@ impl Dictionary {
             } else {
                 (2, id - self.shared_len)
             }
-        };
-        Some((si, self.sections[si].chunk_of_id(local)?))
+        })
     }
 
     /// Number of shared terms `S`.

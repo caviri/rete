@@ -228,13 +228,21 @@ impl V06File {
                     v.push(ci);
                 }
             }
-            let mut leaf_ranges: Vec<(u64, u64)> = Vec::new();
-            let _ = &mut leaf_ranges;
-            for (si, cis) in per.iter().enumerate() {
-                if let Some(Some(d)) = dirs.get(si) {
-                    d.ensure_leaves(&d.leaves_of(cis));
-                }
-            }
+            // One read for the leaves of every section: a batch that names
+            // terms in three sections used to cost three sequential reads here.
+            let wanted: Vec<(usize, Vec<usize>)> = per
+                .iter()
+                .enumerate()
+                .filter_map(|(si, cis)| Some((si, dirs.get(si)?.as_ref()?.leaves_of(cis))))
+                .collect();
+            let across: Vec<(&dyn crate::index::LeafDir, &[usize])> = wanted
+                .iter()
+                .filter_map(|(si, lis)| {
+                    let d: &dyn crate::index::LeafDir = dirs.get(*si)?.as_deref()?;
+                    Some((d, lis.as_slice()))
+                })
+                .collect();
+            crate::index::ensure_leaves_across(&across);
             let ranges: Option<Vec<(u64, u64)>> = pairs
                 .iter()
                 .map(|&(si, ci)| dirs.get(si as usize)?.as_ref()?.range(ci))

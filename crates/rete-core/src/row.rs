@@ -289,6 +289,37 @@ impl<'a> Resolver<'a> {
         self.dict.prefetch_terms(&nodes, &preds);
     }
 
+    /// Canonicalize the predicates `pred_ids` ([`canon_id`](Self::canon_id)) in
+    /// one go: their terms' chunks are faulted together, then the chunks that
+    /// look those terms up as nodes, so the `canon_id` calls that follow are
+    /// memo and cache hits. Each of the two steps is one batched read where a
+    /// lookup predicate by predicate was up to three sequential reads for each
+    /// new one. Only warms the cache; a no-op on a resident dictionary.
+    pub(crate) fn prefetch_canon(&self, pred_ids: &[u32]) {
+        if !self.dict.faults_chunks() {
+            return;
+        }
+        let mut fresh: Vec<u32> = {
+            let memo = self.canon_pred.borrow();
+            pred_ids
+                .iter()
+                .copied()
+                .filter(|&p| !memo.contains_key(&(-(p as i64) - 1)))
+                .collect()
+        };
+        fresh.sort_unstable();
+        fresh.dedup();
+        if fresh.is_empty() {
+            return;
+        }
+        self.dict.prefetch_terms(&[], &fresh);
+        let terms: Vec<Rc<str>> = fresh
+            .iter()
+            .filter_map(|&p| self.term(-(p as i64) - 1))
+            .collect();
+        self.dict.prefetch_lookups(terms.iter().map(|t| &**t), []);
+    }
+
     /// The term string for a tagged id (memoized).
     pub(crate) fn term(&self, id: i64) -> Option<Rc<str>> {
         if let Some(t) = self.terms.borrow().get(&id) {

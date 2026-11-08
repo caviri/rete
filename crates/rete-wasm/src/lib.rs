@@ -2832,6 +2832,15 @@ impl RangeReader for XhrRangeReader {
         }
     }
 
+    /// The cached header window (or a whole body) is in memory: a block cache
+    /// above this reader serves reads inside it without a fetch.
+    fn resident_prefix(&self) -> u64 {
+        if self.whole.get().is_some() {
+            return self.len;
+        }
+        self.head.get().map_or(0, |h| h.len() as u64)
+    }
+
     /// Reads that land entirely inside the cached header window are answered
     /// from memory: opening a file re-reads those bytes several times (length
     /// probe, polyglot marker, then every `read_*_ranged` helper's own header

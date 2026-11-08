@@ -471,6 +471,29 @@ pub struct LeafedChunks {
     failed: AtomicBool,
 }
 
+impl crate::index::LeafDir for LeafedChunks {
+    fn missing_leaf(&self, li: usize) -> Option<(u64, u64)> {
+        (li < self.cells.len() && self.cells[li].get().is_none()).then(|| self.leaves[li].leaf)
+    }
+
+    fn install_leaf(&self, li: usize, stored: &[u8]) {
+        match self.decode_leaf(li, stored) {
+            Some(v) => {
+                let _ = self.cells[li].set(v);
+            }
+            None => self.failed.store(true, Ordering::Relaxed),
+        }
+    }
+
+    fn fail_leaves(&self) {
+        self.failed.store(true, Ordering::Relaxed);
+    }
+
+    fn leaf_fetch(&self) -> &crate::index::LeafFetch {
+        &self.fetch
+    }
+}
+
 impl LeafedChunks {
     /// Bound every leaf decompression at `max` bytes (from the `0x06` root).
     pub fn with_max_block(mut self, max: u64) -> Self {
@@ -518,30 +541,7 @@ impl LeafedChunks {
 
     /// Fault every not-yet-resident leaf of `lis` in one batched read.
     pub fn ensure_leaves(&self, lis: &[usize]) {
-        let mut missing: Vec<usize> = lis
-            .iter()
-            .copied()
-            .filter(|&li| li < self.cells.len() && self.cells[li].get().is_none())
-            .collect();
-        missing.sort_unstable();
-        missing.dedup();
-        if missing.is_empty() {
-            return;
-        }
-        let ranges: Vec<(u64, u64)> = missing.iter().map(|&li| self.leaves[li].leaf).collect();
-        match (self.fetch)(&ranges) {
-            Some(blobs) if blobs.len() == missing.len() => {
-                for (&li, b) in missing.iter().zip(blobs) {
-                    match self.decode_leaf(li, &b) {
-                        Some(v) => {
-                            let _ = self.cells[li].set(v);
-                        }
-                        None => self.failed.store(true, Ordering::Relaxed),
-                    }
-                }
-            }
-            _ => self.failed.store(true, Ordering::Relaxed),
-        }
+        crate::index::ensure_leaves_across(&[(self, lis)]);
     }
 
     /// The leaves holding chunks `cis`.
@@ -1336,6 +1336,49 @@ impl ChunkedSection {
     /// for an empty section, or a term that sorts before the first chunk.
     pub(crate) fn chunk_for_term(&self, term: &str) -> Option<usize> {
         self.chunks.chunk_for_term(term.as_bytes())
+    }
+
+    /// The leaf directory block that routes `term` to a chunk, without reading
+    /// it. `None` on a section whose directory is resident (nothing to fault).
+    pub(crate) fn leaf_for_term(&self, term: &str) -> Option<usize> {
+        match &self.chunks {
+            ChunkDir::Leafed(l) if l.total > 0 => l.leaf_of_term(term.as_bytes()),
+            _ => None,
+        }
+    }
+
+    /// The leaf directory block that routes term `id` (1-based, section-local)
+    /// to a chunk, without reading it. `None` on a resident directory or an
+    /// id out of range.
+    pub(crate) fn leaf_of_id(&self, id: u32) -> Option<usize> {
+        if id == ABSENT || id > self.meta.term_count {
+            return None;
+        }
+        match &self.chunks {
+            ChunkDir::Leafed(l) => {
+                l.leaf_of_run((id - 1) as usize / self.meta.restart_interval as usize)
+            }
+            ChunkDir::Full(_) => None,
+        }
+    }
+
+    /// How many chunks the section has.
+    pub(crate) fn chunk_total(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// Every leaf index of a leafed directory (none when it is resident).
+    pub(crate) fn all_leaves(&self) -> Vec<usize> {
+        self.leaf_dir()
+            .map_or_else(Vec::new, |l| (0..l.leaves.len()).collect())
+    }
+
+    /// This section's leaf directory, when it faults its leaves on demand.
+    pub(crate) fn leaf_dir(&self) -> Option<&LeafedChunks> {
+        match &self.chunks {
+            ChunkDir::Leafed(l) => Some(l),
+            ChunkDir::Full(_) => None,
+        }
     }
 
     /// How many terms of this section sort (bytewise) before `bound`: the

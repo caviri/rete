@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::file::Rete;
 use crate::index::{GraphIndex, Pattern, ProbeBatch};
 use crate::row::{Ctx, Row, Slots, Val};
+use crate::triples::Triple;
 
 /// A term in a pattern: a named variable or a constant term token.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +131,29 @@ pub(crate) fn row_to_binding(ctx: &Ctx, row: &Row) -> Binding {
     b
 }
 
+/// The join order of `lowered` and what a full scan of each pattern would
+/// produce (its own constants only, from the tile directory): the probe-vs-scan
+/// decisions compare the latter with the running result.
+///
+/// A single pattern has one order and nothing to compare its scan with, so it
+/// is not estimated at all. Estimating reads the tile-directory leaves of every
+/// permutation that leads with a bound id, one after another: on the 62 GB
+/// OpenCitations file `<br> ?p ?o` read two 520 KB leaves, the second of them
+/// for a permutation the scan never used, plus a dictionary chunk for
+/// `rdf:type`, each a dependent round trip.
+fn plan_order(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+) -> (Vec<usize>, Vec<f64>) {
+    if lowered.len() == 1 {
+        return (vec![0], vec![0.0]);
+    }
+    let order = selectivity_order(ctx, index, lowered);
+    let scan_est = tile_estimates(ctx, index, lowered, &std::collections::HashSet::new());
+    (order, scan_est)
+}
+
 /// Evaluate a BGP to slot rows against a specific graph `index` (joins run on
 /// integer ids; the shared dictionary comes from `ctx`).
 pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePattern]) -> Vec<Row> {
@@ -145,11 +169,7 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     // Join the patterns most-constrained-first (and keeping the join connected),
     // so intermediate relations stay small. Pure reordering: the hash join is
     // order-independent, so the result is unchanged.
-    let order = selectivity_order(ctx, index, &lowered);
-    // What a full scan of each pattern would produce (its own constants only),
-    // from the tile directory: the probe-vs-scan decision below compares it
-    // with the running result.
-    let scan_est = tile_estimates(ctx, index, &lowered, &std::collections::HashSet::new());
+    let (order, scan_est) = plan_order(ctx, index, &lowered);
     let mut rows: Vec<Row> = vec![ctx.slots.empty_row()];
     let mut bound: Vec<usize> = Vec::new();
     let mut merged: [bool; 2] = [false, false];
@@ -293,7 +313,7 @@ fn try_merge_join(
     let collect = |t: &(SlotTerm, SlotTerm, SlotTerm), col: usize| -> Option<Vec<(u32, Row)>> {
         let pat = lower(t)?;
         let mut out = Vec::new();
-        for tri in index.scan_iter_sorted_on(pat, col)? {
+        for tri in canon_ahead(ctx, &t.1, index.scan_iter_sorted_on(pat, col)?) {
             if let Some(r) = triple_row(ctx, t, tri) {
                 out.push(([tri.0, tri.1, tri.2][col], r));
             }
@@ -629,6 +649,20 @@ fn tile_estimates(
     } else {
         std::collections::HashMap::new()
     };
+    // Each pattern is estimated on every permutation that leads with a bound id,
+    // reading the directory leaves its run starts and ends in: fault them all
+    // for all the patterns at once, not one permutation after another.
+    let patterns: Vec<Pattern> = lowered
+        .iter()
+        .filter_map(|t| {
+            Some((
+                const_subject(&t.0, dict)?,
+                const_predicate(&t.1)?,
+                const_object(&t.2, dict)?,
+            ))
+        })
+        .collect();
+    index.prefault_estimate_leaves(&patterns);
     lowered
         .iter()
         .map(|t| {
@@ -914,6 +948,53 @@ fn pattern_slots(t: &(SlotTerm, SlotTerm, SlotTerm)) -> Vec<usize> {
     slots
 }
 
+/// How many scanned triples [`canon_ahead`] pulls before canonicalizing their
+/// predicates together.
+const CANON_AHEAD: usize = 64;
+
+/// `triples`, with the predicates of each run of [`CANON_AHEAD`] of them
+/// canonicalized in one batch before the first row of the run is built.
+///
+/// A pattern with a variable predicate canonicalizes every new predicate it
+/// meets ([`pred_val`]): its term is looked up as a node, up to three chunk
+/// reads, each a round trip on a lazy open, one new predicate after another.
+/// Looking the run's predicates up together costs the round trips of one
+/// ([`crate::row::Resolver::prefetch_canon`]). Anything but a variable
+/// predicate over a faulting dictionary passes straight through.
+fn canon_ahead<'a, 'c>(
+    ctx: &'a Ctx<'c>,
+    slot: &SlotTerm,
+    triples: impl Iterator<Item = Triple> + 'a,
+) -> Box<dyn Iterator<Item = Triple> + 'a> {
+    if !matches!(slot, SlotTerm::Var(_)) || !ctx.rete.dictionary().faults_chunks() {
+        return Box::new(triples);
+    }
+    Box::new(CanonAhead {
+        ctx,
+        triples,
+        run: std::collections::VecDeque::new(),
+    })
+}
+
+struct CanonAhead<'a, 'c, I> {
+    ctx: &'a Ctx<'c>,
+    triples: I,
+    run: std::collections::VecDeque<Triple>,
+}
+
+impl<I: Iterator<Item = Triple>> Iterator for CanonAhead<'_, '_, I> {
+    type Item = Triple;
+
+    fn next(&mut self) -> Option<Triple> {
+        if self.run.is_empty() {
+            self.run.extend(self.triples.by_ref().take(CANON_AHEAD));
+            let preds: Vec<u32> = self.run.iter().map(|t| t.1).collect();
+            self.ctx.resolver.prefetch_canon(&preds);
+        }
+        self.run.pop_front()
+    }
+}
+
 /// The row value of a matched triple's predicate `p_id`, for a pattern whose
 /// predicate slot is `slot`. Only a variable predicate binds it, so only then
 /// is it canonicalized (a predicate that is also a node becomes the node id):
@@ -970,8 +1051,7 @@ fn scan_rows<'q>(
         const_object(&t.2, dict)?,
     );
     Some(
-        index
-            .scan_iter((sid, pid, oid))
+        canon_ahead(ctx, &t.1, index.scan_iter((sid, pid, oid)))
             .filter_map(move |triple| triple_row(ctx, &t, triple)),
     )
 }
@@ -1059,7 +1139,7 @@ fn pattern_rows(
     );
     // Stream the matches with the lazy cursor — the hash join is
     // order-independent, so no canonical re-sort is needed here.
-    for triple in index.scan_iter((sid, pid, oid)) {
+    for triple in canon_ahead(ctx, &t.1, index.scan_iter((sid, pid, oid))) {
         if let Some(row) = triple_row(ctx, t, triple) {
             rel.push(row);
         }
@@ -1553,8 +1633,7 @@ impl<'q> BgpSolutions<'q> {
         };
         // Join all but the *last* (least selective) pattern eagerly into the
         // prefix; a single pattern leaves the seed row as the prefix.
-        let order = selectivity_order(ctx, index, &lowered);
-        let scan_est = tile_estimates(ctx, index, &lowered, &std::collections::HashSet::new());
+        let (order, scan_est) = plan_order(ctx, index, &lowered);
         // Even the most selective pattern is big: materializing it as the
         // prefix would hold every one of its rows. Stream the whole join.
         if order.len() >= 2 && scan_est[order[0]] > limits().stream_seed {
