@@ -5,6 +5,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-08
+
 ### Fixed
 
 - **`GROUP_CONCAT` of an IRI no longer keeps its angle brackets** (G35). Over `7`, `"_:z"` and `<http://e/i>` it answered `"7|_:z|<http://e/i>"`. `GROUP_CONCAT` is `CONCAT` over its elements (SPARQL 1.1 §18.5.1.7), which takes string literals only, so an IRI, a number or any other typed literal now makes the aggregate unbound for that group, as a blank node already did and as Oxigraph does; `GROUP_CONCAT(STR(?x))` gives the IRI text. A language-tagged element still joins, and `DISTINCT` tells `"a"` from `"a"@en`; the result stays a plain literal (SPARQL 1.1, and the W3C tests; Oxigraph keeps a tag all elements share). Result-changing for a bare IRI or number.
