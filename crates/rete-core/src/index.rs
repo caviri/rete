@@ -21,6 +21,27 @@ use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
 /// A triple pattern: `None` is an unbound variable, `Some(id)` a bound term.
 pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
 
+/// The most tiles one probe-prefetch window faults ([`GraphIndex::prefetch_probe_tiles`]).
+pub(crate) const PROBE_WINDOW_TILES: usize = 1024;
+
+/// The tiles a window of upcoming probes will route to, gathered one pattern
+/// at a time ([`GraphIndex::probe_batch_add`]) so the window can grow until it
+/// is full, then faulted together ([`GraphIndex::probe_batch_fault`]).
+///
+/// Bounded in tiles ([`PROBE_WINDOW_TILES`]) and in stored bytes (an eighth
+/// of the tile cache, within 256 KiB–64 MiB): faulting every tile of a long probe
+/// list at once overran the cache, which evicted the early tiles before their
+/// probes ran, and each then came back as a request of its own, one round trip
+/// at a time (G50a).
+#[derive(Default)]
+pub(crate) struct ProbeBatch {
+    want: [std::collections::BTreeSet<usize>; NUM_PERMS],
+    tiles: usize,
+    bytes: u64,
+    /// Patterns accepted so far.
+    patterns: usize,
+}
+
 /// Default per-tile budget in (uncompressed) encoded bytes. Tiles are the
 /// independently-compressed, independently-fetchable units of a permutation
 /// section: ~64 KiB matches both zstd's sweet spot and one HTTP range read.
@@ -1498,26 +1519,91 @@ impl GraphIndex {
     /// label-heavy join over a lazy reader. Honors the synopsis prune (never
     /// fetches a tile a bound secondary proves can't match). No-op for a local
     /// index or when fewer than two tiles per section need faulting.
-    pub(crate) fn prefetch_probe_tiles(&self, patterns: &[Pattern]) {
+    ///
+    /// The batch is **bounded** ([`ProbeBatch`]): it covers the leading
+    /// patterns whose tiles fit, and returns how many that is (at least one for
+    /// a non-empty list; all of them for a local index). A caller with more
+    /// patterns asks again for the rest after probing these.
+    pub(crate) fn prefetch_probe_tiles(&self, patterns: &[Pattern]) -> usize {
         if self.bulk.is_none() {
-            return;
+            return patterns.len();
         }
-        let mut want: [std::collections::BTreeSet<usize>; NUM_PERMS] = Default::default();
         self.prefault_leaves(patterns);
+        let mut batch = ProbeBatch::default();
+        let mut covered = 0;
         for &pat in patterns {
-            let perm = Self::best_permutation(pat);
-            let [pa, pb, pc] = perm.order_pattern(pat);
-            let si = perm.section_index();
-            let (start, end) = self.tile_span(si, pa);
-            for ti in start..end {
-                if self.sections[si][ti].syn_admits(pb, pc) && !self.tile_resident(si, ti) {
-                    want[si].insert(ti);
-                }
+            if !self.probe_batch_add(&mut batch, pat) {
+                break;
+            }
+            covered += 1;
+        }
+        self.probe_batch_fault(batch);
+        covered
+    }
+
+    /// Add `pat`'s tiles to `batch` if the batch stays within its bounds
+    /// (tiles, stored bytes); `false` leaves the batch as it was. The first
+    /// pattern of a batch is always accepted: if it alone is wider than a
+    /// batch (a bound predicate with nothing else routes to its whole span) it
+    /// adds no tiles, and its own scan faults what it reads. The directory
+    /// leaves of `pat` should be resident
+    /// ([`prefault_leaves`](Self::prefault_leaves)), or this faults them one
+    /// at a time.
+    pub(crate) fn probe_batch_add(&self, batch: &mut ProbeBatch, pat: Pattern) -> bool {
+        let perm = Self::best_permutation(pat);
+        let [pa, pb, pc] = perm.order_pattern(pat);
+        let si = perm.section_index();
+        let (start, end) = self.tile_span(si, pa);
+        // This pattern's tiles that are not already wanted or resident.
+        let mut fresh: Vec<usize> = Vec::new();
+        for ti in start..end {
+            if self.sections[si][ti].syn_admits(pb, pc)
+                && !self.tile_resident(si, ti)
+                && !batch.want[si].contains(&ti)
+            {
+                fresh.push(ti);
             }
         }
-        for (si, set) in want.iter().enumerate() {
+        let fresh_bytes: u64 = fresh
+            .iter()
+            .map(|&ti| self.sections[si][ti].len as u64)
+            .sum();
+        if batch.tiles + fresh.len() > PROBE_WINDOW_TILES
+            || batch.bytes + fresh_bytes > self.probe_window_bytes()
+        {
+            if batch.patterns > 0 {
+                return false;
+            }
+            batch.patterns = 1;
+            return true;
+        }
+        batch.tiles += fresh.len();
+        batch.bytes += fresh_bytes;
+        batch.want[si].extend(fresh);
+        batch.patterns += 1;
+        true
+    }
+
+    /// Fault every tile of `batch`: per section one coalesced, parallel read.
+    pub(crate) fn probe_batch_fault(&self, batch: ProbeBatch) {
+        for (si, set) in batch.want.iter().enumerate() {
             let tiles: Vec<usize> = set.iter().copied().collect();
             self.bulk_fault(si, &tiles);
+        }
+    }
+
+    /// The stored bytes one [`ProbeBatch`] may fault: an eighth of the tile
+    /// cache's cap, within 256 KiB–64 MiB. A tile decodes to a few times its
+    /// stored size and the window must stay resident until its probes have
+    /// run, so a window that outgrew the cache would evict its own early
+    /// tiles. With the CLI's default budget (a 128 MiB tile cache) that is
+    /// 16 MiB: tens of coalesced requests, enough to keep the reader's
+    /// fan-out busy.
+    fn probe_window_bytes(&self) -> u64 {
+        const KIB: u64 = 1 << 10;
+        match self.cache.cap() {
+            u64::MAX => 64 * KIB * KIB,
+            cap => (cap / 8).clamp(256 * KIB, 64 * KIB * KIB),
         }
     }
 

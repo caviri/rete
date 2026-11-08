@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A probe join over a remote file keeps several range reads in flight** (G50a). `COUNT(DISTINCT ?t) { ?r a oaire:Software ; oaire:subject ?t }` over the 113 GB OpenAIRE file took 1,909 s and 15,539 range requests for 3.5 GB, about 1.8 MB/s on a 61 MB/s link, because the requests went out one at a time. Two causes. The join prefetched the tiles of all 221,817 left rows at once (24,452 tiles, 1.7 GB stored): far more than the tile cache holds (a sixteenth of the query budget, at most 256 MiB), so the early tiles were evicted before their probes ran and each came back as a request of its own, a round trip at a time. And a streamed join (a left side too big to hold) prefetched nothing, so every probe was its own request. Now the rows about to be probed go through a window: it fills with the next rows until their tiles reach a bound (1,024 tiles or an eighth of the tile cache in stored bytes), faults them in one coalesced, parallel read, then hands the rows on, in order; the first window is small and each is four times the last, so a `LIMIT` still stops early. The same rows come back, a local file is untouched, and no format changes. Over a local server that answers in 120 ms, a join whose tiles do not fit the cache went from 20.7 s, 174 requests and 45 MB to 2.8 s, 27 requests and 23 MB; one that fits is within a second of what it was.
+
 ## [0.5.4] - 2026-11-08
 
 ### Fixed

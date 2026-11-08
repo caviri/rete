@@ -2403,13 +2403,12 @@ fn union_pushdown<'q>(
     for p in &leaves {
         // An unknown constant empties that branch.
         if let Some(plan) = crate::bgp::ProbePlan::new(ctx, index, p, &cert) {
-            crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
             branches.push(std::rc::Rc::new(plan));
         }
     }
     Some(Box::new(branches.into_iter().flat_map(move |plan| {
-        rows.clone()
-            .into_iter()
+        // The seeds' first-pattern tiles are faulted a window ahead.
+        crate::bgp::plan_windowed(ctx, index, &plan, Box::new(rows.clone().into_iter()))
             .flat_map(move |seed| crate::bgp::ProbeJoin::from_plan(ctx, index, &plan, seed))
     })))
 }
@@ -2747,15 +2746,19 @@ fn join_iter<'q>(
                         // per row. The demand-bound path stays fully lazy
                         // (materializing would defeat its early exit).
                         let left: RowIter<'q> = if let Some(rows) = small_left {
-                            crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
                             Box::new(rows.into_iter())
                         } else if inlj_hint(ctx).is_none() {
                             let rows: Vec<Row> = eval_plan_iter(ctx, index, nf, l).collect();
-                            crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
                             Box::new(rows.into_iter())
                         } else {
                             eval_plan_iter(ctx, index, nf, l)
                         };
+                        // Either way the tiles the probes route to are faulted
+                        // a window ahead of them (`Windowed`): a window starts
+                        // small and doubles, so the demand-bound path stays
+                        // lazy, and a long left side no longer overruns the
+                        // tile cache.
+                        let left = crate::bgp::plan_windowed(ctx, index, &plan, left);
                         Box::new(ProbedJoin {
                             ctx,
                             index,
