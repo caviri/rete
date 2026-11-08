@@ -42,6 +42,17 @@ pub trait RangeReader {
     fn concurrency(&self) -> usize {
         1
     }
+
+    /// How many leading bytes this reader already holds in memory: a read that
+    /// lies wholly inside `[0, resident_prefix())` costs no round trip. An HTTP
+    /// reader that learnt the length from a ranged GET of the first 64 KiB
+    /// reports those 64 KiB. A caching layer above it serves such a read
+    /// straight through instead of fetching a block-aligned span that would
+    /// re-read what is already here (the open's first read used to cost a
+    /// second, larger request for block 0). Purely advisory; defaults to 0.
+    fn resident_prefix(&self) -> u64 {
+        0
+    }
 }
 
 /// Sharing a reader (e.g. keeping a counting handle while a lazily-faulting
@@ -61,6 +72,10 @@ impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
 
     fn concurrency(&self) -> usize {
         (**self).concurrency()
+    }
+
+    fn resident_prefix(&self) -> u64 {
+        (**self).resident_prefix()
     }
 }
 
@@ -122,6 +137,14 @@ impl<R: RangeReader> CountingReader<R> {
     pub fn bytes_read(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
     }
+
+    /// Is `[offset, offset+len)` already in the inner reader's memory (not a
+    /// request)?
+    fn held(&self, offset: u64, len: u64) -> bool {
+        offset
+            .checked_add(len)
+            .is_some_and(|e| e <= self.inner.resident_prefix())
+    }
 }
 
 impl<R: RangeReader> RangeReader for CountingReader<R> {
@@ -131,8 +154,10 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         let out = self.inner.read_at(offset, len)?;
-        self.requests.fetch_add(1, Ordering::Relaxed);
-        self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
+        if !self.held(offset, len) {
+            self.requests.fetch_add(1, Ordering::Relaxed);
+            self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
+        }
         Ok(out)
     }
 
@@ -141,14 +166,24 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
     /// actually fetched, however the inner reader issues them.
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         let out = self.inner.read_many(ranges)?;
-        self.requests.fetch_add(out.len() as u64, Ordering::Relaxed);
-        self.bytes
-            .fetch_add(out.iter().map(|b| b.len() as u64).sum(), Ordering::Relaxed);
+        let (mut n, mut bytes) = (0u64, 0u64);
+        for (&(o, l), b) in ranges.iter().zip(&out) {
+            if !self.held(o, l) {
+                n += 1;
+                bytes += b.len() as u64;
+            }
+        }
+        self.requests.fetch_add(n, Ordering::Relaxed);
+        self.bytes.fetch_add(bytes, Ordering::Relaxed);
         Ok(out)
     }
 
     fn concurrency(&self) -> usize {
         self.inner.concurrency()
+    }
+
+    fn resident_prefix(&self) -> u64 {
+        self.inner.resident_prefix()
     }
 }
 
@@ -190,6 +225,10 @@ impl<R: RangeReader> RangeReader for OffsetReader<R> {
 
     fn concurrency(&self) -> usize {
         self.inner.concurrency()
+    }
+
+    fn resident_prefix(&self) -> u64 {
+        self.inner.resident_prefix().saturating_sub(self.base)
     }
 }
 
@@ -289,6 +328,10 @@ impl<R: RangeReader> RangeReader for PrefixReader<R> {
 
     fn concurrency(&self) -> usize {
         self.inner.concurrency()
+    }
+
+    fn resident_prefix(&self) -> u64 {
+        (self.prefix.len() as u64).max(self.inner.resident_prefix())
     }
 }
 

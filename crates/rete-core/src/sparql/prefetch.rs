@@ -27,6 +27,12 @@ struct Terms<'a> {
     /// Graph names, looked up as nodes only where a quad index stores them in
     /// the dictionary.
     graphs: Vec<&'a str>,
+    /// Single-pattern BGPs seen, and whether anything else was: a lone
+    /// pattern is evaluated without the join planner.
+    lone_patterns: usize,
+    other_shapes: bool,
+    /// Some pattern has a variable in predicate position.
+    var_predicate: bool,
 }
 
 impl<'a> Terms<'a> {
@@ -41,8 +47,9 @@ impl<'a> Terms<'a> {
     }
 
     fn pred(&mut self, t: &'a PatternTerm) {
-        if let PatternTerm::Const(c) = t {
-            self.preds.push(c.as_str());
+        match t {
+            PatternTerm::Const(c) => self.preds.push(c.as_str()),
+            PatternTerm::Var(_) => self.var_predicate = true,
         }
     }
 
@@ -57,6 +64,11 @@ impl<'a> Terms<'a> {
     fn plan(&mut self, plan: &'a Plan) {
         if self.full() {
             return;
+        }
+        if !matches!(plan, Plan::Bgp(p) if p.len() == 1) {
+            self.other_shapes = true;
+        } else {
+            self.lone_patterns += 1;
         }
         match plan {
             Plan::Bgp(patterns) => {
@@ -163,11 +175,13 @@ pub(super) fn prefetch_constants(rete: &Rete, sel: &Select) {
     nodes.dedup();
     let mut preds = terms.preds;
     // The join planner looks `rdf:type` up for every multi-pattern BGP (to
-    // recognise a class enumeration), named in the query or not.
-    if !preds.is_empty() {
+    // recognise a class enumeration), named in the query or not. A query that
+    // is one lone pattern never reaches it.
+    let lone = !terms.other_shapes && terms.lone_patterns <= 1;
+    if !preds.is_empty() && !lone {
         preds.push(crate::file::RDF_TYPE);
     }
     preds.sort_unstable();
     preds.dedup();
-    dict.prefetch_lookups(nodes, preds);
+    dict.prefetch_lookups_with(nodes, preds, terms.var_predicate);
 }

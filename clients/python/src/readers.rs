@@ -60,6 +60,16 @@ impl RangeReader for AnyReader {
             Self::Py(r) => r.concurrency(),
         }
     }
+
+    // The open's first read stays in the HTTP reader: forwarded so the block
+    // cache above does not fetch it a second time.
+    fn resident_prefix(&self) -> u64 {
+        match self {
+            Self::Local(_) | Self::Py(_) => 0,
+            #[cfg(not(target_os = "emscripten"))]
+            Self::Http(r) => r.resident_prefix(),
+        }
+    }
 }
 
 /// Positional reads against a local file (no mmap, no whole-file load), so a

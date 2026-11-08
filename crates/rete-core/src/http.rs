@@ -865,6 +865,15 @@ impl RangeReader for HttpRangeReader {
         self.policy.concurrency
     }
 
+    /// The bytes the opening GET (or a whole-body answer) left in memory.
+    fn resident_prefix(&self) -> u64 {
+        if self.whole.get().is_some() {
+            self.len
+        } else {
+            self.prefix.len() as u64
+        }
+    }
+
     /// Coalesce the batch, fetch its requests concurrently, slice the ranges
     /// back out in request order.
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
@@ -1870,6 +1879,164 @@ mod tests {
                 bytes <= bare_bytes + per_row * 45_000,
                 "{q}: {bytes} bytes, {bare_bytes} without the OPTIONAL: probed per scanned row"
             );
+        }
+    }
+
+    /// Counts the sequential reads a query makes: every `read_at` or
+    /// `read_many` the reader does not answer from memory is one round trip
+    /// (a `read_many` goes out in parallel), and nothing a query does at the
+    /// reader overlaps two of them unless it asks for both in one batch.
+    struct Rounds<R> {
+        inner: R,
+        calls: Arc<AtomicU64>,
+    }
+
+    impl<R: RangeReader> Rounds<R> {
+        fn held(&self, o: u64, l: u64) -> bool {
+            o + l <= self.inner.resident_prefix()
+        }
+    }
+
+    impl<R: RangeReader> RangeReader for Rounds<R> {
+        fn len(&self) -> u64 {
+            self.inner.len()
+        }
+        fn read_at(&self, o: u64, l: u64) -> std::io::Result<Vec<u8>> {
+            if !self.held(o, l) {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+            }
+            self.inner.read_at(o, l)
+        }
+        fn read_many(&self, r: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+            if r.iter().any(|&(o, l)| !self.held(o, l)) {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+            }
+            self.inner.read_many(r)
+        }
+        fn concurrency(&self) -> usize {
+            self.inner.concurrency()
+        }
+        fn resident_prefix(&self) -> u64 {
+            self.inner.resident_prefix()
+        }
+    }
+
+    /// G1: a cold bound-subject lookup over a remote file makes few dependent
+    /// round trips. The file is big enough that every directory has several
+    /// leaves, so nothing a lookup needs sits in the first read. Before: the
+    /// variable predicate canonicalized each new predicate with its own chunk
+    /// reads, the planner read the leaves of four permutations one after
+    /// another for a lone pattern, the constants' leaves went one section at a
+    /// time and the open's first block was fetched twice. Rows are the
+    /// resident file's.
+    #[test]
+    fn a_cold_bound_subject_lookup_makes_few_round_trips() {
+        use crate::{
+            eval_query, BlockCacheReader, DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete,
+        };
+        const N: usize = 150_000;
+        // Hash-like literals and IRIs, so the dictionary and the directories do
+        // not compress to one leaf.
+        let h = |i: usize| (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (i as u64) << 17;
+        let mut triples: Vec<(String, String, String)> = Vec::new();
+        for i in 0..N {
+            let s = format!("<http://ex/r{i:06}>");
+            triples.push((
+                s.clone(),
+                "<http://ex/title>".into(),
+                format!("\"record {:x}{:x}\"", h(i), h(i + N)),
+            ));
+            triples.push((
+                s.clone(),
+                "<http://ex/year>".into(),
+                format!("\"{}\"", 1900 + i % 120),
+            ));
+            triples.push((
+                s.clone(),
+                "<http://ex/seq>".into(),
+                format!("\"{}\"", (i * 17) % N),
+            ));
+            triples.push((
+                s.clone(),
+                "<http://ex/links>".into(),
+                format!("<http://ex/r{:06}>", (i * 31) % N),
+            ));
+            triples.push((
+                s,
+                "<http://ex/kind>".into(),
+                format!("<http://ex/K{}>", i % 7),
+            ));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(128);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = crate::file::write_file_v05(&dict, &ib.build(), false, &[], 0);
+        let image = crate::v06::write::convert_image(&v5, Default::default()).unwrap();
+        let resident = Rete::open(&image).unwrap();
+        let rows = |rete: &Rete, q: &str| -> Vec<String> {
+            let QueryOutput::Select(_, rows) = eval_query(rete, q).unwrap() else {
+                panic!("not a SELECT")
+            };
+            let mut out: Vec<String> = rows.iter().map(|b| format!("{b:?}")).collect();
+            out.sort();
+            out
+        };
+        let iri = "<http://ex/r031337>";
+        let cases = [
+            // (query, rounds without the cache, rounds with it)
+            (format!("SELECT ?p ?o WHERE {{ {iri} ?p ?o }}"), 6u64, 4u64),
+            (
+                format!("SELECT ?o WHERE {{ {iri} <http://ex/title> ?o }}"),
+                5,
+                4,
+            ),
+        ];
+        for (q, max_plain, max_cached) in cases {
+            let want = rows(&resident, &q);
+            assert!(!want.is_empty(), "{q}");
+            for cached in [false, true] {
+                let (url, stats) = serve_with(
+                    image.clone(),
+                    ServerMode::HonorRange,
+                    Duration::from_millis(5),
+                );
+                let policy = FetchPolicy {
+                    backoff_ms: 1,
+                    // The image must not be small enough to fetch whole.
+                    whole_max: 0,
+                    // A small first read stands in for a big file: the
+                    // directories are not in it, as on a real one.
+                    open_read: 4096,
+                    ..FetchPolicy::DEFAULT
+                };
+                let http = HttpRangeReader::open_with(&url, policy).unwrap();
+                let calls = Arc::new(AtomicU64::new(0));
+                let rounds = Rounds {
+                    inner: http,
+                    calls: calls.clone(),
+                };
+                let got = if cached {
+                    let r = BlockCacheReader::new(rounds, 64 * 1024);
+                    rows(&Rete::open_ranged_lazy_with(r, 4096).unwrap(), &q)
+                } else {
+                    rows(&Rete::open_ranged_lazy_with(rounds, 4096).unwrap(), &q)
+                };
+                assert_eq!(got, want, "{q} cached={cached}");
+                let n = calls.load(Ordering::SeqCst);
+                let gets = stats.gets.load(Ordering::SeqCst);
+                eprintln!("{q} cached={cached}: {n} round trips, {gets} GETs");
+                let max = if cached { max_cached } else { max_plain };
+                assert!(
+                    n <= max,
+                    "{q} cached={cached}: {n} round trips, want at most {max}"
+                );
+            }
         }
     }
 }
