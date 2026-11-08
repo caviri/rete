@@ -1867,10 +1867,7 @@ fn text_contains_pushdown<'q>(
         Plan::Graph(GraphTarget::Var(var), p) => {
             graph_walk_pushdown(ctx, index, nf, expr, var, p, &needles)
         }
-        _ => {
-            let rows = seeded_pushdown(ctx, index, nf, expr, inner, &needles)?;
-            Some(Box::new(rows.into_iter()))
-        }
+        _ => seeded_pushdown(ctx, index, nf, expr, inner, &needles),
     }
 }
 
@@ -1968,17 +1965,33 @@ fn contains_candidates(
     seed
 }
 
+/// Candidate subjects seeded per step of [`seeded_pushdown`] once past the
+/// first: their terms and probe tiles are faulted together, and kept resident
+/// until the step's probes have run, so a step must fit the tile cache (256
+/// subjects touch at most 256 tiles of a permutation).
+const SEED_STEP_ROWS: usize = 256;
+
 /// The pushdown proper over one graph (see [`text_contains_pushdown`]): the
 /// candidates seeded into `inner` as a VALUES probe, the rows re-verified by
 /// the original filter.
-fn seeded_pushdown(
-    ctx: &Ctx,
-    index: &GraphIndex,
-    nf: Option<&[String]>,
-    expr: &FExpr,
-    inner: &Plan,
+///
+/// The candidates go in **steps**, lazily: a step faults its candidates' own
+/// terms (the VALUES seed) and the tiles their probes route to in a few
+/// coalesced reads, evaluates the seeded plan over just those, and a consumer
+/// that stops (a `LIMIT`) never asks for the next. Seeding is linear in the
+/// candidates (every operator on the seeded spine is applied row by row), so
+/// the steps' rows are the rows of one seed of all of them, in the same order.
+/// Faulting all of them up front overran the tile cache past a few hundred
+/// candidates, the early tiles were evicted before their probes ran, and each
+/// came back as a request of its own (G33).
+fn seeded_pushdown<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    expr: &'q FExpr,
+    inner: &'q Plan,
     needles: &[Needle],
-) -> Option<Vec<Row>> {
+) -> Option<RowIter<'q>> {
     use std::collections::BTreeSet;
     // Decided from the header, before anything faults the token table.
     if !text_index_covers(ctx, index) {
@@ -1988,44 +2001,60 @@ fn seeded_pushdown(
     if cands.len() > TEXT_PUSHDOWN_MAX_CANDIDATES {
         return None;
     }
-    let dict = ctx.rete.dictionary();
+    // Whether the seed has a place to land, decided before the first step.
+    let _ = inject_contains_seed(inner, &sv, &Plan::Values(vec![sv.clone()], Vec::new()))?;
     let ids: Vec<u32> = cands.iter().copied().collect();
-    // Three batched warm-ups turn the otherwise per-candidate blocking round
-    // trips into a few coalesced reads: the candidates' own terms (the VALUES
-    // seed), the tiles their probes will route to, and — after the id-rows
-    // land — every term the filter/projection is about to decode.
-    dict.prefetch_subject_terms(&ids);
-    let rows: Vec<Vec<Option<String>>> = cands
-        .iter()
-        .filter_map(|&id| dict.subject_term(id))
-        .map(|t| vec![Some(t)])
-        .collect();
-    if let Some(target) = find_seed_bgp(inner, &sv) {
-        crate::bgp::prefetch_subject_probes(ctx, index, target, &sv, &ids);
-    }
-    let values = Plan::Values(vec![sv.clone()], rows);
-    let seeded = inject_contains_seed(inner, &sv, &values)?;
-    let id_rows: Vec<Row> = eval_plan_iter(ctx, index, nf, &seeded).collect();
-    let nodes: Vec<u32> = {
-        let mut set = BTreeSet::new();
-        for row in &id_rows {
-            for v in row.iter().flatten() {
-                if let Val::Id(x) = v {
-                    if *x >= 0 {
-                        set.insert(*x as u32);
+    let target = find_seed_bgp(inner, &sv);
+    // Under a small demand the first step is no wider than the demand.
+    let mut step = SEED_STEP_ROWS.min(ctx.limit_hint.get().unwrap_or(usize::MAX).max(1));
+    let mut next = 0;
+    let steps = std::iter::from_fn(move || {
+        if next >= ids.len() {
+            return None;
+        }
+        let chunk = &ids[next..(next + step).min(ids.len())];
+        next += chunk.len();
+        step = SEED_STEP_ROWS;
+        let dict = ctx.rete.dictionary();
+        // Three batched warm-ups turn the otherwise per-candidate blocking
+        // round trips into a few coalesced reads: the candidates' own terms
+        // (the VALUES seed), the tiles their probes will route to, and, after
+        // the id-rows land, every term the filter/projection is about to
+        // decode.
+        dict.prefetch_subject_terms(chunk);
+        let rows: Vec<Vec<Option<String>>> = chunk
+            .iter()
+            .filter_map(|&id| dict.subject_term(id))
+            .map(|t| vec![Some(t)])
+            .collect();
+        if let Some(target) = target {
+            crate::bgp::prefetch_subject_probes(ctx, index, target, &sv, chunk);
+        }
+        let values = Plan::Values(vec![sv.clone()], rows);
+        let seeded = inject_contains_seed(inner, &sv, &values)?;
+        let id_rows: Vec<Row> = eval_plan_iter(ctx, index, nf, &seeded).collect();
+        let nodes: Vec<u32> = {
+            let mut set = BTreeSet::new();
+            for row in &id_rows {
+                for v in row.iter().flatten() {
+                    if let Val::Id(x) = v {
+                        if *x >= 0 {
+                            set.insert(*x as u32);
+                        }
                     }
                 }
             }
-        }
-        set.into_iter().collect()
-    };
-    dict.prefetch_node_terms(&nodes);
-    let mut cache = ExistsCache::new();
-    let out: Vec<Row> = id_rows
-        .into_iter()
-        .filter(|b| expr.boolean(ctx, index, b, &mut cache))
-        .collect();
-    Some(out)
+            set.into_iter().collect()
+        };
+        dict.prefetch_node_terms(&nodes);
+        let mut cache = ExistsCache::new();
+        let out: Vec<Row> = id_rows
+            .into_iter()
+            .filter(|b| expr.boolean(ctx, index, b, &mut cache))
+            .collect();
+        Some(out)
+    });
+    Some(Box::new(steps.flatten()))
 }
 
 /// `FILTER(e) GRAPH ?var { inner }` through an index that covers the named

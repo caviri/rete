@@ -170,6 +170,129 @@ fn collect_path_predicates(
     }
 }
 
+/// `FILTER(e)` over `inner`, with every conjunct of `e` that the left side of
+/// an OPTIONAL decides on its own applied **there**.
+///
+/// A group's filters scope over the whole group, so `{ ?d :title ?t FILTER(...)
+/// OPTIONAL { ?d :year ?y } }` is `Filter(e, LeftJoin(Bgp, Bgp))`: the filter
+/// runs after the OPTIONAL, which then evaluates once per row of the left side
+/// the filter is about to throw away (G33: a `CONTAINS` that keeps a few in a
+/// million titles probed the year of every title it scanned). A conjunct whose
+/// variables are all bound in every left row sees the same values on the merged
+/// row, since the merge keeps the left row's bindings, so it accepts exactly
+/// the rows it accepted above. It moves onto the base of the left spine
+/// (`LeftJoin` binds nothing certainly beyond its left), where the CONTAINS
+/// push-down and the lazy streaming see it. A conjunct that reads a variable the
+/// OPTIONAL may bind, or holds an `EXISTS` (which reads the whole row), stays.
+fn filter_below_optional(expr: FExpr, mut inner: Plan) -> Plan {
+    if !matches!(inner, Plan::LeftJoin(..)) {
+        return Plan::Filter(expr, Box::new(inner));
+    }
+    // The base of the left spine, walked iteratively like `build_left_spine`.
+    let mut base = &mut inner;
+    while let Plan::LeftJoin(l, _, _) = base {
+        base = &mut **l;
+    }
+    let certain = certain_var_names(base);
+    let mut conjuncts = Vec::new();
+    split_and(expr, &mut conjuncts);
+    let (mut down, mut up) = (Vec::new(), Vec::new());
+    for c in conjuncts {
+        let mut vars = std::collections::BTreeSet::new();
+        if expr_vars(&c, &mut vars) && vars.iter().all(|v| certain.contains(v)) {
+            down.push(c);
+        } else {
+            up.push(c);
+        }
+    }
+    if let Some(cond) = and_all(down) {
+        let b = std::mem::replace(base, Plan::Bgp(Vec::new()));
+        *base = Plan::Filter(cond, Box::new(b));
+    }
+    match and_all(up) {
+        Some(cond) => Plan::Filter(cond, Box::new(inner)),
+        None => inner,
+    }
+}
+
+fn split_and(e: FExpr, out: &mut Vec<FExpr>) {
+    match e {
+        FExpr::And(a, b) => {
+            split_and(*a, out);
+            split_and(*b, out);
+        }
+        e => out.push(e),
+    }
+}
+
+fn and_all(parts: Vec<FExpr>) -> Option<FExpr> {
+    parts
+        .into_iter()
+        .reduce(|a, b| FExpr::And(Box::new(a), Box::new(b)))
+}
+
+/// The variables every solution of `plan` binds, by name: the same notion as
+/// the evaluator's `certain_bound`, without a slot table and conservative
+/// (a shape not listed binds nothing certainly).
+fn certain_var_names(plan: &Plan) -> std::collections::BTreeSet<String> {
+    fn add(t: &PatternTerm, out: &mut std::collections::BTreeSet<String>) {
+        if let PatternTerm::Var(v) = t {
+            out.insert(v.clone());
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    match plan {
+        Plan::Bgp(patterns) => {
+            for p in patterns {
+                for t in [&p.s, &p.p, &p.o] {
+                    add(t, &mut out);
+                }
+            }
+        }
+        Plan::Path(s, _, o) => {
+            add(s, &mut out);
+            add(o, &mut out);
+        }
+        Plan::Values(vars, rows) => {
+            for (i, v) in vars.iter().enumerate() {
+                if rows.iter().all(|r| r.get(i).is_some_and(Option::is_some)) {
+                    out.insert(v.clone());
+                }
+            }
+        }
+        Plan::Filter(_, inner) | Plan::Extend(_, _, inner) => out = certain_var_names(inner),
+        Plan::Join(l, r) => {
+            out = certain_var_names(l);
+            out.extend(certain_var_names(r));
+        }
+        Plan::LeftJoin(l, _, _) => out = certain_var_names(l),
+        _ => {}
+    }
+    out
+}
+
+/// Collect the variables `e` reads. `false` when it holds an `EXISTS`, which
+/// reads the whole row.
+fn expr_vars(e: &FExpr, out: &mut std::collections::BTreeSet<String>) -> bool {
+    match e {
+        FExpr::Var(v) | FExpr::Bound(v) => {
+            out.insert(v.clone());
+            true
+        }
+        FExpr::Const(_) => true,
+        FExpr::Exists(_) => false,
+        FExpr::Arith(_, a, b)
+        | FExpr::SameTerm(a, b)
+        | FExpr::Compare(_, a, b)
+        | FExpr::And(a, b)
+        | FExpr::Or(a, b) => expr_vars(a, out) && expr_vars(b, out),
+        FExpr::Not(a) => expr_vars(a, out),
+        FExpr::If(c, t, f) => expr_vars(c, out) && expr_vars(t, out) && expr_vars(f, out),
+        FExpr::In(x, list) => expr_vars(x, out) && list.iter().all(|e| expr_vars(e, out)),
+        FExpr::Func(_, args) | FExpr::Coalesce(args) => args.iter().all(|e| expr_vars(e, out)),
+    }
+}
+
 /// Lower a left-deep chain of `Join` / `LeftJoin` **iteratively** (see the note
 /// in `build`'s Join/LeftJoin arm). Walks the left spine collecting each
 /// operator (its right side, and a LeftJoin's optional condition), lowers the
@@ -363,7 +486,7 @@ fn build(mut p: &GraphPattern, sel: &mut Select, mut in_where: bool) -> Result<P
                 sel.having.push(fexpr);
                 Ok(inner_plan)
             } else {
-                Ok(Plan::Filter(fexpr, Box::new(inner_plan)))
+                Ok(filter_below_optional(fexpr, inner_plan))
             }
         }
         // Transparent solution-modifier wrappers: record and descend.

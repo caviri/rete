@@ -840,9 +840,17 @@ pub(crate) fn plan_windowed<'q>(
         return rows;
     }
     let pat = bgp_probe_pattern(ctx, t);
-    Box::new(windowed(index, rows, move |base| {
+    let mut win = windowed(index, rows, move |base| {
         pat(base).filter(|(s, _, o)| s.is_some() || o.is_some())
-    }))
+    });
+    // A window is pulled whole before its first row comes out. Under a demand
+    // bound the first one holds no more than the bound: a sparse left side
+    // (a selective filter over a scan) otherwise has to yield 256 rows before
+    // a `LIMIT 25` sees the first (G33).
+    if let Some(demand) = ctx.limit_hint.get() {
+        win.size = win.size.min(demand.max(1));
+    }
+    Box::new(win)
 }
 
 /// Batch-fault the tiles that probing `patterns` from `subject_ids` (each

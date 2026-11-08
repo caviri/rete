@@ -996,6 +996,8 @@ mod tests {
     #[derive(Default)]
     struct Stats {
         gets: AtomicU64,
+        /// Bytes of range bodies served.
+        bytes: AtomicU64,
         in_flight: AtomicU64,
         max_in_flight: AtomicU64,
     }
@@ -1109,6 +1111,7 @@ mod tests {
                 let a: usize = a.parse().unwrap();
                 let b: usize = b.parse().unwrap();
                 let slice = &data[a.min(total)..=b.min(total - 1)];
+                st.bytes.fetch_add(slice.len() as u64, Ordering::SeqCst);
                 let claimed = if matches!(mode, ServerMode::WrongOffset) {
                     a + 1
                 } else {
@@ -1754,6 +1757,119 @@ mod tests {
                 assert!(peak > 1, "{q} at ({floor}, {seed}, {hash}): one at a time");
                 assert!(peak <= 16, "bounded by the reader's fan-out: {peak}");
             }
+        }
+    }
+
+    /// G33: an `OPTIONAL` after a `FILTER` in the same group is probed for the
+    /// rows the filter keeps, not for every row the left side scans. 120,000
+    /// records, 20 of them with a rare word in the title; the query takes the
+    /// first ten. With the filter above the left join each of the thousands of
+    /// scanned titles probed its year (a tile of its own: tens of thousands of
+    /// round trips at DataCite's size); with it below, the OPTIONAL adds the
+    /// ten probes the emitted rows need and the request count stays that of the
+    /// same query without the OPTIONAL. Rows are the resident file's.
+    #[test]
+    fn an_optional_after_a_filter_is_probed_per_kept_row_on_a_remote_file() {
+        use crate::{eval_query, DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete};
+        const N: usize = 120_000;
+        let mut triples: Vec<(String, String, String)> = Vec::new();
+        for i in 0..N {
+            let s = format!("<http://ex/d{i:06}>");
+            let title = if i % 6000 == 3000 {
+                format!("\"a rare record {i}\"")
+            } else {
+                format!("\"plain record {i}\"")
+            };
+            triples.push((s.clone(), "<http://ex/title>".into(), title));
+            triples.push((
+                s.clone(),
+                "<http://ex/year>".into(),
+                format!("\"{}\"", 1900 + (i * 7919) % 120),
+            ));
+            triples.push((
+                s.clone(),
+                "<http://ex/note>".into(),
+                format!("\"note {}\"", (i * 31) % N),
+            ));
+            triples.push((s, "<http://ex/seq>".into(), format!("\"{}\"", (i * 17) % N)));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(128);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = crate::file::write_file_v05(&dict, &ib.build(), false, &[], 0);
+        let image = crate::v06::write::convert_image(&v5, Default::default()).unwrap();
+        let resident = Rete::open(&image).unwrap();
+
+        let rows = |rete: &Rete, q: &str| -> Vec<String> {
+            let QueryOutput::Select(_, rows) = eval_query(rete, q).unwrap() else {
+                panic!("not a SELECT")
+            };
+            let mut out: Vec<String> = rows.iter().map(|b| format!("{b:?}")).collect();
+            out.sort();
+            out
+        };
+        // A fresh remote handle per query, so no query warms another's tiles.
+        // Returns the rows and the GETs the query alone made.
+        let remote = |q: &str| -> (Vec<String>, u64, u64) {
+            let (url, stats) = serve_with(
+                image.clone(),
+                ServerMode::HonorRange,
+                Duration::from_millis(15),
+            );
+            let policy = FetchPolicy {
+                concurrency: 16,
+                coalesce_gap: 0,
+                ..quick()
+            };
+            let reader = HttpRangeReader::open_with(&url, policy).unwrap();
+            let rete = Rete::open_ranged_lazy(reader).unwrap();
+            let opened = stats.gets.load(Ordering::SeqCst);
+            let bytes = stats.bytes.load(Ordering::SeqCst);
+            let got = rows(&rete, q);
+            (
+                got,
+                stats.gets.load(Ordering::SeqCst) - opened,
+                stats.bytes.load(Ordering::SeqCst) - bytes,
+            )
+        };
+        let head = "SELECT * WHERE { ?d <http://ex/title> ?t FILTER(CONTAINS(?t, \"rare\"))";
+        let opt = "OPTIONAL { ?d <http://ex/year> ?y }";
+        let multi = "OPTIONAL { ?d <http://ex/year> ?y . ?d <http://ex/note> ?n }";
+
+        // Every row, no LIMIT: the resident file's rows, OPTIONAL variants too.
+        for tail in [opt, multi] {
+            let q = format!("{head} {tail} }}");
+            let want = rows(&resident, &q);
+            assert_eq!(want.len(), 20, "{q}");
+            let (got, gets, bytes) = remote(&q);
+            assert_eq!(got, want, "{q}");
+            eprintln!("{q}: {gets} GETs, {bytes} bytes");
+        }
+
+        // LIMIT 10: the OPTIONAL costs only the probes of the rows it emits.
+        let (_, bare, bare_bytes) = remote(&format!("{head} }} LIMIT 10"));
+        // (a probe or two per emitted row: a tile, and the leaf that routes to it)
+        for (tail, per_row) in [(opt, 2), (multi, 3)] {
+            let q = format!("{head} {tail} }} LIMIT 10");
+            let (got, gets, bytes) = remote(&q);
+            let all = rows(&resident, &format!("{head} {tail} }}"));
+            assert_eq!(got.len(), 10, "{q}");
+            assert!(got.iter().all(|r| all.contains(r)), "{q}");
+            eprintln!("{q}: {gets} GETs, {bytes} bytes; without the OPTIONAL {bare}, {bare_bytes}");
+            assert!(
+                gets <= bare + per_row * 10,
+                "{q}: {gets} GETs, {bare} without the OPTIONAL: probed per scanned row"
+            );
+            assert!(
+                bytes <= bare_bytes + per_row * 45_000,
+                "{q}: {bytes} bytes, {bare_bytes} without the OPTIONAL: probed per scanned row"
+            );
         }
     }
 }
