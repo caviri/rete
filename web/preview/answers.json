@@ -49523,6 +49523,387 @@
    "error": "",
    "elapsedMs": 138
   },
+  "nanopubs:0": {
+   "id": "nanopubs:0",
+   "dataset": "nanopubs",
+   "index": 0,
+   "view": "table",
+   "ok": true,
+   "qmeta": "3 row(s) | 23 range req · 13.2 MB of 3.62 GB fetched (incl. opening the file) · 12.5 MB cached this session · 6032 ms",
+   "count": 3,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Link",
+     "var": "part"
+    },
+    {
+     "label": "Graph",
+     "var": "graph"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "http://www.nanopub.org/nschema#hasAssertion",
+      "media": false
+     },
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#assertion",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.nanopub.org/nschema#hasProvenance",
+      "media": false
+     },
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#provenance",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.nanopub.org/nschema#hasPublicationInfo",
+      "media": false
+     },
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#pubinfo",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 6065
+  },
+  "nanopubs:1": {
+   "id": "nanopubs:1",
+   "dataset": "nanopubs",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "10 row(s) | 7 range req · 4.0 MB of 3.62 GB fetched · 16.5 MB cached this session · 1689 ms",
+   "count": 10,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Subject",
+     "var": "s"
+    },
+    {
+     "label": "Predicate",
+     "var": "p"
+    },
+    {
+     "label": "Object",
+     "var": "o"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_2",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/dc/terms/subject",
+      "media": false
+     },
+     {
+      "text": "TextLocation",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_2",
+      "media": false
+     },
+     {
+      "text": "http://www.w3.org/1999/02/22-rdf-syntax-ns#value",
+      "media": false
+     },
+     {
+      "text": "Review",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#assertion",
+      "media": false
+     },
+     {
+      "text": "http://www.w3.org/2000/01/rdf-schema#label",
+      "media": false
+     },
+     {
+      "text": "path(MESHD:Atherosclerosis) positiveCorrelation bp(GO:\"lipid oxidation\")",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_1",
+      "media": false
+     },
+     {
+      "text": "http://purl.obolibrary.org/obo/BFO_0000066",
+      "media": false
+     },
+     {
+      "text": "http://purl.bioontology.org/ontology/MSH/D001158",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_1",
+      "media": false
+     },
+     {
+      "text": "http://purl.obolibrary.org/obo/BFO_0000066",
+      "media": false
+     },
+     {
+      "text": "http://purl.bioontology.org/ontology/MSH/D050197",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_1",
+      "media": false
+     },
+     {
+      "text": "http://semanticscience.org/resource/SIO_000255",
+      "media": false
+     },
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_2",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_1",
+      "media": false
+     },
+     {
+      "text": "http://www.w3.org/1999/02/22-rdf-syntax-ns#object",
+      "media": false
+     },
+     {
+      "text": "http://amigo.geneontology.org/amigo/term/GO:0034440",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#_1",
+      "media": false
+     },
+     {
+      "text": "http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate",
+      "media": false
+     },
+     {
+      "text": "http://www.selventa.com/vocabulary/positiveCorrelation",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1709
+  },
+  "nanopubs:2": {
+   "id": "nanopubs:2",
+   "dataset": "nanopubs",
+   "index": 2,
+   "view": "table",
+   "ok": true,
+   "qmeta": "1 row(s) | 0 range req · 0 B of 3.62 GB fetched — 0 new bytes, all served from this session's cache (16.5 MB) · 2 ms",
+   "count": 1,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Assertion graph",
+     "var": "assertion"
+    },
+    {
+     "label": "Primary source",
+     "var": "source"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "http://www.tkuhn.ch/bel2nanopub/RAJElbXzz-A4PV01DggSm3xCti1oiAdrNyM8Bmk3jWCZs#assertion",
+      "media": false
+     },
+     {
+      "text": "http://www.ncbi.nlm.nih.gov/pubmed/12928037",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 14
+  },
+  "nanopubs:3": {
+   "id": "nanopubs:3",
+   "dataset": "nanopubs",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "2 row(s) | 3 range req · 1.5 MB of 3.62 GB fetched · 18.0 MB cached this session · 752 ms",
+   "count": 2,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Creator",
+     "var": "creator"
+    },
+    {
+     "label": "Created",
+     "var": "created"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "http://orcid.org/0000-0002-1267-0234",
+      "media": false
+     },
+     {
+      "text": "2014-07-03T14:29:29.289+02:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://orcid.org/0000-0001-6818-334X",
+      "media": false
+     },
+     {
+      "text": "2014-07-03T14:29:29.289+02:00",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 768
+  },
+  "nanopubs:4": {
+   "id": "nanopubs:4",
+   "dataset": "nanopubs",
+   "index": 4,
+   "view": "table",
+   "ok": true,
+   "qmeta": "10 row(s) | 7 range req · 13.0 MB of 3.62 GB fetched · 31.0 MB cached this session · 4203 ms",
+   "count": 10,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Nanopublication",
+     "var": "np"
+    },
+    {
+     "label": "Created",
+     "var": "created"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "http://example.org/myfinding#RAmg3jacbyBbC5PaR9EnF1nD2cPaAHqErXh0z50qMVg3Y",
+      "media": false
+     },
+     {
+      "text": "2015-04-14T08:05:43+01:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://example.org/nanodesk/example/read/RABJR4m2tDO2AelM5FAsZST1oKcLO-zlHR0aeJmTCy7-Q",
+      "media": false
+     },
+     {
+      "text": "2016-06-17T10:15:58+02:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://example.org/nanodesk/example/read/RAZ0GDaZyzI1IIUWnntGLduG5csqnUJ-teviXCWtPXpus",
+      "media": false
+     },
+     {
+      "text": "2017-03-20T15:23:53+01:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://example.org/nanodesk/example/read/RA_EzhqPFDcrmBM61BUhIJUoMoB5sb2AMIQIow2ghM8yU",
+      "media": false
+     },
+     {
+      "text": "2017-02-22T09:34:59+01:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://example.org/nanodesk/example/read/RAgTuMr8BTHkN_3NreS2gBNPNW2-yJzcoo131AKzA3t4c",
+      "media": false
+     },
+     {
+      "text": "2017-02-27T11:11:05+01:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://example.org/nanodesk/example/read/RAoc3KZvwMyfvGAsB0B140Q07eMeMx-cMIQ_JPJIjscv4",
+      "media": false
+     },
+     {
+      "text": "2017-02-21T11:46:29+01:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://example.org/nanopub-validator-example/RA5FHLXJA1uu_PtFuXeuKtKV3cBvH9Niiairuy4AYICBU",
+      "media": false
+     },
+     {
+      "text": "2014-07-24T18:05:11+01:00",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://example.org/nanopub-validator-example/RA7SttaEAGqyqUVoD6RzuHRIaeP5Vtk35koTdzLS5vMeM",
+      "media": false
+     },
+     {
+      "text": "2016-07-13T18:05:11+01:00",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 4215
+  },
   "neuro-showcase:0": {
    "id": "neuro-showcase:0",
    "dataset": "neuro-showcase",
