@@ -1,4 +1,4 @@
-//! Rang-reading abstraction (SPEC.md §9).
+//! Range-reading abstraction (SPEC.md §9).
 //!
 //! A client doesn't need the whole file: it reads the 1 KiB header, learns
 //! where each section lives, then fetches only those byte ranges. [`RangeReader`]

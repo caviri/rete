@@ -111,6 +111,19 @@ impl Tile {
         }
     }
 
+    /// A remote tile's descriptor with its stored length.
+    pub(crate) fn remote_with_len(
+        min_a: u32,
+        max_a: u32,
+        syn: Option<(u32, u32, u32, u32)>,
+        len: u32,
+    ) -> Self {
+        Tile {
+            len,
+            ..Tile::remote(min_a, max_a, syn)
+        }
+    }
+
     fn remote(min_a: u32, max_a: u32, syn: Option<(u32, u32, u32, u32)>) -> Self {
         Tile {
             min_a,
@@ -540,6 +553,47 @@ impl LeafedTiles {
     }
 }
 
+/// A tile list produced on first use by a closure (see [`TileList::Deferred`]).
+pub struct DeferredTiles {
+    cell: std::sync::OnceLock<Vec<Tile>>,
+    /// Stored bytes the planner may assume before the descriptors exist.
+    approx_bytes: u64,
+    load: Box<dyn Fn() -> Option<Vec<Tile>> + Send + Sync>,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl DeferredTiles {
+    /// Descriptors built by `load` on first use and kept. A failed load is recorded
+    /// (see [`GraphIndex::load_incomplete`]) and reads as no tiles until retried.
+    pub fn new(approx_bytes: u64, load: Box<dyn Fn() -> Option<Vec<Tile>> + Send + Sync>) -> Self {
+        DeferredTiles {
+            cell: std::sync::OnceLock::new(),
+            approx_bytes,
+            load,
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn get(&self) -> &[Tile] {
+        if let Some(v) = self.cell.get() {
+            return v;
+        }
+        match (self.load)() {
+            Some(v) => {
+                // A racing thread may have built it first; both are the same.
+                let _ = self.cell.set(v);
+                self.cell.get().map_or(&[][..], Vec::as_slice)
+            }
+            None => {
+                // Not cached: the next use retries.
+                self.failed
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                &[]
+            }
+        }
+    }
+}
+
 /// A permutation's tile directory: resident in full (`0x05`, built indexes),
 /// or two-level with leaves faulted on demand (`0x06`).
 pub enum TileList {
@@ -547,6 +601,9 @@ pub enum TileList {
     Full(Vec<Tile>),
     /// Root resident, leaves on demand.
     Leafed(Arc<LeafedTiles>),
+    /// Descriptors built on first use (a quad-index view's slice of one order's
+    /// directory: an order a query never touches is never fetched).
+    Deferred(Arc<DeferredTiles>),
 }
 
 impl Default for TileList {
@@ -560,6 +617,7 @@ impl std::ops::Index<usize> for TileList {
     fn index(&self, ti: usize) -> &Tile {
         match self {
             TileList::Full(v) => &v[ti],
+            TileList::Deferred(d) => d.get().get(ti).unwrap_or(&UNREADABLE_TILE),
             TileList::Leafed(l) => match l.entry(ti) {
                 Some((t, _)) => t,
                 None => {
@@ -572,10 +630,20 @@ impl std::ops::Index<usize> for TileList {
 }
 
 impl TileList {
+    /// Tiles known without building anything (0 for a deferred list that has
+    /// not been built).
+    fn known_len(&self) -> usize {
+        match self {
+            TileList::Deferred(d) => d.cell.get().map_or(0, Vec::len),
+            other => other.len(),
+        }
+    }
+
     /// Number of tiles.
     pub fn len(&self) -> usize {
         match self {
             TileList::Full(v) => v.len(),
+            TileList::Deferred(d) => d.get().len(),
             TileList::Leafed(l) => l.total,
         }
     }
@@ -589,6 +657,7 @@ impl TileList {
     pub fn as_full(&self) -> Option<&[Tile]> {
         match self {
             TileList::Full(v) => Some(v),
+            TileList::Deferred(d) => Some(d.get()),
             TileList::Leafed(_) => None,
         }
     }
@@ -624,6 +693,7 @@ impl TileList {
     pub fn first_max_ge(&self, a: u32) -> usize {
         match self {
             TileList::Full(v) => v.partition_point(|t| t.max_a < a),
+            TileList::Deferred(d) => d.get().partition_point(|t| t.max_a < a),
             TileList::Leafed(l) => {
                 let li = l.leaves.partition_point(|lf| lf.max_a < a);
                 if li >= l.leaves.len() {
@@ -647,6 +717,7 @@ impl TileList {
     pub fn first_min_gt(&self, a: u32) -> usize {
         match self {
             TileList::Full(v) => v.partition_point(|t| t.min_a <= a),
+            TileList::Deferred(d) => d.get().partition_point(|t| t.min_a <= a),
             TileList::Leafed(l) => {
                 let next = l.leaves.partition_point(|lf| lf.min_a <= a);
                 if next == 0 {
@@ -667,6 +738,7 @@ impl TileList {
     pub fn total_bytes(&self) -> u64 {
         match self {
             TileList::Full(v) => v.iter().map(Tile::encoded_len).sum(),
+            TileList::Deferred(d) => d.get().iter().map(Tile::encoded_len).sum(),
             TileList::Leafed(l) => l.total_bytes,
         }
     }
@@ -682,6 +754,15 @@ impl TileList {
                 .filter(|t| t.min_a <= a && a <= t.max_a)
                 .map(Tile::encoded_len)
                 .sum(),
+            // No fetch for an estimate: exact once built, else a rough size.
+            TileList::Deferred(d) => match d.cell.get() {
+                Some(v) => v
+                    .iter()
+                    .filter(|t| t.min_a <= a && a <= t.max_a)
+                    .map(Tile::encoded_len)
+                    .sum(),
+                None => d.approx_bytes,
+            },
             TileList::Leafed(l) => {
                 let lis: Vec<usize> = l
                     .leaves
@@ -713,6 +794,7 @@ impl TileList {
     pub fn resident_at(&self, ti: usize) -> bool {
         match self {
             TileList::Full(_) => true,
+            TileList::Deferred(d) => d.cell.get().is_some(),
             TileList::Leafed(l) => ti < l.total && l.cells[l.leaf_of(ti)].get().is_some(),
         }
     }
@@ -720,24 +802,34 @@ impl TileList {
     /// The absolute stored range of tile `ti` (leafed lists only).
     pub fn range(&self, ti: usize) -> Option<(u64, u64)> {
         match self {
-            TileList::Full(_) => None,
+            TileList::Full(_) | TileList::Deferred(_) => None,
             TileList::Leafed(l) => l.range(ti),
         }
     }
 
     fn load_failed(&self) -> bool {
-        matches!(self, TileList::Leafed(l) if l.load_failed())
+        match self {
+            TileList::Leafed(l) => l.load_failed(),
+            TileList::Deferred(d) => d.failed.load(std::sync::atomic::Ordering::Relaxed),
+            TileList::Full(_) => false,
+        }
     }
 
     fn reset_load_failure(&self) {
-        if let TileList::Leafed(l) = self {
-            l.reset_load_failure();
+        match self {
+            TileList::Leafed(l) => l.reset_load_failure(),
+            TileList::Deferred(d) => d.failed.store(false, std::sync::atomic::Ordering::Relaxed),
+            TileList::Full(_) => {}
         }
     }
 
     fn directory_bytes(&self) -> u64 {
         match self {
             TileList::Full(v) => (v.capacity() * std::mem::size_of::<Tile>()) as u64,
+            TileList::Deferred(d) => d
+                .cell
+                .get()
+                .map_or(0, |v| (v.capacity() * std::mem::size_of::<Tile>()) as u64),
             TileList::Leafed(l) => l.resident_bytes(),
         }
     }
@@ -1373,7 +1465,7 @@ impl GraphIndex {
     /// loaders capture. Grows with the tile count, never with what a scan
     /// touches.
     pub fn directory_bytes(&self) -> u64 {
-        let tiles: u64 = self.sections.iter().map(|s| s.len() as u64).sum();
+        let tiles: u64 = self.sections.iter().map(|s| s.known_len() as u64).sum();
         let caps: u64 = self.sections.iter().map(TileList::directory_bytes).sum();
         let ranges = if self.loader.is_some() {
             2 * 24 * tiles
@@ -1403,6 +1495,30 @@ impl GraphIndex {
         });
         GraphIndex {
             sections,
+            perms,
+            loader: Some(loader),
+            bulk: None,
+            load_failed: std::sync::atomic::AtomicBool::new(false),
+            read_concurrency: 1,
+            cache: ChunkCache::unlimited_arc(),
+            size_hint: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// A remote index whose per-order tile lists are built on first use: an
+    /// order the query never routes to costs nothing. `lists[si]` is `None` for
+    /// an order the file does not carry. The loaders index the tiles the lists
+    /// return.
+    pub fn from_remote_deferred(
+        lists: [Option<Arc<DeferredTiles>>; NUM_PERMS],
+        perms: PermSet,
+        loader: TileLoader,
+    ) -> Self {
+        GraphIndex {
+            sections: lists.map(|l| match l {
+                Some(l) => TileList::Deferred(l),
+                None => TileList::Full(Vec::new()),
+            }),
             perms,
             loader: Some(loader),
             bulk: None,
