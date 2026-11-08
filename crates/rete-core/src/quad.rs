@@ -26,7 +26,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::dictionary::Dictionary;
 use crate::file::{compress, ByteRange, FileError, CODEC_NONE};
-use crate::index::{GraphIndex, GroupSizer, IndexPermutation, PermSet, ALL_PERMS, NUM_PERMS};
+use crate::index::{
+    DeferredTiles, GraphIndex, GroupSizer, IndexPermutation, PermSet, ALL_PERMS, NUM_PERMS,
+};
 use crate::reader::RangeReader;
 use crate::triples::{Triple, TripleBlockBuilder};
 use crate::varint::{read_uvarint, write_uvarint};
@@ -843,9 +845,10 @@ struct QuadCore {
 pub(crate) struct V06Quad {
     pre: Preamble,
     blocks: Vec<BlockRef>,
-    /// Per section index: `(leaf absolute range, tiles in leaf, absolute offset
-    /// of the leaf's first tile)` for each leaf of that order.
-    orders: [Vec<(ByteRange, usize, u64)>; NUM_PERMS],
+    /// Per section index, each leaf of that order.
+    orders: [Vec<V06Leaf>; NUM_PERMS],
+    /// The decoded leaves, kept for the life of the open.
+    leaf_cells: [Vec<OnceLock<Arc<[QTile]>>>; NUM_PERMS],
     /// Absolute offset of QUAD_DATA (tile offsets in leaves are relative to it).
     data_base: u64,
     /// Codec of the leaf blocks.
@@ -853,6 +856,22 @@ pub(crate) struct V06Quad {
     /// Decompression bounds: a quad tile, and a leaf or graph-directory block.
     pub(crate) tile_max: u64,
     pub(crate) leaf_max: u64,
+}
+
+/// One leaf of an order's tile directory, as the root lists it.
+#[derive(Clone, Copy)]
+struct V06Leaf {
+    /// Absolute range of the stored leaf.
+    range: ByteRange,
+    /// Tiles in the leaf.
+    n: usize,
+    /// Absolute-in-`QUAD_DATA` offset of the leaf's first tile.
+    toff: u64,
+    /// Index of the leaf's first tile in the whole order.
+    first_tile: usize,
+    /// Graph of the first tile's first row and of the last tile's last row.
+    first_g: u32,
+    last_g: u32,
 }
 
 impl V06Quad {
@@ -905,22 +924,25 @@ impl V06Quad {
             });
             at = end;
         }
-        let mut orders: [Vec<(ByteRange, usize, u64)>; NUM_PERMS] = Default::default();
+        let mut orders: [Vec<V06Leaf>; NUM_PERMS] = Default::default();
+        let mut leaf_cells: [Vec<OnceLock<Arc<[QTile]>>>; NUM_PERMS] = Default::default();
         for o in &root.orders {
             orders[o.si] = o
                 .leaves
                 .iter()
-                .map(|(l, _, _, toff)| {
-                    (
-                        ByteRange {
-                            offset: leaves_base + l.off,
-                            len: l.len,
-                        },
-                        l.n,
-                        *toff,
-                    )
+                .map(|(l, first, last, toff)| V06Leaf {
+                    range: ByteRange {
+                        offset: leaves_base + l.off,
+                        len: l.len,
+                    },
+                    n: l.n,
+                    toff: *toff,
+                    first_tile: l.first,
+                    first_g: first.0,
+                    last_g: last.0,
                 })
                 .collect();
+            leaf_cells[o.si] = (0..o.leaves.len()).map(|_| OnceLock::new()).collect();
         }
         Ok(V06Quad {
             pre: Preamble {
@@ -931,6 +953,7 @@ impl V06Quad {
             },
             blocks,
             orders,
+            leaf_cells,
             data_base,
             leaf_codec,
             tile_max: u64::MAX,
@@ -1230,11 +1253,21 @@ impl QuadCore {
         self.dirs[si].get().cloned()
     }
 
-    /// A `0x06` order's directory: its leaves read in one batch (adjacent, so
-    /// usually one request), decoded and kept.
-    fn dir_v06(&self, v: &V06Quad, si: usize) -> Option<Arc<[QTile]>> {
-        let leaves = &v.orders[si];
-        let ranges: Vec<(u64, u64)> = leaves.iter().map(|(r, _, _)| (r.offset, r.len)).collect();
+    /// Fault the leaves `lis` of a `0x06` order's tile directory that are not
+    /// resident, in one batch, decoded and kept.
+    fn fault_leaves(&self, v: &V06Quad, si: usize, lis: &[usize]) -> Option<()> {
+        let missing: Vec<usize> = lis
+            .iter()
+            .copied()
+            .filter(|&li| v.leaf_cells[si][li].get().is_none())
+            .collect();
+        if missing.is_empty() {
+            return Some(());
+        }
+        let ranges: Vec<(u64, u64)> = missing
+            .iter()
+            .map(|&li| (v.orders[si][li].range.offset, v.orders[si][li].range.len))
+            .collect();
         let blobs = match self.reader.read_many(&ranges) {
             Ok(b) if b.len() == ranges.len() => b,
             _ => {
@@ -1242,17 +1275,18 @@ impl QuadCore {
                 return None;
             }
         };
-        let mut out = Vec::new();
-        for ((_, n, toff), stored) in leaves.iter().zip(blobs) {
+        for (&li, stored) in missing.iter().zip(blobs) {
+            let leaf = &v.orders[si][li];
             let parsed = crate::file::decompress_bounded(v.leaf_codec, &stored, v.leaf_max)
                 .ok()
-                .and_then(|raw| crate::v06::decode_qtile_leaf(&raw, *n, *toff).ok());
+                .and_then(|raw| crate::v06::decode_qtile_leaf(&raw, leaf.n, leaf.toff).ok());
             let Some(ents) = parsed else {
                 self.fail();
                 return None;
             };
-            for e in ents {
-                out.push(QTile {
+            let tiles: Vec<QTile> = ents
+                .into_iter()
+                .map(|e| QTile {
                     first_g: e.first.0,
                     first_a: e.first.1,
                     last_g: e.last.0,
@@ -1263,11 +1297,58 @@ impl QuadCore {
                     },
                     raw: e.raw,
                     syn: e.syn,
-                });
-            }
+                })
+                .collect();
+            let _ = v.leaf_cells[si][li].set(Arc::from(tiles));
+        }
+        Some(())
+    }
+
+    /// A `0x06` order's whole directory: every leaf read in one batch (adjacent,
+    /// so usually one request), decoded and kept.
+    fn dir_v06(&self, v: &V06Quad, si: usize) -> Option<Arc<[QTile]>> {
+        let all: Vec<usize> = (0..v.orders[si].len()).collect();
+        self.fault_leaves(v, si, &all)?;
+        let mut out = Vec::new();
+        for cell in &v.leaf_cells[si] {
+            out.extend_from_slice(cell.get()?);
         }
         let _ = self.dirs[si].set(Arc::from(out));
         self.dirs[si].get().cloned()
+    }
+
+    /// The tiles of order `si` that can hold graph `g`, as `(tiles, index of
+    /// the first one in the whole order)`: a slice of the directory, not
+    /// necessarily only those tiles. A `0x06` order whose directory is in
+    /// several leaves reads the leaves whose graph range holds `g` (the root
+    /// lists each leaf's range), one leaf for a graph inside one; one leaf, or a
+    /// directory already resident, is the whole directory.
+    fn dir_for_graph(&self, si: usize, g: u32) -> Option<(Arc<[QTile]>, usize)> {
+        if let Some(d) = self.dirs[si].get() {
+            return Some((d.clone(), 0));
+        }
+        let Some(v) = &self.v06 else {
+            return Some((self.dir(si)?, 0));
+        };
+        let leaves = &v.orders[si];
+        if leaves.len() <= 1 {
+            return Some((self.dir(si)?, 0));
+        }
+        let lo = leaves.partition_point(|l| l.last_g < g);
+        let hi = leaves.partition_point(|l| l.first_g <= g);
+        if lo >= hi {
+            return Some((Arc::from(Vec::new()), 0));
+        }
+        let lis: Vec<usize> = (lo..hi).collect();
+        self.fault_leaves(v, si, &lis)?;
+        if lis.len() == 1 {
+            return Some((v.leaf_cells[si][lo].get()?.clone(), leaves[lo].first_tile));
+        }
+        let mut out = Vec::new();
+        for &li in &lis {
+            out.extend_from_slice(v.leaf_cells[si][li].get()?);
+        }
+        Some((Arc::from(out), leaves[lo].first_tile))
     }
 
     fn unpack(&self, t: &QTile, stored: &[u8]) -> Option<Arc<[u8]>> {
@@ -1283,7 +1364,10 @@ impl QuadCore {
 
     /// Fault the tiles `want` (ascending) of order slot `si` into the shared
     /// cache, coalescing adjacent ones into single reads.
-    fn fault(&self, si: usize, dir: &[QTile], want: &[usize]) -> Option<()> {
+    ///
+    /// `dir` may be a slice of the order's directory starting at tile `base`;
+    /// `want` and the cache keys are tile indices of the whole order.
+    fn fault(&self, si: usize, dir: &[QTile], base: usize, want: &[usize]) -> Option<()> {
         let missing: Vec<usize> = want
             .iter()
             .copied()
@@ -1295,7 +1379,7 @@ impl QuadCore {
         let mut spans: Vec<(u64, u64)> = Vec::new();
         let mut members: Vec<Vec<usize>> = Vec::new();
         for &ti in &missing {
-            let r = dir.get(ti)?.range;
+            let r = dir.get(ti.checked_sub(base)?)?.range;
             match spans.last_mut() {
                 Some(last) if last.0 + last.1 == r.offset => {
                     last.1 += r.len;
@@ -1316,7 +1400,7 @@ impl QuadCore {
         };
         for ((start, _), (blob, tis)) in spans.iter().zip(blobs.iter().zip(&members)) {
             for &ti in tis {
-                let t = &dir[ti];
+                let t = &dir[ti - base];
                 let lo = (t.range.offset - start) as usize;
                 let stored = blob.get(lo..lo + t.range.len as usize)?;
                 match self.unpack(t, stored) {
@@ -1335,25 +1419,25 @@ impl QuadCore {
 
     /// Tile `ti` of order slot `si`, decompressed, faulting it (and, when the
     /// access is sequential, the tiles after it) on a miss.
-    fn tile(&self, si: usize, dir: &[QTile], ti: usize) -> Option<Arc<CacheEntry>> {
+    fn tile(&self, si: usize, dir: &[QTile], base: usize, ti: usize) -> Option<Arc<CacheEntry>> {
         if let Some(e) = self.tiles.get((si as u8, ti as u32)) {
             return Some(e);
         }
         let end = {
             let mut ramps = self.ramps.lock().unwrap();
             let w = ramps[si].window_for(ti, false);
-            let end = (ti + w).min(dir.len());
+            let end = (ti + w).min(base + dir.len());
             ramps[si].next = end;
             end
         };
         let want: Vec<usize> = (ti..end).collect();
-        self.fault(si, dir, &want)?;
+        self.fault(si, dir, base, &want)?;
         // Inserted a moment ago; a cache cap smaller than one tile can have
         // evicted it already, in which case fetch it alone.
         if let Some(e) = self.tiles.get((si as u8, ti as u32)) {
             return Some(e);
         }
-        let t = &dir[ti];
+        let t = &dir[ti - base];
         let stored = match self.reader.read_at(t.range.offset, t.range.len) {
             Ok(b) => b,
             Err(_) => {
@@ -1466,62 +1550,77 @@ impl QuadCore {
     }
 
     /// A view of graph `g`: a remote-style [`GraphIndex`] over its slice of
-    /// every order's tiles. Reads the tile directories it needs, no tile.
+    /// every order's tiles. Reads no tile, and no tile directory until an order
+    /// is used: each order's slice is built on first use (an `0x06` order's
+    /// directory is one leaf of about a megabyte at 40 M graphs, so a lookup
+    /// that routes to one order reads one, not six).
     fn view(self: &Arc<Self>, g: u32, quads: u64, tile_cap: u64) -> Option<GraphIndex> {
-        #[allow(clippy::type_complexity)]
-        let mut directories: [Vec<(u32, u32, Option<(u32, u32, u32, u32)>)>; NUM_PERMS] =
-            Default::default();
-        let mut phys: [Vec<usize>; NUM_PERMS] = Default::default();
-        let mut lens: [Vec<u32>; NUM_PERMS] = Default::default();
-        let mut dirs: [Option<Arc<[QTile]>>; NUM_PERMS] = Default::default();
+        // Per order, set when its slice is built: the directory and the
+        // physical index of each tile the view holds.
+        type Slice = (Arc<[QTile]>, usize, Vec<usize>);
+        let slices: Arc<[OnceLock<Slice>; NUM_PERMS]> = Arc::new(Default::default());
+        let mut lists: [Option<Arc<DeferredTiles>>; NUM_PERMS] = Default::default();
         for perm in self.perms.iter() {
             let si = perm.section_index();
-            let dir = self.dir(si)?;
-            let lo = dir.partition_point(|t| t.last_g < g);
-            let hi = dir.partition_point(|t| t.first_g <= g);
-            for (ti, t) in dir.iter().enumerate().take(hi).skip(lo) {
-                let min_a = if t.first_g == g { t.first_a } else { 0 };
-                let max_a = if t.last_g == g { t.last_a } else { u32::MAX };
-                directories[si].push((min_a, max_a, Some(t.syn)));
-                phys[si].push(ti);
-                lens[si].push(t.range.len.min(u32::MAX as u64) as u32);
-            }
-            dirs[si] = Some(dir);
+            let core = Arc::clone(self);
+            let slices = Arc::clone(&slices);
+            // Without the directory, the mean tile (64 KiB budget) per quad is
+            // all the planner can assume; it is only a cost hint.
+            let approx = quads.saturating_mul(4);
+            lists[si] = Some(Arc::new(DeferredTiles::new(
+                approx,
+                Box::new(move || {
+                    let (dir, base) = core.dir_for_graph(si, g)?;
+                    let lo = dir.partition_point(|t| t.last_g < g);
+                    let hi = dir.partition_point(|t| t.first_g <= g);
+                    let mut tiles = Vec::with_capacity(hi.saturating_sub(lo));
+                    let mut phys = Vec::with_capacity(hi.saturating_sub(lo));
+                    for (ti, t) in dir.iter().enumerate().take(hi).skip(lo) {
+                        let min_a = if t.first_g == g { t.first_a } else { 0 };
+                        let max_a = if t.last_g == g { t.last_a } else { u32::MAX };
+                        tiles.push(crate::index::Tile::remote_with_len(
+                            min_a,
+                            max_a,
+                            Some(t.syn),
+                            t.range.len.min(u32::MAX as u64) as u32,
+                        ));
+                        phys.push(base + ti);
+                    }
+                    let _ = slices[si].set((dir, base, phys));
+                    Some(tiles)
+                }),
+            )));
         }
-        let shared = Arc::new((phys, dirs));
+        let map = Arc::clone(&slices);
         let core = Arc::clone(self);
-        let map = Arc::clone(&shared);
         let loader: crate::index::TileLoader = Box::new(move |si, ti| {
-            let (phys, dirs) = &*map;
-            let p = *phys.get(si)?.get(ti)?;
-            let dir = dirs.get(si)?.as_ref()?;
-            let entry = core.tile(si, dir, p)?;
-            let block = segment_block(entry.body(), dir[p].first_g, g, ALL_PERMS[si]);
+            let (dir, base, phys) = map.get(si)?.get()?;
+            let p = *phys.get(ti)?;
+            let entry = core.tile(si, dir, *base, p)?;
+            let block = segment_block(entry.body(), dir[p - base].first_g, g, ALL_PERMS[si]);
             if block.is_none() {
                 core.fail();
             }
             block
         });
         let core = Arc::clone(self);
-        let map = shared;
+        let map = slices;
         let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
-            let (phys, dirs) = &*map;
-            let dir = dirs.get(si)?.as_ref()?;
+            let (dir, base, phys) = map.get(si)?.get()?;
             let want: Vec<usize> = tis
                 .iter()
-                .map(|&ti| phys.get(si)?.get(ti).copied())
+                .map(|&ti| phys.get(ti).copied())
                 .collect::<Option<_>>()?;
-            core.fault(si, dir, &want)?;
+            core.fault(si, dir, *base, &want)?;
             want.iter()
                 .map(|&p| {
-                    let entry = core.tile(si, dir, p)?;
-                    segment_block(entry.body(), dir[p].first_g, g, ALL_PERMS[si])
+                    let entry = core.tile(si, dir, *base, p)?;
+                    segment_block(entry.body(), dir[p - base].first_g, g, ALL_PERMS[si])
                 })
                 .collect()
         });
-        let mut index = GraphIndex::from_remote_directories(directories, self.perms, loader)
-            .with_bulk_loader(bulk);
-        index.set_tile_lens(lens);
+        let mut index =
+            GraphIndex::from_remote_deferred(lists, self.perms, loader).with_bulk_loader(bulk);
         index.set_size_hint(quads);
         index.set_read_concurrency(self.read_concurrency);
         if tile_cap != u64::MAX {
@@ -2130,7 +2229,7 @@ impl QuadScan {
             if !self.tile_may_match(&t) {
                 continue;
             }
-            let Some(entry) = self.core.tile(self.si, &self.dir, ti) else {
+            let Some(entry) = self.core.tile(self.si, &self.dir, 0, ti) else {
                 self.next_tile = self.dir.len();
                 return false;
             };
@@ -2228,7 +2327,7 @@ pub(crate) fn check_section(bytes: &[u8], perms: PermSet, codec: u8) -> Result<u
         let dir = q.core.dir(si).ok_or("dir")?;
         let mut seen = 0u64;
         for (ti, t) in dir.iter().enumerate() {
-            let e = q.core.tile(si, &dir, ti).ok_or("tile")?;
+            let e = q.core.tile(si, &dir, 0, ti).ok_or("tile")?;
             let rows = tile_rows(e.body(), t.first_g, perm).ok_or("rows")?;
             if rows.first().map(|r| (r.0, r.1)) != Some((t.first_g, t.first_a))
                 || rows.last().map(|r| (r.0, r.1)) != Some((t.last_g, t.last_a))
