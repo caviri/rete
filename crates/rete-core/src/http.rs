@@ -1655,4 +1655,105 @@ mod tests {
             assert!(!retryable_status(c), "{c}");
         }
     }
+
+    /// G50a: a probe join over a remote file keeps several range reads in
+    /// flight. 60 rare records (every 2000th of 120,000) each probe a tile far
+    /// from the others; probed one at a time that is 60 sequential round
+    /// trips, and the join's windows fault them together instead. The rows are
+    /// the resident file's, on every join path.
+    #[test]
+    fn a_remote_probe_join_keeps_range_reads_in_flight() {
+        use crate::{eval_query, DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete};
+        const N: usize = 120_000;
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut triples: Vec<(String, String, String)> = Vec::new();
+        for i in 0..N {
+            let r = format!("<http://ex/r{i:06}>");
+            let class = if i % 2000 == 7 { "T0" } else { "T1" };
+            triples.push((r.clone(), ty.into(), format!("<http://ex/{class}>")));
+            triples.push((
+                r.clone(),
+                "<http://ex/subject>".into(),
+                format!("\"topic {}\"", (i * 7919) % 50_000),
+            ));
+            triples.push((
+                format!("<http://ex/r{:06}>", (i * 31) % N),
+                "<http://ex/links>".into(),
+                r,
+            ));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(128);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = crate::file::write_file_v05(&dict, &ib.build(), false, &[], 0);
+        let image = crate::v06::write::convert_image(&v5, Default::default()).unwrap();
+        let resident = Rete::open(&image).unwrap();
+
+        let rows = |rete: &Rete, q: &str| -> Vec<String> {
+            let QueryOutput::Select(_, rows) = eval_query(rete, q).unwrap() else {
+                panic!("not a SELECT")
+            };
+            let mut out: Vec<String> = rows.iter().map(|b| format!("{b:?}")).collect();
+            out.sort();
+            out
+        };
+        // (query, probe floor, stream seed, hash build): the prefix probes the
+        // subject pattern per row; the streamed join probes `links` by its
+        // object, one row at a time before the fix. (Two patterns that share a
+        // subject would merge-join instead, with no probes.)
+        let cases = [
+            (
+                "SELECT ?r ?t WHERE { ?r a <http://ex/T0> . ?r <http://ex/subject> ?t }",
+                0.0,
+                f64::MAX,
+                f64::MAX,
+            ),
+            (
+                "SELECT ?r ?x WHERE { ?r a <http://ex/T0> . ?x <http://ex/links> ?r }",
+                0.0,
+                0.0,
+                0.0,
+            ),
+        ];
+        {
+            let want_of = |q: &str| {
+                let w = rows(&resident, q);
+                assert!(!w.is_empty(), "{q}");
+                w
+            };
+            for (q, floor, seed, hash) in cases {
+                let want = want_of(q);
+                let (url, stats) = serve_with(
+                    image.clone(),
+                    ServerMode::HonorRange,
+                    Duration::from_millis(15),
+                );
+                let policy = FetchPolicy {
+                    concurrency: 16,
+                    coalesce_gap: 0,
+                    ..quick()
+                };
+                let reader = HttpRangeReader::open_with(&url, policy).unwrap();
+                let remote = Rete::open_ranged_lazy(reader).unwrap();
+                // Settle the open's own reads; count the probes' alone.
+                let opened = stats.gets.load(Ordering::SeqCst);
+                stats.max_in_flight.store(0, Ordering::SeqCst);
+                let got = crate::bgp::with_plan_limits(floor, seed, hash, || rows(&remote, q));
+                assert_eq!(got, want, "{q} at ({floor}, {seed}, {hash})");
+                let peak = stats.max_in_flight.load(Ordering::SeqCst);
+                eprintln!(
+                    "{q}: {} GETs, {peak} in flight",
+                    stats.gets.load(Ordering::SeqCst) - opened
+                );
+                assert!(peak > 1, "{q} at ({floor}, {seed}, {hash}): one at a time");
+                assert!(peak <= 16, "bounded by the reader's fan-out: {peak}");
+            }
+        }
+    }
 }

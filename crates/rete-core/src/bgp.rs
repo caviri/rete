@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::file::Rete;
-use crate::index::{GraphIndex, Pattern};
+use crate::index::{GraphIndex, Pattern, ProbeBatch};
 use crate::row::{Ctx, Row, Slots, Val};
 
 /// A term in a pattern: a named variable or a constant term token.
@@ -206,28 +206,13 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
         if do_probe {
             let taken = std::mem::take(&mut rows);
             // Over a lazy reader each probe is a byte-range round trip, and they run
-            // one at a time. First fault the tiles the *whole* batch will route to,
+            // one at a time. Fault the tiles each window of the batch will route to,
             // together — one coalesced parallel read per section instead of N
-            // sequential ones — so the probes below hit a warm tile cache. No-op
+            // sequential ones — so the probes hit a warm tile cache. A window, not
+            // the whole batch: see [`Windowed`]. Passes the rows straight through
             // for a local index (every tile is already resident).
-            if index.is_remote() {
-                let pats: Vec<Pattern> = taken
-                    .iter()
-                    .filter_map(|base| {
-                        match (
-                            probe_subject(ctx, &t.0, base),
-                            probe_predicate(ctx, &t.1, base),
-                            probe_object(ctx, &t.2, base),
-                        ) {
-                            (Some(s), Some(p), Some(o)) => Some((s, p, o)),
-                            _ => None,
-                        }
-                    })
-                    .collect();
-                index.prefetch_probe_tiles(&pats);
-            }
             let mut next: Vec<Row> = Vec::with_capacity(taken.len());
-            for base in taken {
+            for base in windowed(index, taken.into_iter(), bgp_probe_pattern(ctx, t)) {
                 next.extend(probe_rows(ctx, index, t, base));
             }
             rows = next;
@@ -546,6 +531,29 @@ pub(crate) fn with_probe_floor<T>(floor: f64, f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Run `f` with every planner threshold set (tests only): probe floor, the
+/// streaming seed size and the hash-build size. Lets a test elsewhere in the
+/// crate drive each join path over a graph small enough to build in a test.
+#[cfg(all(test, feature = "http"))]
+pub(crate) fn with_plan_limits<T>(
+    probe_floor: f64,
+    stream_seed: f64,
+    hash_build: f64,
+    f: impl FnOnce() -> T,
+) -> T {
+    let saved = TEST_LIMITS.with(|c| c.get());
+    TEST_LIMITS.with(|c| {
+        c.set(Some(PlanLimits {
+            probe_floor,
+            stream_seed,
+            hash_build,
+        }))
+    });
+    let out = f();
+    TEST_LIMITS.with(|c| c.set(saved));
+    out
+}
+
 /// The planner's size thresholds, gathered so tests can shrink them and drive
 /// every join path over a graph small enough to check by hand.
 #[derive(Clone, Copy)]
@@ -680,33 +688,161 @@ fn remote_probe_max(index: &GraphIndex) -> usize {
     REMOTE_PROBE_MAX * index.read_concurrency().clamp(1, 16)
 }
 
-/// Batch-fault the tiles that a [`ProbePlan`]'s FIRST pattern will route to
-/// across a batch of seed rows — one coalesced read per section instead of a
-/// blocking round trip per row. Only the first pattern is prefetchable (later
-/// ones bind from earlier probe results), and only rows whose seed binds the
-/// pattern's subject or object are included: a predicate-only pattern routes
-/// to the predicate's WHOLE span, which for the fat sides this path serves
-/// would prefetch the very extent the probe strategy exists to avoid.
-pub(crate) fn prefetch_plan_probes(ctx: &Ctx, index: &GraphIndex, plan: &ProbePlan, rows: &[Row]) {
-    if !index.is_remote() {
-        return;
+/// The rows a first [`Windowed`] window holds: few enough that a `LIMIT 1` or an
+/// `ASK` that stops after one row costs at most a few parallel reads.
+const WINDOW_START_ROWS: usize = 256;
+
+/// The most rows one [`Windowed`] window holds. The window doubles from
+/// [`WINDOW_START_ROWS`] (times four) up to this; the tile and byte bound of
+/// [`ProbeBatch`] cuts it shorter where the rows' tiles are many or large.
+const WINDOW_MAX_ROWS: usize = 1 << 16;
+
+/// Rows pulled and routed together while a window fills: their directory
+/// leaves are faulted in one read.
+const WINDOW_CHUNK_ROWS: usize = 256;
+
+/// How a row becomes the pattern its probe will run.
+type ProbePattern<'a> = Box<dyn Fn(&Row) -> Option<Pattern> + 'a>;
+
+/// A stream of rows about to be **probed** against a remote index, handed on
+/// unchanged and in order, with each window's tiles faulted in one coalesced,
+/// parallel read ([`GraphIndex::probe_batch_fault`]) just before the window is
+/// consumed.
+///
+/// A probe join over a lazy reader otherwise faults one tile per probe, one
+/// round trip at a time (the lazy streaming join did exactly that), or — when
+/// the whole prefix was prefetched at once — faulted more tiles than the tile
+/// cache holds, so the early ones were evicted before their probes ran and
+/// came back one request each (G50a: 15,539 requests at 0.12 s for a 221,817
+/// row prefix). A window grows until its tiles fill a [`ProbeBatch`] (tiles and
+/// stored bytes, within the cache budget), so the reader's fan-out is used (up
+/// to `read_concurrency` requests in flight) and memory stays bounded; it
+/// starts small and grows fourfold, so a demand-bounded consumer reads only a little
+/// past what it uses.
+///
+/// A local index has nothing to fault: the stream passes through untouched.
+pub(crate) struct Windowed<'a> {
+    index: &'a GraphIndex,
+    upstream: Box<dyn Iterator<Item = Row> + 'a>,
+    /// `None`: pass through (a local index).
+    pat_of: Option<ProbePattern<'a>>,
+    /// Pulled from upstream, not yet in a window.
+    pending: std::collections::VecDeque<Row>,
+    /// The window whose tiles were requested (or are resident): ready to probe.
+    ready: std::collections::VecDeque<Row>,
+    /// The next window's row cap.
+    size: usize,
+}
+
+/// Fault `rows`' probe tiles a window at a time as they are consumed.
+pub(crate) fn windowed<'a>(
+    index: &'a GraphIndex,
+    upstream: impl Iterator<Item = Row> + 'a,
+    pat_of: impl Fn(&Row) -> Option<Pattern> + 'a,
+) -> Windowed<'a> {
+    Windowed {
+        index,
+        upstream: Box::new(upstream),
+        pat_of: index.is_remote().then(|| {
+            let f: ProbePattern<'a> = Box::new(pat_of);
+            f
+        }),
+        pending: std::collections::VecDeque::new(),
+        ready: std::collections::VecDeque::new(),
+        size: WINDOW_START_ROWS,
     }
-    let Some(t) = plan.pats.first() else {
-        return;
-    };
-    let mut pats: Vec<Pattern> = Vec::new();
-    for base in rows {
-        if let (Some(s), Some(p), Some(o)) = (
-            probe_subject(ctx, &t.0, base),
-            probe_predicate(ctx, &t.1, base),
-            probe_object(ctx, &t.2, base),
-        ) {
-            if s.is_some() || o.is_some() {
-                pats.push((s, p, o));
+}
+
+impl Windowed<'_> {
+    /// Fill `ready` with the next window and fault its tiles.
+    fn refill(&mut self, pat_of: &dyn Fn(&Row) -> Option<Pattern>) {
+        let mut batch = ProbeBatch::default();
+        'window: while self.ready.len() < self.size {
+            let chunk = WINDOW_CHUNK_ROWS.min(self.size - self.ready.len());
+            while self.pending.len() < chunk {
+                match self.upstream.next() {
+                    Some(r) => self.pending.push_back(r),
+                    None => break,
+                }
+            }
+            if self.pending.is_empty() {
+                break;
+            }
+            let chunk = chunk.min(self.pending.len());
+            // One batched read for the chunk's directory leaves.
+            let pats: Vec<Pattern> = self.pending.iter().take(chunk).filter_map(pat_of).collect();
+            self.index.prefault_leaves(&pats);
+            for _ in 0..chunk {
+                if let Some(p) = pat_of(&self.pending[0]) {
+                    if !self.index.probe_batch_add(&mut batch, p) {
+                        break 'window; // the window is full: this row opens the next
+                    }
+                }
+                let row = self.pending.pop_front().expect("chunk rows are pending");
+                self.ready.push_back(row);
             }
         }
+        self.index.probe_batch_fault(batch);
+        self.size = (self.size * 4).min(WINDOW_MAX_ROWS);
     }
-    index.prefetch_probe_tiles(&pats);
+}
+
+impl Iterator for Windowed<'_> {
+    type Item = Row;
+
+    fn next(&mut self) -> Option<Row> {
+        // Taken out so `refill` can borrow `self` mutably, and put back.
+        let Some(pat_of) = self.pat_of.take() else {
+            return self.upstream.next();
+        };
+        if self.ready.is_empty() {
+            self.refill(pat_of.as_ref());
+        }
+        self.pat_of = Some(pat_of);
+        self.ready.pop_front()
+    }
+}
+
+/// The probe pattern a lowered triple pattern runs for `base`: every term the
+/// row binds is a constant. `None` when a bound value cannot take its role (the
+/// probe is empty), so there is nothing to fault.
+fn bgp_probe_pattern<'a>(
+    ctx: &'a Ctx<'_>,
+    t: (SlotTerm, SlotTerm, SlotTerm),
+) -> impl Fn(&Row) -> Option<Pattern> + 'a {
+    move |base| match (
+        probe_subject(ctx, &t.0, base),
+        probe_predicate(ctx, &t.1, base),
+        probe_object(ctx, &t.2, base),
+    ) {
+        (Some(s), Some(p), Some(o)) => Some((s, p, o)),
+        _ => None,
+    }
+}
+
+/// `rows` as the seeds of a [`ProbePlan`], with the tiles its FIRST pattern
+/// will route to faulted a window ahead ([`Windowed`]). Only the first pattern
+/// is prefetchable (later ones bind from earlier probe results), and only rows
+/// whose seed binds that pattern's subject or object are included: a
+/// predicate-only pattern routes to the predicate's WHOLE span, which for the
+/// fat sides this path serves would prefetch the very extent the probe strategy
+/// exists to avoid.
+pub(crate) fn plan_windowed<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    plan: &ProbePlan,
+    rows: Box<dyn Iterator<Item = Row> + 'q>,
+) -> Box<dyn Iterator<Item = Row> + 'q> {
+    let Some(&t) = plan.pats.first() else {
+        return rows;
+    };
+    if !index.is_remote() {
+        return rows;
+    }
+    let pat = bgp_probe_pattern(ctx, t);
+    Box::new(windowed(index, rows, move |base| {
+        pat(base).filter(|(s, _, o)| s.is_some() || o.is_some())
+    }))
 }
 
 /// Batch-fault the tiles that probing `patterns` from `subject_ids` (each
@@ -1326,7 +1462,13 @@ impl<'q> BgpSolutions<'q> {
                 .filter(|s| bound.contains(s))
                 .collect();
             if !shared.is_empty() && est[i] > limits().hash_build {
-                stream = Box::new(stream.flat_map(move |base| probe_rows(ctx, index, t, base)));
+                // Each window of streamed rows has its probes' tiles faulted
+                // together ([`Windowed`]); one at a time, a probe join over a
+                // remote file was bound by round-trip latency.
+                stream = Box::new(
+                    windowed(index, stream, bgp_probe_pattern(ctx, t))
+                        .flat_map(move |base| probe_rows(ctx, index, t, base)),
+                );
             } else {
                 // Small (or unconnected) pattern: scan it once into a table
                 // keyed on the shared slots and join every streamed row to it.
@@ -1440,11 +1582,7 @@ impl<'q> BgpSolutions<'q> {
             && is_unbound_class(ctx, &lowered[last_i], &shared);
         if !shared.is_empty() && (probe_beats_scan(prefix.len(), scan_est[last_i]) || class_probe) {
             let t = lowered[last_i];
-            if index.is_remote() {
-                prefetch_rows_for(ctx, index, t, &prefix);
-            }
-            let stream = prefix
-                .into_iter()
+            let stream = windowed(index, prefix.into_iter(), bgp_probe_pattern(ctx, t))
                 .flat_map(move |base| probe_rows(ctx, index, t, base));
             return Self::passthrough(Box::new(stream));
         }
@@ -1515,30 +1653,6 @@ impl Iterator for BgpSolutions<'_> {
             self.cur_scan = Some(s);
         }
     }
-}
-
-/// Batch-fault the tiles that probing `t` from each of `rows` will route to
-/// (remote readers only; see [`GraphIndex::prefetch_probe_tiles`]).
-fn prefetch_rows_for(
-    ctx: &Ctx,
-    index: &GraphIndex,
-    t: (SlotTerm, SlotTerm, SlotTerm),
-    rows: &[Row],
-) {
-    let pats: Vec<Pattern> = rows
-        .iter()
-        .filter_map(|base| {
-            match (
-                probe_subject(ctx, &t.0, base),
-                probe_predicate(ctx, &t.1, base),
-                probe_object(ctx, &t.2, base),
-            ) {
-                (Some(s), Some(p), Some(o)) => Some((s, p, o)),
-                _ => None,
-            }
-        })
-        .collect();
-    index.prefetch_probe_tiles(&pats);
 }
 
 /// A **streaming** merge join of two patterns that share exactly one variable,
@@ -2222,6 +2336,70 @@ mod tests {
                 "{name}: rare {rare} vs common {common}"
             );
         }
+    }
+
+    /// A probe prefetch covers a bounded window of its patterns — at most
+    /// [`PROBE_WINDOW_TILES`] tiles — and leaves the rest for the next call, so
+    /// a long list of probes never faults more tiles than the cache holds (the
+    /// whole list at once evicted the early tiles before their probes ran, and
+    /// each came back as a request of its own: G50a). What a window covers is
+    /// resident: probing it reads nothing more.
+    #[test]
+    fn a_probe_prefetch_window_is_bounded_and_warm() {
+        use crate::reader::{CountingReader, SliceReader};
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        for i in 0..20_000 {
+            let s = format!("<http://ex/s{i:06}>");
+            owned.push((s.clone(), ty.into(), format!("<http://ex/C{}>", i % 7)));
+            owned.push((s, "<http://ex/other>".into(), format!("\"o {}\"", i % 5000)));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(128);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = write_file(&dict, &ib.build(), false, &[], 0);
+        let v6 = crate::v06::write::convert_image(&v5, Default::default()).unwrap();
+        let leaked: &'static [u8] = Box::leak(v6.into_boxed_slice());
+        let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+        let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let index = rete.default_index();
+        // A cache far smaller than the tiles the probes touch: a prefetch of every
+        // probe at once would evict its own early tiles.
+        index.set_cache_cap(1 << 20);
+        // Every third subject, as the probes of a long join.
+        let pats: Vec<Pattern> = (0..20_000)
+            .step_by(3)
+            .map(|i| {
+                let (s, _, _) = dict
+                    .encode(&format!("<http://ex/s{i:06}>"), ty, "<http://ex/C0>")
+                    .unwrap();
+                (Some(s), None, None)
+            })
+            .collect();
+        let mut from = 0;
+        let mut windows = 0;
+        while from < pats.len() {
+            let n = index.prefetch_probe_tiles(&pats[from..]);
+            assert!(n >= 1, "a window always makes progress");
+            assert!(
+                n < pats.len() - from || windows > 0,
+                "the first window is cut"
+            );
+            let before = reader.requests();
+            for &p in &pats[from..from + n] {
+                assert!(index.scan_iter(p).next().is_some());
+            }
+            assert_eq!(reader.requests(), before, "a covered probe reads nothing");
+            from += n;
+            windows += 1;
+        }
+        assert!(windows > 1, "{windows} window(s) for {} probes", pats.len());
     }
 
     /// The run of tiles holding a leading id is the same in both layouts, for
