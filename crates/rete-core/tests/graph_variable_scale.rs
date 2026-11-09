@@ -77,7 +77,12 @@ fn bytes() -> &'static [u8] {
         let mut o = write_options();
         o.tile_budget = 4 * 1024;
         set_write_options(o);
-        assemble_dataset_with_layout(
+        // The image these reads are measured against keeps the three graph-leading
+        // orders (the legacy `0x05` layout); an in-RAM build for `0x07` carries GSPO
+        // alone and derives the rest when it is written, so its quad section is a
+        // third of the size the thresholds below were set against.
+        std::env::set_var("RETE_WRITE_FORMAT", "5");
+        let image = assemble_dataset_with_layout(
             fixture(),
             false,
             false,
@@ -87,7 +92,9 @@ fn bytes() -> &'static [u8] {
             GraphLayout::Quad,
             |_, _| Vec::<u8>::new(),
         )
-        .0
+        .0;
+        std::env::remove_var("RETE_WRITE_FORMAT");
+        image
     })
 }
 

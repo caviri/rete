@@ -527,8 +527,12 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
         for ord in &q.orders {
             let mut tiles = Vec::with_capacity(ord.n_tiles);
             for (l, _, _, toff) in &ord.leaves {
-                for mut e in decode_qtile_leaf(&leaf(&qleaves, kind::QUAD_LEAVES, l)?, l.n, *toff)?
-                {
+                for mut e in decode_qtile_leaf(
+                    &leaf(&qleaves, kind::QUAD_LEAVES, l)?,
+                    l.n,
+                    *toff,
+                    h.version == VERSION,
+                )? {
                     e.off += qbase;
                     tiles.push(e);
                 }

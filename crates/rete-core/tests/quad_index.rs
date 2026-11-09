@@ -71,8 +71,15 @@ fn dataset() -> Vec<RawQuad> {
     q
 }
 
+/// The in-RAM `0x05` image. It keeps every graph-leading quad order of the
+/// permutation set (the legacy layout, which these tests measure against: an
+/// in-RAM build for `0x07` carries GSPO alone and derives the rest when the
+/// file is written). Serialised: the switch is an environment variable.
 fn build(layout: GraphLayout, perms: PermSet) -> Vec<u8> {
-    assemble_dataset_with_layout(
+    static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = BUILD.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var("RETE_WRITE_FORMAT", "5");
+    let bytes = assemble_dataset_with_layout(
         dataset(),
         false,
         false,
@@ -82,7 +89,9 @@ fn build(layout: GraphLayout, perms: PermSet) -> Vec<u8> {
         layout,
         |_, _| Vec::<u8>::new(),
     )
-    .0
+    .0;
+    std::env::remove_var("RETE_WRITE_FORMAT");
+    bytes
 }
 
 fn sorted<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {

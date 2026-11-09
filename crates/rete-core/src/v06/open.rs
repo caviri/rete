@@ -482,7 +482,14 @@ impl V06File {
         let leaves = self.section(kind::QUAD_LEAVES).map_or(0, |r| r.offset);
         let data = self.section(kind::QUAD_DATA).map_or(0, |r| r.offset);
         Some(
-            crate::quad::V06Quad::new(&root, leaves, data, self.h.internal_codec).map(|mut v| {
+            crate::quad::V06Quad::new(
+                &root,
+                leaves,
+                data,
+                self.h.internal_codec,
+                self.h.version == VERSION,
+            )
+            .map(|mut v| {
                 v.tile_max = self.bound(kind::QUAD_DATA);
                 v.leaf_max = self.bound(kind::QUAD_LEAVES);
                 crate::quad::QuadNamed::new_v06(

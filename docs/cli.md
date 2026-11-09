@@ -295,9 +295,14 @@ stores the named graphs of an N-Quads/TriG input in the **quad index**. The
 `0x05` alternative, `per-graph` (one permutation index per graph, the
 NAMED_GRAPHS section), is refused; `rete convert` re-encodes a per-graph file as
 a quad index. The quad index is ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)):
-every named-graph quad stored once, the graph as a fourth column of
-graph-leading permutations in tiles that many graphs share, behind a sorted
-graph directory, with graph names as dictionary terms. The rows a query returns
+every named-graph quad stored four times, as GSPO (the graph first, in tiles
+that many graphs share, behind a sorted graph directory) and as SPOG, POSG and
+OSPG (the graph last), with graph names as dictionary terms. The three graph-last
+orders make `GRAPH ?g { <s> ?p ?o }`, `GRAPH ?g { ?s <p> ?o }` and
+`GRAPH ?g { ?s ?p <o> }` a seek, not a pass over the file: on the 3.9 GB nanopub
+dump a bound subject across graphs went from 28,179 requests and 333 MB to 18
+requests and 0.29 MB, and the file got smaller (3.88 to 2.51 GB). `--permutations`
+is the default graph's: the quad index has these four orders whatever it says. The rows a query returns
 are the same either way. What changes is the cost of many small graphs — on the
 OpenCitations sample (1.5 M per-entity provenance graphs of ~9 quads) the
 named-graph section drops from 974 MB to 102 MB, the build from 33 min to 77 s,
@@ -586,7 +591,7 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete convert <in.rete> -o <out.rete> [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
+### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
 Turn a format `0x05` or `0x06` file into format `0x07` ([SPEC §4](SPEC.md#4-file-layout))
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
@@ -619,10 +624,20 @@ a copy:
   writes, from the label predicates' triples read through the index.
   `--no-label-index` skips it.
 
-`--quad-clustering` overrides how the quad tiles are laid out: `graph` puts the
-tiles of every order for one block of graphs side by side (one neighbourhood per
-`GRAPH <g>`), `order` keeps each order contiguous, `auto` (the default) picks
-graph-major when the mean graph is under 64 KiB of tiles.
+**Named graphs get the `0x07` quad orders.** A file with a quad index comes out with
+GSPO, SPOG, POSG and OSPG (SPEC §6.5): GSPO's tiles are copied, and the other three
+are derived from them, one sort pass each, one order at a time. Up to 100 M named
+quads are sorted in RAM; past that the sort spills runs of 100 M (zstd, about 4 GB
+of spill per 1 G quads) into `--tmp-dir` (default: beside the output) and merges them
+straight into the tiles, so the 3.88 GB nanopub dump (378.7 M quads) converts in
+75 s with a 1.8 GB peak and 1.6 GB of spill, to 2.51 GB. The graph-leading
+`G+POS`, `G+OSP` (and `G+SOP`, `G+PSO`, `G+OPS`) orders of the input are not
+written; `RETE_QUAD_RUN_ROWS` changes the run size (RAM against disk), never the
+bytes.
+
+`--quad-clustering` applies to a `0x06` output only (`0x07` is order-major, always):
+`graph` puts the tiles of every order for one block of graphs side by side, `order`
+keeps each order contiguous.
 
 **A `0x06` input** is written again, as `0x07`: the payload is copied verbatim and only the
 directory leaves, the root and the section table are cut anew, the label index's root node
@@ -633,7 +648,7 @@ file written before 0.5.6 gets small directory leaves without a rebuild: on the
 3.88 GB nanopub dump it takes 2.4 s and about 100 MB of memory. The card and the
 build record are kept as they are (the card's starter-query costs are not
 measured again, so a layout change is not reflected in them), and a
-`--quad-clustering` left at `auto` keeps the file's own clustering. The content
+The content
 hash changes (the leaf bytes are part of it), the data does not.
 
 ```sh

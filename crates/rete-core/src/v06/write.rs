@@ -140,7 +140,7 @@ impl DataSec {
 struct Targets {
     dict: [usize; 4],
     index: [usize; 6],
-    quad: [usize; 6],
+    quad: [usize; crate::quad7::NUM_SLOTS],
     text: usize,
 }
 
@@ -157,6 +157,9 @@ struct Front {
     /// Leaves per group, to pick which group to grow: `(group id, count)`.
     counts: Vec<(usize, usize)>,
 }
+
+/// Leaf-group id of the text index (dictionary 0..4, index 4..10, quad 10..19).
+const TEXT_GROUP: usize = 19;
 
 /// Order in which dictionary sections are laid out (predicates first).
 const DICT_ORDER: [usize; 4] = [3, 0, 1, 2];
@@ -498,7 +501,7 @@ fn build_front(
                 &mut f.leaf_max[2],
                 |e, i| {
                     let _ = i;
-                    encode_qtile_leaf(e, e[0].off)
+                    encode_qtile_leaf(e, e[0].off, version == VERSION)
                 },
             );
             f.counts.push((10 + si, leaves.len()));
@@ -554,7 +557,7 @@ fn build_front(
             &mut f.leaf_max[3],
             |e, _| encode_token_leaf(e),
         );
-        f.counts.push((16, leaves.len()));
+        f.counts.push((TEXT_GROUP, leaves.len()));
         f.units.push((
             tag::TEXT,
             encode_text_root(&TextRoot {
@@ -718,6 +721,13 @@ pub fn assemble_with<W: Write + Seek>(
     opts: WriteOpts,
     hooks: &mut Hooks<'_>,
 ) -> Result<Written, FileError> {
+    // `0x07` writes SPOG, POSG and OSPG next to GSPO: derive them from the GSPO
+    // tiles first (the other graph-leading orders of the input are dropped).
+    if opts.version == VERSION && super::neworders::needed(parts) {
+        let (derived, extras) = super::neworders::derive(parts, input)?;
+        let layered = super::neworders::Layered::new(input, &extras);
+        return assemble_with(&derived, &layered, out, opts, hooks);
+    }
     let codec = opts.internal_codec;
     if parts.pyramid_levels > u8::MAX as u16 {
         return Err(FileError::Container(
@@ -732,9 +742,12 @@ pub fn assemble_with<W: Write + Seek>(
         parts.term_count,
         parts.quad.as_ref().map_or(0, |q| q.graph_count),
     ])?;
-    // Quad clustering: graph-major when the mean graph is under a tile.
+    // `0x07` is order-major, always: its graph-leading order is one, and the
+    // graph-last orders have no graph neighbourhood to cluster on.
+    // Quad clustering (`0x06`): graph-major when the mean graph is under a tile.
     let graph_major = match (&parts.quad, opts.quad) {
         (None, _) => false,
+        (_, _) if opts.version == VERSION => false,
         (Some(_), QuadClustering::GraphMajor) => true,
         (Some(_), QuadClustering::OrderMajor) => false,
         (Some(q), QuadClustering::Auto) => {
@@ -793,13 +806,13 @@ pub fn assemble_with<W: Write + Seek>(
     let size_of = |t: &Targets, g: usize| match g {
         0..=3 => t.dict[g],
         4..=9 => t.index[g - 4],
-        10..=15 => t.quad[g - 10],
+        10..=18 => t.quad[g - 10],
         _ => t.text,
     };
     let grow = |t: &mut Targets, g: usize| match g {
         0..=3 => t.dict[g] = t.dict[g].saturating_mul(2),
         4..=9 => t.index[g - 4] = t.index[g - 4].saturating_mul(2),
-        10..=15 => t.quad[g - 10] = t.quad[g - 10].saturating_mul(2),
+        10..=18 => t.quad[g - 10] = t.quad[g - 10].saturating_mul(2),
         _ => t.text = t.text.saturating_mul(2),
     };
     let build = |t: &Targets| {
@@ -817,7 +830,7 @@ pub fn assemble_with<W: Write + Seek>(
     let mut t = Targets {
         dict: [pol.start; 4],
         index: [pol.start; 6],
-        quad: [pol.start; 6],
+        quad: [pol.start; crate::quad7::NUM_SLOTS],
         text: pol.start,
     };
     let mut front = build(&t);
@@ -828,7 +841,7 @@ pub fn assemble_with<W: Write + Seek>(
         let floor = root_len_of(&build(&Targets {
             dict: [one; 4],
             index: [one; 6],
-            quad: [one; 6],
+            quad: [one; crate::quad7::NUM_SLOTS],
             text: one,
         }));
         if floor <= pol.root_budget {

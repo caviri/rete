@@ -879,9 +879,14 @@ stores the named graphs of an N-Quads/TriG input in the <strong>quad index</stro
 <code>0x05</code> alternative, <code>per-graph</code> (one permutation index per graph, the
 NAMED_GRAPHS section), is refused; <code>rete convert</code> re-encodes a per-graph file as
 a quad index. The quad index is (<a href="SPEC.html#65-quad-index-quad_index-section-optional">SPEC.md §6.5</a>):
-every named-graph quad stored once, the graph as a fourth column of
-graph-leading permutations in tiles that many graphs share, behind a sorted
-graph directory, with graph names as dictionary terms. The rows a query returns
+every named-graph quad stored four times, as GSPO (the graph first, in tiles
+that many graphs share, behind a sorted graph directory) and as SPOG, POSG and
+OSPG (the graph last), with graph names as dictionary terms. The three graph-last
+orders make <code>GRAPH ?g { &lt;s&gt; ?p ?o }</code>, <code>GRAPH ?g { ?s &lt;p&gt; ?o }</code> and
+<code>GRAPH ?g { ?s ?p &lt;o&gt; }</code> a seek, not a pass over the file: on the 3.9 GB nanopub
+dump a bound subject across graphs went from 28,179 requests and 333 MB to 18
+requests and 0.29 MB, and the file got smaller (3.88 to 2.51 GB). <code>--permutations</code>
+is the default graph's: the quad index has these four orders whatever it says. The rows a query returns
 are the same either way. What changes is the cost of many small graphs — on the
 OpenCitations sample (1.5 M per-entity provenance graphs of ~9 quads) the
 named-graph section drops from 974 MB to 102 MB, the build from 33 min to 77 s,
@@ -1132,7 +1137,7 @@ one), and writes the SCHEMA section and the community-only pyramid-meta <code>re
 writes. The named-graph layout is kept the same way: a quad-index input
 (<code>--named-graphs quad</code>) comes out as a quad-index file, and <code>merge</code> writes one
 when any of its inputs is one.</p>
-<h3 id="rete-convert-inrete--o-outrete---quad-clustering-autographorder---no-label-index---no-card-costs---memory-budget-mb-n"><code>rete convert &lt;in.rete&gt; -o &lt;out.rete&gt; [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]</code></h3>
+<h3 id="rete-convert-inrete--o-outrete---tmp-dir-dir---quad-clustering-autographorder---no-label-index---no-card-costs---memory-budget-mb-n"><code>rete convert &lt;in.rete&gt; -o &lt;out.rete&gt; [--tmp-dir dir] [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]</code></h3>
 <p>Turn a format <code>0x05</code> or <code>0x06</code> file into format <code>0x07</code> (<a href="SPEC.html#4-file-layout">SPEC §4</a>)
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
@@ -1163,10 +1168,19 @@ block (at most 8,192 entries) gets the label index <code>build --label-index</co
 writes, from the label predicates' triples read through the index.
 <code>--no-label-index</code> skips it.</li>
 </ul>
-<p><code>--quad-clustering</code> overrides how the quad tiles are laid out: <code>graph</code> puts the
-tiles of every order for one block of graphs side by side (one neighbourhood per
-<code>GRAPH &lt;g&gt;</code>), <code>order</code> keeps each order contiguous, <code>auto</code> (the default) picks
-graph-major when the mean graph is under 64 KiB of tiles.</p>
+<p><strong>Named graphs get the <code>0x07</code> quad orders.</strong> A file with a quad index comes out with
+GSPO, SPOG, POSG and OSPG (SPEC §6.5): GSPO's tiles are copied, and the other three
+are derived from them, one sort pass each, one order at a time. Up to 100 M named
+quads are sorted in RAM; past that the sort spills runs of 100 M (zstd, about 4 GB
+of spill per 1 G quads) into <code>--tmp-dir</code> (default: beside the output) and merges them
+straight into the tiles, so the 3.88 GB nanopub dump (378.7 M quads) converts in
+75 s with a 1.8 GB peak and 1.6 GB of spill, to 2.51 GB. The graph-leading
+<code>G+POS</code>, <code>G+OSP</code> (and <code>G+SOP</code>, <code>G+PSO</code>, <code>G+OPS</code>) orders of the input are not
+written; <code>RETE_QUAD_RUN_ROWS</code> changes the run size (RAM against disk), never the
+bytes.</p>
+<p><code>--quad-clustering</code> applies to a <code>0x06</code> output only (<code>0x07</code> is order-major, always):
+<code>graph</code> puts the tiles of every order for one block of graphs side by side, <code>order</code>
+keeps each order contiguous.</p>
 <p><strong>A <code>0x06</code> input</strong> is written again, as <code>0x07</code>: the payload is copied verbatim and only the
 directory leaves, the root and the section table are cut anew, the label index's root node
 moves out of the root into its own section, and the annex is created only if the card has
@@ -1176,7 +1190,7 @@ file written before 0.5.6 gets small directory leaves without a rebuild: on the
 3.88 GB nanopub dump it takes 2.4 s and about 100 MB of memory. The card and the
 build record are kept as they are (the card's starter-query costs are not
 measured again, so a layout change is not reflected in them), and a
-<code>--quad-clustering</code> left at <code>auto</code> keeps the file's own clustering. The content
+The content
 hash changes (the leaf bytes are part of it), the data does not.</p>
 <pre><code class="language-sh">rete convert davidrumsey.rete -o davidrumsey-06.rete
 rete convert nanopubs.rete -o nanopubs-leaves.rete   # a 0x06 file: directory leaves re-cut

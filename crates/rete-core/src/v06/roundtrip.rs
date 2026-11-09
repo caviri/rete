@@ -145,10 +145,18 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
     let a = convert_image(&v5, WriteOpts::default()).unwrap();
     let b = convert_image(&v5, WriteOpts::default()).unwrap();
     assert_eq!(a, b);
-    // Order-major and graph-major hold the same content.
+    // `0x07` is order-major whatever the option says.
+    let mut seven = WriteOpts {
+        quad: write::QuadClustering::GraphMajor,
+        ..WriteOpts::default()
+    };
+    assert_eq!(convert_image(&v5, seven).unwrap(), a);
+    seven.quad = write::QuadClustering::OrderMajor;
+    assert_eq!(convert_image(&v5, seven).unwrap(), a);
+    // `0x06`: order-major and graph-major hold the same content.
     let mut o = WriteOpts {
         quad: write::QuadClustering::OrderMajor,
-        ..WriteOpts::default()
+        ..v06_opts()
     };
     let om = convert_image(&v5, o).unwrap();
     o.quad = write::QuadClustering::GraphMajor;
@@ -659,8 +667,12 @@ fn writers_write_0x07_and_the_label_root_has_its_own_section() {
         .len() as u64;
     assert_eq!(got6, want);
     // The root node (a few bytes on this small file) is out of the root; the
-    // price is one 38-byte table entry.
-    assert!(h.root_len as usize <= h6.root_len as usize + SEC_ENTRY_LEN);
+    // price is one 38-byte table entry. (A file without named graphs: the quad
+    // orders of 0x07 are a different set from 0x06's and change the root too.)
+    let plain = image(1500, false, true, true, false);
+    let (h7p, _) = front_of(&convert_image(&plain, WriteOpts::default()).unwrap());
+    let (h6p, _) = front_of(&convert_image(&plain, v06_opts()).unwrap());
+    assert!(h7p.root_len as usize <= h6p.root_len as usize + SEC_ENTRY_LEN);
 }
 
 #[test]

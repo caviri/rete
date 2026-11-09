@@ -59,5 +59,19 @@ fuzz_target!(|data: &[u8]| {
         // section of its own) and the card annex.
         let _ = rete.prefix_search("a", 5);
         let _ = rete_core::read_card_full_ranged(&rete_core::SliceReader::new(data));
+        // The quad orders of 0x07 (SPOG, POSG, OSPG): a graph variable with a
+        // bound subject, predicate or object seeks them, and the deep check
+        // decodes every tile.
+        for q in [
+            "SELECT ?g ?p ?o WHERE { GRAPH ?g { <http://x/a> ?p ?o } } LIMIT 5",
+            "SELECT ?g ?s ?o WHERE { GRAPH ?g { ?s <http://x/p> ?o } } LIMIT 5",
+            "SELECT ?g ?s ?p WHERE { GRAPH ?g { ?s ?p <http://x/b> } } LIMIT 5",
+            "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://x/p> <http://x/b> } } LIMIT 5",
+            "SELECT ?s ?p ?o WHERE { GRAPH <http://x/g> { ?s ?p ?o } } LIMIT 5",
+        ] {
+            let _ = eval_sparql(&rete, q);
+        }
+        let _ = rete.named_graph_count();
+        let _ = rete_core::v06::check_orders(&rete_core::SliceReader::new(data));
     }
 });

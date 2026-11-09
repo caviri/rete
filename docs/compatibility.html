@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Compatibility and limits · rete docs</title>
-  <meta name="description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB) and an optional card…" />
+  <meta name="description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB), an optional card annex…" />
   <link rel="canonical" href="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Compatibility and limits · rete docs" />
-  <meta property="og:description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB) and an optional card…" />
+  <meta property="og:description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB), an optional card annex…" />
   <meta property="og:url" content="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Compatibility and limits · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Compatibility and limits · rete docs" />
-  <meta name="twitter:description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB) and an optional card…" />
+  <meta name="twitter:description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB), an optional card annex…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta name="rete:section" content="Reference" />
   <script>
@@ -621,15 +621,19 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 <h3 id="format-0x07-generation-2-second-step">Format <code>0x07</code> (generation 2, second step)</h3>
 <p>Every writer now writes format byte <code>0x07</code> (<a href="SPEC.html#410-format-0x07-and-compatibility">SPEC §4.10</a>):
 <code>0x06</code> plus the label index's root node in a cold section of its own (the root
-of a big file shrinks by its 37 to 47 KB) and an optional card annex for card
-fields over the 8 KiB hot cap. Readers of this release read <code>0x05</code>, <code>0x06</code> and
+of a big file shrinks by its 37 to 47 KB), an optional card annex for card
+fields over the 8 KiB hot cap, and a new set of quad orders for named graphs:
+GSPO, SPOG, POSG and OSPG (SPEC §6.5), declared by the root and independent of
+<code>--permutations</code>. Readers of this release read <code>0x05</code>, <code>0x06</code> and
 <code>0x07</code>; <strong>readers up to 0.5.6 cannot read <code>0x07</code></strong>: they refuse it by name
 (<code>unsupported .rete format 0x07; this Rete build reads 0x05..=0x06</code>).</p>
 <ul>
 <li><strong>Convert, do not rebuild.</strong> <code>rete convert in.rete -o out.rete</code> turns a <code>0x05</code> or
 a <code>0x06</code> file into <code>0x07</code>: the payload is copied, the label root is moved out of
-the root and the card is kept, with no annex unless a field of it is over the cap.</li>
-<li><strong>No backward compatibility</strong> is promised before 1.0.0; the catalog is converted
+the root and the card is kept, with no annex unless a field of it is over the cap.
+A file with named graphs gets SPOG, POSG and OSPG derived from its GSPO tiles by a
+sort pass (external past 100 M quads, <code>--tmp-dir</code>), and loses its other
+graph-leading orders: the nanopub dump goes from 3.88 to 2.51 GB in 75 s.- <strong>No backward compatibility</strong> is promised before 1.0.0; the catalog is converted
 in step with the readers, and the <code>0x06</code> reader goes once it is.</li>
 <li><strong>Publish after the readers</strong>, as for <code>0x06</code>.</li>
 </ul>
