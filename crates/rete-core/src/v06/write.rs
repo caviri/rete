@@ -39,6 +39,34 @@ impl QuadClustering {
     }
 }
 
+/// How big the writer makes directory leaves (SPEC.md §9): small, because a
+/// leaf is what a cold lookup transfers; the root carries the leaf lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeafPolicy {
+    /// Uncompressed size a leaf is cut at to begin with.
+    pub start: usize,
+    /// The largest a leaf grows to in order to bring the root under
+    /// `root_budget`. Growing happens only if one leaf per directory would
+    /// fit the budget.
+    pub max: usize,
+    /// Stored root size the writer tries to stay under.
+    pub root_budget: usize,
+    /// The most the leaf lists may add to the root of one leaf per directory;
+    /// past that every directory's leaves grow, beyond `max`.
+    pub list_cap: usize,
+}
+
+impl Default for LeafPolicy {
+    fn default() -> Self {
+        LeafPolicy {
+            start: LEAF_START,
+            max: LEAF_MAX,
+            root_budget: ROOT_BUDGET,
+            list_cap: LIST_CAP,
+        }
+    }
+}
+
 /// Assembly options.
 #[derive(Debug, Clone, Copy)]
 pub struct WriteOpts {
@@ -46,6 +74,8 @@ pub struct WriteOpts {
     pub internal_codec: u8,
     /// Quad tile clustering.
     pub quad: QuadClustering,
+    /// Directory leaf sizes.
+    pub leaves: LeafPolicy,
 }
 
 impl Default for WriteOpts {
@@ -53,6 +83,7 @@ impl Default for WriteOpts {
         WriteOpts {
             internal_codec: crate::file::writer_codec(),
             quad: QuadClustering::from_env(),
+            leaves: LeafPolicy::default(),
         }
     }
 }
@@ -697,25 +728,28 @@ pub fn assemble_with<W: Write + Seek>(
         _ => Vec::new(),
     };
     let label_nodes = match &parts.labels {
-        Some(l) if l.body.len > l.data_len => {
+        Some(l) if l.nodes.is_some_and(|n| n.len > 0) => {
+            let n = l.nodes.unwrap_or_default();
+            input.read_at(n.offset, n.len)?
+        }
+        Some(l) if l.nodes.is_none() && l.body.len > l.data_len => {
             input.read_at(l.body.offset + l.data_len, l.body.len - l.data_len)?
         }
         _ => Vec::new(),
     };
 
-    // Grow leaves until the stored root fits its budget.
-    let mut t = Targets {
-        dict: [LEAF_START; 4],
-        index: [LEAF_START; 6],
-        quad: [LEAF_START; 6],
-        text: LEAF_START,
-    };
-    let mut front;
-    loop {
-        front = build_front(
-            parts, &t, codec, &dict_off, &perm_off, &quad_off, &quad_gdir,
-        );
-        let probe = Root06 {
+    // Leaf policy (`opts.leaves`). A leaf is a cold lookup's unit of transfer,
+    // so leaves stay small (`start`) and the root carries the leaf lists.
+    //  1. They grow, up to `max`, only to bring the stored root under
+    //     `root_budget`, and only when that can work: if the root is over
+    //     budget even with one leaf per directory (the graph directory's block
+    //     index alone can do that), bigger leaves would cost every lookup
+    //     bytes and buy nothing.
+    //  2. The leaf lists add at most `list_cap` to the root of one leaf per
+    //     directory; past that every directory's leaves double, beyond `max`.
+    let pol = opts.leaves;
+    let root_len_of = |front: &Front| {
+        Root06 {
             sections: vec![
                 Sec06 {
                     kind: 0,
@@ -727,21 +761,64 @@ pub fn assemble_with<W: Write + Seek>(
                 kind::ORDER.len()
             ],
             units: front.units.clone(),
-        };
-        if probe.encode(codec).len() <= ROOT_BUDGET {
-            break;
         }
-        let Some(&(g, n)) = front.counts.iter().max_by_key(|(_, n)| *n) else {
-            break;
-        };
-        if n <= 1 {
-            break;
+        .encode(codec)
+        .len()
+    };
+    let size_of = |t: &Targets, g: usize| match g {
+        0..=3 => t.dict[g],
+        4..=9 => t.index[g - 4],
+        10..=15 => t.quad[g - 10],
+        _ => t.text,
+    };
+    let grow = |t: &mut Targets, g: usize| match g {
+        0..=3 => t.dict[g] = t.dict[g].saturating_mul(2),
+        4..=9 => t.index[g - 4] = t.index[g - 4].saturating_mul(2),
+        10..=15 => t.quad[g - 10] = t.quad[g - 10].saturating_mul(2),
+        _ => t.text = t.text.saturating_mul(2),
+    };
+    let build =
+        |t: &Targets| build_front(parts, t, codec, &dict_off, &perm_off, &quad_off, &quad_gdir);
+    let mut t = Targets {
+        dict: [pol.start; 4],
+        index: [pol.start; 6],
+        quad: [pol.start; 6],
+        text: pol.start,
+    };
+    let mut front = build(&t);
+    let mut root_len = root_len_of(&front);
+    if root_len > pol.root_budget && front.counts.iter().any(|(_, n)| *n > 1) {
+        // The root with one leaf per directory: what no leaf size can go under.
+        let one = usize::MAX / 4;
+        let floor = root_len_of(&build(&Targets {
+            dict: [one; 4],
+            index: [one; 6],
+            quad: [one; 6],
+            text: one,
+        }));
+        if floor <= pol.root_budget {
+            while root_len > pol.root_budget {
+                let pick = front
+                    .counts
+                    .iter()
+                    .filter(|(g, n)| *n > 1 && size_of(&t, *g) < pol.max)
+                    .max_by_key(|(_, n)| *n);
+                let Some(&(g, _)) = pick else {
+                    break;
+                };
+                grow(&mut t, g);
+                front = build(&t);
+                root_len = root_len_of(&front);
+            }
         }
-        match g {
-            0..=3 => t.dict[g] *= 2,
-            4..=9 => t.index[g - 4] *= 2,
-            10..=15 => t.quad[g - 10] *= 2,
-            _ => t.text *= 2,
+        while root_len > floor + pol.list_cap && front.counts.iter().any(|(_, n)| *n > 1) {
+            for (g, n) in front.counts.clone() {
+                if n > 1 {
+                    grow(&mut t, g);
+                }
+            }
+            front = build(&t);
+            root_len = root_len_of(&front);
         }
     }
 
@@ -1356,6 +1433,28 @@ pub fn commit_header<F: Write + Seek>(file: &mut F, h: &Header06) -> Result<(), 
     file.write_all(&h.to_bytes())?;
     file.flush()?;
     Ok(())
+}
+
+/// Write the `0x06` file `input` again under the writer's current leaf policy:
+/// the payload is copied verbatim and only the directory leaves, the root and
+/// the section table change. `opts.quad` keeps the input's own clustering when
+/// it is `Auto`.
+pub fn rewrite<W: Write + Seek>(
+    input: &dyn RangeReader,
+    out: &mut W,
+    mut opts: WriteOpts,
+) -> Result<Written, FileError> {
+    let parts = parts::from_v06(input)?;
+    if opts.quad == QuadClustering::Auto {
+        let head = input.read_at(0, HEADER_LEN as u64)?;
+        let h = Header06::from_bytes(&head)?;
+        opts.quad = if h.flags & F_QUAD_GRAPH_MAJOR != 0 {
+            QuadClustering::GraphMajor
+        } else {
+            QuadClustering::OrderMajor
+        };
+    }
+    assemble(&parts, input, out, opts)
 }
 
 #[cfg(test)]

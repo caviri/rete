@@ -87,7 +87,7 @@ pub(crate) fn convert(
     let head =
         rete_core::RangeReader::read_at(&reader, 0, 8.min(rete_core::RangeReader::len(&reader)))?;
     if rete_core::v06::open::is_v06(&head) {
-        anyhow::bail!("{input} is already format 0x06");
+        return rewrite_v06(input, output, &reader, opts);
     }
     let started = std::time::Instant::now();
     let labels = if label_index {
@@ -379,4 +379,38 @@ pub(crate) fn finish_recorded(
     );
     rete_core::build_record::finish_in_ram(image, Some(&record))
         .map_err(|e| anyhow::anyhow!("writing 0x06: {e}"))
+}
+
+/// `rete convert IN -o OUT` on a `0x06` input: the same file written again
+/// under the writer's current directory-leaf policy. The payload is copied
+/// verbatim; the card and the build record are kept as they are.
+fn rewrite_v06(
+    input: &str,
+    output: &str,
+    reader: &super::range_source::RangedSourceReader,
+    opts: WriteOpts,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let tmp = std::path::PathBuf::from(format!("{output}.convert-tmp"));
+    let written = {
+        let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
+        let w = rete_core::v06::write::rewrite(reader, &mut out, opts).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::anyhow!("rewriting {input}: {e}")
+        })?;
+        std::io::Write::flush(&mut out)?;
+        w
+    };
+    std::fs::rename(&tmp, output)?;
+    let in_len = rete_core::RangeReader::len(reader);
+    eprintln!(
+        "convert: wrote {output} — format 0x06 again, {} bytes ({:+.2}% vs {} bytes), root {} bytes, content hash {}, {:.1}s",
+        written.header.file_len,
+        (written.header.file_len as f64 - in_len as f64) * 100.0 / in_len.max(1) as f64,
+        in_len,
+        written.header.root_len,
+        hex16(&written.header.content_hash),
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
 }

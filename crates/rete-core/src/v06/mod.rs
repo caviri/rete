@@ -38,10 +38,16 @@ pub const FIRST_READ: u64 = 64 * 1024;
 /// The 8-byte footer: the generation, then `RETE` — so every reader that
 /// confirms a length by the file's last four bytes finds the magic there.
 pub const FOOTER: [u8; 8] = *b"\x06\x00\x00\x00RETE";
-/// The writer's root budget: leaves grow until the stored root fits.
+/// The writer's root budget: leaves may grow (to [`LEAF_MAX`]) to bring the
+/// stored root under it, when growing them can.
 pub const ROOT_BUDGET: usize = 40 * 1024;
 /// Starting (uncompressed) size of a leaf block.
 pub const LEAF_START: usize = 16 * 1024;
+/// Largest leaf the writer grows to for the root budget (uncompressed).
+pub const LEAF_MAX: usize = 64 * 1024;
+/// The most the leaf lists may add to a root; past it leaves grow beyond
+/// [`LEAF_MAX`].
+pub const LIST_CAP: usize = 256 * 1024;
 /// Slack added to the card region beyond twice the card + record.
 pub const CARD_SLACK_MIN: u32 = 8 * 1024;
 

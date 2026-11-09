@@ -675,5 +675,37 @@ fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
             hex(&s.digest)
         );
     }
+    print_leaf_counts(&root);
     Ok(())
+}
+
+/// Leaves per directory, from the root alone: `dict` (shared, subject, object,
+/// predicate), `index` and `quad` (per stored order), `text`.
+fn print_leaf_counts(root: &rete_core::v06::Root06) {
+    use rete_core::v06::{
+        decode_dict_root, decode_index_root, decode_quad_root, decode_text_root, tag,
+    };
+    let list = |v: Vec<usize>| v.iter().map(usize::to_string).collect::<Vec<_>>().join(" ");
+    println!("  leaves       :");
+    if let Some(Ok(d)) = root.unit(tag::DICT).map(decode_dict_root) {
+        println!(
+            "    dict   {}",
+            list(d.iter().map(|s| s.leaves.len()).collect())
+        );
+    }
+    if let Some(Ok(p)) = root.unit(tag::INDEX).map(decode_index_root) {
+        println!(
+            "    index  {}",
+            list(p.iter().map(|o| o.leaves.len()).collect())
+        );
+    }
+    if let Some(Ok(q)) = root.unit(tag::QUAD).map(decode_quad_root) {
+        println!(
+            "    quad   {}",
+            list(q.orders.iter().map(|o| o.leaves.len()).collect())
+        );
+    }
+    if let Some(Ok(t)) = root.unit(tag::TEXT).map(decode_text_root) {
+        println!("    text   {}", t.leaves.len());
+    }
 }
