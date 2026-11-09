@@ -195,6 +195,14 @@ pub fn normalize_string_list(field: &str, values: Vec<String>) -> Result<Vec<Str
 /// the content hash, and a silent cut would ship a card that no longer says
 /// what the publisher wrote.
 pub fn normalize_description(v: &Value) -> Result<String, String> {
+    let text = description_text(v)?;
+    check_description_len(&text)?;
+    Ok(text)
+}
+
+/// The shape half of [`normalize_description`]: a string, or an array of lines
+/// joined with newlines, trimmed. No size check.
+pub fn description_text(v: &Value) -> Result<String, String> {
     let text = match v {
         Value::String(s) => s.trim().to_string(),
         Value::Array(lines) => {
@@ -216,7 +224,6 @@ pub fn normalize_description(v: &Value) -> Result<String, String> {
             )
         }
     };
-    check_description_len(&text)?;
     Ok(text)
 }
 
@@ -224,9 +231,14 @@ pub fn normalize_description(v: &Value) -> Result<String, String> {
 /// serde-typed path — where `--description` may override whatever the file
 /// said — can apply it to the final text without re-parsing anything.
 pub fn check_description_len(text: &str) -> Result<(), String> {
-    if text.len() > CARD_DESCRIPTION_MAX_BYTES {
+    check_description_len_max(text, CARD_DESCRIPTION_MAX_BYTES)
+}
+
+/// [`check_description_len`] with the cap given (see [`normalize_extra_max`]).
+pub fn check_description_len_max(text: &str, max_bytes: usize) -> Result<(), String> {
+    if text.len() > max_bytes {
         return Err(format!(
-            "card `description` is {} bytes, over the {CARD_DESCRIPTION_MAX_BYTES}-byte cap; \
+            "card `description` is {} bytes, over the {max_bytes}-byte cap; \
              every reader fetches the card on every open — a description is the dataset's \
              abstract, not its documentation, so link out to the long form \
              (`source` / `canonical_url`) or put it in the graph",
@@ -265,6 +277,21 @@ pub fn normalize_themes(themes: Vec<String>) -> Result<Vec<String>, String> {
 /// since the bag folds into the content hash, "what I wrote" and "what hashed"
 /// would diverge invisibly. Only the author can decide what to trim.
 pub fn normalize_extra(extra: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    normalize_extra_max(extra, CARD_EXTRA_MAX_BYTES)
+}
+
+/// Largest `extra` or `description` a card accepts when it may have an annex
+/// (format `0x07`): the hot card keeps [`CARD_EXTRA_MAX_BYTES`] per field and the
+/// rest goes to the cold annex, so this bounds the annex, not every open.
+pub const CARD_ANNEX_FIELD_MAX_BYTES: usize = 1 << 20;
+
+/// [`normalize_extra`] with the byte cap given: [`CARD_EXTRA_MAX_BYTES`] for the
+/// hot card, [`CARD_ANNEX_FIELD_MAX_BYTES`] where an annex can take the
+/// overflow. Every other bound (keys, depth, canonical form) is the same.
+pub fn normalize_extra_max(
+    extra: Map<String, Value>,
+    max_bytes: usize,
+) -> Result<Map<String, Value>, String> {
     if extra.is_empty() {
         return Ok(extra);
     }
@@ -312,9 +339,9 @@ pub fn normalize_extra(extra: Map<String, Value>) -> Result<Map<String, Value>, 
     let bytes = serde_json::to_vec(&extra)
         .map_err(|e| format!("card `extra` does not serialize: {e}"))?
         .len();
-    if bytes > CARD_EXTRA_MAX_BYTES {
+    if bytes > max_bytes {
         return Err(format!(
-            "card `extra` serializes to {bytes} bytes, over the {CARD_EXTRA_MAX_BYTES}-byte cap; \
+            "card `extra` serializes to {bytes} bytes, over the {max_bytes}-byte cap; \
              every reader fetches the card on every open — trim the bag, \
              or put bulk data in the graph itself"
         ));

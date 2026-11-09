@@ -113,6 +113,10 @@ pub struct Parts {
     pub text: Option<TextPart>,
     /// Input range of the community pyramid.
     pub pyramid: Option<ByteRange>,
+    /// The card annex (raw JSON, `0x07`), when the card has one. The assembler
+    /// writes it as the last data section; a card handed over without it is
+    /// split by [`super::annex::split`].
+    pub annex: Option<Vec<u8>>,
 }
 
 fn read(r: &dyn RangeReader, range: ByteRange) -> Result<Vec<u8>, FileError> {
@@ -420,7 +424,7 @@ pub fn from_v05(r: &dyn RangeReader) -> Result<Parts, FileError> {
 /// write the same file again with different directory leaves (the writer's
 /// leaf policy) without touching the payload.
 pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
-    use super::open::{read_card_build, read_front, section_bound};
+    use super::open::{check_digest, read_card_build, read_front, read_section, section_bound};
     use super::*;
     use crate::file::decompress_bounded;
     let (h, root) = read_front(r)?;
@@ -461,6 +465,9 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
     let (card, build) = read_card_build(r, &h)?;
     p.card = card;
     p.build = build;
+    if root.section(kind::CARD_ANNEX).is_some() {
+        p.annex = super::open::read_annex(r, &h, &root)?;
+    }
     if range(kind::SCHEMA)?.is_some() {
         let stored = whole(kind::SCHEMA)?;
         p.schema = Some(decompress_bounded(
@@ -543,8 +550,13 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
     // Labels.
     if let Some(unit) = root.unit(tag::LABELS) {
         let l = decode_label_root(unit)?;
+        let mut head = l.head;
+        if let Some(rn) = read_section(r, &h, &root, kind::LABEL_ROOT)? {
+            check_digest(&root, kind::LABEL_ROOT, &rn)?;
+            head.extend_from_slice(&rn);
+        }
         p.labels = Some(LabelPart {
-            head: l.head,
+            head,
             data_len: l.data_len,
             body: range(kind::LABEL_DATA)?.unwrap_or(ByteRange { offset: 0, len: 0 }),
             nodes: Some(range(kind::LABEL_LEAVES)?.unwrap_or(ByteRange { offset: 0, len: 0 })),

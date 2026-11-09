@@ -6,13 +6,13 @@
 use libfuzzer_sys::fuzz_target;
 use rete_core::{eval_sparql, schema_classes, schema_summary, verify, Rete};
 
-/// A `0x06` input (byte 4 is 6) gets the two fields a mutation would almost
+/// A `0x06` or `0x07` input (byte 4 is 6 or 7) gets the two fields a mutation would almost
 /// always break, re-derived: the file length (bytes 24..32) and the root digest
 /// (bytes 112..128, over the root that follows the 128-byte header). Without
 /// this the open refuses at the header and the root, section-table and
 /// unit-root parsing are never reached.
 fn fix_v06(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if data.len() < 128 || data[4] != 6 {
+    if data.len() < 128 || (data[4] != 6 && data[4] != 7) {
         return std::borrow::Cow::Borrowed(data);
     }
     let mut v = data.to_vec();
@@ -37,5 +37,9 @@ fuzz_target!(|data: &[u8]| {
         let _ = schema_classes(&rete);
         let _ = schema_summary(&rete);
         let _ = eval_sparql(&rete, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5");
+        // The cold sections of 0x07: the label index (its root node is a
+        // section of its own) and the card annex.
+        let _ = rete.prefix_search("a", 5);
+        let _ = rete_core::read_card_full_ranged(&rete_core::SliceReader::new(data));
     }
 });

@@ -2583,6 +2583,18 @@ pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>
     Ok(Some(bytes))
 }
 
+/// The card **with its annex** (format `0x07`) merged back in: the fields the
+/// hot card could not hold (`extra`, `description` over 8 KiB) are fetched from
+/// the cold annex, a second range request. For a file with no annex (and for
+/// every older format) this is [`read_metadata_ranged`].
+pub fn read_card_full_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    if crate::v06::open::is_v06(&head) {
+        return Ok(crate::v06::open::read_card_full(reader)?.0);
+    }
+    read_metadata_ranged(reader)
+}
+
 /// Fetch the metadata (Dataset Card) **and** build-info sections via a
 /// [`RangeReader`] in the fewest requests: the 1 KiB header, then — because the
 /// writer lays the build-info section immediately after the metadata — **one**
@@ -2615,7 +2627,7 @@ pub fn read_card_and_build_info_with_header<R: RangeReader>(
 ) -> Result<(Header, Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
-    if header.version == crate::v06::VERSION {
+    if crate::v06::reads(header.version) {
         let h = crate::v06::Header06::from_bytes(&head)?;
         let (card, build) = crate::v06::open::read_card_build(reader, &h)?;
         return Ok((header, card, build));
@@ -2775,12 +2787,9 @@ pub fn plan_build_info(
 pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError> {
     if crate::v06::open::is_v06(image) {
         // 0x06: the record lives in the card region; the card stays.
-        let h = crate::v06::Header06::from_bytes(image)?;
-        let (card, _) =
-            crate::v06::open::read_card_build(&crate::reader::SliceReader::new(image), &h)?;
-        return crate::v06::write::replace_card(
+        return crate::v06::write::replace_card_with(
             image,
-            card.as_deref(),
+            crate::v06::write::NewCard::Keep,
             (!info.is_empty()).then_some(info),
         );
     }
@@ -2983,7 +2992,7 @@ pub fn verify_ranged_v06(
     }
     if only.is_none() {
         let n = crate::v06::FOOTER.len() as u64;
-        if reader.read_at(h.file_len - n, n)? != crate::v06::FOOTER {
+        if reader.read_at(h.file_len - n, n)? != crate::v06::footer(h.version) {
             bad.push("footer".to_string());
         }
     }
@@ -3343,7 +3352,7 @@ fn read_schema_with_header<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<crate::schema_section::SchemaMeta> {
-    if header.version == crate::v06::VERSION {
+    if crate::v06::reads(header.version) {
         let b = crate::v06::open::read_schema_bytes(reader).ok()??;
         return crate::schema_section::SchemaMeta::decode(&b).ok();
     }
@@ -3444,7 +3453,7 @@ pub fn read_text_index_token_table_len_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<u64> {
-    if header.version == crate::v06::VERSION {
+    if crate::v06::reads(header.version) {
         return crate::v06::open::read_token_table_bytes(reader);
     }
     let (ti_off, ti_len) = header.text_index_payload();
@@ -6897,7 +6906,7 @@ impl SummaryView {
         if header.pyramid_meta_len == 0 {
             return Ok(None);
         }
-        if header.version == crate::v06::VERSION {
+        if crate::v06::reads(header.version) {
             return Self::open_ranged_v06(reader, &header, head).map(Some);
         }
 
@@ -7238,7 +7247,7 @@ pub fn read_schema_coherence_ranged<R: RangeReader>(
         )));
     }
     // Fallback (pre-v0.2.1 files with no header field): decode the whole pyramid-meta.
-    let mb = if header.version == crate::v06::VERSION {
+    let mb = if crate::v06::reads(header.version) {
         crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
     } else {
         reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?
@@ -7291,7 +7300,7 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
             return Ok(Some(summary));
         }
         // Fallback (pre-v0.2.1 files): decode the whole pyramid-meta, pull finest levels.
-        let mb = if header.version == crate::v06::VERSION {
+        let mb = if crate::v06::reads(header.version) {
             crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
         } else {
             reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?

@@ -587,7 +587,7 @@ writes. The named-graph layout is kept the same way: a quad-index input
 when any of its inputs is one.
 
 ### `rete convert <in.rete> -o <out.rete> [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
-Turn a format `0x05` file into format `0x06` ([SPEC §4](SPEC.md#4-file-layout))
+Turn a format `0x05` or `0x06` file into format `0x07` ([SPEC §4](SPEC.md#4-file-layout))
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
 — copied byte for byte; the directories are re-cut into leaves at the front,
@@ -624,8 +624,10 @@ tiles of every order for one block of graphs side by side (one neighbourhood per
 `GRAPH <g>`), `order` keeps each order contiguous, `auto` (the default) picks
 graph-major when the mean graph is under 64 KiB of tiles.
 
-**A `0x06` input** is written again: the payload is copied verbatim and only the
-directory leaves, the root and the section table are cut anew, under the
+**A `0x06` input** is written again, as `0x07`: the payload is copied verbatim and only the
+directory leaves, the root and the section table are cut anew, the label index's root node
+moves out of the root into its own section, and the annex is created only if the card has
+a field over the 8 KiB hot cap (never, for a card written under today's rules), under the
 writer's current leaf policy ([SPEC §4.3](SPEC.md#4-file-layout)). That is how a
 file written before 0.5.6 gets small directory leaves without a rebuild: on the
 3.88 GB nanopub dump it takes 2.4 s and about 100 MB of memory. The card and the
@@ -1051,7 +1053,7 @@ rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 ```
 
-### `rete card <file> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
+### `rete card <file> [--json] [--full] [--format jsonld|croissant] [--sha256 <hex>]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/creators/publisher/…) plus the derived profile (counts, top
 predicates and classes, vocabularies), the content-hash checksum, and (when the
@@ -1061,7 +1063,11 @@ reproduces it, its inputs (name, format, size, BLAKE3), the statement counts,
 the wall time per phase and the peak RAM, and the starter queries' measured
 costs. Costs two small range
 reads (header + one coalesced card/build-info range), never the dictionary or
-index — instant on any size. `--json` emits the card object plus
+index — instant on any size. A card with an **annex** (format `0x07`: `extra` or `description` over
+8 KiB, moved to a cold section) shows a `card annex` line; `--full` reads the
+annex too (one more range) and puts the fields back, in the text view and in
+`--json`. `rete card-url --full` is the same over HTTP. `rete card --json` without
+`--full` has an `annex` marker (`fields`, `bytes`) in place of the moved fields. `--json` emits the card object plus
 `schemaVersion: 1` and a `build` block (the whole record). `--format jsonld`
 projects the card to JSON-LD (VoID + schema.org + PROV-O — already RDF when
 lifted out; the build is a `prov:Activity` with `prov:startedAtTime`,
@@ -1922,7 +1928,7 @@ server sees one fewer, and retries are not counted.
 Measured through a latency-injecting proxy on the OpenCitations sample: see
 the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.
 
-### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
+### `rete card-url <url> [--json] [--full] [--format jsonld|croissant] [--sha256 <hex>]`
 Fetch only the embedded [Dataset Card](dataset-cards.md). On a format `0x06`
 file that is **one first read** of the first 64 KiB, which holds the header, the
 root, the card region (card and build record) and the statistics

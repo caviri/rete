@@ -604,6 +604,10 @@ enum Command {
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Also read the card annex (format 0x07): the fields too big for the
+        /// hot card (`extra`, `description` over 8 KiB), one more cold read.
+        #[arg(long)]
+        full: bool,
         /// Output format: json | jsonld | croissant (default: human text).
         #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
         format: Option<String>,
@@ -624,6 +628,9 @@ enum Command {
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Also read the card annex (see `rete card --full`): one more range.
+        #[arg(long)]
+        full: bool,
         /// Output format: json | jsonld | croissant (default: human text).
         #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
         format: Option<String>,
@@ -1852,15 +1859,17 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Card {
             file,
             json,
+            full,
             format,
             sha256,
-        } => commands::card::card_cmd(&file, json, format.as_deref(), sha256.as_deref()),
+        } => commands::card::card_cmd(&file, json, format.as_deref(), sha256.as_deref(), full),
         Command::CardUrl {
             url,
             json,
+            full,
             format,
             sha256,
-        } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref()),
+        } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref(), full),
         Command::CardAudit {
             path,
             json,

@@ -141,22 +141,22 @@ for artifact in rete.bash _rete rete.fish rete.ps1 rete.1; do
   fi
 done
 
-echo "== format 0x06 =="
-# Every writer writes 0x06; `convert` lifts a 0x05 file (RETE_WRITE_FORMAT=5 is
-# the test hook that still writes one) to the very bytes the 0x06 build writes.
-check "0x06 build"        "format version: 0x06"   -- "$B" info "$T/g.rete"
-check "0x06 verify"       "OK .*format 0x06"       -- "$B" verify "$T/g.rete"
+echo "== format 0x07 =="
+# Every writer writes 0x07; `convert` lifts a 0x05 file (RETE_WRITE_FORMAT=5 is
+# the test hook that still writes one) to the very bytes the 0x07 build writes.
+check "0x07 build"        "format version: 0x07"   -- "$B" info "$T/g.rete"
+check "0x07 verify"       "OK .*format 0x07"       -- "$B" verify "$T/g.rete"
 # Every writer leaves a build record, a card-less one included, and names itself.
 check "build record cardless"  "front end +: cli"  -- "$B" card "$T/g.rete"
 check "0x06 verify dict"  "section dict matches"   -- "$B" verify "$T/g.rete" --section dict
 check_code "0x06 verify bad section" 1 "unknown section" -- "$B" verify "$T/g.rete" --section nope
 RETE_WRITE_FORMAT=5 "$B" build "$T/g.nt" -o "$T/g05.rete" >/dev/null 2>&1
 check "0x05 still written by the hook" "magic|version: 5" -- "$B" info "$T/g05.rete"
-check "convert"           "format 0x06"            -- "$B" convert "$T/g05.rete" -o "$T/g06.rete"
+check "convert"           "format 0x07"            -- "$B" convert "$T/g05.rete" -o "$T/g06.rete"
 check "convert = build"   "^same$"                 -- bash -c "same_content '$T/g06.rete' '$T/g.rete'"
 check "convert verify"    "OK|matches"             -- "$B" verify "$T/g06.rete"
 check "convert answers"   "ex/Bob"                 -- "$B" sparql "$T/g06.rete" "SELECT ?o WHERE { <http://ex/Alice> <http://ex/knows> ?o }"
-check "convert 0x06 again"  "format 0x06 again"      -- "$B" convert "$T/g.rete" -o "$T/g07.rete"
+check "convert 0x07 again"  "format 0x07"            -- "$B" convert "$T/g.rete" -o "$T/g07.rete"
 check "rewrite verify"     "OK|matches"             -- "$B" verify "$T/g07.rete"
 check "rewrite = build"    "^same$"                 -- bash -c "same_content '$T/g07.rete' '$T/g.rete'"
 # A per-graph 0x05 file (the in-RAM hook; the bounded build always writes 0x06)

@@ -52,7 +52,7 @@ fn write_file_is_0x06_and_its_v05_twin_is_0x05() {
     let (dict, def, _) = parts();
     let new = write_file(&dict, &def, false, &[], 0);
     let old = write_file_v05(&dict, &def, false, &[], 0);
-    assert_eq!((&new[..4], new[4]), (&b"RETE"[..], 6));
+    assert_eq!((&new[..4], new[4]), (&b"RETE"[..], 7));
     assert_eq!((&old[..4], old[4]), (&b"RETE"[..], 5));
     assert!(verify(&new).unwrap() && verify(&old).unwrap());
     let (a, b) = (Rete::open(&new).unwrap(), Rete::open(&old).unwrap());
@@ -64,7 +64,7 @@ fn write_file_is_0x06_and_its_v05_twin_is_0x05() {
 fn per_graph_named_graphs_are_written_as_a_quad_index() {
     let (dict, def, named) = parts();
     let new = write_dataset(&dict, &def, &named, true, &[], 0);
-    assert_eq!(new[4], 6);
+    assert_eq!(new[4], 7);
     assert!(verify(&new).unwrap());
     let old = write_dataset_v05(&dict, &def, &named, true, &[], 0);
     assert_eq!(old[4], 5);
@@ -93,7 +93,7 @@ fn a_card_travels_through_the_0x06_writer() {
     let card = br#"{"title":"T","format_version":5}"#;
     let new = write_dataset_with_metadata(&dict, &def, &[], false, &[], 0, card, &[]);
     let old = write_dataset_with_metadata_v05(&dict, &def, &[], false, &[], 0, card, &[]);
-    assert_eq!((new[4], old[4]), (6, 5));
+    assert_eq!((new[4], old[4]), (7, 5));
     assert!(verify(&new).unwrap());
     let stored = Rete::open(&new)
         .unwrap()
@@ -102,6 +102,6 @@ fn a_card_travels_through_the_0x06_writer() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&stored).unwrap();
     assert_eq!(v["title"], "T");
-    // A card written into 0x06 says so.
-    assert_eq!(v["format_version"], 6);
+    // A card written into 0x07 says so.
+    assert_eq!(v["format_version"], 7);
 }
