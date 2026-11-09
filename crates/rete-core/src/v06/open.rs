@@ -549,8 +549,22 @@ pub fn read_card_build<R: RangeReader + ?Sized>(
     r: &R,
     h: &Header06,
 ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
+    read_card_build_with(r, h, true)
+}
+
+/// [`read_card_build`], reading the build record only when `want_build`: a
+/// caller that never prints it stops its read at the end of the card.
+#[allow(clippy::type_complexity)]
+pub fn read_card_build_with<R: RangeReader + ?Sized>(
+    r: &R,
+    h: &Header06,
+    want_build: bool,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
     let c = h.card_range();
-    let b = h.build_range();
+    let mut b = h.build_range();
+    if !want_build {
+        b.len = 0;
+    }
     if c.len == 0 && b.len == 0 {
         return Ok((None, None));
     }

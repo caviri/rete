@@ -1927,7 +1927,7 @@ Fetch only the embedded [Dataset Card](dataset-cards.md). On a format `0x06`
 file that is **one first read** of the first 128 KiB, which holds the header, the
 root, the card region (card and build record) and the statistics
 ([SPEC §4.6](SPEC.md#46-opening-a-file)), and **at most one follow-up**, sized
-from the header, when the front is longer than that. A small remote file is not
+from the header, when the card (and the build record, which every format but Croissant prints) ends past that; it stops there and does not read the slack that follows them. A small remote file is not
 fetched whole, as the other URL commands do. A `0x05` file has its card after
 the 1 KiB header, so it takes the first read and one range for the card and
 the build record. The dictionary, index, and pyramid are never fetched: this is the index-free **CARD
