@@ -57,6 +57,28 @@ pub(crate) struct Extras {
     base: u64,
 }
 
+impl Extras {
+    /// Extra address space starting at `base` (the input's end).
+    pub(super) fn new(base: u64) -> Self {
+        Extras {
+            pieces: Vec::new(),
+            base,
+        }
+    }
+
+    /// Append a finished sink of `len` bytes at the current end.
+    pub(super) fn push(&mut self, len: u64, sink: Sink) -> u64 {
+        let start = self.pieces.last().map_or(self.base, |p| p.start + p.len);
+        let src = match sink {
+            Sink::Mem(v) => Src::Bytes(v),
+            #[cfg(not(target_arch = "wasm32"))]
+            Sink::File(_, path) => Src::File(path),
+        };
+        self.pieces.push(Piece { start, len, src });
+        start
+    }
+}
+
 impl Drop for Extras {
     fn drop(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -159,14 +181,39 @@ impl RangeReader for Layered<'_> {
 }
 
 /// Where an order's payload goes while it is written.
-enum Sink {
+pub(super) enum Sink {
     Mem(Vec<u8>),
     #[cfg(not(target_arch = "wasm32"))]
     File(std::io::BufWriter<std::fs::File>, PathBuf),
 }
 
 impl Sink {
-    fn write(&mut self, b: &[u8]) -> Result<(), FileError> {
+    /// A sink in memory, or (not in a browser) a file `name` in the scratch directory.
+    pub(super) fn new(in_memory: bool, name: &str) -> Result<Sink, FileError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if !in_memory {
+            let dir = scratch_dir();
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join(name);
+            let f = std::fs::File::create(&path)?;
+            return Ok(Sink::File(
+                std::io::BufWriter::with_capacity(1 << 20, f),
+                path,
+            ));
+        }
+        let _ = (in_memory, name);
+        Ok(Sink::Mem(Vec::new()))
+    }
+
+    pub(super) fn flush(&mut self) -> Result<(), FileError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Sink::File(w, _) = self {
+            std::io::Write::flush(w)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn write(&mut self, b: &[u8]) -> Result<(), FileError> {
         match self {
             Sink::Mem(v) => v.extend_from_slice(b),
             #[cfg(not(target_arch = "wasm32"))]
@@ -296,7 +343,7 @@ fn sort_rows(v: &mut [Row4]) {
 
 /// The directory the spill runs go to.
 #[cfg(not(target_arch = "wasm32"))]
-fn scratch_dir() -> PathBuf {
+pub(super) fn scratch_dir() -> PathBuf {
     crate::write_opts::scratch_dir().unwrap_or_else(std::env::temp_dir)
 }
 

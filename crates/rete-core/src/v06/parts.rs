@@ -113,6 +113,9 @@ pub struct Parts {
     pub text: Option<TextPart>,
     /// Input range of the community pyramid.
     pub pyramid: Option<ByteRange>,
+    /// Class clusters of the subject-leading permutations (`0x07`); empty when
+    /// none is clustered. Each order's tiles are in run order.
+    pub cluster: Vec<super::ClusterOrder>,
     /// The card annex (raw JSON, `0x07`), when the card has one. The assembler
     /// writes it as the last data section; a card handed over without it is
     /// split by [`super::annex::split`].
@@ -515,6 +518,21 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
                 }
             }
             p.index.push(PermPart { si: pr.si, tiles });
+        }
+    }
+    if let Some(unit) = root.unit(tag::CLUSTER) {
+        p.cluster = super::decode_cluster_root(unit)?;
+        for c in &p.cluster {
+            let ok = p
+                .index
+                .iter()
+                .find(|x| x.si == c.si)
+                .is_some_and(|x| x.tiles.len() == c.run_tiles.iter().sum::<usize>());
+            if !ok {
+                return Err(FileError::Container(
+                    "0x07 cluster root does not cover the tiles",
+                ));
+            }
         }
     }
     // Quad index: the graph directory blocks come first in QUAD_LEAVES.

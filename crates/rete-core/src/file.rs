@@ -5012,15 +5012,6 @@ impl Rete {
         cursor: u32,
         max_quads: usize,
     ) -> (Vec<TermTriple>, u32, bool) {
-        /// The first subject id at or after `sid` that any SPO tile can hold, or
-        /// `None` when `sid` is past the last tile. Tiles ascend by leading
-        /// range, so this is a binary search; it returns `sid` itself when a tile
-        /// already covers it (an ordinary "this subject has no triples" step).
-        fn next_tile_start(tiles: &crate::index::TileList, sid: u32) -> Option<u32> {
-            let i = tiles.first_max_ge(sid);
-            (i < tiles.len()).then(|| tiles[i].leading_range().0.max(sid))
-        }
-
         let index = match graph {
             None => self.default_index(),
             // An unknown graph IRI is an empty dump, not an error — same as
@@ -5033,11 +5024,8 @@ impl Rete {
         // Tile leading ranges live in the section directory, so both the span and
         // the gap jumps below are free on a lazy/remote open — no tile is fetched
         // to decide where to look.
-        let tiles = index.tile_sections()[IndexPermutation::Spo.section_index()];
-        let (Some(first), Some(last)) = (
-            tiles.first().map(|t| t.leading_range().0),
-            tiles.last().map(|t| t.leading_range().1),
-        ) else {
+        let spo = IndexPermutation::Spo.section_index();
+        let Some((first, last)) = index.leading_bounds(spo) else {
             return (Vec::new(), cursor, true); // empty graph
         };
 
@@ -5069,7 +5057,7 @@ impl Rete {
                     }
                     _ => {}
                 }
-                match next_tile_start(tiles, sid) {
+                match index.next_tile_start(spo, sid) {
                     None => {
                         exhausted = true;
                         break;
@@ -5886,11 +5874,8 @@ impl Rete {
                 // leading-id range covers the match's permuted leading id.
                 let a = index_permutation.forward((s, p, o)).0;
                 let (tile, tile_range) = if let Some(tl) = v06_tiles {
-                    let ti = tl.first_max_ge(a);
-                    match (ti < tl.len() && tl[ti].leading_range().0 <= a)
-                        .then(|| tl.range(ti))
-                        .flatten()
-                    {
+                    let (ti, tj) = self.index.tile_span(si, Some(a));
+                    match (ti < tj && ti < tl.len()).then(|| tl.range(ti)).flatten() {
                         Some((offset, len)) => (
                             Some(format!("{}/{ti}", index_permutation.name())),
                             Some(ByteRange { offset, len }),
@@ -6130,38 +6115,21 @@ fn v06_query_ranged<R: RangeReader>(
     let perm = GraphIndex::best_permutation_in(h.perms(), pattern);
     let si = perm.section_index();
     let index = rete.default_index();
-    let list = index.tile_sections()[si];
-    let n = list.len();
     let [pa, _, _] = perm.order_pattern(pattern);
-    let (start, stop) = match pa {
-        Some(a) => {
-            let start = list.first_max_ge(a);
-            let mut stop = start;
-            while stop < n {
-                list.ensure_span(stop, stop + 1);
-                if list[stop].leading_range().0 > a {
-                    break;
-                }
-                stop += 1;
-            }
-            (start, stop)
-        }
-        None => {
-            list.ensure_span(0, n);
-            (0, n)
-        }
-    };
-    let ranges: Vec<(u64, u64)> = (start..stop)
-        .filter_map(|i| index.tile_range(si, i))
-        .collect();
+    // One span of tiles, contiguous in the file: one request. A clustered
+    // section has a span per class run that can hold a bound subject.
     let mut out = Vec::new();
-    if let (Some(&(lo, _)), Some(&(last, last_len))) = (ranges.first(), ranges.last()) {
-        // The routed tiles are one contiguous run of the section: one request.
-        let body = reader.read_at(lo, last + last_len - lo)?;
-        for &(off, l) in &ranges {
-            let at = (off - lo) as usize;
-            let tile = decompress(h.block_codec, &body[at..at + l as usize])?;
-            out.extend(GraphIndex::match_serialized_block(&tile, perm, pattern));
+    for (start, stop) in index.routed_spans(si, pa) {
+        let ranges: Vec<(u64, u64)> = (start..stop)
+            .filter_map(|i| index.tile_range(si, i))
+            .collect();
+        if let (Some(&(lo, _)), Some(&(last, last_len))) = (ranges.first(), ranges.last()) {
+            let body = reader.read_at(lo, last + last_len - lo)?;
+            for &(off, l) in &ranges {
+                let at = (off - lo) as usize;
+                let tile = decompress(h.block_codec, &body[at..at + l as usize])?;
+                out.extend(GraphIndex::match_serialized_block(&tile, perm, pattern));
+            }
         }
     }
     out.sort_unstable();

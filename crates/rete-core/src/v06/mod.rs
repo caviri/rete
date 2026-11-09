@@ -25,12 +25,16 @@
 //! [`write`](mod@write) assembles a `0x06` file from them, [`open`] reads one.
 
 pub mod annex;
+pub mod cluster;
 pub(crate) mod neworders;
 pub mod open;
 pub mod parts;
+pub use cluster::check_clusters;
 pub use neworders::check_orders;
 pub mod write;
 
+#[cfg(test)]
+mod cluster_tests;
 #[cfg(test)]
 mod roundtrip;
 
@@ -88,6 +92,12 @@ pub const F_TEXT_NAMED: u8 = 0b0100;
 /// Header flag: quad tiles are clustered graph-major (all orders of a block of
 /// graphs adjacent) rather than order-major.
 pub const F_QUAD_GRAPH_MAJOR: u8 = 0b1000;
+/// Header flag (`0x07`): the subject-leading permutations (SPO, SOP) are
+/// clustered by class: their tiles are in `(cluster, s, p, o)` order, listed
+/// by the cluster root ([`tag::CLUSTER`]).
+pub const F_CLUSTERED: u8 = 0b1_0000;
+/// The most classes a clustered permutation has a run for (the rest are run 0).
+pub const MAX_CLUSTERS: usize = 32;
 
 /// Presence bit: a text index.
 pub const P_TEXT: u16 = 1;
@@ -180,6 +190,8 @@ pub mod tag {
     pub const QUAD: u8 = 3;
     pub const LABELS: u8 = 4;
     pub const TEXT: u8 = 5;
+    /// `0x07`: the class clusters of the subject-leading permutations.
+    pub const CLUSTER: u8 = 6;
 }
 
 /// The parsed 128-byte header.
@@ -815,6 +827,71 @@ pub fn decode_index_root(p: &[u8]) -> Result<Vec<PermRoot>, FileError> {
             data_off,
             data_len,
             leaves,
+        });
+    }
+    Ok(out)
+}
+
+/// The class clusters of one subject-leading permutation (`0x07`, flag
+/// [`F_CLUSTERED`]). Its tiles are `k + 1` consecutive runs: run 0 holds the
+/// subjects of no listed class, run `i` (1-based) those whose primary class is
+/// `classes[i - 1]`. Within a run the tiles are in `(s, p, o)` order like an
+/// unclustered permutation; no tile and no directory leaf spans two runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClusterOrder {
+    /// Section index of the permutation (`IndexPermutation::section_index`).
+    pub si: usize,
+    /// The class of runs `1..=k`, as object ids, rarest last.
+    pub classes: Vec<u32>,
+    /// Tiles of each run, run 0 first (`classes.len() + 1` entries).
+    pub run_tiles: Vec<usize>,
+}
+
+/// Encode the cluster unit root.
+pub fn encode_cluster_root(orders: &[ClusterOrder]) -> Vec<u8> {
+    let mut o = Vec::new();
+    write_uvarint(&mut o, orders.len() as u64);
+    for c in orders {
+        write_uvarint(&mut o, c.si as u64);
+        write_uvarint(&mut o, c.classes.len() as u64);
+        for &k in &c.classes {
+            write_uvarint(&mut o, k as u64);
+        }
+        for &t in &c.run_tiles {
+            write_uvarint(&mut o, t as u64);
+        }
+    }
+    o
+}
+
+/// Decode the cluster unit root. Every count is untrusted.
+pub fn decode_cluster_root(p: &[u8]) -> Result<Vec<ClusterOrder>, FileError> {
+    let bad = FileError::Container;
+    let mut c = Cur::new(p);
+    let n = c.count(6)?;
+    let mut out: Vec<ClusterOrder> = Vec::with_capacity(n);
+    for _ in 0..n {
+        let si = c.count(5)?;
+        let k = c.count(MAX_CLUSTERS as u64)?;
+        let mut classes = Vec::with_capacity(k);
+        for _ in 0..k {
+            let id = c.u32v()?;
+            if id == 0 || classes.contains(&id) {
+                return Err(bad("0x07 cluster root: bad class"));
+            }
+            classes.push(id);
+        }
+        let mut run_tiles = Vec::with_capacity(k + 1);
+        for _ in 0..=k {
+            run_tiles.push(c.count(u32::MAX as u64)?);
+        }
+        if out.iter().any(|o| o.si == si) {
+            return Err(bad("0x07 cluster root: a permutation twice"));
+        }
+        out.push(ClusterOrder {
+            si,
+            classes,
+            run_tiles,
         });
     }
     Ok(out)

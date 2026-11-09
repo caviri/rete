@@ -290,6 +290,26 @@ refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see [compatibility.md](compatibility.md).
 
+`--cluster-subjects-by-class` (off by default, format `0x07`) lays the default
+graph's subject-leading permutations (SPO, and SOP when stored) out in
+`(class, subject, predicate, object)` order instead of subject order
+([SPEC.md §6.6](SPEC.md#66-class-clustering-of-the-subject-leading-permutations-0x07-optional)).
+Ids are not renumbered: only the tile order changes. Up to 32 classes (the ones
+with the most subjects, at least 1,000 each) get a contiguous run of tiles, a
+subject of several classes goes to its rarest listed class, and every other or
+untyped subject to a run of its own. A scan of one class's subjects, or the join
+of them with a property (`?r a <Software> . ?r <subject> ?t`), then reads that
+class's few tiles instead of one tile in every few thousand; a lookup of one
+subject costs more, since it must look in every run (one batch of leaves and one
+of tiles, up to 33 tiles). The answers are the same either way; the order of an
+unsorted result may differ. The writer needs one byte of RAM per subject id
+(951 MB for OpenAIRE's 951 M subjects). `rete info` lists the runs and `rete
+verify` checks that every row is in the run of its subject's class;
+`rete convert` with the flag clusters a `0x06` or `0x07` file, without it undoes
+a clustering. It does nothing to a file with no default-graph subject of a
+listed class (the nanopub dump keeps everything in named graphs: its file comes
+out byte-identical).
+
 `--named-graphs quad` (the default, and since format `0x06` the only layout)
 stores the named graphs of an N-Quads/TriG input in the **quad index**. The
 `0x05` alternative, `per-graph` (one permutation index per graph, the
@@ -591,7 +611,7 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
+### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--quad-clustering auto|graph|order] [--cluster-subjects-by-class] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
 Turn a format `0x05` or `0x06` file into format `0x07` ([SPEC §4](SPEC.md#4-file-layout))
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid

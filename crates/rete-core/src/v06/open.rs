@@ -292,6 +292,49 @@ impl V06File {
         Ok(dict)
     }
 
+    /// The class clusters the cluster root lists, checked against the index root:
+    /// every run is whole leaves, and the runs cover the permutation.
+    fn clusters(&self, perms: &[PermRoot]) -> Result<Vec<ClusterOrder>, FileError> {
+        let Some(unit) = self.root.unit(tag::CLUSTER) else {
+            if self.h.flags & F_CLUSTERED != 0 {
+                return Err(FileError::Container(
+                    "0x07 clustered file without a cluster root",
+                ));
+            }
+            return Ok(Vec::new());
+        };
+        let orders = decode_cluster_root(unit)?;
+        for c in &orders {
+            let p = perms
+                .iter()
+                .find(|p| p.si == c.si)
+                .ok_or(FileError::Container(
+                    "0x07 cluster root names a permutation the index lacks",
+                ))?;
+            if c.run_tiles.iter().sum::<usize>() != p.n_tiles {
+                return Err(FileError::Container(
+                    "0x07 cluster runs do not cover the tiles",
+                ));
+            }
+            // A leaf holds the tiles of one run.
+            let mut ends = Vec::with_capacity(c.run_tiles.len());
+            let mut at = 0usize;
+            for &n in &c.run_tiles {
+                at += n;
+                ends.push(at);
+            }
+            for (l, _, _, _) in &p.leaves {
+                let r = ends.partition_point(|&e| e <= l.first);
+                if l.first + l.n > ends[r.min(ends.len() - 1)] {
+                    return Err(FileError::Container(
+                        "0x07 a directory leaf spans two cluster runs",
+                    ));
+                }
+            }
+        }
+        Ok(orders)
+    }
+
     /// The default graph's index, two-level, tiles faulted on demand.
     pub fn index(&self, read_concurrency: usize) -> Result<GraphIndex, FileError> {
         let unit = self
@@ -359,6 +402,12 @@ impl V06File {
                 .collect()
         });
         let mut index = GraphIndex::from_leafed(lists, perms, loader).with_bulk_loader(bulk);
+        for c in self.clusters(&perms_root)? {
+            index = index.with_clusters(
+                c.si,
+                crate::index::ClusterRuns::new(c.classes, &c.run_tiles),
+            );
+        }
         index.set_read_concurrency(read_concurrency);
         Ok(index)
     }

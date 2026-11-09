@@ -223,6 +223,9 @@ fn conversion_entry(
     if !label_index {
         command.push_str(" --no-label-index");
     }
+    if rete_core::write_opts::cluster().is_some() {
+        command.push_str(" --cluster-subjects-by-class");
+    }
     Ok(bi::Conversion {
         at: bi::timestamp(),
         engine: Some(bi::engine()),

@@ -45,6 +45,10 @@ fuzz_target!(|data: &[u8]| {
         // bound subject, predicate or object seeks them, and the deep check
         // decodes every tile.
         for q in [
+            // Class-clustered SPO and SOP (`0x07` flag bit 4): a bound subject is
+            // looked for in every class run, a type-scoped join reads one.
+            "SELECT ?p ?o WHERE { <http://x/a> ?p ?o } LIMIT 5",
+            "SELECT ?s ?o WHERE { ?s a <http://x/C> . ?s <http://x/p> ?o } LIMIT 5",
             "SELECT ?g ?p ?o WHERE { GRAPH ?g { <http://x/a> ?p ?o } } LIMIT 5",
             "SELECT ?g ?s ?o WHERE { GRAPH ?g { ?s <http://x/p> ?o } } LIMIT 5",
             "SELECT ?g ?s ?p WHERE { GRAPH ?g { ?s ?p <http://x/b> } } LIMIT 5",
@@ -55,5 +59,6 @@ fuzz_target!(|data: &[u8]| {
         }
         let _ = rete.named_graph_count();
         let _ = rete_core::v06::check_orders(&rete_core::SliceReader::new(data));
+        let _ = rete_core::v06::check_clusters(&rete_core::SliceReader::new(data));
     }
 });

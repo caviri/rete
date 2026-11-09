@@ -441,11 +441,25 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
                 bad.push(format!("quad order ({p})"));
             }
         }
+        // The class clusters: every row is in the run of its subject's class.
+        let mut clusters = 0usize;
+        if bad.is_empty() && only.is_none_or(|k| k == rete_core::v06::kind::INDEX_DATA) {
+            let (n, problems) = rete_core::v06::check_clusters(&reader)?;
+            clusters = n;
+            for p in problems {
+                bad.push(format!("cluster ({p})"));
+            }
+        }
         if bad.is_empty() {
             let checked = if orders > 0 {
                 format!(", and the {orders} quad orders agree")
             } else {
                 String::new()
+            };
+            let checked = if clusters > 0 {
+                format!("{checked}, and the {clusters} clustered permutations hold their classes")
+            } else {
+                checked
             };
             println!(
                 "OK — {}{checked} (format 0x{:02x})",
@@ -654,7 +668,7 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
 /// section table — where every part of the file is, and its digest.
 fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> {
     use rete_core::v06::{kind, open};
-    use rete_core::v06::{F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
+    use rete_core::v06::{F_CLUSTERED, F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
     let (h, root) = open::read_front(reader)?;
     let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
     println!("format version: 0x{:02x}", h.version);
@@ -666,6 +680,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         (F_QUOTED, "quoted triples"),
         (F_TEXT_NAMED, "text covers named graphs"),
         (F_QUAD_GRAPH_MAJOR, "quad tiles graph-major"),
+        (F_CLUSTERED, "subjects clustered by class"),
     ]
     .into_iter()
     .filter(|&(b, _)| h.flags & b != 0)
@@ -696,6 +711,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         let sizes: Vec<String> = [
             (tag::DICT, "dict"),
             (tag::INDEX, "index"),
+            (tag::CLUSTER, "cluster"),
             (tag::QUAD, "quad"),
             (tag::LABELS, "labels"),
             (tag::TEXT, "text"),
@@ -737,8 +753,29 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         );
     }
     print_leaf_counts(&root);
+    print_clusters(&root);
     print_quad_orders(&h, &root);
     Ok(())
+}
+
+/// The class runs of a clustered file, from the root alone: per permutation,
+/// each run's class (an object id) and tiles.
+fn print_clusters(root: &rete_core::v06::Root06) {
+    use rete_core::v06::{decode_cluster_root, tag};
+    let Some(Ok(orders)) = root.unit(tag::CLUSTER).map(decode_cluster_root) else {
+        return;
+    };
+    for o in orders {
+        let name = ["SPO", "POS", "OSP", "SOP", "PSO", "OPS"][o.si.min(5)];
+        println!(
+            "  clusters     : {name}, {} class runs and the rest",
+            o.classes.len()
+        );
+        println!("    rest      {:>10} tiles", o.run_tiles[0]);
+        for (c, n) in o.classes.iter().zip(&o.run_tiles[1..]) {
+            println!("    class {c:<10} {n:>10} tiles");
+        }
+    }
 }
 
 /// The quad index's orders, from the root alone: tiles, stored bytes, leaves.
