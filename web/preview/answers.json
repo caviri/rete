@@ -18892,7 +18892,7 @@
    "index": 5,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 509 range req · 553.7 MB of 62.95 GB fetched (incl. opening the file) · 432.5 MB cached this session · 133560 ms",
+   "qmeta": "25 row(s) | 397 range req · 307.5 MB of 62.95 GB fetched · 561.8 MB cached this session · 110560 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -18903,6 +18903,10 @@
     {
      "label": "Title",
      "var": "title"
+    },
+    {
+     "label": "Year",
+     "var": "year"
     }
    ],
    "rows": [
@@ -18914,6 +18918,10 @@
      {
       "text": "(Fig. 4) Bulk mineralogy of permafrost core ICDP5011-3",
       "media": false
+     },
+     {
+      "text": "2012",
+      "media": false
      }
     ],
     [
@@ -18923,6 +18931,10 @@
      },
      {
       "text": "(Fig. 4) Content of total organic carbon in permafrost core ICDP5011-3",
+      "media": false
+     },
+     {
+      "text": "2012",
       "media": false
      }
     ],
@@ -18934,6 +18946,10 @@
      {
       "text": "(Fig. 6) Grain size composition of permafrost core ICDP5011-3",
       "media": false
+     },
+     {
+      "text": "2012",
+      "media": false
      }
     ],
     [
@@ -18943,6 +18959,10 @@
      },
      {
       "text": "(Table 1) Growth rate and cultivation characteristics of arctic snow and permafrost algal strains",
+      "media": false
+     },
+     {
+      "text": "2009",
       "media": false
      }
     ],
@@ -18954,6 +18974,10 @@
      {
       "text": "(Table 1) Mean annual ground temperatures and description of permafrost boreholes in Russia",
       "media": false
+     },
+     {
+      "text": "2010",
+      "media": false
      }
     ],
     [
@@ -18963,6 +18987,10 @@
      },
      {
       "text": "(Table 1) Radiocarbon ages for permafrost core BY-pond and monoliths BY-hc1-3, Bylot Island",
+      "media": false
+     },
+     {
+      "text": "2008",
       "media": false
      }
     ],
@@ -18974,6 +19002,10 @@
      {
       "text": "(Table 1a) Radiocarbon dating of organic remains in frozen sediments of the Barrow permafrost tunnel in 2004",
       "media": false
+     },
+     {
+      "text": "2010",
+      "media": false
      }
     ],
     [
@@ -18984,12 +19016,16 @@
      {
       "text": "(Table 1b) Radiocarbon dating of organic remains in ice wedges of the Barrow permafrost tunnel in 2004",
       "media": false
+     },
+     {
+      "text": "2010",
+      "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 133590
+   "elapsedMs": 110668
   },
   "davidrumsey:0": {
    "id": "davidrumsey:0",

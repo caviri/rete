@@ -100,6 +100,8 @@ request is `bytes=0-65535` (§4.6); it holds the header, the root, the card and
 the statistics of every measured file (OpenCitations Meta's root is 37 KiB),
 and on a small file every leaf directory as well.
 
+<img src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 64 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
+
 ### 4.1 Header (128 bytes, little-endian)
 
 | Offset | Size | Field |
@@ -370,7 +372,7 @@ header is the directory: it carries the absolute offset+length of every section,
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.
 
-<img src="img/file-layout.svg" alt="The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.">
+<img src="img/file-layout-0x05.svg" alt="The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.">
 
 *The header is the directory, on a real specimen. Entry `i` lives at `64 + i×24`;
 a kind the reader does not recognise is kept verbatim, so a new writer cannot
