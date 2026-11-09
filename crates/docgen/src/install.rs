@@ -1,9 +1,9 @@
 //! Published installation recipes, deliberately independent of the workspace version.
 //!
-//! Verified 2026-11-03 against GitHub v0.5.4, PyPI, npm and crates.io. Update the
+//! Verified 2026-11-09 against GitHub v0.5.5, PyPI, npm and crates.io. Update the
 //! pins together only after those distributions exist; source main can be newer.
 
-const RELEASE: &str = "0.5.4";
+const RELEASE: &str = "0.5.5";
 const SYSTEMS: &[(&str, &str)] = &[
     ("linux", "Linux"),
     ("macos", "macOS"),
