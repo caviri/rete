@@ -5,6 +5,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-11-09
+
 ### Fixed
 
 - **The first touch of one named graph reads one tile directory, not six** (G4). A view of a graph in a quad-index file read every order's tile directory, one after the other, before it touched a tile: on the 3.88 GB nanopub dump (43.2 M graphs, six orders) `GRAPH <g> { ?s ?p ?o }` for one nanopub's assertion made 28 requests, 7.05 MB and 14 dependent round trips without the block cache, 5.22 MB of it directories read six times in a row. An order's directory is built when the query first routes to it, so the same query now makes 23 requests, 2.56 MB and 9 dependent round trips (0.73 MB of directory). Live, same file: 28 requests/7.05 MB to 23/2.56 MB. The G48 bound join (`GRAPH <head> { <np> np:hasAssertion ?a } GRAPH ?a { ?s ?p ?o }`) goes from 7.04 MB to 2.55 MB. No format change, same rows. A directory split into several leaves is read by leaf: the reader takes only the leaves whose graph range (the root lists it) holds the graph, one leaf per order for a graph inside one. The nanopub file has one leaf per order (0.73 to 0.99 MB each, because the writer grows leaves until the root fits 40 KiB, which a 74 KB root never does), so it gains from the first change only until it is rebuilt. Also fixes a typo in `reader.rs`.
