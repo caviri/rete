@@ -390,6 +390,13 @@ impl RangeReader for RangedSourceReader {
         }
     }
 
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> io::Result<Vec<Vec<u8>>> {
+        match self {
+            Self::Local(r) => r.read_many_scattered(ranges),
+            Self::Http(r) => r.read_many_scattered(ranges),
+        }
+    }
+
     fn concurrency(&self) -> usize {
         match self {
             Self::Local(r) => r.concurrency(),

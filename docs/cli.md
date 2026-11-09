@@ -1883,6 +1883,11 @@ URL):
   where both start;
 - merges ranges of one batch that lie at most 32 KiB apart into one request
   (never past 8 MiB), and slices them apart again;
+- reads the tiles of a probe join window (scattered by construction) as **exact
+  ranges**: the block cache does not round each one out to its 64 or 128 KiB
+  block, two of them are merged only when at most 32 KiB apart
+  (`RETE_HTTP_SPARSE_GAP_KB`), and up to twice `RETE_HTTP_CONCURRENCY` (at most
+  64) requests are in flight, since they are many and small;
 - opens with one `bytes=0-131071` GET, which is also the length probe (the
   total in its `Content-Range`): no `HEAD`. A file of at most **8 MiB**
   (`RETE_HTTP_WHOLE_MB`, `0` = never) is then fetched whole in one more

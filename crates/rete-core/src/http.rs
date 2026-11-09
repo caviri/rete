@@ -63,6 +63,10 @@ pub struct FetchPolicy {
     /// one request (`RETE_HTTP_COALESCE_KB`; `0` merges only touching or
     /// overlapping ranges).
     pub coalesce_gap: u64,
+    /// The same for ranges the caller knows are scattered ([`RangeReader::read_many_scattered`]:
+    /// the tiles of a probe window), where what lies between two of them is not
+    /// wanted (`RETE_HTTP_SPARSE_GAP_KB`).
+    pub sparse_gap: u64,
     /// Coalescing never grows a request past this many bytes, so one huge span
     /// does not serialize what could have gone out in parallel.
     pub max_span: u64,
@@ -98,6 +102,7 @@ impl FetchPolicy {
     pub const DEFAULT: FetchPolicy = FetchPolicy {
         concurrency: 16,
         coalesce_gap: 32 << 10,
+        sparse_gap: SPARSE_GAP,
         max_span: 8 << 20,
         retries: 2,
         backoff_ms: 100,
@@ -120,6 +125,8 @@ impl FetchPolicy {
                 .map_or(d.concurrency, |n| n.clamp(1, 64) as usize),
             coalesce_gap: num("RETE_HTTP_COALESCE_KB")
                 .map_or(d.coalesce_gap, |kb| kb.saturating_mul(1024)),
+            sparse_gap: num("RETE_HTTP_SPARSE_GAP_KB")
+                .map_or(d.sparse_gap, |kb| kb.saturating_mul(1024)),
             max_span: d.max_span,
             retries: num("RETE_HTTP_RETRIES").map_or(d.retries, |n| n.min(10) as u32),
             backoff_ms: d.backoff_ms,
@@ -347,6 +354,9 @@ struct Probe {
 /// What the open reads first: the same 128 KiB a `0x06` reader plans from, so
 /// the length probe *is* the first read and no `HEAD` is sent.
 pub const OPEN_READ: u64 = crate::v06::FIRST_READ;
+
+/// The default [`FetchPolicy::sparse_gap`].
+pub const SPARSE_GAP: u64 = 32 << 10;
 
 /// An HTTP(S) [`RangeReader`]: kept-alive connections, parallel and coalesced
 /// batches, retries, and the bounded whole-body fallback for hosts that ignore
@@ -786,9 +796,9 @@ impl HttpRangeReader {
         self.with_retries(|| self.fetch_once(offset, len))
     }
 
-    /// Fetch `spans` in order, up to `concurrency` at a time.
-    fn fetch_spans(&self, spans: &[Span]) -> std::io::Result<Vec<Vec<u8>>> {
-        let workers = self.policy.concurrency.min(spans.len());
+    /// Fetch `spans` in order, up to `fan_out` at a time.
+    fn fetch_spans(&self, spans: &[Span], fan_out: usize) -> std::io::Result<Vec<Vec<u8>>> {
+        let workers = fan_out.min(spans.len());
         if workers <= 1 {
             return spans.iter().map(|s| self.fetch(s.offset, s.len)).collect();
         }
@@ -877,6 +887,32 @@ impl RangeReader for HttpRangeReader {
     /// Coalesce the batch, fetch its requests concurrently, slice the ranges
     /// back out in request order.
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.read_many_gap(ranges, self.policy.coalesce_gap, self.policy.concurrency)
+    }
+
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.read_many_gap(ranges, self.policy.sparse_gap, self.scattered_fan_out())
+    }
+}
+
+impl HttpRangeReader {
+    /// Requests in flight for a scattered batch: exact ranges are many small
+    /// requests, so twice the usual fan-out (at most 64) keeps a fast link busy;
+    /// a reader set to be sequential stays sequential.
+    fn scattered_fan_out(&self) -> usize {
+        match self.policy.concurrency {
+            0 | 1 => 1,
+            c => (c * 2).min(64),
+        }
+    }
+
+    /// [`RangeReader::read_many`] merging ranges at most `gap` bytes apart.
+    fn read_many_gap(
+        &self,
+        ranges: &[(u64, u64)],
+        gap: u64,
+        fan_out: usize,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
         for &(o, l) in ranges {
             if l > 0 {
                 self.bounds(o, l)?;
@@ -901,7 +937,7 @@ impl RangeReader for HttpRangeReader {
             let mut fetched = if rest.is_empty() {
                 Vec::new()
             } else {
-                self.read_many(&rest)?
+                self.read_many_gap(&rest, gap, fan_out)?
             }
             .into_iter();
             return ranges
@@ -919,17 +955,17 @@ impl RangeReader for HttpRangeReader {
                 })
                 .collect();
         }
-        let (spans, place) = coalesce(ranges, self.policy.coalesce_gap, self.policy.max_span)?;
+        let (spans, place) = coalesce(ranges, gap, self.policy.max_span)?;
         if self.policy.trace {
             let bytes: u64 = spans.iter().map(|s| s.len).sum();
             eprintln!(
                 "[http] batch of {} range(s) -> {} request(s), {bytes} bytes, {} in flight",
                 ranges.len(),
                 spans.len(),
-                self.policy.concurrency.min(spans.len())
+                fan_out.min(spans.len())
             );
         }
-        let blobs = self.fetch_spans(&spans)?;
+        let blobs = self.fetch_spans(&spans, fan_out)?;
         Ok(place
             .into_iter()
             .zip(ranges)
@@ -1765,9 +1801,110 @@ mod tests {
                     stats.gets.load(Ordering::SeqCst) - opened
                 );
                 assert!(peak > 1, "{q} at ({floor}, {seed}, {hash}): one at a time");
-                assert!(peak <= 16, "bounded by the reader's fan-out: {peak}");
+                assert!(peak <= 32, "bounded by twice the reader's fan-out: {peak}");
             }
         }
+    }
+
+    /// The scattered probe tiles of a join are read as exact ranges (G50): the
+    /// block cache does not round each one out to its block and the HTTP reader
+    /// does not merge two across the coalescing gap. The same join through a
+    /// reader that hides `read_many_scattered` (the old path) fetches several
+    /// times the bytes; the rows are the resident file's either way.
+    #[test]
+    fn scattered_probe_tiles_are_fetched_exactly() {
+        use crate::block_cache::BlockCacheReader;
+        use crate::{eval_query, DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete};
+        const N: usize = 120_000;
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let mut triples: Vec<(String, String, String)> = Vec::new();
+        for i in 0..N {
+            let r = format!("<http://ex/r{i:06}>");
+            let class = if i % 2000 == 7 { "T0" } else { "T1" };
+            triples.push((r.clone(), ty.into(), format!("<http://ex/{class}>")));
+            triples.push((
+                r,
+                "<http://ex/subject>".into(),
+                format!("\"topic {}\"", (i * 7919) % 50_000),
+            ));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(128);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let v5 = crate::file::write_file_v05(&dict, &ib.build(), false, &[], 0);
+        let image = crate::v06::write::convert_image(&v5, Default::default()).unwrap();
+        let resident = Rete::open(&image).unwrap();
+        let rows = |rete: &Rete, q: &str| -> Vec<String> {
+            let QueryOutput::Select(_, rows) = eval_query(rete, q).unwrap() else {
+                panic!("not a SELECT")
+            };
+            let mut out: Vec<String> = rows.iter().map(|b| format!("{b:?}")).collect();
+            out.sort();
+            out
+        };
+
+        /// A reader without the scattered path: the trait default applies.
+        struct Plain<R>(R);
+        impl<R: RangeReader> RangeReader for Plain<R> {
+            fn len(&self) -> u64 {
+                self.0.len()
+            }
+            fn read_at(&self, o: u64, l: u64) -> std::io::Result<Vec<u8>> {
+                self.0.read_at(o, l)
+            }
+            fn read_many(&self, r: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+                self.0.read_many(r)
+            }
+            fn concurrency(&self) -> usize {
+                self.0.concurrency()
+            }
+            fn resident_prefix(&self) -> u64 {
+                self.0.resident_prefix()
+            }
+        }
+
+        let q = "SELECT ?r ?t WHERE { ?r a <http://ex/T0> . ?r <http://ex/subject> ?t }";
+        let want = rows(&resident, q);
+        assert!(!want.is_empty());
+        let run = |exact: bool| -> (u64, u64) {
+            let (url, stats) = serve_with(image.clone(), ServerMode::HonorRange, Duration::ZERO);
+            let policy = FetchPolicy {
+                concurrency: 16,
+                coalesce_gap: 32 << 10,
+                sparse_gap: 0,
+                ..quick()
+            };
+            let http = HttpRangeReader::open_with(&url, policy).unwrap();
+            let remote = if exact {
+                Rete::open_ranged_lazy(Arc::new(BlockCacheReader::new(http, 32 << 10))).unwrap()
+            } else {
+                Rete::open_ranged_lazy(Arc::new(BlockCacheReader::new(Plain(http), 32 << 10)))
+                    .unwrap()
+            };
+            let (g0, b0) = (
+                stats.gets.load(Ordering::SeqCst),
+                stats.bytes.load(Ordering::SeqCst),
+            );
+            let got = crate::bgp::with_plan_limits(0.0, f64::MAX, f64::MAX, || rows(&remote, q));
+            assert_eq!(got, want);
+            (
+                stats.gets.load(Ordering::SeqCst) - g0,
+                stats.bytes.load(Ordering::SeqCst) - b0,
+            )
+        };
+        let (old_gets, old_bytes) = run(false);
+        let (new_gets, new_bytes) = run(true);
+        eprintln!("old {old_gets} GETs {old_bytes} B; exact {new_gets} GETs {new_bytes} B");
+        assert!(
+            new_bytes * 2 < old_bytes,
+            "exact ranges: {new_bytes} B against {old_bytes} B"
+        );
     }
 
     /// G33: an `OPTIONAL` after a `FILTER` in the same group is probed for the

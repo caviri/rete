@@ -34,6 +34,16 @@ pub trait RangeReader {
             .collect()
     }
 
+    /// [`read_many`](Self::read_many) for ranges the caller knows lie far apart
+    /// (the tiles of a window of probes): a reader that rounds reads out to
+    /// blocks, or merges ranges across wide gaps, to save requests should fetch
+    /// these as they are, since what lies between them is not wanted. The
+    /// default is [`read_many`](Self::read_many); results are the same bytes
+    /// either way, only the requests differ.
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.read_many(ranges)
+    }
+
     /// How many ranges this reader can usefully have in flight at once — the
     /// planner's hint for probe-vs-scan and batch-size decisions (a phone's
     /// serial sync-XHR reader reports 1; the CLI's threaded HTTP client and the
@@ -68,6 +78,10 @@ impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
 
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         (**self).read_many(ranges)
+    }
+
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        (**self).read_many_scattered(ranges)
     }
 
     fn concurrency(&self) -> usize {
@@ -162,6 +176,14 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
         Ok(out)
     }
 
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        let out = self.inner.read_many_scattered(ranges)?;
+        self.requests.fetch_add(out.len() as u64, Ordering::Relaxed);
+        self.bytes
+            .fetch_add(out.iter().map(|b| b.len() as u64).sum(), Ordering::Relaxed);
+        Ok(out)
+    }
+
     fn concurrency(&self) -> usize {
         self.inner.concurrency()
     }
@@ -205,6 +227,11 @@ impl<R: RangeReader> RangeReader for OffsetReader<R> {
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         let shifted: Vec<(u64, u64)> = ranges.iter().map(|&(o, l)| (self.base + o, l)).collect();
         self.inner.read_many(&shifted)
+    }
+
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        let shifted: Vec<(u64, u64)> = ranges.iter().map(|&(o, l)| (self.base + o, l)).collect();
+        self.inner.read_many_scattered(&shifted)
     }
 
     fn concurrency(&self) -> usize {
@@ -279,6 +306,32 @@ impl<R: RangeReader> PrefixReader<R> {
     }
 }
 
+impl<R: RangeReader> PrefixReader<R> {
+    /// Serve what the prefix holds, fetch the rest through `fetch`.
+    fn serve(
+        &self,
+        ranges: &[(u64, u64)],
+        fetch: impl FnOnce(&[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>>,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        let mut out: Vec<Option<Vec<u8>>> = ranges.iter().map(|&(o, l)| self.cut(o, l)).collect();
+        let rest: Vec<(u64, u64)> = ranges
+            .iter()
+            .zip(&out)
+            .filter(|(_, b)| b.is_none())
+            .map(|(r, _)| *r)
+            .collect();
+        if !rest.is_empty() {
+            let mut fetched = fetch(&rest)?.into_iter();
+            for slot in out.iter_mut().filter(|b| b.is_none()) {
+                *slot = fetched.next();
+            }
+        }
+        out.into_iter()
+            .map(|b| b.ok_or_else(|| std::io::Error::other("read_many left a range unfetched")))
+            .collect()
+    }
+}
+
 impl<R: RangeReader> RangeReader for PrefixReader<R> {
     fn len(&self) -> u64 {
         self.inner.len()
@@ -292,22 +345,11 @@ impl<R: RangeReader> RangeReader for PrefixReader<R> {
     }
 
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
-        let mut out: Vec<Option<Vec<u8>>> = ranges.iter().map(|&(o, l)| self.cut(o, l)).collect();
-        let rest: Vec<(u64, u64)> = ranges
-            .iter()
-            .zip(&out)
-            .filter(|(_, b)| b.is_none())
-            .map(|(r, _)| *r)
-            .collect();
-        if !rest.is_empty() {
-            let mut fetched = self.inner.read_many(&rest)?.into_iter();
-            for slot in out.iter_mut().filter(|b| b.is_none()) {
-                *slot = fetched.next();
-            }
-        }
-        out.into_iter()
-            .map(|b| b.ok_or_else(|| std::io::Error::other("read_many left a range unfetched")))
-            .collect()
+        self.serve(ranges, |rest| self.inner.read_many(rest))
+    }
+
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.serve(ranges, |rest| self.inner.read_many_scattered(rest))
     }
 
     fn concurrency(&self) -> usize {

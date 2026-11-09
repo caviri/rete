@@ -40,6 +40,18 @@ fn read_coalesced(
     crate::file::read_coalesced(r, &rs, gap)
 }
 
+/// [`read_coalesced`] for tiles far apart: the reader gets the exact ranges.
+fn read_scattered(
+    r: &(dyn RangeReader + Send + Sync),
+    ranges: &[(u64, u64)],
+) -> Option<Vec<Vec<u8>>> {
+    let rs: Vec<ByteRange> = ranges
+        .iter()
+        .map(|&(offset, len)| ByteRange { offset, len })
+        .collect();
+    crate::file::read_coalesced_scattered(r, &rs, 0)
+}
+
 impl V06File {
     /// Open from `first`, the file's leading bytes (at least the header; the
     /// root is read from it when it fits, else fetched).
@@ -324,7 +336,19 @@ impl V06File {
                 .map(|b| decompress_bounded(codec, b, max).ok())
                 .collect()
         });
-        let mut index = GraphIndex::from_leafed(lists, perms, loader).with_bulk_loader(bulk);
+        let (r, l) = (self.reader.clone(), lists.clone());
+        let scattered: crate::index::TileBulkLoader = Box::new(move |si, tis| {
+            let list = l.get(si)?.as_ref()?;
+            let ranges: Option<Vec<(u64, u64)>> = tis.iter().map(|&ti| list.range(ti)).collect();
+            let blobs = read_scattered(&*r, &ranges?)?;
+            blobs
+                .iter()
+                .map(|b| decompress_bounded(codec, b, max).ok())
+                .collect()
+        });
+        let mut index = GraphIndex::from_leafed(lists, perms, loader)
+            .with_bulk_loader(bulk)
+            .with_scattered_loader(scattered);
         index.set_read_concurrency(read_concurrency);
         Ok(index)
     }
