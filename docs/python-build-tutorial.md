@@ -80,10 +80,11 @@ builder.card(
 > correctly returns nothing — scope it with `GRAPH ?g { … }`. Details in
 > [§2's closing note](#2-the-dataset-card).
 
-Beyond the named keyword arguments, `card()` passes **any extra field**
-straight into the card JSON — which is how you set the curated **identity and
-provenance** fields the card schema defines (the same ones the CLI's
-`--card-file` takes):
+Beyond the named keyword arguments, `card()` takes the other curated fields
+the card schema defines — the **identity and provenance** ones, the same list as
+the CLI's `--card-file`. A keyword that is not on that list is an error
+(`TypeError`, naming it): a field of your own goes in `extra={...}` (see
+[Custom fields](dataset-card-reference.md#custom-fields-the-extra-bag)).
 
 ```python
 builder.card(
@@ -120,6 +121,8 @@ Field by field:
 | `doi` | The dataset's DOI, as an IRI (`https://doi.org/…`) |
 | `cite_as` | Preferred citation text |
 | `keywords` | Free-text tags — projected as `dcat:keyword` / `schema:keywords` |
+| `base_iri` | An absolute IRI that overrides the derived `signals.base_iri`; needs `derive_card()` (see [Deriving the profile](#deriving-the-profile)) |
+| `extra` | A dict of your own fields, bounded as in the CLI |
 | `theme` | Controlled-vocabulary IRIs (e.g. EU data themes) — projected as `dcat:theme`; free text is rejected, it belongs in `keywords`. (No curated language field: the card *measures* `languages` from the literals' own tags.) |
 
 The **statistics** — `triple_count`, `quad_count`, `named_graph_count`,
@@ -172,10 +175,14 @@ Two things to know before turning it on:
   must be a controlled-vocabulary IRI, the `extra` bag is bounded), so a card
   this accepts is one the CLI accepts.
 
-What stays CLI-only: the adjacent **build-info record** (timestamp, builder,
-parameters, measured starter-query costs — its cost figures come from *running*
-the starter queries, which is a benchmark, not a build) and the JSON-LD /
-Croissant **projections** (`rete card --format jsonld|croissant`).
+What stays CLI-only: the measured starter-query costs in the build record (they
+come from *running* the starter queries, which is a benchmark, not a build) and
+the JSON-LD / Croissant **projections** (`rete card --format jsonld|croissant`).
+The build record itself is written here too: `rete_graph.build_record(image)`
+has the `inputs` (file name, size, BLAKE3; `add_file` records the file's name,
+`add(text, name=...)` names in-memory text), the `counts` and a `run` block with
+the wall time, the phases, the peak RSS and the CPUs, as in the CLI's record.
+`RETE_BUILD_RECORD=reproducible` leaves the `run` block out, as in the CLI.
 
 [#152]: https://github.com/caviri/rete/issues/152
 

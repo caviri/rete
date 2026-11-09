@@ -200,8 +200,9 @@ python 0.5.0 {'default_graph_triples': 6103, 'duplicates_dropped': 0, 'named_gra
 {'codec': 'zstd', 'command': 'build_dataset', 'format': 'nt', 'label_index': True, 'named_graphs': 'quad', 'permutations': 6, 'pyramid_algo': 'types', 'write': {…}}
 ```
 
-The record says `front_end` is `python`. It has no wall times or memory
-figures: the CLI measures those, the Python builder does not.
+The record says `front_end` is `python`. Its `run` block has the wall time, the
+phases, the peak RSS of the process, its memory limit and the CPUs, as the
+CLI's record does; `add_file` names each input by its file name (`solar.nt`).
 
 ## 3. Build with the CLI
 
@@ -250,17 +251,25 @@ build record. `--pyramid-algo types` is the same choice as in Python.
 [section 9](#9-optional-flags). The build also ran 20 starter queries against
 the file it had just written; the card keeps those that answer.
 
-`rete info` prints the decoded header (a long debug dump, which the `sed` below
-skips), then the front of the file and its sections:
+`rete info` prints a summary of the header: the format, the counts, the codecs,
+then the front of the file and its sections (`--raw` adds the header's fields
+as Rust `Debug` output, for a bug report):
 
 ```sh
-rete info solar.rete | sed -n '/^format 0x06/,/^permutations/p'
+rete info solar.rete | sed -n '/^format 0x06/,/^    pyramid/p'
 ```
 
 ```text
 format 0x06 — 91898 bytes, content hash b38ff62dbf5262ec1e50e4ef364be23e
   flags        : none
   front        : root 456 B at 128, card region 24842 B (card 3382 B, record 4943 B), data at 26080
+  counts       :
+    quad_count: 6103
+    term_count: 3880
+    graph_count: 0
+    build_info_len: 4943
+  codecs       : dictionary zstd, blocks zstd, internal zstd
+  pyramid      : 1 level(s)
   sections     :
     schema                 25426 + 479          digest 6d9ba70882efc7199926a4a943793ba9
     dict-leaves            25905 + 61           digest 541def2fa3e22fd17bb6033bcd55df0e
@@ -269,7 +278,6 @@ format 0x06 — 91898 bytes, content hash b38ff62dbf5262ec1e50e4ef364be23e
     index                  35453 + 54943        digest 84fdc42618e0ed9da127b844e1500cbb
     labels                 90396 + 1114         digest 01e2e2dc987750d92ad5cac474dc2257
     pyramid                91510 + 380          digest 1b335d5add44a8da100358527e380800
-permutations: 6 index permutations (SPO/POS/OSP/SOP/PSO/OPS) — sort-merge joins available
 ```
 
 `rete verify` re-reads every section and checks its digest:
@@ -863,15 +871,15 @@ Content-Length: 1024
 Accept-Ranges: bytes
 ```
 
-Read the card. `card-url` fetches the header, the root and the card, and never
-the index:
+Read the card. `card-url` reads the first 64 KiB (the header, the root, the card region and
+the statistics) in one request, and never the index:
 
 ```sh
 rete card-url http://host.docker.internal:8000/solar-big.rete | head -n 12
 ```
 
 ```text
-fetched 9833 of 105891840 bytes in 5 range request(s) — index NOT fetched
+fetched 65536 of 105891840 bytes in 1 range request(s) — index NOT fetched
 Dataset Card
   title        : Solar systems (synthetic)
   description  : A synthetic knowledge graph of planetary systems: the eight bodies of our own, then generated systems with a star, planets and moons. Made for the rete build tutorial.

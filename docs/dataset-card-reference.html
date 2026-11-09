@@ -1193,7 +1193,7 @@ never when it is read, so every reader already accepts a depth-3 bag. Past it
 the build fails with the path to the deepest point (<code>at examples[0].words</code>)
 and how to flatten it.</p>
 <p>The CARD tier's <strong>request count cannot change</strong>: <code>rete card-url</code> still costs
-the 1 KiB header plus one coalesced metadata+build-info range, bag or no bag —
+the first read plus at most one follow-up, bag or no bag —
 pinned by test. The one cost worth knowing: on the smallest cards a maxed-out
 bag can push the coalesced range past a conservative TCP initial window
 (~14.6 KB), i.e. one extra round trip — never an extra request.</p>
@@ -1651,13 +1651,15 @@ explicit so a client knows what is free before it runs anything:</p>
 <tr><td>🔵 <strong>Summary</strong></td><td>the pyramid superedge totals <strong>and the <a href="semantic-zoom.html">schema pyramid</a></strong> — a leveled <code>rdf:type</code> histogram (<code>rete summary [--level k]</code> / <code>summary-url</code>)</td><td>index-free</td></tr>
 <tr><td>🟠 <strong>Index</strong></td><td>the triple index (range-fetched tiles)</td><td>O(touched tiles)</td></tr>
 </tbody></table>
-<p><code>rete card-url &lt;url&gt;</code> reads the <strong>Card tier</strong> over HTTP in two small range
-requests — the header, then <strong>one coalesced range covering the card and the
-adjacent build-info</strong> — and <strong>never touches the index</strong>, so a remote/S3 client
+<p><code>rete card-url &lt;url&gt;</code> reads the <strong>Card tier</strong> over HTTP in one first read (the
+first 64 KiB, which holds the header, the root and the card region with the card
+and the build record) and at most one follow-up, sized from the header — and
+<strong>never touches the index</strong>, so a remote/S3 client
 gets the whole self-description (counts, vocabulary, class graph, signals,
 starter queries, build record) without downloading the file. Measured on the
 published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
-1,161,874,550 bytes for Hugging Face, two range requests each.</p>
+1,161,874,550 bytes for Hugging Face, two range requests each (measured before
+the first read took the whole front: see <a href="cli.html#rete-card-url-url---json---format-jsonldcroissant---sha256-hex"><code>card-url</code></a>).</p>
 <h2 id="the-starter-query-library">The starter-query library</h2>
 <p><code>queries</code> is a vetted set of starter SPARQL queries, <strong>auto-instantiated at
 build</strong> with the dataset's own vocabulary (<code>{{TOP_CLASS}}</code> → the most populous
@@ -1854,7 +1856,7 @@ not ship one it just watched return nothing; older files had no such check.</p>
 remote dataset has to come down in full and go back up in full. The published
 catalog is <strong>248 GB across 98 files</strong> (22 of them ≥ 1 GB), which makes
 "re-card everything" 248 GB each way. Finding out which files actually need it
-costs <strong>0.6 MB</strong> — the same two range requests <code>rete card-url</code> makes, per file,
+costs <strong>0.6 MB</strong> — the same few range requests <code>rete card-url</code> makes, per file,
 and never the index:</p>
 <pre><code class="language-sh">bash scripts/recard/survey.sh                                    # whole catalog
 bash scripts/recard/survey.sh --keys "lombardi orcid switzerland-fedlex"

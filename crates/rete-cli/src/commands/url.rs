@@ -16,11 +16,119 @@ use crate::commands::card;
 use crate::commands::range_source::RangedSourceReader;
 use crate::commands::render::print_query_output_warned;
 
+/// A reader for the front of a file: what the CARD tier needs, in the fewest
+/// requests.
+///
+/// The open already holds the first 64 KiB (the length probe is that GET,
+/// SPEC §4.6), and a format `0x06` file keeps its header, root, card region
+/// and statistics inside it. Where the header says the front is longer, this
+/// fetches the missing part **once**, sized from the header, and serves every
+/// later read from it. It counts what goes over the wire, not the reads the
+/// card code makes of memory it already holds.
+struct FrontReader<R> {
+    inner: R,
+    /// The follow-up read: `(offset, bytes)`, when the front outruns the first read.
+    follow_up: Option<(u64, Vec<u8>)>,
+    requests: std::sync::atomic::AtomicU64,
+    bytes: std::sync::atomic::AtomicU64,
+}
+
+impl<R: RangeReader> FrontReader<R> {
+    fn open(inner: R) -> anyhow::Result<Self> {
+        use std::sync::atomic::AtomicU64;
+        let held = inner.resident_prefix();
+        let mut me = FrontReader {
+            inner,
+            follow_up: None,
+            // The open's own GET, when it left bytes behind.
+            requests: AtomicU64::new(u64::from(held > 0)),
+            bytes: AtomicU64::new(held),
+        };
+        let head = me
+            .inner
+            .read_at(0, (rete_core::HEADER_LEN as u64).min(me.inner.len()))?;
+        // The span of the file the card code will read after the header.
+        let want = if head.get(4) == Some(&rete_core::v06::VERSION) {
+            let h = rete_core::v06::Header06::from_bytes(&head)?;
+            Some((
+                0,
+                128 + u64::from(h.root_len) + u64::from(h.card_region_len),
+            ))
+        } else {
+            let h = rete_core::Header::from_bytes(&head)?;
+            let spans = [
+                (h.metadata_offset, h.metadata_len),
+                (h.build_info_offset, h.build_info_len),
+            ];
+            let live = spans.iter().filter(|s| s.1 > 0);
+            let lo = live.clone().map(|s| s.0).min();
+            let hi = live.map(|s| s.0 + s.1).max();
+            lo.zip(hi)
+        };
+        if let Some((lo, hi)) = want {
+            let hi = hi.min(me.inner.len());
+            if hi > held && hi > lo {
+                // Keep the held part (from memory) in front of the fetched
+                // one, so a read that spans the two is still one read of memory.
+                let from = lo.max(held);
+                let fetched = me.inner.read_at(from, hi - from)?;
+                me.requests
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                me.bytes
+                    .fetch_add(fetched.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                if lo < held {
+                    let mut bytes = me.inner.read_at(lo, held - lo)?;
+                    bytes.extend_from_slice(&fetched);
+                    me.follow_up = Some((lo, bytes));
+                } else {
+                    me.follow_up = Some((from, fetched));
+                }
+            }
+        }
+        Ok(me)
+    }
+
+    fn requests(&self) -> u64 {
+        self.requests.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn bytes_read(&self) -> u64 {
+        self.bytes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl<R: RangeReader> RangeReader for FrontReader<R> {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let end = offset.saturating_add(len);
+        if let Some((lo, bytes)) = &self.follow_up {
+            if offset >= *lo && end <= lo + bytes.len() as u64 {
+                let from = (offset - lo) as usize;
+                return Ok(bytes[from..from + len as usize].to_vec());
+            }
+        }
+        let out = self.inner.read_at(offset, len)?;
+        if end > self.inner.resident_prefix() {
+            // Not in memory: a real request.
+            self.requests
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.bytes
+                .fetch_add(out.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(out)
+    }
+}
+
 /// Fetch just the embedded Dataset Card (and, when present, the adjacent
-/// build-info record) over HTTP — the index-free CARD tier. Reads only the 1 KiB
-/// header and one coalesced metadata+build-info range (two small range
-/// requests), never the dictionary, index, or pyramid: the cold-start
-/// self-description a newcomer needs before they know what to query.
+/// build-info record) over HTTP — the index-free CARD tier. On a format `0x06`
+/// file that is the one first read (the first 64 KiB, which holds the header,
+/// the root, the card region and the statistics) and, only when the header
+/// says the front is longer, one follow-up sized from it. It never reads the
+/// dictionary, index, or pyramid, and it never fetches a small file whole: the
+/// cold-start self-description a newcomer needs before they know what to query.
 pub(crate) fn card_url(
     url: &str,
     json: bool,
@@ -28,7 +136,7 @@ pub(crate) fn card_url(
     sha256: Option<&str>,
 ) -> anyhow::Result<()> {
     let format = card::CardFormat::resolve(json, format)?;
-    let reader = CountingReader::new(RangedSourceReader::open(url)?);
+    let reader = FrontReader::open(RangedSourceReader::open_front(url)?)?;
     let total = reader.len();
     let read = card::load_card_and_build_ranged(&reader)?;
     match &read.card {
@@ -392,4 +500,90 @@ pub(crate) fn why_url(
         total
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod front_reader_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// A file image whose reader holds only its first `held` bytes in memory,
+    /// as an HTTP reader does after a first GET shorter than the front. It
+    /// counts the reads that fall outside them.
+    struct Partial {
+        data: Vec<u8>,
+        held: u64,
+        network: AtomicU64,
+    }
+
+    impl RangeReader for Partial {
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            if offset + len > self.held {
+                self.network.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(self.data[offset as usize..(offset + len) as usize].to_vec())
+        }
+        fn resident_prefix(&self) -> u64 {
+            self.held
+        }
+    }
+
+    fn image() -> Vec<u8> {
+        use rete_core::build_record as br;
+        let nt = "<http://e/a> <http://e/p> <http://e/b> .\n<http://e/b> <http://e/p> \"x\" .\n";
+        let quads = rete_core::ingest::parse_statements(nt, "nt").unwrap();
+        let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
+        let record = br::to_json(
+            &br::Record {
+                front_end: br::front_end::CLI.into(),
+                ..Default::default()
+            },
+            Some(&stats),
+        );
+        br::finish_in_ram(bytes, Some(&record)).unwrap()
+    }
+
+    /// The front fits what the open already holds: nothing more is requested.
+    #[test]
+    fn a_front_inside_the_first_read_needs_no_follow_up() {
+        let data = image();
+        let held = data.len() as u64;
+        let front = FrontReader::open(Partial {
+            data,
+            held,
+            network: AtomicU64::new(0),
+        })
+        .unwrap();
+        let read = card::load_card_and_build_ranged(&front).unwrap();
+        assert!(read.build.is_some());
+        assert_eq!(front.requests(), 1, "the first read, counted once");
+        assert_eq!(front.inner.network.load(Ordering::Relaxed), 0);
+    }
+
+    /// A first read shorter than the front: one follow-up, sized from the
+    /// header, after which every read of the front is served from memory.
+    #[test]
+    fn a_longer_front_costs_one_sized_follow_up() {
+        let data = image();
+        let held = rete_core::HEADER_LEN as u64; // the header, not the card region
+        let h = rete_core::v06::Header06::from_bytes(&data).unwrap();
+        assert!(128 + u64::from(h.root_len) + u64::from(h.card_region_len) > held);
+        let front = FrontReader::open(Partial {
+            data,
+            held,
+            network: AtomicU64::new(0),
+        })
+        .unwrap();
+        let read = card::load_card_and_build_ranged(&front).unwrap();
+        assert!(read.build.is_some());
+        assert_eq!(front.requests(), 2, "first read + one follow-up");
+        assert_eq!(
+            front.inner.network.load(Ordering::Relaxed),
+            1,
+            "only the follow-up left memory"
+        );
+    }
 }

@@ -639,18 +639,20 @@ fetches cross-origin, so the host must send
 can read <code>Content-Range</code> only when the host lists it in
 <code>Access-Control-Expose-Headers</code>, and <code>HEAD</code>'s <code>Content-Length</code> may describe
 a compressed representation (GitHub Pages, #95). So the reader takes a
-<code>.rete</code>'s length from the file itself: the first ranged <code>GET</code> reads the 1 KiB
-header, whose section directory fixes the length, and one 4-byte read of the
-closing <code>RETE</code> footer confirms it. A visible <code>Content-Range</code> that agrees
-saves that footer read, which is why the production bucket still exposes
-it. A resource that is not a plain <code>.rete</code> (a polyglot page) falls back to
+<code>.rete</code>'s length from the file itself: the first ranged <code>GET</code> reads the first
+64 KiB, and the 128-byte header in it carries the file length (<a href="SPEC.html#41-header-128-bytes-little-endian">SPEC §4.1</a>).
+A visible <code>Content-Range</code> that agrees is a cross-check, which is why the
+production bucket still exposes it. (A format <code>0x05</code> file has a 1 KiB header
+and a closing <code>RETE</code> footer, and the reader confirms the length with a 4-byte
+footer read.) A resource that is not a plain <code>.rete</code> (a polyglot page) falls back to
 <code>Content-Range</code>, then to <code>HEAD</code>'s <code>Content-Length</code>, which is
 CORS-safelisted and readable everywhere; the opt-in persistent range cache
 does the same when <code>Content-Range</code> is hidden.</li>
 </ol>
 <h3 id="the-ten-second-check">The ten-second check</h3>
-<pre><code class="language-sh"># 206 + a content-range header = ranges work:
-curl -sI -r 0-1023 https://host/path/data.rete | grep -iE "^HTTP|content-range"
+<pre><code class="language-sh"># 206 + a content-range header = ranges work. A ranged GET, not HEAD: many
+# hosts, `scripts/range_server.py` among them, answer HEAD with a plain 200.
+curl -s -o /dev/null -D - -r 0-1023 https://host/path/data.rete | grep -iE "^HTTP|content-range"
 # HTTP/2 206
 # content-range: bytes 0-1023/104857600
 
@@ -659,7 +661,7 @@ curl -sI -r 0-1023 -H "Origin: https://example.org" https://host/path/data.rete 
   | grep -i access-control
 </code></pre>
 <p>If both pass, <code>rete card-url https://host/path/data.rete</code> should print the
-dataset card in two range requests — and the same URL pasted into the
+dataset card in one or two range requests — and the same URL pasted into the
 <a href="playground-guide.html">playground</a>'s <strong>+ Add source → Connect (lazy)</strong> queries it
 live.</p>
 <h2 id="recipes">Recipes</h2>
@@ -698,8 +700,7 @@ request with <code>206</code> and <code>Access-Control-Allow-Origin: *</code> an
 the preflight, but its <code>Access-Control-Expose-Headers</code> lists only
 <code>Content-Type</code>, <code>ETag</code>, <code>Link</code> and the rate-limit headers, so a browser cannot
 read <code>Content-Range</code>. That costs nothing (requirement 3 above): the reader
-takes the length from the file's own header and confirms it with a 4-byte
-footer read, and the playground labels the source with the file name rather
+takes the length from the file's own header, and the playground labels the source with the file name rather
 than the URL's trailing <code>content</code>. <code>tests/gate/checks/check_zenodo_host.mjs</code>
 serves a file with exactly that header set, in both browser engines, so this
 stays true without depending on zenodo.org (whose API rate-limits with <code>403</code>).</p>
@@ -732,7 +733,7 @@ the bytes.</p>
 <ul>
 <li>Embed a <a href="dataset-cards.html">Dataset Card</a> at build time (<code>rete build --card</code>)
 so anyone who finds the URL gets the title, license, counts, and runnable
-starter queries from two range requests — <code>rete card-url &lt;url&gt;</code>.</li>
+starter queries from one or two range requests — <code>rete card-url &lt;url&gt;</code>.</li>
 <li>Register it in the <a href="playground-guide.html">playground</a> catalog to give it a
 browsable home with examples, media rendering, and SQL companions — see
 <a href="media-companions.html">Media &amp; SQL companions</a>.</li>

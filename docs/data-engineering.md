@@ -181,3 +181,23 @@ under a second. The slice is a real cross-section of *all* of Wikidata (people,
 places, works, taxa, …); for a curated biology-only graph use the WDQS fetcher
 above. `--parts N` draws from N whole partitions; `--local-dir` reads partitions
 you have already downloaded.
+
+## Building a graph that does not fit in memory
+
+`rete build` holds the whole graph in RAM by default. When it does not fit, or the
+container has a hard memory limit, give it a budget:
+
+```sh
+rete build big.nq.gz -o big.rete --memory-budget-mb 3000 --tmp-dir /scratch
+```
+
+`--memory-budget-mb N` selects the external builder: it cuts the input into
+chunks, spills them to `--tmp-dir` (default: next to the output), merges the
+dictionary and sorts each index on disk, so memory is sized from the budget and
+not from the graph. The file has the same content hash as the in-RAM build (only the
+build record differs); what changes is the time and the scratch disk. It reads
+N-Triples, N-Quads, Turtle and TriG, gzipped or not, directly. The budget is a
+ceiling for the build's own buffers, so leave headroom below the container's
+limit. Details, measurements and the scratch-disk cost are in
+[the CLI reference](cli.md#building) and the
+[build tutorial](build-tutorial.md#the-memory-bounded-build).

@@ -471,10 +471,14 @@ enum Command {
         #[command(flatten)]
         progress: commands::progress::ProgressArgs,
     },
-    /// Print the header of a `.rete` file.
+    /// Print what a `.rete` file's header says: format, counts, codecs, flags and
+    /// where each section is, plus the Dataset Card when it has one.
     Info {
         /// Path to the `.rete` file.
         file: String,
+        /// Also print the header's fields as Rust Debug output (for a bug report).
+        #[arg(long)]
+        raw: bool,
     },
     /// Human-friendly overview: size, counts, graphs, pyramid, top predicates.
     Stats {
@@ -528,8 +532,9 @@ enum Command {
     /// Search a `.rete` for entities. Two modes:
     ///
     /// • **Label prefix** (default): the subjects whose label starts with
-    ///   `prefix` (case-insensitive), from the bounded label-index block in the
-    ///   pyramid-meta — no literal scan, the fast path for autocomplete.
+    ///   `prefix` (case-insensitive), from the LABEL_INDEX section
+    ///   (`build --label-index`) — no literal scan, the fast path for
+    ///   autocomplete. A file built without it has no label index.
     ///
     /// • **Full-text** (`--contains <word>…`): subjects whose literals contain
     ///   **every** given word (whole-word, case-insensitive — AND), from the
@@ -683,11 +688,13 @@ enum Command {
     /// verbatim with `--keep-curated`; an input card with curated fields and
     /// neither option is refused, never silently stripped.
     ///
-    /// `--in-place` skips the copy: the new card and build record are written
-    /// after the file's last section, then its header is rewritten — one read
-    /// of the file to hash it, a few KB of writes, no second file. The old card
-    /// and build record stay behind as dead bytes until the file is next
-    /// rewritten (a re-card without `--in-place` drops them).
+    /// `--in-place` skips the copy. On a format 0x06 file the new card and
+    /// build record go into the free part of the card region, beside the old
+    /// pair, and then the 128-byte header is rewritten to point at them: no
+    /// data byte is read or moved. If the pair does not fit, the file is
+    /// copied once with a fresh card region and renamed over the input. On a
+    /// 0x05 file the pair is appended after the last section and the 1 KiB
+    /// header is rewritten; the old card stays behind as dead bytes.
     Recard {
         /// The `.rete` to re-card (read only, unless `--in-place`).
         file: String,
@@ -699,11 +706,11 @@ enum Command {
             conflicts_with = "in_place"
         )]
         output: Option<String>,
-        /// Re-card the file itself instead of writing a new one: append the
-        /// new card and build record after its last section, sync, then
-        /// rewrite its 1 KiB header and sync. A crash before the header write
-        /// leaves the old file, readable as it was; after it, the new one. The
-        /// old card's bytes become dead space.
+        /// Re-card the file itself instead of writing a new one: write the
+        /// new card and build record beside the old ones, sync, then rewrite
+        /// the header (128 bytes on 0x06, 1 KiB on 0x05) and sync. A crash
+        /// before the header write leaves the old file, readable as it was;
+        /// after it, the new one.
         #[arg(long = "in-place")]
         in_place: bool,
         /// JSON file of curated card fields (same document as `build --card-file`).
@@ -1785,7 +1792,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 !no_card_costs,
             )
         }
-        Command::Info { file } => commands::inspect::info(&file),
+        Command::Info { file, raw } => commands::inspect::info(&file, raw),
         Command::Stats { file } => commands::inspect::stats(&file),
         Command::Verify { file, section } => {
             commands::inspect::verify_cmd(&file, section.as_deref())
