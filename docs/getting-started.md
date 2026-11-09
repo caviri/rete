@@ -267,7 +267,7 @@ query cost preview
 ```
 
 The graph is 18 KB, so the whole file is one read. On a large file the lazy
-open reads the first 64 KiB and the query then reads only the tiles it needs.
+open reads the first 128 KiB and the query then reads only the tiles it needs.
 
 ### Several files
 

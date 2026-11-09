@@ -1518,7 +1518,7 @@ the run had spent when it stopped, and <code>rows</code> is 0. A run that finish
 before the file is written, and decides which queries the card keeps (below):
 the card is inside the content hash, so it has to be final before the file is.
 The second is against the file as written, because in <code>0x06</code> the bytes a query
-reads depend on the card region (the open reads the first 64 KiB). Only the
+reads depend on the card region (the open reads the first 128 KiB). Only the
 second set of figures is stored. A query the <strong>memory</strong> ceiling stops stays in
 the card in either run, with <code>status: over_budget</code>: whether it trips depends on
 allocator timing, and the card is inside the content hash, so memory never
@@ -1652,7 +1652,7 @@ explicit so a client knows what is free before it runs anything:</p>
 <tr><td>🟠 <strong>Index</strong></td><td>the triple index (range-fetched tiles)</td><td>O(touched tiles)</td></tr>
 </tbody></table>
 <p><code>rete card-url &lt;url&gt;</code> reads the <strong>Card tier</strong> over HTTP in one first read (the
-first 64 KiB, which holds the header, the root and the card region with the card
+first 128 KiB, which holds the header, the root and the card region with the card
 and the build record) and at most one follow-up, sized from the header — and
 <strong>never touches the index</strong>, so a remote/S3 client
 gets the whole self-description (counts, vocabulary, class graph, signals,
@@ -2288,7 +2288,7 @@ locates the root and card region at the front of the file:</p>
 [payload]      dictionary chunks, index tiles and other data sections
 [footer]       trailing version and magic
 </code></pre>
-<p>The initial ranged read is up to 64 KiB, so it includes card bytes that lie
+<p>The initial ranged read is up to 128 KiB, so it includes card bytes that lie
 in that front range. Larger front metadata may require further reads. A
 card therefore participates in the opening cost; it is not universally free
 for queries. <code>rete card-url</code> reads the card without scanning the graph.

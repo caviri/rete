@@ -19,7 +19,7 @@ use crate::commands::render::print_query_output_warned;
 /// A reader for the front of a file: what the CARD tier needs, in the fewest
 /// requests.
 ///
-/// The open already holds the first 64 KiB (the length probe is that GET,
+/// The open already holds the first 128 KiB (the length probe is that GET,
 /// SPEC §4.6), and a format `0x06` file keeps its header, root, card region
 /// and statistics inside it. Where the header says the front is longer, this
 /// fetches the missing part **once**, sized from the header, and serves every
@@ -124,7 +124,7 @@ impl<R: RangeReader> RangeReader for FrontReader<R> {
 
 /// Fetch just the embedded Dataset Card (and, when present, the adjacent
 /// build-info record) over HTTP — the index-free CARD tier. On a format `0x06`
-/// file that is the one first read (the first 64 KiB, which holds the header,
+/// file that is the one first read (the first 128 KiB, which holds the header,
 /// the root, the card region and the statistics) and, only when the header
 /// says the front is longer, one follow-up sized from it. It never reads the
 /// dictionary, index, or pyramid, and it never fetches a small file whole: the

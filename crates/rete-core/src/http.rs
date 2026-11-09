@@ -344,9 +344,9 @@ struct Probe {
     prefix: Option<Vec<u8>>,
 }
 
-/// What the open reads first: the same 64 KiB a `0x06` reader plans from, so
+/// What the open reads first: the same 128 KiB a `0x06` reader plans from, so
 /// the length probe *is* the first read and no `HEAD` is sent.
-pub const OPEN_READ: u64 = 64 * 1024;
+pub const OPEN_READ: u64 = crate::v06::FIRST_READ;
 
 /// An HTTP(S) [`RangeReader`]: kept-alive connections, parallel and coalesced
 /// batches, retries, and the bounded whole-body fallback for hosts that ignore
@@ -1177,11 +1177,11 @@ mod tests {
         }
     }
 
-    /// The default open: one `bytes=0-65535` GET is both the length probe and
+    /// The default open: one `bytes=0-131071` GET is both the length probe and
     /// the first read; no `HEAD`, and later reads inside it never leave memory.
     #[test]
     fn the_open_reads_first_and_sends_no_head() {
-        let data: Vec<u8> = (0..=255u8).cycle().take(100_000).collect();
+        let data: Vec<u8> = (0..=255u8).cycle().take(300_000).collect();
         let (url, stats) = serve_with(data.clone(), ServerMode::HeadWithoutLength, Duration::ZERO);
         let policy = FetchPolicy {
             backoff_ms: 1,
@@ -1189,7 +1189,7 @@ mod tests {
             ..FetchPolicy::DEFAULT
         };
         let r = HttpRangeReader::open_with(&url, policy).unwrap();
-        assert_eq!(r.len(), 100_000);
+        assert_eq!(r.len(), 300_000);
         assert_eq!(stats.gets.load(Ordering::SeqCst), 1, "the open is one GET");
         assert_eq!(r.read_at(1000, 24).unwrap(), &data[1000..1024]);
         assert_eq!(
@@ -1201,7 +1201,7 @@ mod tests {
             1,
             "served from the first read"
         );
-        assert_eq!(r.read_at(70_000, 4).unwrap(), &data[70_000..70_004]);
+        assert_eq!(r.read_at(140_000, 4).unwrap(), &data[140_000..140_004]);
         assert_eq!(
             stats.gets.load(Ordering::SeqCst),
             2,
@@ -1451,7 +1451,7 @@ mod tests {
             assert!(err.to_string().contains(want), "{mode:?}: {err}");
         }
         // The opening read is held to the same rule.
-        let (url, _) = serve_with(vec![7; 100_000], ServerMode::WrongEnd, Duration::ZERO);
+        let (url, _) = serve_with(vec![7; 300_000], ServerMode::WrongEnd, Duration::ZERO);
         let policy = FetchPolicy {
             backoff_ms: 1,
             ..FetchPolicy::DEFAULT
@@ -1460,10 +1460,11 @@ mod tests {
             .err()
             .expect("refused");
         assert!(
-            err.to_string().contains("not the 65536 bytes asked for"),
+            err.to_string()
+                .contains(&format!("not the {OPEN_READ} bytes asked for")),
             "{err}"
         );
-        let (url, _) = serve_with(vec![7; 100_000], ServerMode::Overlong, Duration::ZERO);
+        let (url, _) = serve_with(vec![7; 300_000], ServerMode::Overlong, Duration::ZERO);
         let err = HttpRangeReader::open_with(&url, policy)
             .err()
             .expect("refused");

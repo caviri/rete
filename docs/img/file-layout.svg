@@ -37,7 +37,7 @@
   <rect x="1" y="1" width="558" height="468" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
   <text class="title" x="26" y="40">The front of the file is the directory</text>
-  <text class="deck" x="26" y="62">the first 64 KiB read holds everything a reader needs to plan a query</text>
+  <text class="deck" x="26" y="62">the first 128 KiB read holds everything a reader needs to plan a query</text>
 
   <!-- ============ the file, in order (not to scale) ============ -->
   <text class="sect" x="26" y="100">the file, in order — <tspan class="mono">not to scale</tspan></text>

@@ -640,7 +640,7 @@ can read <code>Content-Range</code> only when the host lists it in
 <code>Access-Control-Expose-Headers</code>, and <code>HEAD</code>'s <code>Content-Length</code> may describe
 a compressed representation (GitHub Pages, #95). So the reader takes a
 <code>.rete</code>'s length from the file itself: the first ranged <code>GET</code> reads the first
-64 KiB, and the 128-byte header in it carries the file length (<a href="SPEC.html#41-header-128-bytes-little-endian">SPEC §4.1</a>).
+128 KiB, and the 128-byte header in it carries the file length (<a href="SPEC.html#41-header-128-bytes-little-endian">SPEC §4.1</a>).
 A visible <code>Content-Range</code> that agrees is a cross-check, which is why the
 production bucket still exposes it. (A format <code>0x05</code> file has a 1 KiB header
 and a closing <code>RETE</code> footer, and the reader confirms the length with a 4-byte

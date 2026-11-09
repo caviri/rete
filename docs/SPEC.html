@@ -630,7 +630,7 @@ with a <strong>pyramid</strong> of progressively-refined detail.</p>
 <ul>
 <li><strong>Single immutable file</strong>, queryable in place over HTTP <code>Range</code> requests.</li>
 <li><strong>Bounded request count</strong> to answer a query — the client reads the first
-64 KiB (the header, the root block with every section's byte range, the card,
+128 KiB (the header, the root block with every section's byte range, the card,
 the statistics and, on a small file, every leaf directory), then fetches only
 the leaves and payload a query touches (§4.6).</li>
 <li><strong>SPARQL</strong> evaluation against the file (BGPs, joins, filters, paths, aggregates,
@@ -701,10 +701,10 @@ data_offset  DATA SECTIONS, clustered: dictionary chunks, index tiles, quad
 file_len - 8 FOOTER: 06 00 00 00 "RETE"
 </code></pre>
 <p><code>front_base = 128 + root length + card region length</code>. A reader's first
-request is <code>bytes=0-65535</code> (§4.6); it holds the header, the root, the card and
+request is <code>bytes=0-131071</code> (§4.6); it holds the header, the root, the card and
 the statistics of every measured file (OpenCitations Meta's root is 37 KiB),
 and on a small file every leaf directory as well.</p>
-<img class="img-sq" src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 64 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
+<img class="img-sq" src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 128 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
 <h3 id="41-header-128-bytes-little-endian">4.1 Header (128 bytes, little-endian)</h3>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
@@ -844,7 +844,7 @@ codec) and the build record (raw JSON, possibly followed by ASCII spaces up to
 its length, as in §4.9), each at the offset and length the header gives,
 relative to the region; the rest is free. The writer sizes the region
 <code>2 × (card + record) + 8 KiB</code> when it writes a card, the record alone when it
-writes none (that space is in the first 64 KiB the open reads, where slack
+writes none (that space is in the first 128 KiB the open reads, where slack
 would push the leaf directories out of it, so a file with no card is re-carded
 by a copy), and 0 when there is neither. The card is inside
 the content hash; the build record is not (it records when, how and how fast,
@@ -877,8 +877,8 @@ query finds the graph's slice in every order in one neighbourhood;</li>
 overrides it). Readers route through the directories either way.</p>
 <h3 id="46-opening-a-file">4.6 Opening a file</h3>
 <ol>
-<li>Read <code>min(64 KiB, file length)</code> from offset 0. Over HTTP this is
-<code>GET bytes=0-65535</code>, which also gives the length (<code>Content-Range</code>, whose
+<li>Read <code>min(128 KiB, file length)</code> from offset 0. Over HTTP this is
+<code>GET bytes=0-131071</code>, which also gives the length (<code>Content-Range</code>, whose
 start, end and total must all match); no <code>HEAD</code> is sent. A remote file of
 at most 8 MiB is then fetched whole in one more read. Byte 4 picks the
 reader: <code>0x05</code> continues with the generation-1 open (§4.9), served from
@@ -886,7 +886,7 @@ these bytes where it can.</li>
 <li><code>0x06</code>: parse the header; take the root (and in the rare case it does not
 fit, read the rest of it); check the root digest; decode the section table
 and the unit roots. The card, the record and the statistics are in hand, and
-so is every leaf inside the first 64 KiB.</li>
+so is every leaf inside the first 128 KiB.</li>
 <li>A query faults the leaves it needs, then the payload. The dictionary and the
 index route through the unit roots to a leaf, then to a chunk or a tile.
 Sequential dictionary misses read ahead (2, 4, 8, up to 16 chunks a batch);
@@ -1811,7 +1811,7 @@ dominated by range-request count and block sizes.</p>
 <hr />
 <h2 id="9-access-protocol-the-client">9. Access protocol (the client)</h2>
 <p>A generation-2 file is planned from its front (§4.6):</p>
-<pre><code>1. GET bytes=0-65535        → header, root block (section table + directory
+<pre><code>1. GET bytes=0-131071        → header, root block (section table + directory
                               roots), card, statistics; on a small file every
                               leaf directory too. Doubles as the length probe:
                               no HEAD.

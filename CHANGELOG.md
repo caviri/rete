@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The open reads the first 128 KiB, not 64 KiB** (no format change). Every reader takes its first read, which is also the length probe, at 128 KiB (`v06::FIRST_READ`, and the HTTP reader's `OPEN_READ` follows it): the CLI, Python, R, Java, Node, MCPB and the browser engines all go through the one constant. A front of 64 to 128 KiB (a big card, or a root with leaf lists) is now one request instead of two. Measured against 0.5.6 on the three published files and the OC sample (120 ms per request, 4 MB/s): `card-url` goes from 2 requests to 1 on OpenAIRE, OC Meta and nanopubs (0.37 to 0.21 s on OpenAIRE), and a cold bound-subject lookup from 8 rounds to 7 on nanopubs and from 5 to 4 on the OC sample. It costs 64 KiB more per open, about 16 ms at 4 MB/s. The writer's 40 KiB root budget is unchanged. SPEC §4.6, docs/hosting.md and the CLI docs say 128 KiB.
+
 ## [0.5.6] - 2026-11-09
 
 ### Fixed

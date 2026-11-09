@@ -1883,7 +1883,7 @@ URL):
   where both start;
 - merges ranges of one batch that lie at most 32 KiB apart into one request
   (never past 8 MiB), and slices them apart again;
-- opens with one `bytes=0-65535` GET, which is also the length probe (the
+- opens with one `bytes=0-131071` GET, which is also the length probe (the
   total in its `Content-Range`): no `HEAD`. A file of at most **8 MiB**
   (`RETE_HTTP_WHOLE_MB`, `0` = never) is then fetched whole in one more
   request, and no query on it reads the network again: 2 round trips per query
@@ -1924,7 +1924,7 @@ the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.
 
 ### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
 Fetch only the embedded [Dataset Card](dataset-cards.md). On a format `0x06`
-file that is **one first read** of the first 64 KiB, which holds the header, the
+file that is **one first read** of the first 128 KiB, which holds the header, the
 root, the card region (card and build record) and the statistics
 ([SPEC §4.6](SPEC.md#46-opening-a-file)), and **at most one follow-up**, sized
 from the header, when the front is longer than that. A small remote file is not
