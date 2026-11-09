@@ -117,18 +117,13 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
         Some(path) => {
             let text = std::fs::read_to_string(path)
                 .map_err(|e| anyhow::anyhow!("reading --card-file {path}: {e}"))?;
-            serde_json::from_str(&text).map_err(|e| {
-                // The top level is reserved for rete-defined fields; point a
-                // stray key at the bag instead of leaving a bare serde error.
-                // (The wording is `rete-core`'s, so the CLI, the browser
-                // builder and every binding say the same thing.)
-                let hint = if e.to_string().contains("unknown field") {
-                    rete_core::card::UNKNOWN_FIELD_HINT
-                } else {
-                    ""
-                };
-                anyhow::anyhow!("parsing --card-file {path}: {e}{hint}")
-            })?
+            // Format 0x07 files have a card annex, so the card file may carry
+            // an `extra` or a `description` past the 8 KiB hot cap: the writer
+            // moves such a field to the annex. (The top level stays reserved
+            // for rete-defined fields, with `rete-core`'s wording, so the CLI,
+            // the browser builder and every binding say the same thing.)
+            CardInput::from_json_str_with_annex(&text)
+                .map_err(|e| anyhow::anyhow!("parsing --card-file {path}: {e}"))?
         }
         None => CardInput::default(),
     };
@@ -155,7 +150,7 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
     // canonicalization, the `extra` bounds — is `rete_core::card::CardInput`'s,
     // so a card written from Python or the browser is held to exactly what
     // `--card-file` is held to. All the CLI adds is the `anyhow` face.
-    c.normalize().map_err(|e| anyhow::anyhow!(e))
+    c.normalize_with_annex().map_err(|e| anyhow::anyhow!(e))
 }
 
 /// The `--card-file` as the build record names it: file name (never the path)
@@ -190,7 +185,7 @@ pub(crate) fn load_card(bytes: &[u8]) -> anyhow::Result<Option<DatasetCard>> {
 pub(crate) fn load_card_ranged<R: rete_core::RangeReader>(
     reader: &R,
 ) -> anyhow::Result<Option<DatasetCard>> {
-    match rete_core::read_metadata_ranged(reader)? {
+    match rete_core::read_card_full_ranged(reader)? {
         None => Ok(None),
         Some(bytes) => Ok(Some(parse_card(&bytes)?)),
     }
@@ -240,7 +235,7 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
     let header = Header::from_bytes(&head)?;
     let meta = (header.metadata_offset, header.metadata_len);
     let build = (header.build_info_offset, header.build_info_len);
-    let (m, b) = if header.version == rete_core::v06::VERSION {
+    let (m, b) = if rete_core::v06::reads(header.version) {
         // 0x06: card and record share the card region, right after the root.
         let (_, m, b) = rete_core::read_card_and_build_info_with_header(reader)?;
         (m, b)
@@ -361,6 +356,15 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
             // so a value is always unambiguous about its type.
             let _ = writeln!(out, "      {k} = {v}");
         }
+    }
+    if let Some(a) = &card.annex {
+        let _ = writeln!(
+            out,
+            "  {:<13}: {} ({} bytes, cold) — `--full` reads it",
+            "card annex",
+            a.fields.join(", "),
+            a.bytes
+        );
     }
 
     let _ = writeln!(out, "  {:<13}: {}", "triples", card.triple_count);
@@ -608,13 +612,17 @@ pub(crate) fn card_cmd(
     json: bool,
     format: Option<&str>,
     sha256: Option<&str>,
+    full: bool,
 ) -> anyhow::Result<()> {
     let format = CardFormat::resolve(json, format)?;
     // The CARD tier: header + one coalesced metadata+build-info range — the
     // same reads `card-url` does over HTTP, so a 50 GB local file costs KBs to
     // describe.
     let reader = crate::commands::range_source::LocalRangeReader::open(file)?;
-    let read = load_card_and_build_ranged(&reader)?;
+    let mut read = load_card_and_build_ranged(&reader)?;
+    if full {
+        merge_annex(&mut read, &reader)?;
+    }
     match &read.card {
         // A cardless file can still answer the one question the header alone
         // decides — and staying silent about it is what #189 was about.
@@ -1558,7 +1566,19 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     // 1. What the file says about itself today: the CARD tier.
     let reader = LocalRangeReader::open(input)?;
     let file_len = rete_core::RangeReader::len(&reader);
-    let old = load_card_and_build_ranged(&reader)?;
+    let mut old = load_card_and_build_ranged(&reader)?;
+    // The hot card has no `extra` / `description` that went to the annex; a
+    // re-card carries the curated fields whole, so bring them back first.
+    if old.card.as_ref().is_some_and(|c| c.annex.is_some()) {
+        if let Some(full) = rete_core::read_card_full_ranged(&reader)? {
+            let full = parse_card(&full)?;
+            if let Some(c) = old.card.as_mut() {
+                c.extra = full.extra;
+                c.description = full.description;
+                c.annex = None;
+            }
+        }
+    }
     let curated = curated_for_recard(old.card.as_ref(), opts)?;
     rec.lap(Phase::Read);
 
@@ -1838,6 +1858,26 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     Ok(())
 }
 
+/// `--full`: bring the card annex's fields (format 0x07) back into the card.
+/// One more range request, only when the hot card says an annex exists.
+pub(crate) fn merge_annex<R: rete_core::RangeReader>(
+    read: &mut CardRead,
+    reader: &R,
+) -> anyhow::Result<()> {
+    if read.card.as_ref().is_none_or(|c| c.annex.is_none()) {
+        return Ok(());
+    }
+    if let Some(bytes) = rete_core::read_card_full_ranged(reader)? {
+        let full = parse_card(&bytes)?;
+        if let Some(c) = read.card.as_mut() {
+            c.extra = full.extra;
+            c.description = full.description;
+            c.annex = None;
+        }
+    }
+    Ok(())
+}
+
 /// The curated half of a re-card — see [`recard_cmd`].
 fn curated_for_recard(
     old: Option<&DatasetCard>,
@@ -1848,7 +1888,7 @@ fn curated_for_recard(
             anyhow::bail!("--keep-curated: the input has no card to keep the curated fields of");
         };
         return CardInput::from_card(old)
-            .normalize()
+            .normalize_with_annex()
             .map_err(|e| anyhow::anyhow!("the input card's curated fields: {e}"));
     }
     if opts.card.requested() {
@@ -2206,7 +2246,7 @@ mod tests {
     #[test]
     fn the_description_flag_is_bounded_like_the_card_file() {
         let args = CardArgs {
-            description: Some("x".repeat(rete_core::card::CARD_DESCRIPTION_MAX_BYTES + 1)),
+            description: Some("x".repeat(rete_core::card::CARD_ANNEX_FIELD_MAX_BYTES + 1)),
             ..Default::default()
         };
         let err = load_curated(&args).unwrap_err().to_string();

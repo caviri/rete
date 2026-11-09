@@ -32,6 +32,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{Header, RDF_TYPE};
+/// What a hot card says about its annex (see [`DatasetCard::annex`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardAnnexMarker {
+    /// The card fields that live in the annex.
+    pub fields: Vec<String>,
+    /// The annex's size, uncompressed JSON bytes.
+    pub bytes: u64,
+}
+
 /// The embeddable dataset card. Curated fields come from `rete build` flags or a
 /// `--card-file` JSON document; the statistics are derived from the data at build
 /// time. Absent optional/empty fields are omitted from the JSON.
@@ -125,6 +134,13 @@ pub struct DatasetCard {
     /// writing, never when reading.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, serde_json::Value>,
+    /// Set by the format layer when the file's card has an **annex** (format
+    /// `0x07`): the fields named here were too big for the hot card and live in
+    /// a cold section; `rete card --full` and
+    /// [`crate::file::read_card_full_ranged`] bring them back. Never authored:
+    /// [`CardInput`] has no such field, and the writer states its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annex: Option<CardAnnexMarker>,
 
     pub triple_count: u64,
     pub quad_count: u64,
@@ -585,7 +601,7 @@ impl TextIndexSignal {
         if header.text_index_len == 0 {
             return TextIndexSignal::default();
         }
-        if header.version == crate::v06::VERSION {
+        if crate::v06::reads(header.version) {
             return match crate::v06::open::read_signals(reader) {
                 Ok((Some((bytes, tt)), _)) => TextIndexSignal {
                     present: true,
@@ -652,7 +668,7 @@ impl LabelIndexSignal {
         let Some(s) = header.label_index_section() else {
             return LabelIndexSignal::default();
         };
-        if header.version == crate::v06::VERSION {
+        if crate::v06::reads(header.version) {
             return match crate::v06::open::read_signals(reader) {
                 Ok((_, Some((bytes, entries)))) => LabelIndexSignal {
                     present: true,
@@ -926,9 +942,48 @@ impl CardInput {
     /// serde-typed face of them, so `rete build --card-file`, the browser
     /// builder and every language binding reject the same documents with the
     /// same words.
-    pub fn normalize(mut self) -> Result<Self, String> {
+    pub fn normalize(self) -> Result<Self, String> {
+        self.normalize_max(
+            crate::card_input::CARD_DESCRIPTION_MAX_BYTES,
+            crate::card_input::CARD_EXTRA_MAX_BYTES,
+        )
+    }
+
+    /// [`normalize`](Self::normalize) for a card that goes into a format `0x07`
+    /// file: `extra` and `description` may be up to
+    /// [`CARD_ANNEX_FIELD_MAX_BYTES`](crate::card_input::CARD_ANNEX_FIELD_MAX_BYTES);
+    /// the writer moves a field over the 8 KiB hot cap to the card annex.
+    pub fn normalize_with_annex(self) -> Result<Self, String> {
+        let max = crate::card_input::CARD_ANNEX_FIELD_MAX_BYTES;
+        self.normalize_max(max, max)
+    }
+
+    /// [`from_json_str`](Self::from_json_str) for a card that may have an annex
+    /// (see [`normalize_with_annex`](Self::normalize_with_annex)): the
+    /// `description` is bounded by the annex cap instead of the hot one.
+    pub fn from_json_str_with_annex(text: &str) -> Result<Self, String> {
+        let mut doc: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        // The description's own parse-time cap is the hot one; take it out and
+        // bound it by the annex cap here.
+        let description = match doc.as_object_mut().and_then(|o| o.remove("description")) {
+            None | Some(serde_json::Value::Null) => None,
+            Some(v) => Some(crate::card_input::description_text(&v)?),
+        };
+        let mut parsed: CardInput = serde_json::from_value(doc).map_err(|e| {
+            let hint = if e.to_string().contains("unknown field") {
+                crate::card_input::UNKNOWN_FIELD_HINT
+            } else {
+                ""
+            };
+            format!("{e}{hint}")
+        })?;
+        parsed.description = description;
+        parsed.normalize_with_annex()
+    }
+
+    fn normalize_max(mut self, description_max: usize, extra_max: usize) -> Result<Self, String> {
         if let Some(d) = &self.description {
-            crate::card_input::check_description_len(d)?;
+            crate::card_input::check_description_len_max(d, description_max)?;
         }
         self.keywords = crate::card_input::normalize_string_list(
             "keywords",
@@ -937,7 +992,7 @@ impl CardInput {
         self.theme = crate::card_input::normalize_themes(std::mem::take(&mut self.theme))?;
         let bag: serde_json::Map<String, serde_json::Value> =
             std::mem::take(&mut self.extra).into_iter().collect();
-        self.extra = crate::card_input::normalize_extra(bag)?
+        self.extra = crate::card_input::normalize_extra_max(bag, extra_max)?
             .into_iter()
             .collect();
         if let Some(b) = &self.base_iri {
@@ -2689,13 +2744,14 @@ fn split_namespace(term: &str) -> Option<String> {
 
 /// Read the dataset card embedded in a `.rete` file image, or `None` if it has
 /// no metadata section. Parses only the header and the metadata range — it
-/// never decodes the dictionary, index or pyramid, so a client that just built
-/// a file can read back the card it wrote for the price of a slice.
+/// never decodes the dictionary, index or pyramid, so a client that just built a
+/// file can read back the card it wrote for the price of a slice.
+/// A card with an annex (format `0x07`) comes back whole: the annex is merged in.
 ///
 /// The ranged (remote) companion lives in `rete-cli`, which has the HTTP reader.
 pub fn load_card(bytes: &[u8]) -> Result<Option<DatasetCard>, String> {
     if crate::v06::open::is_v06(bytes) {
-        return match crate::file::read_metadata_ranged(&crate::reader::SliceReader::new(bytes))
+        return match crate::file::read_card_full_ranged(&crate::reader::SliceReader::new(bytes))
             .map_err(|e| e.to_string())?
         {
             Some(b) => Ok(Some(DatasetCard::from_json_bytes(&b)?)),

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Format specification · rete docs</title>
-  <meta name="description" content="Status: Format generation 2 (header byte 0x06), written by every writer; generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
+  <meta name="description" content="Status: Format generation 2 (header byte 0x07), written by every writer; 0x06, the same generation one step earlier, and generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
   <link rel="canonical" href="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Format specification · rete docs" />
-  <meta property="og:description" content="Status: Format generation 2 (header byte 0x06), written by every writer; generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
+  <meta property="og:description" content="Status: Format generation 2 (header byte 0x07), written by every writer; 0x06, the same generation one step earlier, and generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
   <meta property="og:url" content="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Format specification · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Format specification · rete docs" />
-  <meta name="twitter:description" content="Status: Format generation 2 (header byte 0x06), written by every writer; generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
+  <meta name="twitter:description" content="Status: Format generation 2 (header byte 0x07), written by every writer; 0x06, the same generation one step earlier, and generation 1 (0x05, frozen 2026-07-14) is read, never written (§4.9)." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta name="rete:section" content="Reference" />
   <script>
@@ -617,7 +617,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <article class="content">
 <p class="parent-link"><a href="reference.html">Back to API and technical reference</a></p>
 <h1 id="rete--a-cloud-native-range-queryable-rdf-graph-file">Rete — a cloud-native, range-queryable RDF graph file</h1>
-<p><strong>Status:</strong> Format generation <strong>2</strong> (header byte <code>0x06</code>), written by every writer; generation <strong>1</strong> (<code>0x05</code>, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
+<p><strong>Status:</strong> Format generation <strong>2</strong> (header byte <code>0x07</code>), written by every writer; <code>0x06</code>, the same generation one step earlier, and generation <strong>1</strong> (<code>0x05</code>, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
 <blockquote>
 <p>One file. Put it on S3, GitHub, or any HTTP server that honors <code>Range</code>.
 Give a client the URL. Run SPARQL. No database server.</p>
@@ -679,15 +679,16 @@ aggregated edges). Each deeper level expands supernodes into their members.</li>
 </ol>
 <hr />
 <h2 id="4-file-layout">4. File layout</h2>
-<p>The current layout is <strong>format <code>0x06</code></strong>, stable generation <strong>2</strong>. Everything a
+<p>The current layout is <strong>format <code>0x07</code></strong>, stable generation <strong>2</strong> (<code>0x06</code>, its
+predecessor, is still read; §4.10 lists what <code>0x07</code> changed). Everything a
 reader needs to plan a query sits at the <strong>front</strong> of the file, inside the
 first read: a 128-byte header, the root block, the Dataset Card, the planner
 statistics and every leaf directory. The payload follows, clustered by
 section. The payload blocks themselves (dictionary chunks §5.1, permutation
 tiles §6.1–6.2, quad tiles §6.5, label blocks §6.4, text postings §6.3) are
 byte-identical to generation 1; only their framing and their directories
-moved. <code>rete convert</code> turns a <code>0x05</code> file into a <code>0x06</code> one by copying them
-(§4.9, <a href="cli.html">cli</a>).</p>
+moved. <code>rete convert</code> turns a <code>0x05</code> or <code>0x06</code> file into a <code>0x07</code> one by
+copying them (§4.9, §4.10, <a href="cli.html">cli</a>).</p>
 <pre><code>0            HEADER, 128 B: counts, codecs, presence bits, card and root
              digests, content hash (§4.1)
 128          ROOT BLOCK: the section table (kind, offset, length, digest)
@@ -695,20 +696,24 @@ moved. <code>rete convert</code> turns a <code>0x05</code> file into a <code>0x0
              CARD REGION: card | build record | free space (§4.4)
 front_base   FRONT SECTIONS: stats + schema, then the leaf directories of
              the dictionary, the index, the quad index, the label index and
-             the text index (§4.3)
+             the text index (§4.3), then the label index's root node (§6.4)
 data_offset  DATA SECTIONS, clustered: dictionary chunks, index tiles, quad
-             tiles, label blocks, text postings, community pyramid (§4.5)
-file_len - 8 FOOTER: 06 00 00 00 "RETE"
+             tiles, label blocks, text postings, community pyramid (§4.5),
+             and last the card annex when there is one (§4.4)
+file_len - 8 FOOTER: 07 00 00 00 "RETE"
 </code></pre>
 <p><code>front_base = 128 + root length + card region length</code>. A reader's first
 request is <code>bytes=0-65535</code> (§4.6); it holds the header, the root, the card and
-the statistics of every measured file (OpenCitations Meta's root is 37 KiB),
-and on a small file every leaf directory as well.</p>
+the statistics of every measured file, and on a small file every leaf directory
+as well. In <code>0x06</code> the label index's root node sat in the root (37 KiB of
+OpenCitations Meta's 41 KiB root, 47 KiB of OpenAIRE's 48 KiB: it is
+incompressible); <code>0x07</code> moves it out (§4.10), so the root is the section table
+and the small unit roots.</p>
 <img class="img-sq" src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 64 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
 <h3 id="41-header-128-bytes-little-endian">4.1 Header (128 bytes, little-endian)</h3>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
-<tr><td>4</td><td>1</td><td>format version <code>0x06</code></td></tr>
+<tr><td>4</td><td>1</td><td>format version: <code>0x07</code> (written), or <code>0x06</code> (read, §4.10)</td></tr>
 <tr><td>5</td><td>1</td><td>flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5)</td></tr>
 <tr><td>6</td><td>2</td><td>header length (128)</td></tr>
 <tr><td>8</td><td>16</td><td>content hash (§4.7) — also an ETag-like id</td></tr>
@@ -773,14 +778,18 @@ order:</p>
 <tr><td>4</td><td><code>quad-leaves</code></td><td>front</td><td>the quad index's graph directory (§6.5), then its tile directories, in leaves</td></tr>
 <tr><td>5</td><td><code>label-leaves</code></td><td>front</td><td>the label index's directory nodes (§6.4)</td></tr>
 <tr><td>6</td><td><code>text-leaves</code></td><td>front</td><td>the text index's token table, in leaves</td></tr>
+<tr><td>7</td><td><code>label-root</code></td><td>front</td><td><code>0x07</code>: the label index's root node (§6.4), stored as the label index encodes it (already compressed), after every other front section; read only when a label search runs</td></tr>
 <tr><td>16</td><td><code>dict</code></td><td>data</td><td>dictionary chunks: predicates, shared, subject-only, object-only</td></tr>
 <tr><td>17</td><td><code>index</code></td><td>data</td><td>permutation tiles: SPO, POS, OSP, SOP, PSO, OPS (those the mask stores)</td></tr>
 <tr><td>18</td><td><code>quad</code></td><td>data</td><td>quad tiles (§4.5)</td></tr>
 <tr><td>19</td><td><code>labels</code></td><td>data</td><td>label data blocks, in key order</td></tr>
 <tr><td>20</td><td><code>text</code></td><td>data</td><td>postings, in token order</td></tr>
 <tr><td>21</td><td><code>pyramid</code></td><td>data</td><td>the community pyramid-meta (§7.3); optional and cold, only the overview reads it</td></tr>
+<tr><td>22</td><td><code>card-annex</code></td><td>data</td><td><code>0x07</code>: the card fields too big for the hot card (§4.4), the internal codec over a JSON object; optional, cold, always the <strong>last</strong> section</td></tr>
 </tbody></table>
-<p>A reader ignores a kind it does not know (<code>verify</code> still checks its digest).</p>
+<p>A reader ignores a kind it does not know (<code>verify</code> still checks its digest),
+except that a <code>0x06</code> file has no kind 7 and no kind 22: a reader refuses one
+that does.</p>
 <p>The <strong>unit roots</strong> are the first level of every two-level directory, plus the
 small fixed facts that would otherwise cost a read. Tags: <code>1</code> dictionary, <code>2</code>
 index, <code>3</code> quad index, <code>4</code> label index, <code>5</code> text index. All integers are
@@ -801,7 +810,10 @@ order number, tile count and per leaf: entry count, offset, stored length,
 the first tile's first <code>(g, a)</code>, the last tile's last <code>(g, a)</code>, and the first
 tile's offset within <code>quad</code>.</li>
 <li><strong>Label index</strong>: the length of the data blocks, then the section's 32-byte
-preamble (digest zeroed) and root node, as §6.4 encodes them.</li>
+preamble (digest zeroed), as §6.4 encodes it. <code>0x06</code> followed the preamble
+with the root node; in <code>0x07</code> the root node is the <code>label-root</code> section, whose
+offset, length and digest are its entry in the section table (the root's pointer
+to it), and whose length is the preamble's <code>root_len</code>.</li>
 <li><strong>Text index</strong>: the scope block (§6.3; empty for the default scope), token
 count, then per leaf: entry count, offset, stored length and its first token.</li>
 </ul>
@@ -859,6 +871,29 @@ the data region byte for byte (its digests, and so the root, unchanged). A card
 equal to the current one stays where it is, so a record-only update
 (<code>card-audit --write-costs</code>) never changes the content hash.</p>
 <p>A file shorter than 1 KiB is padded to 1 KiB inside its card region.</p>
+<p><strong>Card annex (<code>0x07</code>).</strong> The hot card is what every reader fetches on every
+open, so its two open-ended authored fields, <code>description</code> and <code>extra</code>, stay
+under 8 KiB each. A card that has a field past that (the OpenCitations Index
+card's <code>extra</code> is 13 KB: 114 source checksums) keeps it in the <strong>annex</strong>, a
+cold section (kind 22) that only <code>rete card --full</code>, <code>rete card-url --full</code> and
+<code>rete_core::read_card_full_ranged</code> read. The writer moves a field <strong>whole</strong>: the
+annex is a JSON object whose keys are the moved fields, and the hot card has no
+such field but a marker, <code>"annex": {"fields": ["extra"], "bytes": N}</code>, so a
+reader knows there is more. The annex is the last data section, so its digest is
+in the root's section table and inside the content hash through the root
+digest, and <code>verify</code> checks it. The input side is a cap, not a flag: the CLI
+accepts up to 1 MiB for each of the two fields (<code>CARD_ANNEX_FIELD_MAX_BYTES</code>)
+and the format layer moves whichever is over 8 KiB; the library's
+<code>CardInput::normalize</code> keeps the 8 KiB rejection, and
+<code>normalize_with_annex</code> is the 1 MiB one.</p>
+<p>A re-card that keeps the annex unchanged (<code>--keep-curated</code> of a card whose
+fields did not change, or a record-only update) is in place as before. One that
+changes, adds or removes the annex rewrites the file's tail and the section
+table entry, hence the root digest: that is a copy (a new front, the data region
+byte for byte up to the annex, the new annex, the footer), never an in-place
+write, because the header alone is the commit point of an in-place re-card. A
+<code>0x06</code> file has no annex: re-carding it with a field over the cap fails and says
+to <code>rete convert</code> first.</p>
 <h3 id="45-data-region">4.5 Data region</h3>
 <p>The data sections follow the front in the order of the kind table, each one
 contiguous, with nothing interleaved: no container prefixes, no directories, no
@@ -883,7 +918,7 @@ start, end and total must all match); no <code>HEAD</code> is sent. A remote fil
 at most 8 MiB is then fetched whole in one more read. Byte 4 picks the
 reader: <code>0x05</code> continues with the generation-1 open (§4.9), served from
 these bytes where it can.</li>
-<li><code>0x06</code>: parse the header; take the root (and in the rare case it does not
+<li><code>0x06</code> or <code>0x07</code>: parse the header; take the root (and in the rare case it does not
 fit, read the rest of it); check the root digest; decode the section table
 and the unit roots. The card, the record and the statistics are in hand, and
 so is every leaf inside the first 64 KiB.</li>
@@ -900,11 +935,12 @@ against this layout: it changes no round trip of the 83 measured runs or of the
 Meta projection, the predicate pair grows by 39–44%, and <code>convert</code> would have
 to re-tile every permutation instead of copying its tiles.</p>
 <h3 id="47-content-hash-and-verify">4.7 Content hash and verify</h3>
-<pre><code>content hash = BLAKE3("rete/0x06" ‖ header[4..8] ‖ header[48..80]
+<pre><code>content hash = BLAKE3("rete/0x07" ‖ header[4..8] ‖ header[48..80]
                       ‖ card length (u32) ‖ card digest
                       ‖ root length (u32) ‖ root digest)[0..16]
 </code></pre>
-<p><code>header[4..8]</code> is the version, the flags and the header length;
+<p>(<code>"rete/0x06"</code> for a <code>0x06</code> file.) <code>header[4..8]</code> is the version, the flags and
+the header length;
 <code>header[48..80]</code> the counts, the mask, the codecs, the pyramid levels and the
 presence bits. Through the root digest the hash covers every section digest, so
 every byte of every section; through the card digest, the card. It hashes no
@@ -1114,6 +1150,36 @@ range of the content hash itself, but its BLAKE3 digest is the <strong>seal</str
 section of the index container (kind <code>3</code>), which is — so it stays part of the
 file's identity, a current <code>verify</code> checks it against the seal, and an older
 <code>verify</code> (which refuses to open such a file anyway, on the seal) still passes.</p>
+<h3 id="410-format-0x07-and-compatibility">4.10 Format <code>0x07</code> and compatibility</h3>
+<p><code>0x07</code> is <code>0x06</code> plus two changes; every payload block, every leaf and every unit
+root other than the label one is byte-identical. The same code reads both: the
+header's version byte says which one a file is.</p>
+<ol>
+<li><strong>The label index's root node leaves the root.</strong> In <code>0x06</code> the label unit root
+held the 32-byte preamble and the root node, 47 KB of OpenAIRE's 48 KB root and
+37 KB of Meta's 41 KB, and it does not compress. In <code>0x07</code> the unit root keeps
+the preamble (the entry count, the root's length, and the data length), and
+the root node is a front section of its own (kind 7, <code>label-root</code>, placed after
+the other leaves, so the statistics and the leaf directories sit nearer the
+front). The root's pointer to it is its table entry (offset, length, digest), and
+it is read, digest-checked, only when a label search first runs (the label
+index is already opened lazily). A search over a small file whose front is in the first read
+is already in hand; over a big one it costs one more request, the same bytes
+it used to carry in every open.</li>
+<li><strong>The card annex</strong> (kind 22, §4.4).</li>
+</ol>
+<p>Other differences: the version byte, the footer (<code>07 00 00 00 "RETE"</code>), the
+hash domain (<code>"rete/0x07"</code>) and the <code>format_version</code> a card is stamped with
+(<code>7</code>).</p>
+<p><strong>Compatibility.</strong> Writers write <code>0x07</code> only; the reader reads <code>0x05</code>, <code>0x06</code> and
+<code>0x07</code>. A reader that predates <code>0x07</code> refuses the file at the header, by name:
+<code>unsupported .rete format 0x07; this Rete build reads 0x05..=0x06</code>. It cannot
+read a <code>0x07</code> file as a <code>0x06</code> one with an unknown section, because the root's
+label unit no longer holds the root node. There is no backward-compatibility
+promise before 1.0.0: <code>rete convert</code> turns a <code>0x05</code> or a <code>0x06</code> file into a
+<code>0x07</code> one, copying the payload, moving the label root out of the root and keeping
+the card (no annex unless a card field is over the hot cap); the catalog is
+converted in step, and the <code>0x06</code> reader is removed once it is.</p>
 <hr />
 <h2 id="5-dictionary">5. Dictionary</h2>
 <img class="img-sq" src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
@@ -1501,6 +1567,10 @@ the dictionary. A remote search reads the section's first <code>min(len, 64 KiB)
 (preamble + root), then one node per level and the data blocks of the matching run,
 one at a time, until <code>limit</code> entries are found or the run ends. A card reader learns
 <code>entry_count</code> from the 32-byte preamble alone (<code>signals.label_index</code>).</p>
+<p><strong><code>0x07</code>:</strong> the root node is its own front section (kind 7, <code>label-root</code>, §4.10), not
+part of the root block, so a remote search reads the preamble from the root, the
+root node (one request, digest-checked), then the nodes and blocks as above.
+The 32-byte preamble stays in the root, where a card reader finds <code>entry_count</code>.</p>
 <p><strong>Compatibility:</strong> <code>0x05</code> is stable format generation 1. Every stable reader from
 Rete <strong>0.3.0</strong> onward reads <code>0x05</code> — there is no 1.0.0; the generation was frozen
 in the 0.3 line and the release version is a separate number.

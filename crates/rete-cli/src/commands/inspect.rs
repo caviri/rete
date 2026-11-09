@@ -17,7 +17,7 @@ pub(crate) fn info(file: &str, raw: bool) -> anyhow::Result<()> {
     let reader = LocalRangeReader::open(file)?;
     let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
     let header = rete_core::Header::from_bytes(&head)?;
-    if header.version == rete_core::v06::VERSION {
+    if rete_core::v06::reads(header.version) {
         print_v06_layout(&reader, raw)?;
     } else {
         print_v05_layout(&header, raw);
@@ -426,11 +426,12 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
         let bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
         if bad.is_empty() {
             println!(
-                "OK — {} (format 0x06)",
+                "OK — {} (format 0x{:02x})",
                 match section {
                     Some(s) => format!("section {s} matches its digest"),
                     None => "content hash matches, and every section digest".to_string(),
-                }
+                },
+                head[4]
             );
             return Ok(());
         }
@@ -441,7 +442,7 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
         );
     }
     if section.is_some() {
-        anyhow::bail!("--section needs a format 0x06 file");
+        anyhow::bail!("--section needs a format 0x06 or 0x07 file");
     }
     if rete_core::verify_ranged(&reader)? {
         println!("OK — content hash matches");
@@ -634,7 +635,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
     use rete_core::v06::{F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
     let (h, root) = open::read_front(reader)?;
     let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
-    println!("format version: 0x06");
+    println!("format version: 0x{:02x}", h.version);
     if raw {
         println!("{h:#?}");
     }
@@ -649,7 +650,8 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
     .map(|(_, n)| n)
     .collect();
     println!(
-        "format 0x06 — {} bytes, content hash {}",
+        "format 0x{:02x} — {} bytes, content hash {}",
+        h.version,
         h.file_len,
         hex(&h.content_hash)
     );
@@ -665,6 +667,28 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         "  front        : root {} B at 128, card region {} B (card {} B, record {} B), data at {}",
         h.root_len, h.card_region_len, h.card_len, h.build_len, h.data_offset
     );
+    // What the root holds, decompressed, by unit: the label index's root node
+    // is its own section in 0x07 and no longer in here.
+    {
+        use rete_core::v06::tag;
+        let sizes: Vec<String> = [
+            (tag::DICT, "dict"),
+            (tag::INDEX, "index"),
+            (tag::QUAD, "quad"),
+            (tag::LABELS, "labels"),
+            (tag::TEXT, "text"),
+        ]
+        .into_iter()
+        .filter_map(|(t, n)| root.unit(t).map(|u| format!("{n} {}", u.len())))
+        .collect();
+        println!("  root units   : {} B (decompressed)", sizes.join(", "));
+    }
+    if let Some(s) = root.section(kind::CARD_ANNEX) {
+        println!(
+            "  card annex   : {} B stored, cold (`rete card --full`)",
+            s.len
+        );
+    }
     // The counts and the record's size under the keys the gate's fixture check
     // (tests/gate/fixtures.sh) and the scripts read them by.
     println!("  counts       :");

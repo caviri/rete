@@ -1,6 +1,6 @@
 # Rete — a cloud-native, range-queryable RDF graph file
 
-**Status:** Format generation **2** (header byte `0x06`), written by every writer; generation **1** (`0x05`, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · **File extension:** `.rete` · **Header magic:** `RETE`
+**Status:** Format generation **2** (header byte `0x07`), written by every writer; `0x06`, the same generation one step earlier, and generation **1** (`0x05`, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · **File extension:** `.rete` · **Header magic:** `RETE`
 
 > One file. Put it on S3, GitHub, or any HTTP server that honors `Range`.
 > Give a client the URL. Run SPARQL. No database server.
@@ -71,15 +71,16 @@ Three transformations make it range-queryable:
 
 ## 4. File layout
 
-The current layout is **format `0x06`**, stable generation **2**. Everything a
+The current layout is **format `0x07`**, stable generation **2** (`0x06`, its
+predecessor, is still read; §4.10 lists what `0x07` changed). Everything a
 reader needs to plan a query sits at the **front** of the file, inside the
 first read: a 128-byte header, the root block, the Dataset Card, the planner
 statistics and every leaf directory. The payload follows, clustered by
 section. The payload blocks themselves (dictionary chunks §5.1, permutation
 tiles §6.1–6.2, quad tiles §6.5, label blocks §6.4, text postings §6.3) are
 byte-identical to generation 1; only their framing and their directories
-moved. `rete convert` turns a `0x05` file into a `0x06` one by copying them
-(§4.9, [cli](cli.md)).
+moved. `rete convert` turns a `0x05` or `0x06` file into a `0x07` one by
+copying them (§4.9, §4.10, [cli](cli.md)).
 
 ```
 0            HEADER, 128 B: counts, codecs, presence bits, card and root
@@ -89,16 +90,20 @@ moved. `rete convert` turns a `0x05` file into a `0x06` one by copying them
              CARD REGION: card | build record | free space (§4.4)
 front_base   FRONT SECTIONS: stats + schema, then the leaf directories of
              the dictionary, the index, the quad index, the label index and
-             the text index (§4.3)
+             the text index (§4.3), then the label index's root node (§6.4)
 data_offset  DATA SECTIONS, clustered: dictionary chunks, index tiles, quad
-             tiles, label blocks, text postings, community pyramid (§4.5)
-file_len - 8 FOOTER: 06 00 00 00 "RETE"
+             tiles, label blocks, text postings, community pyramid (§4.5),
+             and last the card annex when there is one (§4.4)
+file_len - 8 FOOTER: 07 00 00 00 "RETE"
 ```
 
 `front_base = 128 + root length + card region length`. A reader's first
 request is `bytes=0-65535` (§4.6); it holds the header, the root, the card and
-the statistics of every measured file (OpenCitations Meta's root is 37 KiB),
-and on a small file every leaf directory as well.
+the statistics of every measured file, and on a small file every leaf directory
+as well. In `0x06` the label index's root node sat in the root (37 KiB of
+OpenCitations Meta's 41 KiB root, 47 KiB of OpenAIRE's 48 KiB: it is
+incompressible); `0x07` moves it out (§4.10), so the root is the section table
+and the small unit roots.
 
 <img src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 64 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
 
@@ -107,7 +112,7 @@ and on a small file every leaf directory as well.
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version `0x06` |
+| 4 | 1 | format version: `0x07` (written), or `0x06` (read, §4.10) |
 | 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5) |
 | 6 | 2 | header length (128) |
 | 8 | 16 | content hash (§4.7) — also an ETag-like id |
@@ -180,14 +185,18 @@ order:
 | 4 | `quad-leaves` | front | the quad index's graph directory (§6.5), then its tile directories, in leaves |
 | 5 | `label-leaves` | front | the label index's directory nodes (§6.4) |
 | 6 | `text-leaves` | front | the text index's token table, in leaves |
+| 7 | `label-root` | front | `0x07`: the label index's root node (§6.4), stored as the label index encodes it (already compressed), after every other front section; read only when a label search runs |
 | 16 | `dict` | data | dictionary chunks: predicates, shared, subject-only, object-only |
 | 17 | `index` | data | permutation tiles: SPO, POS, OSP, SOP, PSO, OPS (those the mask stores) |
 | 18 | `quad` | data | quad tiles (§4.5) |
 | 19 | `labels` | data | label data blocks, in key order |
 | 20 | `text` | data | postings, in token order |
 | 21 | `pyramid` | data | the community pyramid-meta (§7.3); optional and cold, only the overview reads it |
+| 22 | `card-annex` | data | `0x07`: the card fields too big for the hot card (§4.4), the internal codec over a JSON object; optional, cold, always the **last** section |
 
-A reader ignores a kind it does not know (`verify` still checks its digest).
+A reader ignores a kind it does not know (`verify` still checks its digest),
+except that a `0x06` file has no kind 7 and no kind 22: a reader refuses one
+that does.
 
 The **unit roots** are the first level of every two-level directory, plus the
 small fixed facts that would otherwise cost a read. Tags: `1` dictionary, `2`
@@ -209,7 +218,10 @@ unsigned LEB128 varints, byte strings are length-prefixed.
   the first tile's first `(g, a)`, the last tile's last `(g, a)`, and the first
   tile's offset within `quad`.
 - **Label index**: the length of the data blocks, then the section's 32-byte
-  preamble (digest zeroed) and root node, as §6.4 encodes them.
+  preamble (digest zeroed), as §6.4 encodes it. `0x06` followed the preamble
+  with the root node; in `0x07` the root node is the `label-root` section, whose
+  offset, length and digest are its entry in the section table (the root's pointer
+  to it), and whose length is the preamble's `root_len`.
 - **Text index**: the scope block (§6.3; empty for the default scope), token
   count, then per leaf: entry count, offset, stored length and its first token.
 
@@ -273,6 +285,31 @@ equal to the current one stays where it is, so a record-only update
 
 A file shorter than 1 KiB is padded to 1 KiB inside its card region.
 
+**Card annex (`0x07`).** The hot card is what every reader fetches on every
+open, so its two open-ended authored fields, `description` and `extra`, stay
+under 8 KiB each. A card that has a field past that (the OpenCitations Index
+card's `extra` is 13 KB: 114 source checksums) keeps it in the **annex**, a
+cold section (kind 22) that only `rete card --full`, `rete card-url --full` and
+`rete_core::read_card_full_ranged` read. The writer moves a field **whole**: the
+annex is a JSON object whose keys are the moved fields, and the hot card has no
+such field but a marker, `"annex": {"fields": ["extra"], "bytes": N}`, so a
+reader knows there is more. The annex is the last data section, so its digest is
+in the root's section table and inside the content hash through the root
+digest, and `verify` checks it. The input side is a cap, not a flag: the CLI
+accepts up to 1 MiB for each of the two fields (`CARD_ANNEX_FIELD_MAX_BYTES`)
+and the format layer moves whichever is over 8 KiB; the library's
+`CardInput::normalize` keeps the 8 KiB rejection, and
+`normalize_with_annex` is the 1 MiB one.
+
+A re-card that keeps the annex unchanged (`--keep-curated` of a card whose
+fields did not change, or a record-only update) is in place as before. One that
+changes, adds or removes the annex rewrites the file's tail and the section
+table entry, hence the root digest: that is a copy (a new front, the data region
+byte for byte up to the annex, the new annex, the footer), never an in-place
+write, because the header alone is the commit point of an in-place re-card. A
+`0x06` file has no annex: re-carding it with a field over the cap fails and says
+to `rete convert` first.
+
 ### 4.5 Data region
 
 The data sections follow the front in the order of the kind table, each one
@@ -300,7 +337,7 @@ overrides it). Readers route through the directories either way.
    at most 8 MiB is then fetched whole in one more read. Byte 4 picks the
    reader: `0x05` continues with the generation-1 open (§4.9), served from
    these bytes where it can.
-2. `0x06`: parse the header; take the root (and in the rare case it does not
+2. `0x06` or `0x07`: parse the header; take the root (and in the rare case it does not
    fit, read the rest of it); check the root digest; decode the section table
    and the unit roots. The card, the record and the statistics are in hand, and
    so is every leaf inside the first 64 KiB.
@@ -321,12 +358,13 @@ to re-tile every permutation instead of copying its tiles.
 ### 4.7 Content hash and verify
 
 ```
-content hash = BLAKE3("rete/0x06" ‖ header[4..8] ‖ header[48..80]
+content hash = BLAKE3("rete/0x07" ‖ header[4..8] ‖ header[48..80]
                       ‖ card length (u32) ‖ card digest
                       ‖ root length (u32) ‖ root digest)[0..16]
 ```
 
-`header[4..8]` is the version, the flags and the header length;
+(`"rete/0x06"` for a `0x06` file.) `header[4..8]` is the version, the flags and
+the header length;
 `header[48..80]` the counts, the mask, the codecs, the pyramid levels and the
 presence bits. Through the root digest the hash covers every section digest, so
 every byte of every section; through the card digest, the card. It hashes no
@@ -562,6 +600,39 @@ range of the content hash itself, but its BLAKE3 digest is the **seal**, the las
 section of the index container (kind `3`), which is — so it stays part of the
 file's identity, a current `verify` checks it against the seal, and an older
 `verify` (which refuses to open such a file anyway, on the seal) still passes.
+
+### 4.10 Format `0x07` and compatibility
+
+`0x07` is `0x06` plus two changes; every payload block, every leaf and every unit
+root other than the label one is byte-identical. The same code reads both: the
+header's version byte says which one a file is.
+
+1. **The label index's root node leaves the root.** In `0x06` the label unit root
+   held the 32-byte preamble and the root node, 47 KB of OpenAIRE's 48 KB root and
+   37 KB of Meta's 41 KB, and it does not compress. In `0x07` the unit root keeps
+   the preamble (the entry count, the root's length, and the data length), and
+   the root node is a front section of its own (kind 7, `label-root`, placed after
+   the other leaves, so the statistics and the leaf directories sit nearer the
+   front). The root's pointer to it is its table entry (offset, length, digest), and
+   it is read, digest-checked, only when a label search first runs (the label
+   index is already opened lazily). A search over a small file whose front is in the first read
+   is already in hand; over a big one it costs one more request, the same bytes
+   it used to carry in every open.
+2. **The card annex** (kind 22, §4.4).
+
+Other differences: the version byte, the footer (`07 00 00 00 "RETE"`), the
+hash domain (`"rete/0x07"`) and the `format_version` a card is stamped with
+(`7`).
+
+**Compatibility.** Writers write `0x07` only; the reader reads `0x05`, `0x06` and
+`0x07`. A reader that predates `0x07` refuses the file at the header, by name:
+`unsupported .rete format 0x07; this Rete build reads 0x05..=0x06`. It cannot
+read a `0x07` file as a `0x06` one with an unknown section, because the root's
+label unit no longer holds the root node. There is no backward-compatibility
+promise before 1.0.0: `rete convert` turns a `0x05` or a `0x06` file into a
+`0x07` one, copying the payload, moving the label root out of the root and keeping
+the card (no annex unless a card field is over the hot cap); the catalog is
+converted in step, and the `0x06` reader is removed once it is.
 
 ---
 
@@ -990,6 +1061,11 @@ the dictionary. A remote search reads the section's first `min(len, 64 KiB)` byt
 (preamble + root), then one node per level and the data blocks of the matching run,
 one at a time, until `limit` entries are found or the run ends. A card reader learns
 `entry_count` from the 32-byte preamble alone (`signals.label_index`).
+
+**`0x07`:** the root node is its own front section (kind 7, `label-root`, §4.10), not
+part of the root block, so a remote search reads the preamble from the root, the
+root node (one request, digest-checked), then the nodes and blocks as above.
+The 32-byte preamble stays in the root, where a card reader finds `entry_count`.
 
 **Compatibility:** `0x05` is stable format generation 1. Every stable reader from
 Rete **0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen

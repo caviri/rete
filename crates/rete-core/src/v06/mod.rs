@@ -1,4 +1,4 @@
-//! Format generation `0x06` (SPEC.md §4): everything a reader needs to plan a
+//! Format generations `0x06` and `0x07` (SPEC.md §4): everything a reader needs to plan a
 //! query sits at the **front** of the file — a 128-byte header, the root block,
 //! the Dataset Card, the planner statistics and every leaf directory — and the
 //! payload follows, clustered by section.
@@ -13,11 +13,18 @@
 //! file_len-8 footer "RETE" 06 00 00 00
 //! ```
 //!
+//! `0x07` is `0x06` plus two things: the label index's root node lives in a
+//! cold section of its own ([`kind::LABEL_ROOT`]) instead of in the root, and an
+//! optional card annex ([`kind::CARD_ANNEX`]) holds card fields too big for the
+//! hot card. The two generations share this module: [`Header06::version`] says
+//! which one a file is, readers read both, writers write [`VERSION`].
+//!
 //! Payload blocks (dictionary chunks, index tiles, quad tiles, label blocks,
 //! postings) are byte-identical to `0x05`; only their framing and their
 //! directories move. [`parts`] lifts a `0x05` file into [`parts::Parts`],
 //! [`write`](mod@write) assembles a `0x06` file from them, [`open`] reads one.
 
+pub mod annex;
 pub mod open;
 pub mod parts;
 pub mod write;
@@ -28,16 +35,35 @@ mod roundtrip;
 use crate::file::FileError;
 use crate::varint::{read_uvarint, write_uvarint};
 
-/// The format byte of this generation.
-pub const VERSION: u8 = 0x06;
+/// The format byte writers stamp (the current generation).
+pub const VERSION: u8 = 0x07;
+/// The previous generation this reader still reads (no annex, label root in
+/// the root block).
+pub const VERSION_06: u8 = 0x06;
+
+/// Does this module read format byte `v`?
+pub fn reads(v: u8) -> bool {
+    v == VERSION_06 || v == VERSION
+}
 /// Fixed header length.
 pub const HEADER_LEN: usize = 128;
 /// What a reader fetches first: header, root, card, statistics and, on a small
 /// file, every leaf directory (SPEC.md §9).
 pub const FIRST_READ: u64 = 64 * 1024;
-/// The 8-byte footer: the generation, then `RETE` — so every reader that
-/// confirms a length by the file's last four bytes finds the magic there.
-pub const FOOTER: [u8; 8] = *b"\x06\x00\x00\x00RETE";
+/// The 8-byte footer of the current generation: the generation, then `RETE`
+/// — so every reader that confirms a length by the file's last four bytes
+/// finds the magic there.
+pub const FOOTER: [u8; 8] = *b"\x07\x00\x00\x00RETE";
+
+/// The footer of generation `version`.
+pub fn footer(version: u8) -> [u8; 8] {
+    let mut f = FOOTER;
+    f[0] = version;
+    f
+}
+
+/// Largest card annex a reader decompresses.
+pub const ANNEX_MAX: u64 = 64 << 20;
 /// The writer's root budget: leaves may grow (to [`LEAF_MAX`]) to bring the
 /// stored root under it, when growing them can.
 pub const ROOT_BUDGET: usize = 40 * 1024;
@@ -89,22 +115,33 @@ pub mod kind {
     pub const LABEL_DATA: u8 = 19;
     pub const TEXT_DATA: u8 = 20;
     pub const PYRAMID: u8 = 21;
+    /// `0x07`: the label index's root node (front, after the other leaves).
+    pub const LABEL_ROOT: u8 = 7;
+    /// `0x07`: card fields too big for the hot card (the last data section).
+    pub const CARD_ANNEX: u8 = 22;
 
     /// Every kind, in file order (front kinds, then data kinds).
-    pub const ORDER: [u8; 12] = [
+    pub const ORDER: [u8; 14] = [
         SCHEMA,
         DICT_LEAVES,
         INDEX_LEAVES,
         QUAD_LEAVES,
         LABEL_LEAVES,
         TEXT_LEAVES,
+        LABEL_ROOT,
         DICT_DATA,
         INDEX_DATA,
         QUAD_DATA,
         LABEL_DATA,
         TEXT_DATA,
         PYRAMID,
+        CARD_ANNEX,
     ];
+
+    /// Kinds only a `0x07` file has.
+    pub fn is_v07_only(k: u8) -> bool {
+        k == LABEL_ROOT || k == CARD_ANNEX
+    }
 
     /// A short name, for `verify --section` and `info`.
     pub fn name(k: u8) -> &'static str {
@@ -121,6 +158,8 @@ pub mod kind {
             LABEL_DATA => "labels",
             TEXT_DATA => "text",
             PYRAMID => "pyramid",
+            LABEL_ROOT => "label-root",
+            CARD_ANNEX => "card-annex",
             _ => "unknown",
         }
     }
@@ -145,6 +184,8 @@ pub mod tag {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub struct Header06 {
+    /// The format byte: [`VERSION_06`] or [`VERSION`].
+    pub version: u8,
     pub flags: u8,
     pub content_hash: [u8; 16],
     pub file_len: u64,
@@ -176,7 +217,7 @@ impl Header06 {
     pub fn to_bytes(&self) -> [u8; HEADER_LEN] {
         let mut b = [0u8; HEADER_LEN];
         b[0..4].copy_from_slice(&crate::header::MAGIC);
-        b[4] = VERSION;
+        b[4] = self.version;
         b[5] = self.flags;
         b[6..8].copy_from_slice(&(HEADER_LEN as u16).to_le_bytes());
         b[8..24].copy_from_slice(&self.content_hash);
@@ -208,8 +249,8 @@ impl Header06 {
         if b.len() < HEADER_LEN {
             return Err(FileError::Container("0x06 header truncated"));
         }
-        if b[0..4] != crate::header::MAGIC || b[4] != VERSION {
-            return Err(FileError::Container("not a 0x06 file"));
+        if b[0..4] != crate::header::MAGIC || !reads(b[4]) {
+            return Err(FileError::Container("not a 0x06 or 0x07 file"));
         }
         if u16::from_le_bytes([b[6], b[7]]) as usize != HEADER_LEN {
             return Err(FileError::Container("0x06 header length is not 128"));
@@ -222,6 +263,7 @@ impl Header06 {
             x
         };
         let h = Header06 {
+            version: b[4],
             flags: b[5],
             content_hash: h16(8),
             file_len: u64_at(24),
@@ -360,7 +402,11 @@ pub fn id_position_names() -> [&'static str; 4] {
 pub fn content_hash(h: &Header06) -> [u8; 16] {
     let b = h.to_bytes();
     let mut x = blake3::Hasher::new();
-    x.update(b"rete/0x06");
+    x.update(if h.version == VERSION_06 {
+        b"rete/0x06"
+    } else {
+        b"rete/0x07"
+    });
     x.update(&b[4..8]);
     x.update(&b[48..80]);
     x.update(&h.card_len.to_le_bytes());
@@ -1310,7 +1356,7 @@ pub fn logical_header(h: &Header06) -> crate::header::Header {
         });
     }
     crate::header::Header {
-        version: VERSION,
+        version: h.version,
         flags,
         metadata_offset: end,
         metadata_len: h.card_len as u64,
@@ -1347,6 +1393,7 @@ mod tests {
     #[test]
     fn header_round_trips() {
         let h = Header06 {
+            version: VERSION,
             flags: F_NAMED | F_QUAD_GRAPH_MAJOR,
             content_hash: [7; 16],
             file_len: 10_000,
@@ -1463,6 +1510,7 @@ mod id_width_tests {
 
     fn sample() -> Header06 {
         Header06 {
+            version: VERSION,
             file_len: 10_000,
             root_len: 300,
             card_region_len: 100,
@@ -1538,6 +1586,7 @@ mod hostile_root_tests {
     #[test]
     fn section_range_overflow_is_an_error() {
         let h = Header06 {
+            version: VERSION,
             data_offset: 100,
             ..Header06::default()
         };

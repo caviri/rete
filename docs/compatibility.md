@@ -2,6 +2,22 @@
 
 ## Stable `.rete` file compatibility
 
+### Format `0x07` (generation 2, second step)
+
+Every writer now writes format byte `0x07` ([SPEC §4.10](SPEC.md#410-format-0x07-and-compatibility)):
+`0x06` plus the label index's root node in a cold section of its own (the root
+of a big file shrinks by its 37 to 47 KB) and an optional card annex for card
+fields over the 8 KiB hot cap. Readers of this release read `0x05`, `0x06` and
+`0x07`; **readers up to 0.5.6 cannot read `0x07`**: they refuse it by name
+(`unsupported .rete format 0x07; this Rete build reads 0x05..=0x06`).
+
+- **Convert, do not rebuild.** `rete convert in.rete -o out.rete` turns a `0x05` or
+  a `0x06` file into `0x07`: the payload is copied, the label root is moved out of
+  the root and the card is kept, with no annex unless a field of it is over the cap.
+- **No backward compatibility** is promised before 1.0.0; the catalog is converted
+  in step with the readers, and the `0x06` reader goes once it is.
+- **Publish after the readers**, as for `0x06`.
+
 ### Format `0x06` (generation 2)
 
 Every writer now writes format byte `0x06`, generation 2 ([SPEC §4](SPEC.md#4-file-layout)):

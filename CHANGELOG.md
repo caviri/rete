@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **Format 0x07, step 1: the label root leaves the root, and a card annex.** Every writer writes `0x07`; the reader reads `0x05`, `0x06` and `0x07`, and an older reader refuses `0x07` by name. The label index's root node (47 KB of OpenAIRE's 48 KB root, 37 KB of Meta's 41 KB, incompressible) is now a front section of its own (kind 7) read only when a label search runs; the root keeps the 32-byte preamble and the section table entry is its pointer. A card field over the 8 KiB hot cap (`extra`, `description`) moves whole into a cold annex (kind 22, the last section, inside the content hash); the hot card carries an `annex` marker, and `rete card --full`, `rete card-url --full` and `read_card_full_ranged` bring the fields back. The CLI accepts up to 1 MiB for each of the two fields and the writer decides what is hot. A re-card that changes the annex is a copy. `rete convert` writes `0x07` from `0x05` or `0x06`, copying the payload. See SPEC §4.10.
+
 ## [0.5.6] - 2026-11-09
 
 ### Fixed
