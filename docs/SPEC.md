@@ -232,9 +232,19 @@ internal codec. Entries are rows of varints:
   of the generation-1 section body: data blocks first (`labels`), nodes after
   (`label-leaves`), so the reader maps one onto the other.
 
-The writer cuts each directory into leaves of 16 KiB of entries, then, while
-the stored root exceeds 40 KiB, doubles the leaf size of the directory with the
-most leaves. A leaf is faulted on first use and kept for the session.
+The writer cuts each directory into leaves of 16 KiB of entries (uncompressed).
+A leaf is a cold lookup's unit of transfer, so leaves stay small and the root
+carries the leaf lists. They grow, up to 64 KiB, only to bring the stored root
+under 40 KiB, and only if one leaf per directory would get it there: a root that
+is over budget for another reason (the graph directory's block index, in a file
+with tens of millions of graphs) is not made smaller by bigger leaves, which
+would only make every lookup read more. The leaf lists add at most 256 KiB to
+the root of one leaf per directory; past that, every directory's leaves double
+beyond 64 KiB. (Until 0.5.5 the writer doubled the largest directory's leaf
+size while the root exceeded 40 KiB, with no ceiling, so a big file ended with
+one leaf per directory: 0.7 to 1.3 MB read by the first lookup.) Readers need no
+change; a file written either way reads the same. A leaf is faulted on first
+use and kept for the session.
 
 ### 4.4 Card region and re-card
 

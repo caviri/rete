@@ -56,6 +56,9 @@ pub struct LabelPart {
     pub data_len: u64,
     /// Input range of the body (data blocks, then directory nodes).
     pub body: ByteRange,
+    /// Where the directory nodes are when they are not right after the data
+    /// blocks (a `0x06` source keeps them in the front): `None` = contiguous.
+    pub nodes: Option<ByteRange>,
 }
 
 /// The text index.
@@ -217,6 +220,7 @@ pub(crate) fn label_part<R: RangeReader + ?Sized>(
             offset: offset + root_end,
             len: length - root_end,
         },
+        nodes: None,
     })
 }
 
@@ -408,5 +412,163 @@ pub fn from_v05(r: &dyn RangeReader) -> Result<Parts, FileError> {
             len: h.pyramid_meta_len,
         });
     }
+    Ok(p)
+}
+
+/// Lift a `0x06` file into [`Parts`]: header, root and leaf directories are
+/// read; payload is referenced by range, so [`super::write::assemble`] can
+/// write the same file again with different directory leaves (the writer's
+/// leaf policy) without touching the payload.
+pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
+    use super::open::{read_card_build, read_front, section_bound};
+    use super::*;
+    use crate::file::decompress_bounded;
+    let (h, root) = read_front(r)?;
+    let codec = h.internal_codec;
+    let range = |k: u8| -> Result<Option<ByteRange>, FileError> {
+        root.section(k).map(|s| s.abs(&h)).transpose()
+    };
+    let max_block = |k: u8| root.section(k).map_or(0, |s| s.max_block as u64);
+    let whole = |k: u8| -> Result<Vec<u8>, FileError> {
+        match range(k)? {
+            Some(a) if a.len > 0 => Ok(r.read_at(a.offset, a.len)?),
+            _ => Ok(Vec::new()),
+        }
+    };
+    let leaf = |bytes: &[u8], k: u8, l: &LeafRef| -> Result<Vec<u8>, FileError> {
+        let end = l
+            .off
+            .checked_add(l.len)
+            .filter(|&e| e <= bytes.len() as u64)
+            .ok_or(FileError::Container("0x06 leaf outside its section"))?;
+        decompress_bounded(
+            codec,
+            &bytes[l.off as usize..end as usize],
+            section_bound(&root, k),
+        )
+    };
+    let mut p = Parts {
+        quad_count: h.quad_count,
+        term_count: h.term_count,
+        perm_mask: h.perm_mask,
+        dict_codec: h.dict_codec,
+        block_codec: h.block_codec,
+        pyramid_levels: h.pyramid_levels,
+        named: h.flags & F_NAMED != 0,
+        quoted: h.flags & F_QUOTED != 0,
+        ..Default::default()
+    };
+    let (card, build) = read_card_build(r, &h)?;
+    p.card = card;
+    p.build = build;
+    if range(kind::SCHEMA)?.is_some() {
+        let stored = whole(kind::SCHEMA)?;
+        p.schema = Some(decompress_bounded(
+            codec,
+            &stored,
+            section_bound(&root, kind::SCHEMA),
+        )?);
+    }
+    // Dictionary.
+    let roots = decode_dict_root(
+        root.unit(tag::DICT)
+            .ok_or(FileError::Container("0x06 file has no dictionary"))?,
+    )?;
+    let dleaves = whole(kind::DICT_LEAVES)?;
+    let dbase = range(kind::DICT_DATA)?.map_or(0, |a| a.offset);
+    for (si, s) in roots.iter().enumerate() {
+        let mut chunks = Vec::with_capacity(s.n_chunks);
+        let mut at = dbase + s.data_off;
+        for (l, _, _, _) in &s.leaves {
+            for e in decode_chunk_leaf(&leaf(&dleaves, kind::DICT_LEAVES, l)?, l.n)? {
+                let clen = e.clen;
+                chunks.push((e, at));
+                at += clen;
+            }
+        }
+        p.dict[si] = DictPart {
+            term_count: s.term_count,
+            restart_interval: s.restart_interval,
+            chunks,
+            max_raw: max_block(kind::DICT_DATA),
+        };
+    }
+    // Index.
+    let ileaves = whole(kind::INDEX_LEAVES)?;
+    let ibase = range(kind::INDEX_DATA)?.map_or(0, |a| a.offset);
+    if let Some(unit) = root.unit(tag::INDEX) {
+        for pr in decode_index_root(unit)? {
+            let mut tiles = Vec::with_capacity(pr.n_tiles);
+            let mut at = ibase + pr.data_off;
+            for (l, _, _, _) in &pr.leaves {
+                for e in decode_tile_leaf(&leaf(&ileaves, kind::INDEX_LEAVES, l)?, l.n)? {
+                    let clen = e.clen;
+                    tiles.push((e, at));
+                    at += clen;
+                }
+            }
+            p.index.push(PermPart { si: pr.si, tiles });
+        }
+    }
+    // Quad index: the graph directory blocks come first in QUAD_LEAVES.
+    if let Some(unit) = root.unit(tag::QUAD) {
+        let q = decode_quad_root(unit)?;
+        let lsec = range(kind::QUAD_LEAVES)?.unwrap_or(ByteRange { offset: 0, len: 0 });
+        let qleaves = whole(kind::QUAD_LEAVES)?;
+        let qbase = range(kind::QUAD_DATA)?.map_or(0, |a| a.offset);
+        let mut orders = Vec::with_capacity(q.orders.len());
+        for ord in &q.orders {
+            let mut tiles = Vec::with_capacity(ord.n_tiles);
+            for (l, _, _, toff) in &ord.leaves {
+                for mut e in decode_qtile_leaf(&leaf(&qleaves, kind::QUAD_LEAVES, l)?, l.n, *toff)?
+                {
+                    e.off += qbase;
+                    tiles.push(e);
+                }
+            }
+            orders.push((ord.si, tiles));
+        }
+        p.quad = Some(QuadPart {
+            graph_count: q.graph_count,
+            quad_count: q.quad_count,
+            block_graphs: q.block_graphs,
+            p0: q.p0,
+            gdir: ByteRange {
+                offset: lsec.offset,
+                len: q.gdir_len,
+            },
+            orders,
+        });
+    }
+    // Labels.
+    if let Some(unit) = root.unit(tag::LABELS) {
+        let l = decode_label_root(unit)?;
+        p.labels = Some(LabelPart {
+            head: l.head,
+            data_len: l.data_len,
+            body: range(kind::LABEL_DATA)?.unwrap_or(ByteRange { offset: 0, len: 0 }),
+            nodes: Some(range(kind::LABEL_LEAVES)?.unwrap_or(ByteRange { offset: 0, len: 0 })),
+        });
+    }
+    // Text.
+    if let Some(unit) = root.unit(tag::TEXT) {
+        let t = decode_text_root(unit)?;
+        let tleaves = whole(kind::TEXT_LEAVES)?;
+        let mut tokens = Vec::with_capacity(t.n_tokens);
+        for (l, _) in &t.leaves {
+            tokens.extend(decode_token_leaf(
+                &leaf(&tleaves, kind::TEXT_LEAVES, l)?,
+                l.n,
+            )?);
+        }
+        p.text = Some(TextPart {
+            scope: t.scope,
+            tokens,
+            postings: range(kind::TEXT_DATA)?.unwrap_or(ByteRange { offset: 0, len: 0 }),
+            partial: h.has(P_TEXT_PARTIAL),
+            named: h.flags & F_TEXT_NAMED != 0,
+        });
+    }
+    p.pyramid = range(kind::PYRAMID)?;
     Ok(p)
 }

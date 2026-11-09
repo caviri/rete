@@ -430,3 +430,164 @@ fn every_section_records_its_largest_block() {
     }
     assert_eq!(largest, max, "the recorded maximum is the largest tile");
 }
+
+/// Leaves per group of a `0x06` image: dictionary sections, index orders, quad
+/// orders and the text index, from the root alone.
+fn leaf_counts(v6: &[u8]) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
+    let (_, root) = open::read_front(&crate::reader::SliceReader::new(v6)).unwrap();
+    let dict = root
+        .unit(tag::DICT)
+        .map(|u| {
+            decode_dict_root(u)
+                .unwrap()
+                .iter()
+                .map(|s| s.leaves.len())
+                .collect()
+        })
+        .unwrap_or_default();
+    let index = root
+        .unit(tag::INDEX)
+        .map(|u| {
+            decode_index_root(u)
+                .unwrap()
+                .iter()
+                .map(|p| p.leaves.len())
+                .collect()
+        })
+        .unwrap_or_default();
+    let quad = root
+        .unit(tag::QUAD)
+        .map(|u| {
+            decode_quad_root(u)
+                .unwrap()
+                .orders
+                .iter()
+                .map(|o| o.leaves.len())
+                .collect()
+        })
+        .unwrap_or_default();
+    let text = root
+        .unit(tag::TEXT)
+        .map(|u| decode_text_root(u).unwrap().leaves.len())
+        .unwrap_or(0);
+    (dict, index, quad, text)
+}
+
+/// Leaves of a few hundred bytes, so a small fixture has several per directory.
+fn small_leaves() -> write::LeafPolicy {
+    write::LeafPolicy {
+        start: 256,
+        max: 1024,
+        root_budget: 1,
+        list_cap: 1 << 20,
+    }
+}
+
+/// One leaf per directory: where the writer used to end on a big file.
+fn one_leaf() -> write::LeafPolicy {
+    write::LeafPolicy {
+        start: usize::MAX / 4,
+        ..write::LeafPolicy::default()
+    }
+}
+
+/// The writer cuts a directory larger than the leaf size into several leaves,
+/// and keeps them when the root is over budget for another reason: the
+/// graph-directory block index (or anything else that is not a leaf list)
+/// cannot be shrunk by bigger leaves.
+#[test]
+fn a_directory_larger_than_the_target_gets_several_leaves() {
+    let v5 = image(3000, true, true, true, false);
+    let opts = |leaves| WriteOpts {
+        leaves,
+        ..WriteOpts::default()
+    };
+    let single = convert_image(&v5, opts(one_leaf())).unwrap();
+    let (d, i, q, t) = leaf_counts(&single);
+    assert!(d.iter().chain(&i).chain(&q).all(|&n| n <= 1));
+    assert!(t <= 1);
+    // A 1-byte root budget cannot be met even by one leaf per directory: the
+    // old loop grew every directory to one leaf anyway; the leaves stay small.
+    let kept = convert_image(&v5, opts(small_leaves())).unwrap();
+    let (_, _, _, t) = leaf_counts(&kept);
+    assert!(t >= 2, "text leaves: {t}");
+}
+
+/// The leaf lists add at most `list_cap` to the root of one leaf per
+/// directory: past it, leaves grow.
+#[test]
+fn the_leaf_lists_are_capped() {
+    let v5 = image(3000, true, true, true, false);
+    let root_len = |leaves| {
+        let v6 = convert_image(
+            &v5,
+            WriteOpts {
+                leaves,
+                ..WriteOpts::default()
+            },
+        )
+        .unwrap();
+        Header06::from_bytes(&v6).unwrap().root_len as usize
+    };
+    let floor = root_len(one_leaf());
+    let free = root_len(small_leaves());
+    assert!(
+        free > floor + 256,
+        "the fixture's leaf lists: {free} vs {floor}"
+    );
+    let capped = root_len(write::LeafPolicy {
+        list_cap: 256,
+        ..small_leaves()
+    });
+    assert!(capped < free, "{capped} < {free}");
+    assert!(capped <= floor + 256 + 64, "{capped} vs {floor} + 256");
+}
+
+/// A file written with small leaves answers every pattern shape as one written
+/// with one leaf per directory, on the resident and the lazy open, verifies,
+/// and is what a rewrite of the other produces byte for byte.
+#[test]
+fn leaf_sizes_do_not_change_answers() {
+    for &(graphs, text, labels, pyramid) in &[
+        (true, true, true, true),
+        (false, false, false, false),
+        (true, false, true, false),
+    ] {
+        let v5 = image(3000, graphs, text, labels, pyramid);
+        let opts = |leaves| WriteOpts {
+            leaves,
+            ..WriteOpts::default()
+        };
+        let want = answers(&Rete::open(&v5).unwrap());
+        let small = convert_image(&v5, opts(small_leaves())).unwrap();
+        let single = convert_image(&v5, opts(one_leaf())).unwrap();
+        assert_eq!(
+            small != single,
+            text,
+            "small leaves differ where a directory has entries to cut"
+        );
+        for v6 in [&small, &single] {
+            assert!(crate::file::verify(v6).unwrap(), "verify");
+            let rep =
+                crate::file::verify_ranged_v06(&crate::reader::SliceReader::new(v6), v6, None)
+                    .unwrap();
+            assert!(rep.is_empty(), "{rep:?}");
+            assert_eq!(answers(&Rete::open(v6).unwrap()), want, "resident");
+            assert_eq!(answers(&lazy(v6)), want, "lazy");
+        }
+        // Rewriting changes the directories and nothing else.
+        for (from, to, leaves) in [
+            (&single, &small, small_leaves()),
+            (&small, &single, one_leaf()),
+        ] {
+            let mut out = std::io::Cursor::new(Vec::new());
+            write::rewrite(
+                &crate::reader::SliceReader::new(from),
+                &mut out,
+                opts(leaves),
+            )
+            .unwrap();
+            assert_eq!(&out.into_inner(), to, "rewrite == convert");
+        }
+    }
+}

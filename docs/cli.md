@@ -623,8 +623,19 @@ tiles of every order for one block of graphs side by side (one neighbourhood per
 `GRAPH <g>`), `order` keeps each order contiguous, `auto` (the default) picks
 graph-major when the mean graph is under 64 KiB of tiles.
 
+**A `0x06` input** is written again: the payload is copied verbatim and only the
+directory leaves, the root and the section table are cut anew, under the
+writer's current leaf policy ([SPEC §4.3](SPEC.md#4-file-layout)). That is how a
+file written before 0.5.6 gets small directory leaves without a rebuild: on the
+3.88 GB nanopub dump it takes 2.4 s and about 100 MB of memory. The card and the
+build record are kept as they are (the card's starter-query costs are not
+measured again, so a layout change is not reflected in them), and a
+`--quad-clustering` left at `auto` keeps the file's own clustering. The content
+hash changes (the leaf bytes are part of it), the data does not.
+
 ```sh
 rete convert davidrumsey.rete -o davidrumsey-06.rete
+rete convert nanopubs.rete -o nanopubs-leaves.rete   # a 0x06 file: directory leaves re-cut
 rete verify davidrumsey-06.rete
 ```
 

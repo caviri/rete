@@ -476,9 +476,10 @@ enum Command {
     /// stored one index per graph is re-encoded as a quad index. A file whose
     /// only labels are the pyramid's legacy block (≤ 8,192 entries) gets the
     /// LABEL_INDEX section `build --label-index` writes, unless
-    /// `--no-label-index`.
+    /// `--no-label-index`. A format 0x06 input is written again with its
+    /// directory leaves cut anew (payload copied, card and record kept).
     Convert {
-        /// The 0x05 input (a path or an http(s) URL).
+        /// The 0x05 (or 0x06) input (a path or an http(s) URL).
         input: String,
         /// The 0x06 output path.
         #[arg(short, long)]

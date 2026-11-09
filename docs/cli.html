@@ -1166,7 +1166,17 @@ writes, from the label predicates' triples read through the index.
 tiles of every order for one block of graphs side by side (one neighbourhood per
 <code>GRAPH &lt;g&gt;</code>), <code>order</code> keeps each order contiguous, <code>auto</code> (the default) picks
 graph-major when the mean graph is under 64 KiB of tiles.</p>
+<p><strong>A <code>0x06</code> input</strong> is written again: the payload is copied verbatim and only the
+directory leaves, the root and the section table are cut anew, under the
+writer's current leaf policy (<a href="SPEC.html#4-file-layout">SPEC §4.3</a>). That is how a
+file written before 0.5.6 gets small directory leaves without a rebuild: on the
+3.88 GB nanopub dump it takes 2.4 s and about 100 MB of memory. The card and the
+build record are kept as they are (the card's starter-query costs are not
+measured again, so a layout change is not reflected in them), and a
+<code>--quad-clustering</code> left at <code>auto</code> keeps the file's own clustering. The content
+hash changes (the leaf bytes are part of it), the data does not.</p>
 <pre><code class="language-sh">rete convert davidrumsey.rete -o davidrumsey-06.rete
+rete convert nanopubs.rete -o nanopubs-leaves.rete   # a 0x06 file: directory leaves re-cut
 rete verify davidrumsey-06.rete
 </code></pre>
 <h3 id="rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card----no-card-costs"><code>rete merge &lt;inputs…&gt; -o &lt;out.rete&gt; [--memory-budget-mb N] [--tmp-dir dir] [--card …] [--no-card-costs]</code></h3>

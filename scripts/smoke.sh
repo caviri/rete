@@ -156,7 +156,9 @@ check "convert"           "format 0x06"            -- "$B" convert "$T/g05.rete"
 check "convert = build"   "^same$"                 -- bash -c "same_content '$T/g06.rete' '$T/g.rete'"
 check "convert verify"    "OK|matches"             -- "$B" verify "$T/g06.rete"
 check "convert answers"   "ex/Bob"                 -- "$B" sparql "$T/g06.rete" "SELECT ?o WHERE { <http://ex/Alice> <http://ex/knows> ?o }"
-check_code "convert refuses 0x06" 1 "already format 0x06" -- "$B" convert "$T/g.rete" -o "$T/g07.rete"
+check "convert 0x06 again"  "format 0x06 again"      -- "$B" convert "$T/g.rete" -o "$T/g07.rete"
+check "rewrite verify"     "OK|matches"             -- "$B" verify "$T/g07.rete"
+check "rewrite = build"    "^same$"                 -- bash -c "same_content '$T/g07.rete' '$T/g.rete'"
 # A per-graph 0x05 file (the in-RAM hook; the bounded build always writes 0x06)
 # is re-encoded as a quad index.
 RETE_WRITE_FORMAT=5 "$B" build "$T/d.nq" -o "$T/d05.rete" --named-graphs per-graph >/dev/null 2>&1

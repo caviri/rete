@@ -144,6 +144,14 @@ fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) -> Vec<u8> 
         plain(&b) == plain(&c),
         "{name}: bounded build differs from the in-RAM 0x05 build plus convert"
     );
+    // A 0x06 file converted again is the same file: the directories are cut anew,
+    // under the same policy, and the payload is copied.
+    let rew = dir.path().join("rew.rete");
+    run(&["convert", s(&bounded), "-o", s(&rew)], false);
+    assert!(
+        plain(&b) == plain(&std::fs::read(&rew).unwrap()),
+        "{name}: a 0x06 file converted again differs"
+    );
     rete().arg("verify").arg(&bounded).assert().success();
     if src_name.ends_with(".nq") {
         // A per-graph 0x05 file (the legacy layout) is re-encoded as a quad
