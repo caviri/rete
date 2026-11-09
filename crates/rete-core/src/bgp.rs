@@ -980,6 +980,7 @@ fn canon_ahead<'a, 'c>(
         triples,
         run: std::collections::VecDeque::new(),
         decode: (decoded(&t.0), decoded(&t.2)),
+        ahead: 0,
     })
 }
 
@@ -989,6 +990,9 @@ struct CanonAhead<'a, 'c, I> {
     run: std::collections::VecDeque<Triple>,
     /// Is the subject, the object, decoded by the query's final projection?
     decode: (bool, bool),
+    /// Rows whose terms were already prefetched, across every run: the
+    /// decode-ahead is capped by the query's demand once, not once per run.
+    ahead: usize,
 }
 
 impl<I: Iterator<Item = Triple>> Iterator for CanonAhead<'_, '_, I> {
@@ -1003,7 +1007,12 @@ impl<I: Iterator<Item = Triple>> Iterator for CanonAhead<'_, '_, I> {
             // for both, where the decode after the last row was two more
             // dependent reads (leaves, then chunks) on a leafed dictionary.
             let dict = self.ctx.rete.dictionary();
-            let take = self.ctx.decode_rows().min(self.run.len());
+            let take = self
+                .ctx
+                .decode_rows()
+                .saturating_sub(self.ahead)
+                .min(self.run.len());
+            self.ahead += take;
             let mut nodes: Vec<u32> = Vec::new();
             for t in self.run.iter().take(take) {
                 if self.decode.0 {
