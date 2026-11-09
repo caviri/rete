@@ -925,13 +925,14 @@ updating when a new defect shape turns up.
 ## Inspecting
 
 ### `rete info <file>`
-Print the decoded header — on a format `0x06` file the 128-byte header's fields,
-then the front (root, card region, data offset) and every section of the root
-with its range and digest; on a `0x05` file the 1 KB header and its section
-directory — plus
-the [Dataset Card](dataset-cards.md) catalog when the file carries one. Reads only
-the header and card byte ranges (the same two small reads `card-url` does over
-HTTP), so a 50 GB file answers in about a second.
+Print what the header says, as a short summary: the format, size and content
+hash, the flags, the front of the file (root, card region, data offset), the
+counts (`quad_count`, `term_count`, `graph_count`), the codecs, the pyramid
+levels and every section with its range (and, on `0x06`, its digest) — plus
+the [Dataset Card](dataset-cards.md) catalog when the file carries one.
+`--raw` also prints the header's fields as Rust `Debug` output, for a bug
+report. Reads only the header, the root and the card region, so a 50 GB file
+answers in about a second.
 
 ### `rete stats <file>`
 Human-friendly overview: file size, statement counts, distinct terms, pyramid
@@ -1879,12 +1880,18 @@ Measured through a latency-injecting proxy on the OpenCitations sample: see
 the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.
 
 ### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
-Fetch only the embedded [Dataset Card](dataset-cards.md) — the header and one
-coalesced metadata + build-info range, in **two small range requests**. The
-dictionary, index, and pyramid are never fetched: this is the index-free **CARD
+Fetch only the embedded [Dataset Card](dataset-cards.md). On a format `0x06`
+file that is **one first read** of the first 64 KiB, which holds the header, the
+root, the card region (card and build record) and the statistics
+([SPEC §4.6](SPEC.md#46-opening-a-file)), and **at most one follow-up**, sized
+from the header, when the front is longer than that. A small remote file is not
+fetched whole, as the other URL commands do. A `0x05` file has its card after
+the 1 KiB header, so it takes the first read and one range for the card and
+the build record. The dictionary, index, and pyramid are never fetched: this is the index-free **CARD
 tier**, the cold-start self-description (counts, vocabulary, class graph,
 signals, starter queries, build record) a client reads before it knows what to
-query. Reports bytes fetched + range count. The `--format` projections (and
+query. Reports the bytes fetched and the range requests that went over the wire.
+The `--format` projections (and
 `--sha256` for Croissant) match `rete card`.
 
 ```sh
@@ -1972,7 +1979,7 @@ download.
 #### `--write-costs`: make the measurement durable
 
 Records the run in the file's build-info section, so the next reader gets the
-figures from the CARD tier (two range requests) instead of re-measuring. Local
+figures from the CARD tier (one first read, see [`card-url`](#rete-card-url-url---json---format-jsonldcroissant---sha256-hex)) instead of re-measuring. Local
 files only.
 
 The record sits **outside** the blake3 content hash — that is why two builds of

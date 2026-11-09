@@ -685,7 +685,7 @@ the build fails with the path to the deepest point (`at examples[0].words`)
 and how to flatten it.
 
 The CARD tier's **request count cannot change**: `rete card-url` still costs
-the 1 KiB header plus one coalesced metadata+build-info range, bag or no bag —
+the first read plus at most one follow-up, bag or no bag —
 pinned by test. The one cost worth knowing: on the smallest cards a maxed-out
 bag can push the coalesced range past a conservative TCP initial window
 (~14.6 KB), i.e. one extra round trip — never an extra request.
@@ -1163,13 +1163,15 @@ explicit so a client knows what is free before it runs anything:
 | 🔵 **Summary** | the pyramid superedge totals **and the [schema pyramid](semantic-zoom.md)** — a leveled `rdf:type` histogram (`rete summary [--level k]` / `summary-url`) | index-free |
 | 🟠 **Index** | the triple index (range-fetched tiles) | O(touched tiles) |
 
-`rete card-url <url>` reads the **Card tier** over HTTP in two small range
-requests — the header, then **one coalesced range covering the card and the
-adjacent build-info** — and **never touches the index**, so a remote/S3 client
+`rete card-url <url>` reads the **Card tier** over HTTP in one first read (the
+first 64 KiB, which holds the header, the root and the card region with the card
+and the build record) and at most one follow-up, sized from the header — and
+**never touches the index**, so a remote/S3 client
 gets the whole self-description (counts, vocabulary, class graph, signals,
 starter queries, build record) without downloading the file. Measured on the
 published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
-1,161,874,550 bytes for Hugging Face, two range requests each.
+1,161,874,550 bytes for Hugging Face, two range requests each (measured before
+the first read took the whole front: see [`card-url`](cli.md#rete-card-url-url---json---format-jsonldcroissant---sha256-hex)).
 
 ## The starter-query library
 
@@ -1405,7 +1407,7 @@ Re-carding is a bandwidth cost, not a CPU one: the file is rewritten, so a
 remote dataset has to come down in full and go back up in full. The published
 catalog is **248 GB across 98 files** (22 of them ≥ 1 GB), which makes
 "re-card everything" 248 GB each way. Finding out which files actually need it
-costs **0.6 MB** — the same two range requests `rete card-url` makes, per file,
+costs **0.6 MB** — the same few range requests `rete card-url` makes, per file,
 and never the index:
 
 ```sh

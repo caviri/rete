@@ -1414,13 +1414,14 @@ construction — which is precisely why a gate written against it does not need
 updating when a new defect shape turns up.</p>
 <h2 id="inspecting">Inspecting</h2>
 <h3 id="rete-info-file"><code>rete info &lt;file&gt;</code></h3>
-<p>Print the decoded header — on a format <code>0x06</code> file the 128-byte header's fields,
-then the front (root, card region, data offset) and every section of the root
-with its range and digest; on a <code>0x05</code> file the 1 KB header and its section
-directory — plus
-the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries one. Reads only
-the header and card byte ranges (the same two small reads <code>card-url</code> does over
-HTTP), so a 50 GB file answers in about a second.</p>
+<p>Print what the header says, as a short summary: the format, size and content
+hash, the flags, the front of the file (root, card region, data offset), the
+counts (<code>quad_count</code>, <code>term_count</code>, <code>graph_count</code>), the codecs, the pyramid
+levels and every section with its range (and, on <code>0x06</code>, its digest) — plus
+the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries one.
+<code>--raw</code> also prints the header's fields as Rust <code>Debug</code> output, for a bug
+report. Reads only the header, the root and the card region, so a 50 GB file
+answers in about a second.</p>
 <h3 id="rete-stats-file"><code>rete stats &lt;file&gt;</code></h3>
 <p>Human-friendly overview: file size, statement counts, distinct terms, pyramid
 levels, and top predicates. Notes the label-index and <strong>text-index</strong> sizes when
@@ -2222,12 +2223,18 @@ server sees one fewer, and retries are not counted.</p>
 <p>Measured through a latency-injecting proxy on the OpenCitations sample: see
 the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.</p>
 <h3 id="rete-card-url-url---json---format-jsonldcroissant---sha256-hex"><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
-<p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and one
-coalesced metadata + build-info range, in <strong>two small range requests</strong>. The
-dictionary, index, and pyramid are never fetched: this is the index-free <strong>CARD
+<p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a>. On a format <code>0x06</code>
+file that is <strong>one first read</strong> of the first 64 KiB, which holds the header, the
+root, the card region (card and build record) and the statistics
+(<a href="SPEC.html#46-opening-a-file">SPEC §4.6</a>), and <strong>at most one follow-up</strong>, sized
+from the header, when the front is longer than that. A small remote file is not
+fetched whole, as the other URL commands do. A <code>0x05</code> file has its card after
+the 1 KiB header, so it takes the first read and one range for the card and
+the build record. The dictionary, index, and pyramid are never fetched: this is the index-free <strong>CARD
 tier</strong>, the cold-start self-description (counts, vocabulary, class graph,
 signals, starter queries, build record) a client reads before it knows what to
-query. Reports bytes fetched + range count. The <code>--format</code> projections (and
+query. Reports the bytes fetched and the range requests that went over the wire.
+The <code>--format</code> projections (and
 <code>--sha256</code> for Croissant) match <code>rete card</code>.</p>
 <pre><code class="language-sh">rete card-url https://host/data.rete --json
 </code></pre>
@@ -2297,7 +2304,7 @@ answer. Both matter: eight of <code>switzerland-fedlex</code>'s ten starter quer
 download.</p>
 <h4 id="--write-costs-make-the-measurement-durable"><code>--write-costs</code>: make the measurement durable</h4>
 <p>Records the run in the file's build-info section, so the next reader gets the
-figures from the CARD tier (two range requests) instead of re-measuring. Local
+figures from the CARD tier (one first read, see <a href="#rete-card-url-url---json---format-jsonldcroissant---sha256-hex"><code>card-url</code></a>) instead of re-measuring. Local
 files only.</p>
 <p>The record sits <strong>outside</strong> the blake3 content hash — that is why two builds of
 identical data hash equal — so the file keeps its identity: same checksum, same

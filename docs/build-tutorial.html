@@ -774,8 +774,9 @@ print(rec["params"])
 python 0.5.0 {'default_graph_triples': 6103, 'duplicates_dropped': 0, 'named_graph_quads': 0, 'named_graphs': 0, 'statements_read': 6103, 'statements_unique': 6103, 'terms': 3880}
 {'codec': 'zstd', 'command': 'build_dataset', 'format': 'nt', 'label_index': True, 'named_graphs': 'quad', 'permutations': 6, 'pyramid_algo': 'types', 'write': {…}}
 </code></pre>
-<p>The record says <code>front_end</code> is <code>python</code>. It has no wall times or memory
-figures: the CLI measures those, the Python builder does not.</p>
+<p>The record says <code>front_end</code> is <code>python</code>. Its <code>run</code> block has the wall time, the
+phases, the peak RSS of the process, its memory limit and the CPUs, as the
+CLI's record does; <code>add_file</code> names each input by its file name (<code>solar.nt</code>).</p>
 <h2 id="3-build-with-the-cli">3. Build with the CLI</h2>
 <p>Same input, same card. This time the card comes from a JSON file of curated
 fields. Save it as <code>solar-card.json</code>:</p>
@@ -814,13 +815,21 @@ build record. <code>--pyramid-algo types</code> is the same choice as in Python.
 <code>--label-index</code> writes the label index described in
 <a href="#9-optional-flags">section 9</a>. The build also ran 20 starter queries against
 the file it had just written; the card keeps those that answer.</p>
-<p><code>rete info</code> prints the decoded header (a long debug dump, which the <code>sed</code> below
-skips), then the front of the file and its sections:</p>
-<pre><code class="language-sh">rete info solar.rete | sed -n '/^format 0x06/,/^permutations/p'
+<p><code>rete info</code> prints a summary of the header: the format, the counts, the codecs,
+then the front of the file and its sections (<code>--raw</code> adds the header's fields
+as Rust <code>Debug</code> output, for a bug report):</p>
+<pre><code class="language-sh">rete info solar.rete | sed -n '/^format 0x06/,/^    pyramid/p'
 </code></pre>
 <pre><code class="language-text">format 0x06 — 91898 bytes, content hash b38ff62dbf5262ec1e50e4ef364be23e
   flags        : none
   front        : root 456 B at 128, card region 24842 B (card 3382 B, record 4943 B), data at 26080
+  counts       :
+    quad_count: 6103
+    term_count: 3880
+    graph_count: 0
+    build_info_len: 4943
+  codecs       : dictionary zstd, blocks zstd, internal zstd
+  pyramid      : 1 level(s)
   sections     :
     schema                 25426 + 479          digest 6d9ba70882efc7199926a4a943793ba9
     dict-leaves            25905 + 61           digest 541def2fa3e22fd17bb6033bcd55df0e
@@ -829,7 +838,6 @@ skips), then the front of the file and its sections:</p>
     index                  35453 + 54943        digest 84fdc42618e0ed9da127b844e1500cbb
     labels                 90396 + 1114         digest 01e2e2dc987750d92ad5cac474dc2257
     pyramid                91510 + 380          digest 1b335d5add44a8da100358527e380800
-permutations: 6 index permutations (SPO/POS/OSP/SOP/PSO/OPS) — sort-merge joins available
 </code></pre>
 <p><code>rete verify</code> re-reads every section and checks its digest:</p>
 <pre><code class="language-sh">rete verify solar.rete
@@ -1321,11 +1329,11 @@ Content-Range: bytes 0-1023/105891840
 Content-Length: 1024
 Accept-Ranges: bytes
 </code></pre>
-<p>Read the card. <code>card-url</code> fetches the header, the root and the card, and never
-the index:</p>
+<p>Read the card. <code>card-url</code> reads the first 64 KiB (the header, the root, the card region and
+the statistics) in one request, and never the index:</p>
 <pre><code class="language-sh">rete card-url http://host.docker.internal:8000/solar-big.rete | head -n 12
 </code></pre>
-<pre><code class="language-text">fetched 9833 of 105891840 bytes in 5 range request(s) — index NOT fetched
+<pre><code class="language-text">fetched 65536 of 105891840 bytes in 1 range request(s) — index NOT fetched
 Dataset Card
   title        : Solar systems (synthetic)
   description  : A synthetic knowledge graph of planetary systems: the eight bodies of our own, then generated systems with a star, planets and moons. Made for the rete build tutorial.

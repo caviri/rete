@@ -661,7 +661,7 @@ curl -sI -r 0-1023 -H "Origin: https://example.org" https://host/path/data.rete 
   | grep -i access-control
 </code></pre>
 <p>If both pass, <code>rete card-url https://host/path/data.rete</code> should print the
-dataset card in two range requests — and the same URL pasted into the
+dataset card in one or two range requests — and the same URL pasted into the
 <a href="playground-guide.html">playground</a>'s <strong>+ Add source → Connect (lazy)</strong> queries it
 live.</p>
 <h2 id="recipes">Recipes</h2>
@@ -733,7 +733,7 @@ the bytes.</p>
 <ul>
 <li>Embed a <a href="dataset-cards.html">Dataset Card</a> at build time (<code>rete build --card</code>)
 so anyone who finds the URL gets the title, license, counts, and runnable
-starter queries from two range requests — <code>rete card-url &lt;url&gt;</code>.</li>
+starter queries from one or two range requests — <code>rete card-url &lt;url&gt;</code>.</li>
 <li>Register it in the <a href="playground-guide.html">playground</a> catalog to give it a
 browsable home with examples, media rendering, and SQL companions — see
 <a href="media-companions.html">Media &amp; SQL companions</a>.</li>

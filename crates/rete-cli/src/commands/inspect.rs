@@ -7,18 +7,20 @@
 use crate::commands::range_source::{open_local_query, LocalRangeReader};
 use rete_core::{SummaryView, CODEC_ZSTD};
 
-/// Print the raw file header (section offsets, counts, codec), plus the embedded
-/// Dataset Card catalog when the file carries one.
-pub(crate) fn info(file: &str) -> anyhow::Result<()> {
+/// Print what the file header says — format, size, counts, codecs, flags and
+/// where each section is — plus the embedded Dataset Card catalog when the file
+/// carries one. `raw` adds the header's fields as Rust `Debug` output, for a bug
+/// report.
+pub(crate) fn info(file: &str, raw: bool) -> anyhow::Result<()> {
     // Header + card are small addressable ranges — read exactly those instead
     // of slurping the file (on a 50 GB graph this is two range reads, not 50 GB).
     let reader = LocalRangeReader::open(file)?;
     let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
     let header = rete_core::Header::from_bytes(&head)?;
     if header.version == rete_core::v06::VERSION {
-        print_v06_layout(&reader)?;
+        print_v06_layout(&reader, raw)?;
     } else {
-        println!("{header:#?}");
+        print_v05_layout(&header, raw);
     }
     // The section directory the header just printed is also where "can I
     // full-text search this?" is decided; fold that into the card the same way
@@ -627,16 +629,15 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
 
 /// `rete info` for a format 0x06 file: the fixed header, then the root's
 /// section table — where every part of the file is, and its digest.
-fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
+fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> {
     use rete_core::v06::{kind, open};
     use rete_core::v06::{F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
     let (h, root) = open::read_front(reader)?;
     let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
-    // The header's fields by name, as for a 0x05 file (`quad_count: …`).
     println!("format version: 0x06");
-    println!("{h:#?}");
-    // The 0x05 key scripts read the record's presence from (tests/gate/fixtures.sh).
-    println!("build_info_len: {}", h.build_len);
+    if raw {
+        println!("{h:#?}");
+    }
     let flags: Vec<&str> = [
         (F_NAMED, "named graphs"),
         (F_QUOTED, "quoted triples"),
@@ -664,6 +665,20 @@ fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
         "  front        : root {} B at 128, card region {} B (card {} B, record {} B), data at {}",
         h.root_len, h.card_region_len, h.card_len, h.build_len, h.data_offset
     );
+    // The counts and the record's size under the keys the gate's fixture check
+    // (tests/gate/fixtures.sh) and the scripts read them by.
+    println!("  counts       :");
+    println!("    quad_count: {}", h.quad_count);
+    println!("    term_count: {}", h.term_count);
+    println!("    graph_count: {}", h.graph_count);
+    println!("    build_info_len: {}", h.build_len);
+    println!(
+        "  codecs       : dictionary {}, blocks {}, internal {}",
+        codec_name(h.dict_codec),
+        codec_name(h.block_codec),
+        codec_name(h.internal_codec)
+    );
+    println!("  pyramid      : {} level(s)", h.pyramid_levels);
     println!("  sections     :");
     for s in &root.sections {
         let a = s.abs(&h)?;
@@ -677,6 +692,61 @@ fn print_v06_layout(reader: &LocalRangeReader) -> anyhow::Result<()> {
     }
     print_leaf_counts(&root);
     Ok(())
+}
+
+/// `rete info` for a format 0x05 file: the header's fields and its section
+/// directory, one line each.
+fn print_v05_layout(h: &rete_core::Header, raw: bool) {
+    println!("format version: {}", h.version);
+    if raw {
+        println!("{h:#?}");
+    }
+    println!(
+        "format {} (legacy) — content hash {}",
+        h.version,
+        crate::commands::card::hex16(&h.content_hash)
+    );
+    println!("  counts       :");
+    println!("    quad_count: {}", h.quad_count);
+    println!("    term_count: {}", h.term_count);
+    println!("    build_info_len: {}", h.build_info_len);
+    println!(
+        "  codecs       : dictionary {}, blocks {}",
+        codec_name(h.dict_codec),
+        codec_name(h.block_codec)
+    );
+    println!("  pyramid      : {} level(s)", h.pyramid_levels);
+    println!("  sections     :");
+    let mut sections = vec![
+        ("card", h.metadata_offset, h.metadata_len),
+        ("dictionary", h.dictionary_offset, h.dictionary_len),
+        ("index", h.root_dir_offset, h.root_dir_len),
+        ("pyramid", h.pyramid_meta_offset, h.pyramid_meta_len),
+        ("named graphs", h.named_graphs_offset, h.named_graphs_len),
+        ("text index", h.text_index_offset, h.text_index_len),
+        ("build info", h.build_info_offset, h.build_info_len),
+    ];
+    sections.retain(|s| s.2 > 0);
+    for (name, offset, len) in sections {
+        println!("    {name:<13} {offset:>14} + {len:<12}");
+    }
+    for s in &h.extra_sections {
+        println!(
+            "    {:<13} {:>14} + {:<12}",
+            format!("{:?}", s.kind).to_lowercase(),
+            s.offset,
+            s.length
+        );
+    }
+}
+
+/// A codec id by name.
+fn codec_name(id: u8) -> String {
+    match id {
+        0 => "none".to_string(),
+        CODEC_ZSTD => "zstd".to_string(),
+        n => format!("codec {n}"),
+    }
 }
 
 /// Leaves per directory, from the root alone: `dict` (shared, subject, object,
