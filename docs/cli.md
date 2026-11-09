@@ -104,9 +104,10 @@ coherence axioms, the planner's per-predicate `query_stats` and the
 characteristic sets — computed without the pyramid, so `--no-pyramid` and
 `--memory-budget-mb` files have them too; it is a few kilobytes, and `--no-schema`
 leaves it out. Both flags work with `--no-pyramid`, any `--pyramid-algo` and
-`--memory-budget-mb`, and both sections sit outside the content hash (an older
-`rete verify` still passes; an older reader just doesn't see them — see
-[compatibility.md](compatibility.md)). The publish recipe is
+`--memory-budget-mb`. In format `0x06` both sections are inside the content hash and
+have their own entries in the root ([SPEC §4.8](SPEC.md#48-what-generation-2-dropped));
+only in a `0x05` file were they outside it, which is why an older `rete verify`
+still passed there ([compatibility.md](compatibility.md)). The publish recipe is
 `--pyramid-algo types --label-index --card`.
 
 ```sh

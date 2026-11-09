@@ -23,11 +23,12 @@ hosts this project uses in production.
    can read `Content-Range` only when the host lists it in
    `Access-Control-Expose-Headers`, and `HEAD`'s `Content-Length` may describe
    a compressed representation (GitHub Pages, #95). So the reader takes a
-   `.rete`'s length from the file itself: the first ranged `GET` reads the 1 KiB
-   header, whose section directory fixes the length, and one 4-byte read of the
-   closing `RETE` footer confirms it. A visible `Content-Range` that agrees
-   saves that footer read, which is why the production bucket still exposes
-   it. A resource that is not a plain `.rete` (a polyglot page) falls back to
+   `.rete`'s length from the file itself: the first ranged `GET` reads the first
+   64 KiB, and the 128-byte header in it carries the file length ([SPEC §4.1](SPEC.md#41-header-128-bytes-little-endian)).
+   A visible `Content-Range` that agrees is a cross-check, which is why the
+   production bucket still exposes it. (A format `0x05` file has a 1 KiB header
+   and a closing `RETE` footer, and the reader confirms the length with a 4-byte
+   footer read.) A resource that is not a plain `.rete` (a polyglot page) falls back to
    `Content-Range`, then to `HEAD`'s `Content-Length`, which is
    CORS-safelisted and readable everywhere; the opt-in persistent range cache
    does the same when `Content-Range` is hidden.
@@ -35,8 +36,9 @@ hosts this project uses in production.
 ### The ten-second check
 
 ```sh
-# 206 + a content-range header = ranges work:
-curl -sI -r 0-1023 https://host/path/data.rete | grep -iE "^HTTP|content-range"
+# 206 + a content-range header = ranges work. A ranged GET, not HEAD: many
+# hosts, `scripts/range_server.py` among them, answer HEAD with a plain 200.
+curl -s -o /dev/null -D - -r 0-1023 https://host/path/data.rete | grep -iE "^HTTP|content-range"
 # HTTP/2 206
 # content-range: bytes 0-1023/104857600
 
@@ -96,8 +98,7 @@ request with `206` and `Access-Control-Allow-Origin: *` and allows `Range` in
 the preflight, but its `Access-Control-Expose-Headers` lists only
 `Content-Type`, `ETag`, `Link` and the rate-limit headers, so a browser cannot
 read `Content-Range`. That costs nothing (requirement 3 above): the reader
-takes the length from the file's own header and confirms it with a 4-byte
-footer read, and the playground labels the source with the file name rather
+takes the length from the file's own header, and the playground labels the source with the file name rather
 than the URL's trailing `content`. `tests/gate/checks/check_zenodo_host.mjs`
 serves a file with exactly that header set, in both browser engines, so this
 stays true without depending on zenodo.org (whose API rate-limits with `403`).

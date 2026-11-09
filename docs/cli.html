@@ -709,9 +709,10 @@ coherence axioms, the planner's per-predicate <code>query_stats</code> and the
 characteristic sets — computed without the pyramid, so <code>--no-pyramid</code> and
 <code>--memory-budget-mb</code> files have them too; it is a few kilobytes, and <code>--no-schema</code>
 leaves it out. Both flags work with <code>--no-pyramid</code>, any <code>--pyramid-algo</code> and
-<code>--memory-budget-mb</code>, and both sections sit outside the content hash (an older
-<code>rete verify</code> still passes; an older reader just doesn't see them — see
-<a href="compatibility.html">compatibility.md</a>). The publish recipe is
+<code>--memory-budget-mb</code>. In format <code>0x06</code> both sections are inside the content hash and
+have their own entries in the root (<a href="SPEC.html#48-what-generation-2-dropped">SPEC §4.8</a>);
+only in a <code>0x05</code> file were they outside it, which is why an older <code>rete verify</code>
+still passed there (<a href="compatibility.html">compatibility.md</a>). The publish recipe is
 <code>--pyramid-algo types --label-index --card</code>.</p>
 <pre><code class="language-sh">rete build data.nt -o data.rete --no-pyramid --label-index   # labels + schema, no pyramid
 rete build huge.nq.gz -o huge.rete --memory-budget-mb 3000 --label-index

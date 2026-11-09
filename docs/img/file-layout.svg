@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 584" role="img" aria-labelledby="t">
-  <title id="t">The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 470" role="img" aria-labelledby="t">
+  <title id="t">The front of a format 0x06 .rete file. A 128-byte header comes first, then the root block with the section table, then the card region holding the Dataset Card, the build record and free space, then the front sections (statistics, schema and the leaf directories), then the data sections, then an 8-byte footer. The header is drawn to scale in six groups: bytes 0 to 7 magic, version, flags and header length; 8 to 23 the content hash; 24 to 47 the file length, root length, card region length and data offset; 48 to 71 the statement, term and named-graph counts; 72 to 79 the permutation mask, codecs, pyramid levels, id widths and presence bits; 80 to 127 the card and build record positions, the card digest and the root digest. A reader's first request, bytes 0 to 65535, holds the header, the root, the card and the statistics.</title>
   <style>
     :root{
       --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
@@ -7,7 +7,6 @@
       --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
       --data:#2bb673; --data-ink:#17794a;
       --meta:#a259f7; --meta-ink:#7a2fe0;
-      --warn:#b32741;
     }
     @media (prefers-color-scheme:dark){
       :root{
@@ -16,125 +15,87 @@
         --cold:#232b35; --coldfg:#8d99a6;
         --data:#2fc47e; --data-ink:#5fe0a8;
         --meta:#a978f7; --meta-ink:#c6a4ff;
-        --warn:#ff8098;
       }
     }
     svg{fill:var(--ink)}
     text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
-    /* Colour utilities for text. The base fill lives on svg{} so that fill=
-       attributes and group-level fills still win by inheritance. */
-    .u-coldfg{fill:var(--coldfg)}
-    .u-data{fill:var(--data)}
     .u-dataink{fill:var(--data-ink)}
-    .u-ink{fill:var(--ink)}
-    .u-ink2{fill:var(--ink2)}
-    .u-meta{fill:var(--meta)}
     .u-metaink{fill:var(--meta-ink)}
     .u-muted{fill:var(--muted)}
     .u-onchip{fill:var(--on-chip)}
-    .u-onink{fill:var(--surface)}
-    .u-warn{fill:var(--warn)}
     .mono{font-family:ui-monospace,Consolas,monospace}
     .title{font-size:19px;font-weight:700}
     .deck{font-size:13px;fill:var(--muted)}
     .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
     .body{font-size:13px}
     .ann{font-size:13px;fill:var(--muted)}
+    .chip{font-size:12px;font-weight:700;fill:var(--on-chip)}
     .cold{fill:var(--cold);stroke:var(--line)}
-    .coldtx{fill:var(--coldfg);font-size:13px}
     .lead{stroke:var(--muted);stroke-width:1;fill:none;stroke-dasharray:4 3}
   </style>
 
-  <rect x="1" y="1" width="558" height="582" rx="14" fill="var(--surface)" stroke="var(--line)"/>
+  <rect x="1" y="1" width="558" height="468" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <text class="title" x="26" y="40">The header is the directory</text>
-  <text class="deck" x="26" y="62">one 1 KiB read locates every section — there is nothing else to chase</text>
+  <text class="title" x="26" y="40">The front of the file is the directory</text>
+  <text class="deck" x="26" y="62">the first 64 KiB read holds everything a reader needs to plan a query</text>
 
-  <rect x="26" y="76" width="164" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/>
-  <text class="mono body" x="40" y="95" font-weight="700">davidrumsey.rete</text>
-  <text class="ann" x="202" y="95">74.8 MB · 6 sections</text>
+  <!-- ============ the file, in order (not to scale) ============ -->
+  <text class="sect" x="26" y="100">the file, in order — <tspan class="mono">not to scale</tspan></text>
+  <rect x="26"  y="110" width="62"  height="34" rx="4" fill="var(--meta)"/>
+  <rect x="88"  y="110" width="54"  height="34" rx="4" fill="var(--meta)" opacity="0.75"/>
+  <rect x="142" y="110" width="80"  height="34" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <rect x="222" y="110" width="92" height="34" rx="4" fill="var(--meta)" opacity="0.4"/>
+  <rect x="314" y="110" width="168" height="34" rx="4" fill="var(--data)"/>
+  <rect x="482" y="110" width="52"  height="34" rx="4" class="cold"/>
+  <g class="chip" text-anchor="middle">
+    <text x="57"  y="125">header</text><text x="57"  y="138" font-weight="400">128 B</text>
+    <text x="115" y="125">root</text><text x="115" y="138" font-weight="400">sections</text>
+    <text x="182" y="125">card region</text><text x="182" y="138" font-weight="400">card · record</text>
+    <text x="268" y="125">front sections</text><text x="268" y="138" font-weight="400">stats · leaves</text>
+    <text x="398" y="125">data sections</text><text x="398" y="138" font-weight="400">dict · tiles · labels · text</text>
+  </g>
+  <text class="ann" x="508" y="131" text-anchor="middle">footer</text>
+  <!-- the first read -->
+  <path d="M26 154 v8 H314 v-8" fill="none" stroke="var(--meta)" stroke-width="1.5"/>
+  <text class="mono body u-metaink" x="170" y="180" text-anchor="middle" font-weight="700">first read: bytes=0-65535</text>
+  <text class="ann" x="398" y="164" text-anchor="middle">fetched when a query needs it</text>
+  <text class="ann" x="26" y="204">The header holds the file length, so no <tspan class="mono">HEAD</tspan> is needed. The footer is <tspan class="mono">06 00 00 00 "RETE"</tspan>.</text>
 
   <!-- ============ the header, to scale ============ -->
-  <text class="sect" x="26" y="140">the header — <tspan class="mono">bytes 0–1023</tspan>, drawn to scale</text>
-  <rect x="26"    y="150" width="30"    height="18" rx="4" fill="var(--meta)" opacity="0.55"/>
-  <!-- the six directory entries, each 24 B = 11.25 px, drawn discretely -->
-  <g fill="var(--meta)">
-    <rect x="56.0"  y="150" width="10.25" height="18" rx="3"/>
-    <rect x="67.25" y="150" width="10.25" height="18" rx="3"/>
-    <rect x="78.5"  y="150" width="10.25" height="18" rx="3"/>
-    <rect x="89.75" y="150" width="10.25" height="18" rx="3"/>
-    <rect x="101.0" y="150" width="10.25" height="18" rx="3"/>
-    <rect x="112.25" y="150" width="10.25" height="18" rx="3"/>
+  <text class="sect" x="26" y="244">the header — <tspan class="mono">bytes 0–127</tspan>, drawn to scale</text>
+  <g>
+    <rect x="26"    y="254" width="31.75"  height="22" rx="3" fill="var(--meta)"/>
+    <rect x="57.75" y="254" width="63.5"   height="22" rx="3" fill="var(--data)"/>
+    <rect x="121.25" y="254" width="95.25" height="22" rx="3" fill="var(--meta)" opacity="0.7"/>
+    <rect x="216.5" y="254" width="95.25"  height="22" rx="3" fill="var(--data)" opacity="0.7"/>
+    <rect x="311.75" y="254" width="31.75" height="22" rx="3" fill="var(--meta)" opacity="0.55"/>
+    <rect x="343.5" y="254" width="190.5"  height="22" rx="3" fill="var(--data)" opacity="0.5"/>
   </g>
-  <rect x="123.5" y="150" width="382.5" height="18" rx="4" class="cold"/>
-  <path class="lead" d="M41 168 v12"/>
-  <path class="lead" d="M112 168 v26"/>
-  <path class="lead" d="M315 168 v12"/>
-  <text class="ann" x="26"  y="196">core 64 B</text>
-  <text class="ann" x="315" y="196" text-anchor="middle">zero pad — room for 40 sections in all</text>
-  <text class="ann" x="104" y="212">6 entries · 24 B each</text>
-
-  <!-- ============ one entry, to scale ============ -->
-  <text class="sect" x="26" y="252">one entry — <tspan class="mono">24 bytes</tspan> at <tspan class="mono">64 + i × 24</tspan></text>
-  <rect x="26"  y="262" width="40"  height="18" rx="4" fill="var(--meta)"/>
-  <rect x="66"  y="262" width="40"  height="18" rx="4" fill="var(--meta)" opacity="0.55"/>
-  <rect x="106" y="262" width="80"  height="18" rx="4" class="cold"/>
-  <rect x="186" y="262" width="160" height="18" rx="4" fill="var(--meta)"/>
-  <rect x="346" y="262" width="160" height="18" rx="4" fill="var(--meta)"/>
+  <g class="mono" font-size="12" text-anchor="middle">
+    <text class="u-onchip" x="41.9"  y="269">0</text>
+    <text class="u-onchip" x="89.5"  y="269">8</text>
+    <text class="u-onchip" x="168.9" y="269">24</text>
+    <text class="u-onchip" x="264.1" y="269">48</text>
+    <text class="u-onchip" x="327.6" y="269">72</text>
+    <text class="u-onchip" x="438.8" y="269">80</text>
+  </g>
   <g class="mono" font-size="13">
-    <text class="u-metaink" x="46"  y="298" text-anchor="middle">kind</text>
-    <text class="u-metaink" x="86"  y="298" text-anchor="middle">flags</text>
-    <text class="u-coldfg" x="146" y="298" text-anchor="middle">rsvd</text>
-    <text class="u-metaink" x="266" y="298" text-anchor="middle">offset u64</text>
-    <text class="u-metaink" x="426" y="298" text-anchor="middle">length u64</text>
+    <text class="ann" x="26" y="304">bytes</text>
+    <text class="ann" x="92" y="304">holds</text>
+
+    <text class="u-metaink" x="26" y="326">0–7</text>
+    <text x="92" y="326">magic, version, flags, header length</text>
+    <text class="u-dataink" x="26" y="346">8–23</text>
+    <text x="92" y="346">content hash</text>
+    <text class="u-metaink" x="26" y="366">24–47</text>
+    <text x="92" y="366">file length, root length, card region length, data offset</text>
+    <text class="u-dataink" x="26" y="386">48–71</text>
+    <text x="92" y="386">statement, term, named-graph counts</text>
+    <text class="u-metaink" x="26" y="406">72–79</text>
+    <text x="92" y="406">permutation mask, codecs, levels, id widths, presence</text>
+    <text class="u-dataink" x="26" y="426">80–127</text>
+    <text x="92" y="426">card and record position, card digest, root digest</text>
   </g>
 
-  <!-- ============ what this file's directory says ============ -->
-  <text class="sect" x="26" y="338">what this file's directory says</text>
-  <g class="mono" font-size="13">
-    <text class="ann" x="26"  y="358">kind</text>
-    <text class="ann" x="66"  y="358">section</text>
-    <text class="ann" x="392" y="358" text-anchor="end">offset</text>
-    <text class="ann" x="534" y="358" text-anchor="end">length</text>
-
-    <text class="u-metaink" x="26" y="380">1</text>
-    <text x="66" y="380">dataset card</text>
-    <text x="392" y="380" text-anchor="end">1,024</text>
-    <text x="534" y="380" text-anchor="end">59,921</text>
-
-    <text class="u-dataink" x="26" y="400">2</text>
-    <text x="66" y="400">dictionary</text>
-    <text x="392" y="400" text-anchor="end">60,945</text>
-    <text x="534" y="400" text-anchor="end">16,069,891</text>
-
-    <text class="u-dataink" x="26" y="420">3</text>
-    <text x="66" y="420">index</text>
-    <text x="392" y="420" text-anchor="end">16,130,836</text>
-    <text x="534" y="420" text-anchor="end">42,598,021</text>
-
-    <text class="u-metaink" x="26" y="440">4</text>
-    <text x="66" y="440">pyramid</text>
-    <text x="392" y="440" text-anchor="end">58,728,857</text>
-    <text x="534" y="440" text-anchor="end">1,332,512</text>
-
-    <text class="coldtx" x="26" y="460">5</text>
-    <text class="coldtx" x="66" y="460">named graphs</text>
-    <text class="coldtx" x="534" y="460" text-anchor="end">not in this file</text>
-
-    <text class="u-dataink" x="26" y="480">6</text>
-    <text x="66" y="480">text index</text>
-    <text x="392" y="480" text-anchor="end">60,061,369</text>
-    <text x="534" y="480" text-anchor="end">14,741,877</text>
-
-    <text class="coldtx" x="26" y="500">7</text>
-    <text class="coldtx" x="66" y="500">build info</text>
-    <text class="coldtx" x="534" y="500" text-anchor="end">not in this file</text>
-  </g>
-
-  <text class="ann" x="26" y="524">A kind a reader does not know is kept verbatim — a new writer cannot break an old reader.</text>
-
-  <!-- takeaway -->
-  <rect x="26" y="536" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--meta)" stroke-width="1.3" stroke-dasharray="6 4"/>
-  <text class="mono body u-metaink" x="40" y="558" font-weight="700">GET bytes=0-1023</text>
-  <text class="body" x="170" y="558">— and the client knows where everything is</text>
+  <text class="ann" x="26" y="454">Re-carding rewrites the card region and these 128 bytes, and nothing else.</text>
 </svg>
