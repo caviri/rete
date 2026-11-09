@@ -11,7 +11,7 @@
 //! only the tile order is.
 //!
 //! [`derive`] is the one implementation, shared by every writer like
-//! [`super::neworders`]: the in-RAM build, the memory-bounded build and
+//! `neworders`: the in-RAM build, the memory-bounded build and
 //! `convert` hand the assembler an unclustered SPO, and this reads it, partitions
 //! its rows by cluster (a stable partition: each run stays in `(s, p, o)` order,
 //! so nothing is sorted), cuts and encodes each run with the ordinary tiler and
