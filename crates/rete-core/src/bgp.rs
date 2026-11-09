@@ -313,7 +313,7 @@ fn try_merge_join(
     let collect = |t: &(SlotTerm, SlotTerm, SlotTerm), col: usize| -> Option<Vec<(u32, Row)>> {
         let pat = lower(t)?;
         let mut out = Vec::new();
-        for tri in canon_ahead(ctx, &t.1, index.scan_iter_sorted_on(pat, col)?) {
+        for tri in canon_ahead(ctx, t, index.scan_iter_sorted_on(pat, col)?) {
             if let Some(r) = triple_row(ctx, t, tri) {
                 out.push(([tri.0, tri.1, tri.2][col], r));
             }
@@ -963,16 +963,23 @@ const CANON_AHEAD: usize = 64;
 /// predicate over a faulting dictionary passes straight through.
 fn canon_ahead<'a, 'c>(
     ctx: &'a Ctx<'c>,
-    slot: &SlotTerm,
+    t: &(SlotTerm, SlotTerm, SlotTerm),
     triples: impl Iterator<Item = Triple> + 'a,
 ) -> Box<dyn Iterator<Item = Triple> + 'a> {
-    if !matches!(slot, SlotTerm::Var(_)) || !ctx.rete.dictionary().faults_chunks() {
+    if !matches!(t.1, SlotTerm::Var(_)) || !ctx.rete.dictionary().faults_chunks() {
         return Box::new(triples);
     }
+    // Which of the subject and object the query will decode as it ends: a
+    // projected variable of this pattern (see [`Ctx::decode_ahead`]).
+    let decoded = |term: &SlotTerm| match term {
+        SlotTerm::Var(i) => ctx.decodes_slot(*i),
+        _ => false,
+    };
     Box::new(CanonAhead {
         ctx,
         triples,
         run: std::collections::VecDeque::new(),
+        decode: (decoded(&t.0), decoded(&t.2)),
     })
 }
 
@@ -980,6 +987,8 @@ struct CanonAhead<'a, 'c, I> {
     ctx: &'a Ctx<'c>,
     triples: I,
     run: std::collections::VecDeque<Triple>,
+    /// Is the subject, the object, decoded by the query's final projection?
+    decode: (bool, bool),
 }
 
 impl<I: Iterator<Item = Triple>> Iterator for CanonAhead<'_, '_, I> {
@@ -989,7 +998,22 @@ impl<I: Iterator<Item = Triple>> Iterator for CanonAhead<'_, '_, I> {
         if self.run.is_empty() {
             self.run.extend(self.triples.by_ref().take(CANON_AHEAD));
             let preds: Vec<u32> = self.run.iter().map(|t| t.1).collect();
-            self.ctx.resolver.prefetch_canon(&preds);
+            // The rows the query will decode are these ones (up to its LIMIT):
+            // their terms go out with the canonicalization lookups, one batch
+            // for both, where the decode after the last row was two more
+            // dependent reads (leaves, then chunks) on a leafed dictionary.
+            let dict = self.ctx.rete.dictionary();
+            let take = self.ctx.decode_rows().min(self.run.len());
+            let mut nodes: Vec<u32> = Vec::new();
+            for t in self.run.iter().take(take) {
+                if self.decode.0 {
+                    nodes.push(dict.subject_node(t.0));
+                }
+                if self.decode.1 {
+                    nodes.push(dict.object_node(t.2));
+                }
+            }
+            self.ctx.resolver.prefetch_canon(&preds, &nodes);
         }
         self.run.pop_front()
     }
@@ -1051,7 +1075,7 @@ fn scan_rows<'q>(
         const_object(&t.2, dict)?,
     );
     Some(
-        canon_ahead(ctx, &t.1, index.scan_iter((sid, pid, oid)))
+        canon_ahead(ctx, &t, index.scan_iter((sid, pid, oid)))
             .filter_map(move |triple| triple_row(ctx, &t, triple)),
     )
 }
@@ -1139,7 +1163,7 @@ fn pattern_rows(
     );
     // Stream the matches with the lazy cursor — the hash join is
     // order-independent, so no canonical re-sort is needed here.
-    for triple in canon_ahead(ctx, &t.1, index.scan_iter((sid, pid, oid))) {
+    for triple in canon_ahead(ctx, t, index.scan_iter((sid, pid, oid))) {
         if let Some(row) = triple_row(ctx, t, triple) {
             rel.push(row);
         }
@@ -1934,10 +1958,11 @@ fn probe_rows<'q>(
         return Box::new(std::iter::empty());
     };
     let dict = ctx.rete.dictionary();
+    // A variable predicate is canonicalized a run at a time ([`canon_ahead`]):
+    // one new predicate after another was a dictionary round trip each.
     Box::new(
-        index
-            .scan_iter((sid, pid, oid))
-            .filter_map(move |(s_id, p_id, o_id)| {
+        canon_ahead(ctx, &t, index.scan_iter((sid, pid, oid))).filter_map(
+            move |(s_id, p_id, o_id)| {
                 let s_val = dict.subject_node(s_id) as i64;
                 let p_val = pred_val(ctx, &t.1, p_id);
                 let o_val = dict.object_node(o_id) as i64;
@@ -1953,7 +1978,8 @@ fn probe_rows<'q>(
                     }
                 }
                 Some(row)
-            }),
+            },
+        ),
     )
 }
 

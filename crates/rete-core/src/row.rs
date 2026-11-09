@@ -295,7 +295,11 @@ impl<'a> Resolver<'a> {
     /// memo and cache hits. Each of the two steps is one batched read where a
     /// lookup predicate by predicate was up to three sequential reads for each
     /// new one. Only warms the cache; a no-op on a resident dictionary.
-    pub(crate) fn prefetch_canon(&self, pred_ids: &[u32]) {
+    ///
+    /// `decode_nodes` are node ids the caller is about to resolve to strings
+    /// (a result page): they ride along with the second step's lookups, so
+    /// their leaves and chunks cost no round trip of their own.
+    pub(crate) fn prefetch_canon(&self, pred_ids: &[u32], decode_nodes: &[u32]) {
         if !self.dict.faults_chunks() {
             return;
         }
@@ -317,7 +321,13 @@ impl<'a> Resolver<'a> {
             .iter()
             .filter_map(|&p| self.term(-(p as i64) - 1))
             .collect();
-        self.dict.prefetch_lookups(terms.iter().map(|t| &**t), []);
+        self.dict.prefetch_lookups_and_terms(
+            terms.iter().map(|t| &**t),
+            [],
+            false,
+            decode_nodes,
+            &[],
+        );
     }
 
     /// The term string for a tagged id (memoized).
@@ -455,9 +465,29 @@ pub(crate) struct Ctx<'a> {
     /// no-match on valid string arguments to the diagnostics sink, so the
     /// case-sensitivity probe costs one bit test per row after the first.
     pub(crate) miss_mask: std::cell::Cell<u8>,
+    /// The top-level SELECT's final decode, when its rows are decoded as they
+    /// come out of the plan (no aggregate, ORDER BY or HAVING between): how
+    /// many rows at most, and which slots are projected. Only a *fetch
+    /// strategy* hint: a batch that canonicalizes a variable predicate also
+    /// faults the terms of the rows the projection will decode, in the same
+    /// round trips. Never an input to an answer.
+    pub(crate) decode_ahead: std::cell::RefCell<Option<(usize, Vec<bool>)>>,
 }
 
 impl<'a> Ctx<'a> {
+    /// How many rows the final projection decodes at most (0: none known).
+    pub(crate) fn decode_rows(&self) -> usize {
+        self.decode_ahead.borrow().as_ref().map_or(0, |d| d.0)
+    }
+
+    /// Does the final projection decode slot `i`?
+    pub(crate) fn decodes_slot(&self, i: usize) -> bool {
+        self.decode_ahead
+            .borrow()
+            .as_ref()
+            .is_some_and(|d| d.1.get(i).copied().unwrap_or(false))
+    }
+
     pub(crate) fn new(rete: &'a Rete, slots: Slots) -> Self {
         Ctx {
             rete,
@@ -466,6 +496,7 @@ impl<'a> Ctx<'a> {
             limit_hint: std::cell::Cell::new(None),
             exhaustive: std::cell::Cell::new(false),
             miss_mask: std::cell::Cell::new(0),
+            decode_ahead: std::cell::RefCell::new(None),
         }
     }
 }

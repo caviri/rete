@@ -765,6 +765,10 @@ type BlockCell = OnceLock<Arc<[(u32, u64)]>>;
 /// A run of decoded directory blocks and the ordinal of the first.
 type BlockWindow = (usize, Vec<Arc<[(u32, u64)]>>);
 
+/// A decoded graph-directory block, and the bytes of the extra ranges that were
+/// read in the same batch (none when the block was resident).
+type BlockAndExtra = (Arc<[(u32, u64)]>, Vec<Vec<u8>>);
+
 /// Past this many graphs the directory blocks are not all kept (see `QuadCore::block`).
 const BLOCK_MEMO_MAX_GRAPHS: u64 = 1 << 21;
 
@@ -1114,6 +1118,18 @@ impl QuadCore {
     /// so the blocks are kept only as the last read-ahead window and a block
     /// outside it is read again.
     fn block(&self, b: usize, exhaustive: bool) -> Option<Arc<[(u32, u64)]>> {
+        self.block_with(b, exhaustive, &[]).map(|(v, _)| v)
+    }
+
+    /// [`block`](Self::block), and when the block has to be read, the ranges
+    /// `extra` in the same batch (one round trip for both): their bytes come
+    /// back in order, or none when the block was resident.
+    fn block_with(
+        &self,
+        b: usize,
+        exhaustive: bool,
+        extra: &[(u64, u64)],
+    ) -> Option<BlockAndExtra> {
         let index = self.blocks_index()?.clone();
         let cells = self.blocks.get()?;
         let pre = self.pre()?.clone();
@@ -1122,11 +1138,11 @@ impl QuadCore {
             let win = self.window.lock().unwrap();
             if let Some((start, blocks)) = win.as_ref() {
                 if let Some(v) = b.checked_sub(*start).and_then(|k| blocks.get(k)) {
-                    return Some(v.clone());
+                    return Some((v.clone(), Vec::new()));
                 }
             }
         } else if let Some(v) = cells.get(b)?.get() {
-            return Some(v.clone());
+            return Some((v.clone(), Vec::new()));
         }
         let w = {
             let mut ramps = self.ramps.lock().unwrap();
@@ -1138,11 +1154,26 @@ impl QuadCore {
         let end = b + w;
         let span_start = index[b].range.offset;
         let span_end = index[end - 1].range.end();
-        let span = match self.reader.read_at(span_start, span_end - span_start) {
-            Ok(s) => s,
-            Err(_) => {
-                self.fail();
-                return None;
+        let (span, extra_bytes) = if extra.is_empty() {
+            match self.reader.read_at(span_start, span_end - span_start) {
+                Ok(s) => (s, Vec::new()),
+                Err(_) => {
+                    self.fail();
+                    return None;
+                }
+            }
+        } else {
+            let mut ranges = vec![(span_start, span_end - span_start)];
+            ranges.extend_from_slice(extra);
+            match self.reader.read_many(&ranges) {
+                Ok(mut blobs) if blobs.len() == ranges.len() => {
+                    let span = blobs.remove(0);
+                    (span, blobs)
+                }
+                _ => {
+                    self.fail();
+                    return None;
+                }
             }
         };
         let mut window: Vec<Arc<[(u32, u64)]>> = Vec::new();
@@ -1166,9 +1197,9 @@ impl QuadCore {
         if bounded {
             let first = window.first().cloned();
             *self.window.lock().unwrap() = Some((b, window));
-            return first;
+            return first.map(|v| (v, extra_bytes));
         }
-        cells[b].get().cloned()
+        cells[b].get().cloned().map(|v| (v, extra_bytes))
     }
 
     /// The graph at ordinal `i`: `(graph id, quad count)`.
@@ -1180,14 +1211,61 @@ impl QuadCore {
 
     /// The ordinal of graph id `g`, or `None` when the file has no such graph.
     fn ordinal_of(&self, g: u32) -> Option<usize> {
+        self.ordinal_of_with(g, &[]).map(|(i, _)| i)
+    }
+
+    /// [`ordinal_of`](Self::ordinal_of), with `extra` ranges read in the same
+    /// batch as the directory block when that has to be read (see
+    /// [`block_with`](Self::block_with)).
+    fn ordinal_of_with(&self, g: u32, extra: &[(u64, u64)]) -> Option<(usize, Vec<Vec<u8>>)> {
         let index = self.blocks_index()?.clone();
         let bi = index.partition_point(|r| r.first_g <= g);
         if bi == 0 {
             return None;
         }
-        let block = self.block(bi - 1, false)?;
+        let (block, bytes) = self.block_with(bi - 1, false, extra)?;
         let pos = block.binary_search_by_key(&g, |&(id, _)| id).ok()?;
-        Some((bi - 1) * self.pre()?.block_graphs as usize + pos)
+        Some(((bi - 1) * self.pre()?.block_graphs as usize + pos, bytes))
+    }
+
+    /// [`ordinal_of`](Self::ordinal_of) for a graph about to be viewed. Neither
+    /// the graph's directory block nor the leaf of a tile directory that holds
+    /// it depends on the other (the leaf is routed by the graph id, which the
+    /// caller has), so a `0x06` file with a leafed directory reads both in one
+    /// round trip, where it read the block and then the leaf. The leaf is the
+    /// first order's, the one a scan that binds the subject or nothing takes;
+    /// a view that takes another order reads its own leaf as before, and has
+    /// read one small leaf too many.
+    fn ordinal_of_for_view(&self, g: u32) -> Option<usize> {
+        let (Some(v), Some(si)) = (
+            &self.v06,
+            self.perms.iter().next().map(|p| p.section_index()),
+        ) else {
+            return self.ordinal_of(g);
+        };
+        let leaves = &v.orders[si];
+        if leaves.len() <= 1 || self.dirs[si].get().is_some() {
+            return self.ordinal_of(g);
+        }
+        let lo = leaves.partition_point(|l| l.last_g < g);
+        let hi = leaves.partition_point(|l| l.first_g <= g);
+        let missing: Vec<usize> = (lo..hi)
+            .filter(|&li| v.leaf_cells[si][li].get().is_none())
+            .collect();
+        if missing.is_empty() {
+            return self.ordinal_of(g);
+        }
+        let ranges: Vec<(u64, u64)> = missing
+            .iter()
+            .map(|&li| (leaves[li].range.offset, leaves[li].range.len))
+            .collect();
+        let (ordinal, blobs) = self.ordinal_of_with(g, &ranges)?;
+        if blobs.len() == missing.len() {
+            // A leaf that does not decode is recorded as a failed read, the
+            // same as when the view asks for it.
+            let _ = self.install_leaves(v, si, &missing, blobs);
+        }
+        Some(ordinal)
     }
 
     /// The tile directory of the order in section slot `si`. A view needs
@@ -1275,6 +1353,18 @@ impl QuadCore {
                 return None;
             }
         };
+        self.install_leaves(v, si, &missing, blobs)
+    }
+
+    /// Decode the stored leaves `blobs` of order `si` (`missing[k]` is the
+    /// leaf of `blobs[k]`) and keep them.
+    fn install_leaves(
+        &self,
+        v: &V06Quad,
+        si: usize,
+        missing: &[usize],
+        blobs: Vec<Vec<u8>>,
+    ) -> Option<()> {
         for (&li, stored) in missing.iter().zip(blobs) {
             let leaf = &v.orders[si][li];
             let parsed = crate::file::decompress_bounded(v.leaf_codec, &stored, v.leaf_max)
@@ -2090,7 +2180,7 @@ impl QuadNamed {
 
     fn ordinal_of_name(&self, dict: &Dictionary, iri: &str) -> Option<usize> {
         let g = dict.subject_id(iri)?;
-        self.core.ordinal_of(g)
+        self.core.ordinal_of_for_view(g)
     }
 
     /// The index of the graph named `iri`: dictionary lookup, then directory

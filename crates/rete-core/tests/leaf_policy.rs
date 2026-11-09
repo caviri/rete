@@ -264,3 +264,115 @@ fn the_rows_are_the_same_whatever_the_leaf_size() {
     assert!(!lazy.index_incomplete());
     assert!(rete_core::file::verify(small()).unwrap(), "verify");
 }
+
+/// Counts the dependent round trips of a cold query: each `read_at` and each
+/// `read_many` is one round (a batch goes out together), whatever it holds.
+struct Rounds {
+    data: &'static [u8],
+    rounds: std::sync::atomic::AtomicU64,
+    bytes: std::sync::atomic::AtomicU64,
+}
+
+impl Rounds {
+    fn new(data: &'static [u8]) -> Arc<Self> {
+        Arc::new(Rounds {
+            data,
+            rounds: Default::default(),
+            bytes: Default::default(),
+        })
+    }
+    /// `(rounds, bytes)` since the last call.
+    fn take(&self) -> (u64, u64) {
+        use std::sync::atomic::Ordering::SeqCst;
+        (self.rounds.swap(0, SeqCst), self.bytes.swap(0, SeqCst))
+    }
+    fn slice(&self, o: u64, l: u64) -> std::io::Result<Vec<u8>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.bytes.fetch_add(l, SeqCst);
+        self.data
+            .get(o as usize..(o + l) as usize)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "oob"))
+    }
+}
+
+impl RangeReader for Rounds {
+    fn len(&self) -> u64 {
+        self.data.len() as u64
+    }
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.rounds
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.slice(offset, len)
+    }
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.rounds
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ranges.iter().map(|&(o, l)| self.slice(o, l)).collect()
+    }
+    fn concurrency(&self) -> usize {
+        4
+    }
+}
+
+/// Dependent round trips of one cold query over `image`, and its rows.
+fn cold_rounds(image: &'static [u8], q: &str) -> (u64, Vec<String>) {
+    let rec = Rounds::new(image);
+    let rete = Rete::open_ranged_lazy_with(rec.clone(), 4096).unwrap();
+    rec.take();
+    let got = rows(&rete, q);
+    assert!(!rete.index_incomplete());
+    (rec.take().0, got)
+}
+
+/// Cold shapes over small leaves take no more dependent round trips than over
+/// one leaf per directory (the old loop's file, read by the same reader): the
+/// join, a graph's view and a bound subject in a graph. Before, each distinct
+/// dictionary or directory leaf was a read of its own: every predicate a
+/// `GRAPH ?a { ?s ?p ?o }` probe met was canonicalized by itself (a leaf read
+/// and a chunk read each time), a result's terms were decoded after the
+/// predicates were, and a graph's directory block was read before the tile
+/// directory leaf that does not depend on it. Rows are the resident reader's.
+#[test]
+fn cold_shapes_over_small_leaves_are_no_deeper_than_over_one_leaf() {
+    let np = "http://ex/np#hasAssertion";
+    let queries = [
+        (
+            "join",
+            format!(
+                "SELECT ?s ?p ?o WHERE {{ GRAPH <http://ex/np/9#Head> {{ <http://ex/np/9> <{np}> ?a }}                  GRAPH ?a {{ ?s ?p ?o }} }}"
+            ),
+        ),
+        (
+            "view",
+            format!("SELECT ?s ?p ?o WHERE {{ GRAPH {G} {{ ?s ?p ?o }} }}"),
+        ),
+        (
+            "a graph's rows, decoded",
+            "SELECT ?s ?p ?o WHERE { GRAPH <http://ex/np/777#Head> { ?s ?p ?o } }".into(),
+        ),
+        (
+            "bound subject in a graph",
+            "SELECT ?p ?o WHERE { GRAPH <http://ex/np/777#assertion> { <http://ex/e/439> ?p ?o } }"
+                .into(),
+        ),
+        (
+            "bound subject",
+            "SELECT ?p ?o WHERE { GRAPH <http://ex/np/9#Head> { <http://ex/np/9> ?p ?o } }".into(),
+        ),
+    ];
+    let resident = Rete::open(single()).unwrap();
+    for (name, q) in &queries {
+        let want = rows(&resident, q);
+        assert!(!want.is_empty(), "{name}");
+        let (small_rounds, got) = cold_rounds(small(), q);
+        assert_eq!(&got, &want, "{name}: rows differ from the resident reader");
+        let (single_rounds, got) = cold_rounds(single(), q);
+        assert_eq!(&got, &want, "{name}: rows differ on one leaf");
+        eprintln!("{name}: small {small_rounds} rounds, single {single_rounds} rounds");
+        assert!(
+            small_rounds <= single_rounds,
+            "{name}: {small_rounds} round trips on small leaves, {single_rounds} on one leaf"
+        );
+    }
+}
