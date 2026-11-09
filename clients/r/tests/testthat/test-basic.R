@@ -42,9 +42,9 @@ test_that("ASK and CONSTRUCT", {
   expect_equal(df$predicate, "http://example.org/knownBy")
 })
 
-test_that("a build is format 0x06 with a build record", {
+test_that("a build is format 0x07 with a build record", {
   data <- rete_build(NT)
-  expect_equal(as.integer(data[5]), 6L)
+  expect_equal(as.integer(data[5]), 7L)
   # The record sits beside the card as plain JSON; drop the zero padding so the
   # image reads as text.
   text <- rawToChar(data[data != as.raw(0)])
