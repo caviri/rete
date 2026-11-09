@@ -24,7 +24,7 @@ hosts this project uses in production.
    `Access-Control-Expose-Headers`, and `HEAD`'s `Content-Length` may describe
    a compressed representation (GitHub Pages, #95). So the reader takes a
    `.rete`'s length from the file itself: the first ranged `GET` reads the first
-   64 KiB, and the 128-byte header in it carries the file length ([SPEC §4.1](SPEC.md#41-header-128-bytes-little-endian)).
+   128 KiB, and the 128-byte header in it carries the file length ([SPEC §4.1](SPEC.md#41-header-128-bytes-little-endian)).
    A visible `Content-Range` that agrees is a cross-check, which is why the
    production bucket still exposes it. (A format `0x05` file has a 1 KiB header
    and a closing `RETE` footer, and the reader confirms the length with a 4-byte

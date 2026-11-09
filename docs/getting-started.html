@@ -802,7 +802,7 @@ most useful on a large or remote file:</p>
   note: SPARQL evaluation opens lazily (tile directories only) and range-fetches index tiles as the query touches them; the full query-open figure is the eager upper bound.
 </code></pre>
 <p>The graph is 18 KB, so the whole file is one read. On a large file the lazy
-open reads the first 64 KiB and the query then reads only the tiles it needs.</p>
+open reads the first 128 KiB and the query then reads only the tiles it needs.</p>
 <h3 id="several-files">Several files</h3>
 <p><code>rete federate</code> runs one query over several files, local paths and URLs mixed,
 and merges the rows. Build a second file with one more dependency:</p>

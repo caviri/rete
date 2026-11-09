@@ -871,7 +871,7 @@ Content-Length: 1024
 Accept-Ranges: bytes
 ```
 
-Read the card. `card-url` reads the first 64 KiB (the header, the root, the card region and
+Read the card. `card-url` reads the first 128 KiB (the header, the root, the card region and
 the statistics) in one request, and never the index:
 
 ```sh
@@ -879,7 +879,7 @@ rete card-url http://host.docker.internal:8000/solar-big.rete | head -n 12
 ```
 
 ```text
-fetched 65536 of 105891840 bytes in 1 range request(s) — index NOT fetched
+fetched 131072 of 105891840 bytes in 1 range request(s) — index NOT fetched
 Dataset Card
   title        : Solar systems (synthetic)
   description  : A synthetic knowledge graph of planetary systems: the eight bodies of our own, then generated systems with a star, planets and moons. Made for the rete build tutorial.
@@ -934,7 +934,7 @@ rete cost solar-big.rete "PREFIX s: <https://example.org/solar/> PREFIX rdfs: <h
   summary exact answer: unavailable (query shape is not exactly answerable from summary predicate totals)
   summary overview: 5151904 bytes in 4 range request(s) · skips index
   routed pattern open: unavailable (query is not a single default-graph triple pattern)
-  lazy query open: 65536 bytes in 1 range request(s) · reads index
+  lazy query open: 131072 bytes in 1 range request(s) · reads index
   full query open: 105891840 bytes in 2 range request(s) · reads index
   index section: offset 5160233 · len 99424196
   note: SPARQL evaluation opens lazily (tile directories only) and range-fetches index tiles as the query touches them; the full query-open figure is the eager upper bou…

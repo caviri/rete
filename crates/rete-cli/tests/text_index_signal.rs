@@ -244,7 +244,7 @@ fn a_ranged_read_answers_without_fetching_the_index() {
         .unwrap_or_else(|| panic!("no byte report in: {stderr}"));
 
     if rete_core::v06::open::is_v06(&image) {
-        // 0x06: the CARD tier is the first read — 64 KiB, or the whole file
+        // 0x06: the CARD tier is the first read — 128 KiB, or the whole file
         // when smaller — and the card region (with the measured signal's
         // sizes in the root) sits inside it. Nothing past it is fetched.
         let h = rete_core::v06::Header06::from_bytes(&image).unwrap();

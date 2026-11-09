@@ -1019,7 +1019,7 @@ The costs are measured twice. The first run is against the finished sections,
 before the file is written, and decides which queries the card keeps (below):
 the card is inside the content hash, so it has to be final before the file is.
 The second is against the file as written, because in `0x06` the bytes a query
-reads depend on the card region (the open reads the first 64 KiB). Only the
+reads depend on the card region (the open reads the first 128 KiB). Only the
 second set of figures is stored. A query the **memory** ceiling stops stays in
 the card in either run, with `status: over_budget`: whether it trips depends on
 allocator timing, and the card is inside the content hash, so memory never
@@ -1164,7 +1164,7 @@ explicit so a client knows what is free before it runs anything:
 | 🟠 **Index** | the triple index (range-fetched tiles) | O(touched tiles) |
 
 `rete card-url <url>` reads the **Card tier** over HTTP in one first read (the
-first 64 KiB, which holds the header, the root and the card region with the card
+first 128 KiB, which holds the header, the root and the card region with the card
 and the build record) and at most one follow-up, sized from the header — and
 **never touches the index**, so a remote/S3 client
 gets the whole self-description (counts, vocabulary, class graph, signals,
@@ -1915,7 +1915,7 @@ locates the root and card region at the front of the file:
 [footer]       trailing version and magic
 ```
 
-The initial ranged read is up to 64 KiB, so it includes card bytes that lie
+The initial ranged read is up to 128 KiB, so it includes card bytes that lie
 in that front range. Larger front metadata may require further reads. A
 card therefore participates in the opening cost; it is not universally free
 for queries. `rete card-url` reads the card without scanning the graph.

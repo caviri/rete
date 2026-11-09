@@ -45,8 +45,8 @@ pub trait RangeReader {
 
     /// How many leading bytes this reader already holds in memory: a read that
     /// lies wholly inside `[0, resident_prefix())` costs no round trip. An HTTP
-    /// reader that learnt the length from a ranged GET of the first 64 KiB
-    /// reports those 64 KiB. A caching layer above it serves such a read
+    /// reader that learnt the length from a ranged GET of the first 128 KiB
+    /// reports those 128 KiB. A caching layer above it serves such a read
     /// straight through instead of fetching a block-aligned span that would
     /// re-read what is already here (the open's first read used to cost a
     /// second, larger request for block 0). Purely advisory; defaults to 0.
