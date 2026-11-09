@@ -292,11 +292,13 @@ enum Command {
         /// anything published.
         #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
         permutations: String,
-        /// How to store the **named graphs**. Format `0x06` has one layout,
-        /// `quad` (the default): the **quad index** (SPEC.md), every
-        /// named-graph quad once, the graph as a fourth column of
-        /// graph-leading permutations behind a sorted graph directory, with
-        /// graph names as dictionary terms.
+        /// How to store the **named graphs**. Format `0x07` has one layout,
+        /// `quad` (the default): the **quad index** (SPEC.md §6.5), every
+        /// named-graph quad stored four times, as GSPO (graph first, behind a
+        /// sorted graph directory) and as SPOG, POSG and OSPG (graph last),
+        /// with graph names as dictionary terms. `--permutations` is the
+        /// default graph's alone: the quad orders are the same four whatever
+        /// it says.
         ///
         /// `per-graph` (the `0x05` NAMED_GRAPHS section) is no longer
         /// written and is refused; `rete convert` turns a per-graph `0x05`
@@ -510,10 +512,17 @@ enum Command {
         /// The 0x06 output path.
         #[arg(short, long)]
         output: String,
-        /// Quad-tile clustering: `auto` (graph-major when graphs are small),
-        /// `graph`, or `order`.
+        /// Quad-tile clustering of a `0x06` output: `auto` (graph-major when
+        /// graphs are small), `graph`, or `order`. Ignored for the `0x07`
+        /// `convert` writes, which is always order-major.
         #[arg(long = "quad-clustering", value_name = "MODE")]
         quad_clustering: Option<String>,
+        /// Directory for the spill of the sort that derives the `0x07` quad
+        /// orders (SPOG, POSG, OSPG) from GSPO when the file is big (default:
+        /// alongside the output). Needs free space of about 16 bytes per
+        /// named quad, one order at a time.
+        #[arg(long = "tmp-dir")]
+        tmp_dir: Option<String>,
         /// Do not build the label index for a file that has only the
         /// pyramid's legacy label block.
         #[arg(long = "no-label-index")]
@@ -1808,6 +1817,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             input,
             output,
             quad_clustering,
+            tmp_dir,
             no_label_index,
             no_card_costs,
             memory_budget_mb,
@@ -1815,6 +1825,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             &input,
             &output,
             quad_clustering.as_deref(),
+            tmp_dir.as_deref(),
             !no_label_index,
             commands::v06::CardCosts {
                 skip: no_card_costs,

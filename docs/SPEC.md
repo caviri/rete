@@ -212,11 +212,19 @@ unsigned LEB128 varints, byte strings are length-prefixed.
   permutation's offset and length within `index`, then per leaf: entry count,
   offset, stored length, the first tile's lowest and the last tile's highest
   leading id, and the first tile's offset within the permutation.
-- **Quad index**: graph count, quad count, graphs per directory block, the
-  block index `P0` (§6.5), the graph directory's length, then per order:
-  order number, tile count and per leaf: entry count, offset, stored length,
-  the first tile's first `(g, a)`, the last tile's last `(g, a)`, and the first
-  tile's offset within `quad`.
+- **Quad index**: graph count, quad count, graphs per directory block (1,024 in
+  `0x06`, 8,192 in `0x07`), the block index `P0` (§6.5), the graph directory's
+  length, then per order: order number, tile count and per leaf: entry count,
+  offset, stored length, the first tile's first key, the last tile's last key,
+  and the first tile's offset within `quad`. The order numbers are the
+  **declaration of the order set**: `0` to `5` are the graph-leading orders
+  `G+SPO`, `G+POS`, `G+OSP`, `G+SOP`, `G+PSO`, `G+OPS` (the permutation's
+  section index), and `6`, `7`, `8` the graph-last `SPO+G`, `POS+G`, `OSP+G`
+  (`0x07`). A key is `(g, a)` in a graph-leading order and `(a, b)` in a
+  graph-last one (§6.5). A `0x06` file declares the file's permutation set
+  with a `G+` before each; a `0x07` file declares `0, 6, 7, 8` and no other
+  (`--permutations` is the default graph's alone), and a reader reads whatever
+  set the root declares that holds `G+SPO`.
 - **Label index**: the length of the data blocks, then the section's 32-byte
   preamble (digest zeroed), as §6.4 encodes it. `0x06` followed the preamble
   with the root node; in `0x07` the root node is the `label-root` section, whose
@@ -237,9 +245,14 @@ internal codec. Entries are rows of varints:
   stored length; after every entry of the leaf, the synopsis columns (§6.2):
   lowest *b*, highest minus lowest *b*, lowest *c*, highest minus lowest *c*.
 - **quad tile**: first graph (a delta), first *a*, last graph minus first
-  graph, last *a*, `stored length × 2 + raw`, the four synopsis varints, and an
-  offset code: `0` when the tile follows the previous one, else its offset
-  within `quad` plus one (graph-major clustering interleaves the orders).
+  graph, last *a*, `stored length × 2 + raw`, the four synopsis varints, and (in
+  `0x06`) an offset code: `0` when the tile follows the previous one, else its
+  offset within `quad` plus one (graph-major clustering interleaves the
+  orders). In a graph-last order (`0x07`) the first two fields are the first
+  tile row's `(a, b)` and the next two the last row's, "graph" above reading
+  "first column"; the synopsis is `(min c, max c, min g, max g)`. `0x07` is
+  order-major, so a tile always follows the previous one and the offset code is
+  not written.
 - **text token**: bytes shared with the previous token, the rest
   (length-prefixed), the posting list's offset and length within `text`.
 - **label nodes** are §6.4's level-1 nodes, unchanged. Their offsets are those
@@ -318,16 +331,18 @@ synopsis trailers, no restart tables. Dictionary chunks go predicates first, so
 the predicate routing every query needs is one short range. A scan of one
 permutation, or of one predicate's run in POS, is one contiguous range.
 
-Quad tiles are clustered one of two ways, and header flag bit3 says which:
+Quad tiles are clustered one of two ways in `0x06`, and header flag bit3 says
+which:
 
 - **graph-major** — for each block of graphs of the graph directory, the tiles
   of every order whose first graph falls in it, side by side, so a `GRAPH <g>`
   query finds the graph's slice in every order in one neighbourhood;
 - **order-major** — each order's tiles contiguous, as in generation 1.
 
-The writer chooses graph-major when the mean named graph is smaller than
+The `0x06` writer chooses graph-major when the mean named graph is smaller than
 64 KiB of quad tiles, else order-major (`rete convert --quad-clustering`
-overrides it). Readers route through the directories either way.
+overrides it). **`0x07` is order-major, always**, and flag bit3 is never set
+(§6.5 gives the reason). Readers route through the directories either way.
 
 ### 4.6 Opening a file
 
@@ -603,9 +618,10 @@ file's identity, a current `verify` checks it against the seal, and an older
 
 ### 4.10 Format `0x07` and compatibility
 
-`0x07` is `0x06` plus two changes; every payload block, every leaf and every unit
-root other than the label one is byte-identical. The same code reads both: the
-header's version byte says which one a file is.
+`0x07` is `0x06` plus three changes; every payload block and every leaf other than the
+quad index's, and every unit root other than the label and the quad ones, is
+byte-identical. The same code reads both: the header's version byte says which one
+a file is.
 
 1. **The label index's root node leaves the root.** In `0x06` the label unit root
    held the 32-byte preamble and the root node, 47 KB of OpenAIRE's 48 KB root and
@@ -620,6 +636,16 @@ header's version byte says which one a file is.
    it used to carry in every open.
 2. **The card annex** (kind 22, §4.4).
 
+3. **The quad index's order set** (§6.5). `0x06` stores a graph-leading order
+   `G+X` for every permutation the file has (three or six); `0x07` stores four
+   orders and no other: `G+SPO` as before, and the graph-last **SPOG**, **POSG**
+   and **OSPG**, which answer `GRAPH ?g { <s> ... }`, `GRAPH ?g { ?s <p> ... }` and
+   `GRAPH ?g { ?s ?p <o> }` by a seek instead of a pass over the file. The set is
+   declared by the quad unit root (§4.2), so `--permutations` is the default
+   graph's alone. The tiles are order-major (§4.5), a graph-directory block holds
+   8,192 graphs, and a quad tile's leaf entry has no offset code, so the root of
+   the 2018 nanopub dump goes from 104 KB to 33 KB.
+
 Other differences: the version byte, the footer (`07 00 00 00 "RETE"`), the
 hash domain (`"rete/0x07"`) and the `format_version` a card is stamped with
 (`7`).
@@ -631,8 +657,11 @@ read a `0x07` file as a `0x06` one with an unknown section, because the root's
 label unit no longer holds the root node. There is no backward-compatibility
 promise before 1.0.0: `rete convert` turns a `0x05` or a `0x06` file into a
 `0x07` one, copying the payload, moving the label root out of the root and keeping
-the card (no annex unless a card field is over the hot cap); the catalog is
-converted in step, and the `0x06` reader is removed once it is.
+the card (no annex unless a card field is over the hot cap), and, for a file with
+named graphs, deriving SPOG, POSG and OSPG from the input's `G+SPO` tiles by one
+sort pass each (external past 100 M quads) and dropping the other graph-leading
+orders; the catalog is converted in step, and the `0x06` reader is removed once
+it is.
 
 ---
 
@@ -1086,6 +1115,10 @@ cut into tiles that many graphs share, behind a **sorted graph directory**.
 A graph name is a dictionary term in the **subject** role (shared or
 subject-only section), and the graph column stores its subject id.
 
+This is the layout of `0x05` and `0x06`. `0x07` keeps GSPO and adds three
+graph-last orders (the last subsection below); everything said here about the
+segments, the graph directory and the views holds for GSPO.
+
 A file uses it exactly when header flag bit 3 (`0b1000`) is set. Then:
 the directory has a kind-`10` entry; it has **no** kind-`5` entry; and the
 INDEX container (kind 3) holds `perms + 1` sections — the permutations, then a
@@ -1155,8 +1188,126 @@ whose leading range is exact where the directory knows it (`first_a` when
 `first_g = g`, `last_a` when `last_g = g`) and conservative otherwise; a tile's
 synopsis bounds every graph it holds. One decompressed tile serves every graph
 in it. Graphs enumerate in graph-id order. Orders led by `S`, `P` or `O` with
-the graph trailing (`SPO+G`, …) are not stored: SPARQL evaluates `GRAPH ?g` one
-graph at a time, which the graph-leading orders already route.
+the graph trailing (`SPO+G`, …) are not stored in `0x05` and `0x06`: SPARQL evaluates `GRAPH ?g` one
+graph at a time, which the graph-leading orders already route. `0x07` stores three
+of them (below).
+
+#### Format `0x07`: GSPO, SPOG, POSG, OSPG
+
+A `0x07` quad index stores **four** orders, whatever `--permutations` says (that
+flag is the default graph's alone): the graph-leading **GSPO** of `0x06`, and
+the graph-**last** **SPOG**, **POSG** and **OSPG**. The root's quad unit
+declares them (§4.2: order numbers `0, 6, 7, 8`); the other graph-leading
+orders are not written, and a reader still reads them in a `0x06` file. The
+order mask is not the permutation mask: the three new orders have no
+graph-leading twin to tie them to.
+
+```
+row:      (a, b, c, g)   (a, b, c) the permuted (s, p, o); g the graph's subject id
+sorted:   ascending on (a, b, c, g), no duplicates
+```
+
+A lookup on `<s>` is a prefix of SPOG, on `<p>` or `<p> <o>` of POSG, on `<o>`
+or `<o> <s>` of OSPG, on `<s> <p>` of SPOG: the directory finds one tile (or a
+run of adjacent ones for a hot term), not a pass over the file.
+
+**Tile.** Rows are the §6.1 grouped-delta encoding with one more varint per row,
+the graph; then the codec (zstd, stored raw when it does not shrink):
+
+```
+varint num_a
+per a-group:  varint Δa          # from the previous a of the tile; the first absolute
+              varint num_b
+  per b-group: varint Δb         # from the previous b within this a; the first from 0
+               varint num_rows
+    per row:   varint Δc         # from the previous c within this b; the first from 0;
+                                 #   0 again when the triple is in several graphs
+               varint graph code
+```
+
+The **graph code** is `zigzag((g − s) − (g' − s'))`, `s` being the row's subject
+id (column `a` in SPOG, `c` in POSG, `b` in OSPG) and `g'`, `s'` the previous row
+of the same tile; the first row of a tile has `g' − s' = 0`. Both ids come from
+string-sorted role dictionaries, so `g − s` is nearly constant along a run: on
+the 2018 nanopub dump 85 to 93% of the codes are one byte, and the graph column
+costs 0.31 to 0.45 bytes a quad (plain `g` costs about 1.5 after zstd; coding `g`
+against the subject alone is 18 to 24% worse than against the previous row).
+
+**Tiling** is the same rule as the other orders: whole leading-id (`a`) groups
+are packed until the estimated encoded size would pass the tile budget (64 KiB by
+default); a group larger than the budget on its own is cut mid-group, so a
+leading id may run over several tiles. The estimate counts the bytes above; only
+its determinism matters, which is why the in-RAM build, the memory-bounded
+build and `convert` write the same bytes.
+
+**Directory.** One entry per tile in the leaves of §4.3: the first row's
+`(a, b)`, the last row's `(a, b)`, the stored length, the synopsis `(min c,
+max c, min g, max g)`. Leaves follow the small-leaf policy (§9); the root lists
+each leaf's first and last key, so a lookup on a leading id reads the leaf (or
+the few leaves) whose range holds it.
+
+**Layout is order-major**, in the order GSPO, SPOG, POSG, OSPG, each order's
+tiles contiguous in `quad`. Graph-major clustering existed so that the tiles of
+a graph, in every order, sat in one neighbourhood; the new orders' tiles are
+not graph-ordered at all, so it has nothing to cluster, and for the tiles of
+one hot term it would scatter what order-major reads as one range (on the
+interleaved nanopub file a block cache read 7.5 times the bytes a tile pass
+needs). Flag bit3 is never set. With the layout fixed, a leaf entry needs no
+offset code (§4.3). The **graph directory** stays, because graph ordinals
+(enumeration, names, counts per graph) are its job and `GRAPH <g>` still finds
+its tiles through GSPO's leaf lists; what changes is that its block index, which
+sits in the root and grew with the graph count (42,200 entries of 1,024 graphs
+on the nanopub dump, most of a 104 KB root), now has blocks of 8,192 graphs: a
+block read by a graph lookup is about 4 KB stored and the root drops to 33 KB.
+The graph-major use of the block index (placing a tile by the block of its first
+graph) is gone with the clustering.
+
+**Reading.** A graph-unbound pattern with a bound term scans the order that
+binds the longest prefix; a tile is skipped when its key range or its `(c, g)`
+synopsis cannot hold the pattern, and a scan reads the tiles of its range in
+batches (adjacent tiles coalesce into one request). Rows come in `(a, b, c, g)`
+order, not graph order. The routing:
+
+| pattern | order |
+|---|---|
+| `GRAPH ?g { <s> ?p ?o }`, `{ <s> <p> ?o }`, `{ <s> <p> <o> }` | SPOG |
+| `GRAPH ?g { ?s <p> ?o }`, `{ ?s <p> <o> }` | POSG |
+| `GRAPH ?g { ?s ?p <o> }`, `{ <s> ?p <o> }` | OSPG |
+| `GRAPH ?g { ?s ?p ?o }` | GSPO (graph order) |
+| `GRAPH <g> { … }` | GSPO's slice of `g`; see below |
+
+A `GRAPH ?g` of several patterns visits the graphs the best-bound pattern finds
+(sorted by graph id) and evaluates the whole group in each, as before.
+
+**One graph.** The view of one graph reads GSPO's tiles of that graph. The
+view's other orders (POS, OSP, and SOP, PSO, OPS when the file has six
+permutations) do not exist graph-leading any more: a graph of at most 2^20 quads
+(`RETE_QUAD_SYNTH_MAX`) has them built from its GSPO rows in RAM, one tile each,
+on first use; a bigger graph reads POS and OSP from the POSG and OSPG tiles
+whose `g` synopsis can hold it, keeping its rows, so `GRAPH <g> { ?s <p> ?o }` on
+a big graph costs that predicate's tiles, not the graph. The choice is the
+graph's size from the directory; it changes what a query reads, never what it
+returns.
+
+**Writing.** `0x07` writers produce GSPO as `0x06` did and derive the rest from
+it: stream the GSPO rows, permute, sort, cut with the tiler, encode, one order
+at a time. Up to 100 M rows (1.6 GB, `RETE_QUAD_RUN_ROWS`) are sorted in RAM;
+past that, sorted runs of that size are spilled (zstd, delta-coded) and merged
+straight into the tiler, so a 4 GB container converts the 378.7 M quads of the
+nanopub dump with a 1.8 GB peak and about 1.6 GB of spill at a time. The
+memory-bounded build writes GSPO only into its own spill and derives the other
+three at the end; `rete convert` does the same from a `0x05` or `0x06` input
+(`--tmp-dir`, default beside the output). `rete verify` decodes every tile of
+every order, checks keys and synopses against the directory, and that all four
+orders hold the same quads.
+
+| order | nanopubs 2018 (378.7 M quads) | OpenCitations sample (12.9 M quads) |
+|---|---|---|
+| GSPO | 359.2 MB | 12.1 MB |
+| SPOG | 407.4 MB | 11.6 MB |
+| POSG | 333.0 MB | 15.3 MB |
+| OSPG | 412.3 MB | 14.5 MB |
+| file | 2.515 GB (0x06: 3.882 GB) | 157.9 MB (0x06: 202.5 MB) |
 
 ---
 

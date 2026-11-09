@@ -131,7 +131,14 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     }
     println!("  distinct terms        : {}", h.term_count);
     if h.has_quad_index() {
-        println!("  named-graph layout    : quad index (graph-leading permutations, kind 10)");
+        println!(
+            "  named-graph layout    : quad index ({})",
+            if h.version >= 7 {
+                "GSPO, SPOG, POSG, OSPG"
+            } else {
+                "graph-leading permutations, kind 10"
+            }
+        );
     }
     println!("  pyramid levels        : {}", h.pyramid_levels);
     if h.id_widths == 0 && h.version == 6 {
@@ -423,10 +430,25 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
                     .ok_or_else(|| anyhow::anyhow!("unknown section {name:?}"))?,
             ),
         };
-        let bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
+        let mut bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
+        // The quad orders, tile by tile: the digests say the bytes are the
+        // writer's, this says the orders are sound and hold the same quads.
+        let mut orders = 0usize;
+        if bad.is_empty() && only.is_none_or(|k| k == rete_core::v06::kind::QUAD_DATA) {
+            let (n, problems) = rete_core::v06::check_orders(&reader)?;
+            orders = n;
+            for p in problems {
+                bad.push(format!("quad order ({p})"));
+            }
+        }
         if bad.is_empty() {
+            let checked = if orders > 0 {
+                format!(", and the {orders} quad orders agree")
+            } else {
+                String::new()
+            };
             println!(
-                "OK — {} (format 0x{:02x})",
+                "OK — {}{checked} (format 0x{:02x})",
                 match section {
                     Some(s) => format!("section {s} matches its digest"),
                     None => "content hash matches, and every section digest".to_string(),
@@ -715,7 +737,45 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         );
     }
     print_leaf_counts(&root);
+    print_quad_orders(&h, &root);
     Ok(())
+}
+
+/// The quad index's orders, from the root alone: tiles, stored bytes, leaves.
+/// `0x07` stores GSPO, SPOG, POSG and OSPG (SPEC.md §6.5), each order's tiles
+/// contiguous, so an order's size is the distance to the next one's first tile.
+fn print_quad_orders(h: &rete_core::v06::Header06, root: &rete_core::v06::Root06) {
+    use rete_core::v06::{decode_quad_root, kind, tag};
+    let Some(Ok(q)) = root.unit(tag::QUAD).map(decode_quad_root) else {
+        return;
+    };
+    let total = root.section(kind::QUAD_DATA).map_or(0, |s| s.len);
+    println!(
+        "  quad orders  : {} ({} named quads in {} graphs)",
+        q.orders.len(),
+        q.quad_count,
+        q.graph_count
+    );
+    for (i, o) in q.orders.iter().enumerate() {
+        let name = rete_core::v06::quad_order_name(o.si);
+        let first = o.leaves.first().map_or(0, |l| l.3);
+        let next = q
+            .orders
+            .get(i + 1)
+            .and_then(|n| n.leaves.first().map(|l| l.3))
+            .unwrap_or(total);
+        // A graph-major (`0x06`) file interleaves its orders: no size per order.
+        let bytes = if h.flags & rete_core::v06::F_QUAD_GRAPH_MAJOR != 0 {
+            "interleaved".to_string()
+        } else {
+            format!("{} B", next.saturating_sub(first))
+        };
+        println!(
+            "    {name:<6} {:>10} tiles in {:>4} leaves, {bytes}",
+            o.n_tiles,
+            o.leaves.len()
+        );
+    }
 }
 
 /// `rete info` for a format 0x05 file: the header's fields and its section

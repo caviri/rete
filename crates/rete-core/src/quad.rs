@@ -29,6 +29,7 @@ use crate::file::{compress, ByteRange, FileError, CODEC_NONE};
 use crate::index::{
     DeferredTiles, GraphIndex, GroupSizer, IndexPermutation, PermSet, ALL_PERMS, NUM_PERMS,
 };
+use crate::quad7::{self, NUM_SLOTS};
 use crate::reader::RangeReader;
 use crate::triples::{Triple, TripleBlockBuilder};
 use crate::varint::{read_uvarint, write_uvarint};
@@ -37,10 +38,22 @@ use crate::varint::{read_uvarint, write_uvarint};
 pub(crate) const QUAD_MAGIC: [u8; 4] = *b"RQIX";
 /// Layout version of the section (and the seal).
 pub(crate) const QUAD_VERSION: u8 = 1;
+/// Layout version of the section as the writers hand it to the `0x06`/`0x07`
+/// assembler (never in a released file): the order mask is any set that holds
+/// `G+SPO`, not the file's permutation set. A `0x07` writer needs only `G+SPO`:
+/// the other orders are derived from it, so the builders do not write the
+/// graph-leading ones at all.
+pub(crate) const QUAD_VERSION_SUBSET: u8 = 2;
 /// Seal: magic, version, 16-byte blake3 digest of the QUAD_INDEX section.
 pub(crate) const SEAL_LEN: usize = 4 + 1 + 16;
 /// Graphs per graph-directory block.
 pub(crate) const DIR_BLOCK_GRAPHS: u64 = 1024;
+/// Graphs per graph-directory block in a `0x07` file. The block index is part of
+/// the root, so it grows with the graph count: at 1,024 graphs a block it was
+/// 42,200 entries and most of the nanopubs' 100 KB root. A block of 8,192 graphs
+/// is about 4 KB stored (the ids are close to consecutive), the cost of the one
+/// block a graph lookup reads, and the index is a quarter of the root it was.
+pub(crate) const DIR_BLOCK_GRAPHS_07: u64 = 8192;
 /// Bytes charged against the tile budget for one segment header (Δg, zigzag
 /// first a, body length, a-group count). An estimate: only determinism matters,
 /// so both builders cut at the same rows.
@@ -75,11 +88,11 @@ pub(crate) fn check_perms(perms: PermSet) -> Result<(), FileError> {
     }
 }
 
-fn zigzag(v: i64) -> u64 {
+pub(crate) fn zigzag(v: i64) -> u64 {
     ((v << 1) ^ (v >> 63)) as u64
 }
 
-fn unzigzag(u: u64) -> i64 {
+pub(crate) fn unzigzag(u: u64) -> i64 {
     ((u >> 1) as i64) ^ -((u & 1) as i64)
 }
 
@@ -208,7 +221,7 @@ pub(crate) struct EncodedTile {
 }
 
 /// Compress `body` with `codec`, keeping it raw when that does not shrink it.
-fn pack(codec: u8, body: Vec<u8>) -> (Vec<u8>, bool) {
+pub(crate) fn pack(codec: u8, body: Vec<u8>) -> (Vec<u8>, bool) {
     if codec == CODEC_NONE {
         return (body, true);
     }
@@ -432,6 +445,7 @@ impl PermDirWriter {
 /// the small block index stays in RAM.
 pub(crate) struct GraphDirWriter {
     codec: u8,
+    block_graphs: u64,
     block: Vec<(u32, u64)>,
     index: Vec<u8>,
     num_blocks: u64,
@@ -442,9 +456,15 @@ pub(crate) struct GraphDirWriter {
 
 impl GraphDirWriter {
     pub(crate) fn new(codec: u8) -> Self {
+        Self::with_block_graphs(codec, DIR_BLOCK_GRAPHS)
+    }
+
+    /// A writer cutting blocks of `block_graphs` graphs.
+    pub(crate) fn with_block_graphs(codec: u8, block_graphs: u64) -> Self {
         GraphDirWriter {
             codec,
-            block: Vec::with_capacity(DIR_BLOCK_GRAPHS as usize),
+            block_graphs,
+            block: Vec::with_capacity(block_graphs as usize),
             index: Vec::new(),
             num_blocks: 0,
             prev_first_g: 0,
@@ -461,7 +481,7 @@ impl GraphDirWriter {
     ) -> std::io::Result<()> {
         self.block.push((g, count));
         self.graphs += 1;
-        if self.block.len() as u64 == DIR_BLOCK_GRAPHS {
+        if self.block.len() as u64 == self.block_graphs {
             self.flush_block(sink)?;
         }
         Ok(())
@@ -504,17 +524,19 @@ impl GraphDirWriter {
 }
 
 /// The section's preamble: magic, version, order mask, counts and the part
-/// table (`part_lens` in part order — see SPEC.md §6.5).
-pub(crate) fn encode_preamble(
-    perms: PermSet,
+/// table (`part_lens` in part order — see SPEC.md §6.5), for an order mask and
+/// a layout version.
+pub(crate) fn encode_preamble_mask(
+    mask: u8,
+    version: u8,
     graph_count: u64,
     quad_count: u64,
     part_lens: &[u64],
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(64);
     out.extend_from_slice(&QUAD_MAGIC);
-    out.push(QUAD_VERSION);
-    out.push(perms.bits());
+    out.push(version);
+    out.push(mask);
     out.extend_from_slice(&[0, 0]);
     write_uvarint(&mut out, graph_count);
     write_uvarint(&mut out, quad_count);
@@ -590,6 +612,24 @@ pub(crate) fn encode_quad_index(
     codec: u8,
 ) -> Result<EncodedQuadIndex, FileError> {
     check_perms(perms)?;
+    encode_quad_orders(quads, perms.bits(), QUAD_VERSION, codec)
+}
+
+/// [`encode_quad_index`] for the writers of `0x07`: the section carries `G+SPO`
+/// alone ([`QUAD_VERSION_SUBSET`]); the assembler derives the other orders.
+pub(crate) fn encode_quad_gspo(
+    quads: Vec<[u32; 4]>,
+    codec: u8,
+) -> Result<EncodedQuadIndex, FileError> {
+    encode_quad_orders(quads, 1, QUAD_VERSION_SUBSET, codec)
+}
+
+fn encode_quad_orders(
+    quads: Vec<[u32; 4]>,
+    mask: u8,
+    version: u8,
+    codec: u8,
+) -> Result<EncodedQuadIndex, FileError> {
     // G+SPO rows are the input itself, sorted and deduplicated — every other
     // order is permuted from that (smaller) set.
     let mut spo: Vec<QuadRow> = quads
@@ -617,9 +657,13 @@ pub(crate) fn encode_quad_index(
     let (gindex, gblocks_len, graph_count) = gdir.finish(&mut gblocks).map_err(FileError::Io)?;
     debug_assert_eq!(gblocks_len as usize, gblocks.len());
 
-    let mut dirs: Vec<Vec<u8>> = Vec::with_capacity(perms.len());
-    let mut payloads: Vec<Vec<u8>> = Vec::with_capacity(perms.len());
-    for perm in perms.iter() {
+    let n_orders = mask.count_ones() as usize;
+    let mut dirs: Vec<Vec<u8>> = Vec::with_capacity(n_orders);
+    let mut payloads: Vec<Vec<u8>> = Vec::with_capacity(n_orders);
+    for perm in ALL_PERMS
+        .into_iter()
+        .filter(|p| mask & (1 << p.section_index()) != 0)
+    {
         let mut payload = Vec::new();
         let dir = if perm == IndexPermutation::Spo {
             tile_order(&spo, codec, perm, &mut payload)
@@ -642,7 +686,7 @@ pub(crate) fn encode_quad_index(
     part_lens.extend(dirs.iter().map(|d| d.len() as u64));
     part_lens.push(gblocks.len() as u64);
     part_lens.extend(payloads.iter().map(|p| p.len() as u64));
-    let mut bytes = encode_preamble(perms, graph_count, quad_count, &part_lens);
+    let mut bytes = encode_preamble_mask(mask, version, graph_count, quad_count, &part_lens);
     bytes.extend_from_slice(&gindex);
     for d in &dirs {
         bytes.extend_from_slice(d);
@@ -693,9 +737,18 @@ pub(crate) fn parse_seal(bytes: &[u8]) -> Result<[u8; 16], FileError> {
 // Reading
 // ---------------------------------------------------------------------------
 
+/// The rank of `perm` among the orders of `mask`: its position among the
+/// section's order parts.
+fn rank_in(mask: u8, perm: IndexPermutation) -> Option<usize> {
+    let bit = 1u8 << perm.section_index();
+    (mask & bit != 0).then(|| (mask & (bit - 1)).count_ones() as usize)
+}
+
 /// The parsed preamble: counts and the absolute ranges of every part.
 #[derive(Debug, Clone)]
 struct Preamble {
+    /// The orders the section carries (bits of the permutation section index).
+    mask: u8,
     graph_count: u64,
     quad_count: u64,
     block_graphs: u64,
@@ -710,12 +763,15 @@ fn parse_preamble(head: &[u8], base: u64, len: u64, perms: PermSet) -> Result<Pr
     if head.len() < 8 || head[0..4] != QUAD_MAGIC {
         return bad("malformed quad-index section");
     }
-    if head[4] != QUAD_VERSION {
-        return bad("unsupported quad-index version: this file needs a newer rete");
-    }
-    if head[5] != perms.bits() {
-        return bad("quad-index order mask does not match the header permutation mask");
-    }
+    let mask = match head[4] {
+        QUAD_VERSION if head[5] == perms.bits() => head[5],
+        QUAD_VERSION => {
+            return bad("quad-index order mask does not match the header permutation mask")
+        }
+        QUAD_VERSION_SUBSET if head[5] & 1 != 0 && head[5] & !0b11_1111 == 0 => head[5],
+        QUAD_VERSION_SUBSET => return bad("malformed quad-index order mask"),
+        _ => return bad("unsupported quad-index version: this file needs a newer rete"),
+    };
     let mut pos = 8usize;
     let mut take = || -> Result<u64, FileError> {
         let (v, n) = read_uvarint(head.get(pos..).unwrap_or(&[]))
@@ -727,7 +783,7 @@ fn parse_preamble(head: &[u8], base: u64, len: u64, perms: PermSet) -> Result<Pr
     let quad_count = take()?;
     let block_graphs = take()?;
     let part_count = take()?;
-    let n = perms.len() as u64;
+    let n = mask.count_ones() as u64;
     if part_count != 2 + 2 * n {
         return bad("quad-index part count does not match its orders");
     }
@@ -752,6 +808,7 @@ fn parse_preamble(head: &[u8], base: u64, len: u64, perms: PermSet) -> Result<Pr
         at = end;
     }
     Ok(Preamble {
+        mask,
         graph_count,
         quad_count,
         block_graphs,
@@ -832,12 +889,12 @@ struct QuadCore {
     window: Mutex<Option<BlockWindow>>,
     /// The graph count past which blocks are not all memoised.
     memo_max_graphs: u64,
-    dirs: [OnceLock<Arc<[QTile]>>; NUM_PERMS],
+    dirs: [OnceLock<Arc<[QTile]>>; NUM_SLOTS],
     /// Decompressed tiles, keyed `(order section index, tile)`, shared by every
     /// view: one decompression serves all the graphs a tile holds.
     tiles: ChunkCache,
     /// `[0..6)` the orders' tile streams, `[6]` the directory blocks.
-    ramps: Mutex<[Ramp; NUM_PERMS + 1]>,
+    ramps: Mutex<[Ramp; NUM_SLOTS + 1]>,
     failed: AtomicBool,
     /// A `0x06` file: the preamble and block index come from the root, the
     /// orders' tile directories from leaf blocks (SPEC.md §4.4).
@@ -850,9 +907,13 @@ pub(crate) struct V06Quad {
     pre: Preamble,
     blocks: Vec<BlockRef>,
     /// Per section index, each leaf of that order.
-    orders: [Vec<V06Leaf>; NUM_PERMS],
+    orders: [Vec<V06Leaf>; NUM_SLOTS],
     /// The decoded leaves, kept for the life of the open.
-    leaf_cells: [Vec<OnceLock<Arc<[QTile]>>>; NUM_PERMS],
+    leaf_cells: [Vec<OnceLock<Arc<[QTile]>>>; NUM_SLOTS],
+    /// The orders the root declares, one bit per slot (`quad7`).
+    mask: u16,
+    /// A `0x07` file: a leaf lists no tile offsets (order-major).
+    contiguous: bool,
     /// Absolute offset of QUAD_DATA (tile offsets in leaves are relative to it).
     data_base: u64,
     /// Codec of the leaf blocks.
@@ -886,6 +947,7 @@ impl V06Quad {
         leaves_base: u64,
         data_base: u64,
         leaf_codec: u8,
+        contiguous: bool,
     ) -> Result<Self, FileError> {
         let mut pos = 0usize;
         let b = &root.p0;
@@ -928,9 +990,11 @@ impl V06Quad {
             });
             at = end;
         }
-        let mut orders: [Vec<V06Leaf>; NUM_PERMS] = Default::default();
-        let mut leaf_cells: [Vec<OnceLock<Arc<[QTile]>>>; NUM_PERMS] = Default::default();
+        let mut orders: [Vec<V06Leaf>; NUM_SLOTS] = Default::default();
+        let mut leaf_cells: [Vec<OnceLock<Arc<[QTile]>>>; NUM_SLOTS] = Default::default();
+        let mut mask = 0u16;
         for o in &root.orders {
+            mask |= 1 << o.si;
             orders[o.si] = o
                 .leaves
                 .iter()
@@ -950,6 +1014,7 @@ impl V06Quad {
         }
         Ok(V06Quad {
             pre: Preamble {
+                mask: 0,
                 graph_count: root.graph_count,
                 quad_count: root.quad_count,
                 block_graphs: root.block_graphs.max(1),
@@ -958,6 +1023,8 @@ impl V06Quad {
             blocks,
             orders,
             leaf_cells,
+            mask,
+            contiguous,
             data_base,
             leaf_codec,
             tile_max: u64::MAX,
@@ -1007,8 +1074,12 @@ impl QuadCore {
         }
     }
 
-    fn n_orders(&self) -> usize {
-        self.perms.len()
+    /// The orders this index carries, one bit per slot (`quad7`).
+    fn mask(&self) -> u16 {
+        match &self.v06 {
+            Some(v) => v.mask,
+            None => self.pre().map_or(self.perms.bits(), |p| p.mask) as u16,
+        }
     }
 
     fn blocks_index(&self) -> Option<&Arc<[BlockRef]>> {
@@ -1025,7 +1096,7 @@ impl QuadCore {
         }
         let pre = self.pre()?.clone();
         let bytes = self.read_part(0)?;
-        let blocks_part = pre.parts[1 + self.n_orders()];
+        let blocks_part = pre.parts[1 + pre.mask.count_ones() as usize];
         let parsed = (|| -> Option<Vec<BlockRef>> {
             let mut pos = 0usize;
             let mut take = || -> Option<u64> {
@@ -1146,9 +1217,9 @@ impl QuadCore {
         }
         let w = {
             let mut ramps = self.ramps.lock().unwrap();
-            let w = ramps[NUM_PERMS].window_for(b, exhaustive);
+            let w = ramps[NUM_SLOTS].window_for(b, exhaustive);
             let end = (b + w).min(index.len());
-            ramps[NUM_PERMS].next = end;
+            ramps[NUM_SLOTS].next = end;
             end - b
         };
         let end = b + w;
@@ -1280,13 +1351,14 @@ impl QuadCore {
             return self.dir_v06(v, si);
         }
         let pre = self.pre()?.clone();
-        let n = self.n_orders();
+        let n = pre.mask.count_ones() as usize;
         let first = pre.parts[1];
         let last = pre.parts[n];
         let together = last.end() - first.offset <= DIRS_TOGETHER_MAX;
         let want: Vec<IndexPermutation> = if together {
-            self.perms
-                .iter()
+            ALL_PERMS
+                .into_iter()
+                .filter(|p| pre.mask & (1 << p.section_index()) != 0)
                 .filter(|p| self.dirs[p.section_index()].get().is_none())
                 .collect()
         } else {
@@ -1296,12 +1368,12 @@ impl QuadCore {
             offset: if together {
                 first.offset
             } else {
-                pre.parts[1 + self.perms.position(want[0])?].offset
+                pre.parts[1 + rank_in(pre.mask, want[0])?].offset
             },
             len: if together {
                 last.end() - first.offset
             } else {
-                pre.parts[1 + self.perms.position(want[0])?].len
+                pre.parts[1 + rank_in(pre.mask, want[0])?].len
             },
         };
         let bytes = match self.reader.read_at(span.offset, span.len) {
@@ -1312,7 +1384,7 @@ impl QuadCore {
             }
         };
         for perm in want {
-            let k = self.perms.position(perm)?;
+            let k = rank_in(pre.mask, perm)?;
             let part = pre.parts[1 + k];
             let lo = (part.offset - span.offset) as usize;
             let parsed = bytes
@@ -1369,7 +1441,9 @@ impl QuadCore {
             let leaf = &v.orders[si][li];
             let parsed = crate::file::decompress_bounded(v.leaf_codec, &stored, v.leaf_max)
                 .ok()
-                .and_then(|raw| crate::v06::decode_qtile_leaf(&raw, leaf.n, leaf.toff).ok());
+                .and_then(|raw| {
+                    crate::v06::decode_qtile_leaf(&raw, leaf.n, leaf.toff, v.contiguous).ok()
+                });
             let Some(ents) = parsed else {
                 self.fail();
                 return None;
@@ -1510,13 +1584,26 @@ impl QuadCore {
     /// Tile `ti` of order slot `si`, decompressed, faulting it (and, when the
     /// access is sequential, the tiles after it) on a miss.
     fn tile(&self, si: usize, dir: &[QTile], base: usize, ti: usize) -> Option<Arc<CacheEntry>> {
+        self.tile_capped(si, dir, base, ti, usize::MAX)
+    }
+
+    /// [`tile`](Self::tile) whose read-ahead stops before tile `cap` (a scan that
+    /// knows where its range ends does not read past it).
+    fn tile_capped(
+        &self,
+        si: usize,
+        dir: &[QTile],
+        base: usize,
+        ti: usize,
+        cap: usize,
+    ) -> Option<Arc<CacheEntry>> {
         if let Some(e) = self.tiles.get((si as u8, ti as u32)) {
             return Some(e);
         }
         let end = {
             let mut ramps = self.ramps.lock().unwrap();
             let w = ramps[si].window_for(ti, false);
-            let end = (ti + w).min(base + dir.len());
+            let end = (ti + w).min(base + dir.len()).min(cap.max(ti + 1));
             ramps[si].next = end;
             end
         };
@@ -1549,7 +1636,9 @@ impl QuadCore {
     /// (the failure is recorded, as for every lazy read).
     fn graphs_with_subjects(&self, subjects: &std::collections::BTreeSet<u32>) -> Option<Vec<u32>> {
         let perm = IndexPermutation::Spo;
-        self.perms.position(perm)?;
+        if self.mask() & 1 == 0 {
+            return None;
+        }
         let si = perm.section_index();
         let dir = self.dir(si)?;
         let cols = subject_columns(perm);
@@ -1644,79 +1733,272 @@ impl QuadCore {
     /// is used: each order's slice is built on first use (an `0x06` order's
     /// directory is one leaf of about a megabyte at 40 M graphs, so a lookup
     /// that routes to one order reads one, not six).
+    ///
+    /// A `0x07` file stores one graph-leading order, GSPO, so the view's other
+    /// orders come from somewhere else ([`ViewSrc`]): a graph of at most
+    /// [`crate::write_opts::quad_view_synth_max`] quads has them built from its GSPO slice (one tile
+    /// per order, made on first use); a bigger one reads POS and OSP out of the
+    /// graph-last POSG and OSPG tiles, keeping the rows of the graph, so a
+    /// lookup on a predicate or an object costs that term's tiles and not the
+    /// whole graph.
     fn view(self: &Arc<Self>, g: u32, quads: u64, tile_cap: u64) -> Option<GraphIndex> {
-        // Per order, set when its slice is built: the directory and the
-        // physical index of each tile the view holds.
-        type Slice = (Arc<[QTile]>, usize, Vec<usize>);
-        let slices: Arc<[OnceLock<Slice>; NUM_PERMS]> = Arc::new(Default::default());
+        let mask = self.mask();
+        let big = quads > crate::write_opts::quad_view_synth_max();
+        // The orders of the view that the file has no graph-leading tiles for.
+        let lacks = ALL_PERMS
+            .iter()
+            .any(|p| self.perms.contains(*p) && mask & (1 << p.section_index()) == 0);
+        let mut src: [ViewSrc; NUM_PERMS] = [ViewSrc::Slice; NUM_PERMS];
+        let mut view_perms = self.perms;
+        if lacks {
+            // A `0x07` file (or a build's image): GSPO is the one graph-leading
+            // order.
+            if big {
+                view_perms = PermSet::CORE;
+            }
+            for perm in ALL_PERMS {
+                let si = perm.section_index();
+                if mask & (1 << si) != 0 {
+                    continue;
+                }
+                let last = quad7::last_slot(perm);
+                src[si] = if big && si < 3 && mask & (1 << last) != 0 {
+                    ViewSrc::Filter(last)
+                } else {
+                    ViewSrc::Synth
+                };
+            }
+        }
+        let st = Arc::new(ViewState {
+            core: Arc::clone(self),
+            g,
+            src,
+            slices: Default::default(),
+            rows: OnceLock::new(),
+        });
         let mut lists: [Option<Arc<DeferredTiles>>; NUM_PERMS] = Default::default();
-        for perm in self.perms.iter() {
+        for perm in view_perms.iter() {
             let si = perm.section_index();
-            let core = Arc::clone(self);
-            let slices = Arc::clone(&slices);
+            let st = Arc::clone(&st);
             // Without the directory, the mean tile (64 KiB budget) per quad is
             // all the planner can assume; it is only a cost hint.
             let approx = quads.saturating_mul(4);
             lists[si] = Some(Arc::new(DeferredTiles::new(
                 approx,
-                Box::new(move || {
-                    let (dir, base) = core.dir_for_graph(si, g)?;
-                    let lo = dir.partition_point(|t| t.last_g < g);
-                    let hi = dir.partition_point(|t| t.first_g <= g);
-                    let mut tiles = Vec::with_capacity(hi.saturating_sub(lo));
-                    let mut phys = Vec::with_capacity(hi.saturating_sub(lo));
-                    for (ti, t) in dir.iter().enumerate().take(hi).skip(lo) {
-                        let min_a = if t.first_g == g { t.first_a } else { 0 };
-                        let max_a = if t.last_g == g { t.last_a } else { u32::MAX };
-                        tiles.push(crate::index::Tile::remote_with_len(
-                            min_a,
-                            max_a,
-                            Some(t.syn),
-                            t.range.len.min(u32::MAX as u64) as u32,
-                        ));
-                        phys.push(base + ti);
-                    }
-                    let _ = slices[si].set((dir, base, phys));
-                    Some(tiles)
-                }),
+                Box::new(move || st.tiles(si)),
             )));
         }
-        let map = Arc::clone(&slices);
-        let core = Arc::clone(self);
-        let loader: crate::index::TileLoader = Box::new(move |si, ti| {
-            let (dir, base, phys) = map.get(si)?.get()?;
-            let p = *phys.get(ti)?;
-            let entry = core.tile(si, dir, *base, p)?;
-            let block = segment_block(entry.body(), dir[p - base].first_g, g, ALL_PERMS[si]);
-            if block.is_none() {
-                core.fail();
-            }
-            block
-        });
-        let core = Arc::clone(self);
-        let map = slices;
-        let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
-            let (dir, base, phys) = map.get(si)?.get()?;
-            let want: Vec<usize> = tis
-                .iter()
-                .map(|&ti| phys.get(ti).copied())
-                .collect::<Option<_>>()?;
-            core.fault(si, dir, *base, &want)?;
-            want.iter()
-                .map(|&p| {
-                    let entry = core.tile(si, dir, *base, p)?;
-                    segment_block(entry.body(), dir[p - base].first_g, g, ALL_PERMS[si])
-                })
-                .collect()
-        });
+        let loader: crate::index::TileLoader = {
+            let st = Arc::clone(&st);
+            Box::new(move |si, ti| {
+                let b = st.block(si, ti);
+                if b.is_none() {
+                    st.core.fail();
+                }
+                b
+            })
+        };
+        let bulk: crate::index::TileBulkLoader = {
+            let st = Arc::clone(&st);
+            Box::new(move |si, tis| st.blocks(si, tis))
+        };
         let mut index =
-            GraphIndex::from_remote_deferred(lists, self.perms, loader).with_bulk_loader(bulk);
+            GraphIndex::from_remote_deferred(lists, view_perms, loader).with_bulk_loader(bulk);
         index.set_size_hint(quads);
         index.set_read_concurrency(self.read_concurrency);
         if tile_cap != u64::MAX {
             index.set_cache_cap(tile_cap);
         }
         Some(index)
+    }
+}
+
+/// Where one order of a graph's view gets its tiles.
+#[derive(Clone, Copy)]
+enum ViewSrc {
+    /// The graph's slice of the file's own `G+X` tiles.
+    Slice,
+    /// Built from the graph's GSPO slice: one tile.
+    Synth,
+    /// The tiles of this graph-last order (slot) that may hold the graph,
+    /// reduced to its rows.
+    Filter(usize),
+}
+
+/// The tiles of one order that a view holds: the directory, the index of its
+/// first entry in the whole order, and the physical index of each view tile.
+type Slice = (Arc<[QTile]>, usize, Vec<usize>);
+
+/// The cell of `slices` that holds the graph's GSPO slice for the orders that
+/// are built from it.
+const GSPO_CELL: usize = NUM_PERMS;
+
+/// The shared state behind one view's loaders.
+struct ViewState {
+    core: Arc<QuadCore>,
+    g: u32,
+    src: [ViewSrc; NUM_PERMS],
+    slices: [OnceLock<Slice>; NUM_PERMS + 1],
+    /// The graph's rows `(s, p, o)`, for [`ViewSrc::Synth`].
+    rows: OnceLock<Option<Arc<Vec<Triple>>>>,
+}
+
+impl ViewState {
+    /// The graph's slice of graph-leading order `slot`, kept in `cell`.
+    fn graph_slice(&self, slot: usize, cell: usize) -> Option<&Slice> {
+        if let Some(s) = self.slices[cell].get() {
+            return Some(s);
+        }
+        let (dir, base) = self.core.dir_for_graph(slot, self.g)?;
+        let g = self.g;
+        let lo = dir.partition_point(|t| t.last_g < g);
+        let hi = dir.partition_point(|t| t.first_g <= g);
+        let phys: Vec<usize> = (lo..hi).map(|ti| base + ti).collect();
+        let _ = self.slices[cell].set((dir, base, phys));
+        self.slices[cell].get()
+    }
+
+    /// The view's tile descriptors of order `si`.
+    fn tiles(&self, si: usize) -> Option<Vec<crate::index::Tile>> {
+        let g = self.g;
+        match self.src[si] {
+            ViewSrc::Slice => {
+                let (dir, base, phys) = self.graph_slice(si, si)?;
+                Some(
+                    phys.iter()
+                        .map(|&p| {
+                            let t = &dir[p - base];
+                            let min_a = if t.first_g == g { t.first_a } else { 0 };
+                            let max_a = if t.last_g == g { t.last_a } else { u32::MAX };
+                            crate::index::Tile::remote_with_len(
+                                min_a,
+                                max_a,
+                                Some(t.syn),
+                                t.range.len.min(u32::MAX as u64) as u32,
+                            )
+                        })
+                        .collect(),
+                )
+            }
+            ViewSrc::Synth => {
+                let (dir, base, phys) = self.graph_slice(0, GSPO_CELL)?;
+                if phys.is_empty() {
+                    return Some(Vec::new());
+                }
+                let len: u64 = phys.iter().map(|&p| dir[p - base].range.len).sum();
+                Some(vec![crate::index::Tile::remote_with_len(
+                    0,
+                    u32::MAX,
+                    None,
+                    len.min(u32::MAX as u64) as u32,
+                )])
+            }
+            ViewSrc::Filter(slot) => {
+                let dir = self.core.dir(slot)?;
+                let mut tiles = Vec::new();
+                let mut phys = Vec::new();
+                for (ti, t) in dir.iter().enumerate() {
+                    // syn = (min c, max c, min g, max g)
+                    if t.syn.2 <= g && g <= t.syn.3 {
+                        tiles.push(crate::index::Tile::remote_with_len(
+                            t.first_g,
+                            t.last_g,
+                            Some((0, u32::MAX, t.syn.0, t.syn.1)),
+                            t.range.len.min(u32::MAX as u64) as u32,
+                        ));
+                        phys.push(ti);
+                    }
+                }
+                let _ = self.slices[si].set((dir, 0, phys));
+                Some(tiles)
+            }
+        }
+    }
+
+    /// The graph's rows, from its GSPO slice, decoded once.
+    fn graph_rows(&self) -> Option<Arc<Vec<Triple>>> {
+        self.rows
+            .get_or_init(|| {
+                let (dir, base, phys) = self.graph_slice(0, GSPO_CELL)?;
+                let mut rows: Vec<Triple> = Vec::new();
+                for &p in phys {
+                    let entry = self.core.tile(0, dir, *base, p)?;
+                    let mut ok = true;
+                    walk_segments(entry.body(), dir[p - base].first_g, |sg, first_a, body| {
+                        if sg == self.g {
+                            // A fresh vector per segment: the decoder bounds its row
+                            // count by the segment's bytes.
+                            let mut seg: Vec<Triple> = Vec::new();
+                            ok = decode_segment_body(body, first_a, (false, false), &mut seg)
+                                .is_some();
+                            rows.extend(seg);
+                            return false;
+                        }
+                        sg < self.g
+                    })?;
+                    if !ok {
+                        return None;
+                    }
+                }
+                Some(Arc::new(rows))
+            })
+            .clone()
+    }
+
+    /// Tile `ti` of view order `si` as a §6.1 block.
+    fn block(&self, si: usize, ti: usize) -> Option<Vec<u8>> {
+        match self.src[si] {
+            ViewSrc::Slice => {
+                let (dir, base, phys) = self.slices[si].get()?;
+                let p = *phys.get(ti)?;
+                let entry = self.core.tile(si, dir, *base, p)?;
+                segment_block(entry.body(), dir[p - base].first_g, self.g, ALL_PERMS[si])
+            }
+            ViewSrc::Synth => {
+                if ti != 0 {
+                    return None;
+                }
+                let rows = self.graph_rows()?;
+                let perm = ALL_PERMS[si];
+                let mut b = TripleBlockBuilder::new();
+                for &t in rows.iter() {
+                    b.push(perm.forward(t));
+                }
+                Some(b.build())
+            }
+            ViewSrc::Filter(slot) => {
+                let (dir, base, phys) = self.slices[si].get()?;
+                let p = *phys.get(ti)?;
+                let entry = self.core.tile(slot, dir, *base, p)?;
+                let scol = quad7::subject_col(quad7::perm_of(slot));
+                let mut rows = Vec::new();
+                quad7::decode_tile(entry.body(), scol, &mut rows)?;
+                let mut b = TripleBlockBuilder::new();
+                for r in rows.iter().filter(|r| r.3 == self.g) {
+                    b.push((r.0, r.1, r.2));
+                }
+                Some(b.build())
+            }
+        }
+    }
+
+    /// Tiles `tis` of view order `si`, faulted in one batch where the order
+    /// reads real tiles.
+    fn blocks(&self, si: usize, tis: &[usize]) -> Option<Vec<Vec<u8>>> {
+        let slot = match self.src[si] {
+            ViewSrc::Slice => Some(si),
+            ViewSrc::Filter(slot) => Some(slot),
+            ViewSrc::Synth => None,
+        };
+        if let Some(slot) = slot {
+            let (dir, base, phys) = self.slices[si].get()?;
+            let want: Vec<usize> = tis
+                .iter()
+                .map(|&ti| phys.get(ti).copied())
+                .collect::<Option<_>>()?;
+            self.core.fault(slot, dir, *base, &want)?;
+        }
+        tis.iter().map(|&ti| self.block(si, ti)).collect()
     }
 }
 
@@ -1730,12 +2012,15 @@ pub(crate) fn v05_parts(
 ) -> Result<crate::v06::parts::QuadPart, FileError> {
     let head = reader.read_at(section.offset, section.len.min(PREAMBLE_MAX))?;
     let pre = parse_preamble(&head, section.offset, section.len, perms)?;
-    let n = perms.len();
+    let n = pre.mask.count_ones() as usize;
     let p0 = pre.parts[0];
     let p0_bytes = reader.read_at(p0.offset, p0.len)?;
     let gdir = pre.parts[1 + n];
     let mut orders = Vec::with_capacity(n);
-    for (k, perm) in perms.iter().enumerate() {
+    let order_perms = ALL_PERMS
+        .into_iter()
+        .filter(|p| pre.mask & (1 << p.section_index()) != 0);
+    for (k, perm) in order_perms.enumerate() {
         let part = pre.parts[1 + k];
         let bytes = reader.read_at(part.offset, part.len)?;
         let tiles = parse_tile_dir(&bytes, pre.parts[2 + n + k])
@@ -1910,9 +2195,8 @@ fn segment_block(tile: &[u8], first_g: u32, g: u32, perm: IndexPermutation) -> O
     Some(b.build())
 }
 
-/// Every row of a decompressed tile as `(g, a, b, c)` — for tests and checks.
-#[cfg(test)]
-fn tile_rows(tile: &[u8], first_g: u32, perm: IndexPermutation) -> Option<Vec<QuadRow>> {
+/// Every row of a decompressed graph-leading tile as `(g, a, b, c)`.
+pub(crate) fn tile_rows(tile: &[u8], first_g: u32, perm: IndexPermutation) -> Option<Vec<QuadRow>> {
     let cols = subject_columns(perm);
     let mut out = Vec::new();
     let mut ok = true;
@@ -2145,29 +2429,69 @@ impl QuadNamed {
     }
 
     /// A streaming scan of every quad matching a triple pattern, over all
-    /// graphs, in graph order: see [`QuadScan`]. `None` when the section is
-    /// unreadable.
+    /// graphs: see [`QuadScan`]. `None` when the section is unreadable.
+    ///
+    /// The order is the one whose leading columns the pattern binds the
+    /// longest. A `0x07` file has the graph-last SPOG, POSG and OSPG for that
+    /// (`<s>` is a SPOG prefix, `<p>` and `<p> <o>` POSG, `<o>` and `<o> <s>`
+    /// OSPG, `<s> <p>` SPOG); the graph-leading GSPO only takes a pattern with
+    /// nothing bound, which it answers in graph order. A `0x05`/`0x06` file's
+    /// graph-leading orders cover the eight shapes by synopsis pruning.
     pub(crate) fn scan(&self, pat: (Option<u32>, Option<u32>, Option<u32>)) -> Option<QuadScan> {
-        // The order whose leading columns the pattern binds the longest; every
-        // legal file stores SPO, POS and OSP, which cover all eight shapes.
-        let perm = self.core.perms.iter().max_by_key(|p| {
-            let lead = p
-                .order_pattern(pat)
-                .iter()
-                .take_while(|c| c.is_some())
-                .count();
-            (lead, std::cmp::Reverse(p.section_index()))
-        })?;
-        let si = perm.section_index();
-        let dir = self.core.dir(si)?;
+        let mask = self.core.mask();
+        let any_last = mask & quad7::LAST_MASK != 0;
+        let slot = (0..NUM_SLOTS)
+            .filter(|s| mask & (1 << s) != 0)
+            .max_by_key(|&s| {
+                let lead = quad7::perm_of(s)
+                    .order_pattern(pat)
+                    .iter()
+                    .take_while(|c| c.is_some())
+                    .count();
+                // A graph-leading order cannot be seeked on its first column
+                // when a graph-last one exists.
+                let score = if !quad7::is_last(s) && any_last {
+                    0
+                } else {
+                    lead
+                };
+                (
+                    score,
+                    u8::from(score > 0 && quad7::is_last(s)),
+                    std::cmp::Reverse(s),
+                )
+            })?;
+        let perm = quad7::perm_of(slot);
+        let last = quad7::is_last(slot);
+        let abc = perm.order_pattern(pat);
+        let (dir, base) = match abc[0] {
+            Some(a) if last => self.core.dir_for_graph(slot, a)?,
+            _ => (self.core.dir(slot)?, 0),
+        };
+        let (next_tile, end_tile) = if last {
+            // The tiles whose `(a, b)` key range can hold the bound prefix.
+            let (lo, hi) = match (abc[0], abc[1]) {
+                (Some(a), Some(b)) => ((a, b), (a, b)),
+                (Some(a), None) => ((a, 0), (a, u32::MAX)),
+                _ => ((0, 0), (u32::MAX, u32::MAX)),
+            };
+            let from = dir.partition_point(|t| (t.last_g, t.last_a) < lo);
+            let to = dir.partition_point(|t| (t.first_g, t.first_a) <= hi);
+            (base + from, base + to.max(from))
+        } else {
+            (base, base + dir.len())
+        };
         Some(QuadScan {
             core: Arc::clone(&self.core),
             dir,
+            base,
             perm,
-            si,
-            abc: perm.order_pattern(pat),
+            si: slot,
+            last,
+            abc,
             cols: subject_columns(perm),
-            next_tile: 0,
+            next_tile,
+            end_tile,
             buf: Vec::new().into_iter(),
         })
     }
@@ -2273,29 +2597,54 @@ impl QuadNamed {
 }
 
 /// A streaming scan of the quads matching a triple pattern over **every**
-/// graph of a quad index, yielding `(graph id, (s, p, o))` in graph order.
+/// graph of a quad index, yielding `(graph id, (s, p, o))`.
 ///
-/// It walks one graph-leading order's tiles, skipping those whose directory
-/// entry (graph/first-column range, column synopsis) cannot hold a match, and
-/// decodes one tile at a time, so memory is a tile and its matches, never
-/// proportional to the number of graphs or quads. With only graph-leading
-/// orders, the cost of a pattern whose graph is unbound is a pass over the
-/// tiles the synopses cannot rule out: the graph column cannot be skipped to.
+/// It walks one order's tiles and decodes one at a time, so memory is a tile
+/// and its matches, never proportional to the number of graphs or quads.
+///
+/// - A graph-leading order (`0x05`, `0x06`, and GSPO of `0x07`) skips the tiles
+///   whose directory entry (graph and first-column range, column synopsis)
+///   cannot hold a match; with the graph unbound that is a pass over what the
+///   synopses cannot rule out. Rows come in graph order.
+/// - A graph-last order (`0x07`: SPOG, POSG, OSPG) is **seeked**: the pattern's
+///   leading bound columns are a prefix of the order, so the tiles holding it
+///   are the run whose `(a, b)` key range contains the prefix, found by binary
+///   search on the directory (and, for a big file, on the leaves the root
+///   lists), then read in one batch. Rows come in `(a, b, c, g)` order, not
+///   graph order ([`graph_ordered`](Self::graph_ordered)).
 pub(crate) struct QuadScan {
     core: Arc<QuadCore>,
+    /// The order's directory, or the slice of it that can hold the pattern.
     dir: Arc<[QTile]>,
+    /// Index in the whole order of `dir[0]`.
+    base: usize,
     perm: IndexPermutation,
+    /// The order's slot (`quad7`).
     si: usize,
+    last: bool,
     /// The pattern's bound values in this order's column order.
     abc: [Option<u32>; 3],
     cols: (bool, bool),
+    /// Next tile to look at, and the end of the range (both absolute).
     next_tile: usize,
+    end_tile: usize,
     buf: std::vec::IntoIter<(u32, Triple)>,
 }
 
 impl QuadScan {
+    /// Does the scan yield rows in graph order? (A graph-leading order does.)
+    pub(crate) fn graph_ordered(&self) -> bool {
+        !self.last
+    }
+
     fn tile_may_match(&self, t: &QTile) -> bool {
-        let (min_b, max_b, min_c, max_c) = t.syn;
+        let (x, y, z, w) = t.syn;
+        if self.last {
+            // (min c, max c, min g, max g); the leading keys were used to cut
+            // the range.
+            return !self.abc[2].is_some_and(|c| c < x || c > y);
+        }
+        let (min_b, max_b, min_c, max_c) = (x, y, z, w);
         if self.abc[1].is_some_and(|b| b < min_b || b > max_b) {
             return false;
         }
@@ -2312,44 +2661,63 @@ impl QuadScan {
     /// Decode the next tile that holds a match into `buf`; `false` at the end
     /// (or on a failed read, which the core has recorded).
     fn fill(&mut self) -> bool {
-        while self.next_tile < self.dir.len() {
+        while self.next_tile < self.end_tile {
             let ti = self.next_tile;
             self.next_tile += 1;
-            let t = self.dir[ti];
+            let t = self.dir[ti - self.base];
             if !self.tile_may_match(&t) {
                 continue;
             }
-            let Some(entry) = self.core.tile(self.si, &self.dir, 0, ti) else {
-                self.next_tile = self.dir.len();
+            let Some(entry) =
+                self.core
+                    .tile_capped(self.si, &self.dir, self.base, ti, self.end_tile)
+            else {
+                self.next_tile = self.end_tile;
                 return false;
             };
             let [wa, wb, wc] = self.abc;
             let mut out: Vec<(u32, Triple)> = Vec::new();
-            let mut rows: Vec<Triple> = Vec::new();
-            let mut ok = true;
-            let walked = walk_segments(entry.body(), t.first_g, |g, first_a, seg| {
-                // Every row of a segment has a first column of at least `first_a`.
-                if wa.is_some_and(|a| a < first_a) {
-                    return true;
-                }
-                rows.clear();
-                if decode_segment_body(seg, first_a, self.cols, &mut rows).is_none() {
-                    ok = false;
-                    return false;
-                }
-                for &(a, b, c) in &rows {
-                    if wa.is_none_or(|x| x == a)
-                        && wb.is_none_or(|x| x == b)
-                        && wc.is_none_or(|x| x == c)
+            let ok = if self.last {
+                let mut rows: Vec<quad7::Row4> = Vec::new();
+                let scol = quad7::subject_col(self.perm);
+                let ok = quad7::decode_tile(entry.body(), scol, &mut rows).is_some();
+                for r in &rows {
+                    if wa.is_none_or(|x| x == r.0)
+                        && wb.is_none_or(|x| x == r.1)
+                        && wc.is_none_or(|x| x == r.2)
                     {
-                        out.push((g, self.perm.back((a, b, c))));
+                        out.push(quad7::quad_of(self.perm, r));
                     }
                 }
-                true
-            });
-            if walked.is_none() || !ok {
+                ok
+            } else {
+                let mut rows: Vec<Triple> = Vec::new();
+                let mut ok = true;
+                let walked = walk_segments(entry.body(), t.first_g, |g, first_a, seg| {
+                    // Every row of a segment has a first column of at least `first_a`.
+                    if wa.is_some_and(|a| a < first_a) {
+                        return true;
+                    }
+                    rows.clear();
+                    if decode_segment_body(seg, first_a, self.cols, &mut rows).is_none() {
+                        ok = false;
+                        return false;
+                    }
+                    for &(a, b, c) in &rows {
+                        if wa.is_none_or(|x| x == a)
+                            && wb.is_none_or(|x| x == b)
+                            && wc.is_none_or(|x| x == c)
+                        {
+                            out.push((g, self.perm.back((a, b, c))));
+                        }
+                    }
+                    true
+                });
+                walked.is_some() && ok
+            };
+            if !ok {
                 self.core.fail();
-                self.next_tile = self.dir.len();
+                self.next_tile = self.end_tile;
                 return false;
             }
             if !out.is_empty() {

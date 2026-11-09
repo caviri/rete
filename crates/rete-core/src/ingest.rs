@@ -1557,7 +1557,10 @@ where
     S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
 {
     let graphs = opts.graph_layout;
-    if graphs == GraphLayout::Quad && crate::quad::check_perms(opts.perms).is_err() {
+    if graphs == GraphLayout::Quad
+        && crate::build_record::writes_legacy()
+        && crate::quad::check_perms(opts.perms).is_err()
+    {
         return Err(IngestError::Io(
             "the quad index needs the 3- or 6-permutation set".into(),
         ));
@@ -1778,8 +1781,15 @@ fn finish_assembly<M: IntoMetadata>(
         ),
         NamedQuads::Quad { quads, .. } => {
             let n = quads.len() as u64;
-            let q = crate::quad::encode_quad_index(quads, perms, codec)
-                .expect("the quad index needs the 3- or 6-permutation set");
+            // `0x07` derives every other order from GSPO, so the in-RAM image
+            // carries that one; the legacy `0x05` output (a test hook) keeps
+            // the file's whole permutation set.
+            let q = if crate::build_record::writes_legacy() {
+                crate::quad::encode_quad_index(quads, perms, codec)
+            } else {
+                crate::quad::encode_quad_gspo(quads, codec)
+            }
+            .expect("the quad index needs the 3- or 6-permutation set");
             progress::advance(n);
             (Vec::new(), Some(q))
         }

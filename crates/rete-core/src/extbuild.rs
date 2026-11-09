@@ -421,8 +421,6 @@ where
     // directory. The finished file is written beside it under a name of its own.
     let partial = PartialFile::create(output)?;
     let quad_layout = true;
-    crate::quad::check_perms(opts.perms)
-        .map_err(|_| ExtBuildError::Internal("the quad index needs the 3- or 6-permutation set"))?;
     let mut text = opts
         .text_index
         .clone()
@@ -736,7 +734,11 @@ where
         );
         // Each spill file is deleted as soon as every range of it is in the
         // output, so the output grows as the spill shrinks.
-        write_v06(output, &image, &metadata, &build_info, true, &partial)?;
+        // The graph-last quad orders sort in the build's own spill directory.
+        crate::write_opts::set_scratch_dir(Some(tmp.dir.clone()));
+        let written = write_v06(output, &image, &metadata, &build_info, true, &partial);
+        crate::write_opts::set_scratch_dir(None);
+        written?;
         stats.pyramid_levels = 0;
         note_scratch(&tmp);
         trace::lap(Phase::Write);
@@ -2383,12 +2385,10 @@ fn build_quad_section(
     perms: crate::index::PermSet,
     codec: u8,
 ) -> Result<QuadSectionFile, ExtBuildError> {
-    let order: Vec<crate::index::IndexPermutation> = perms.iter().collect();
-    if order.first() != Some(&QUAD_FIRST) {
-        return Err(ExtBuildError::Internal(
-            "the quad index's first order must be G+SPO",
-        ));
-    }
+    // `0x07` derives every other order from GSPO (`v06::neworders`), so the
+    // spill holds that order alone: `--permutations` is the default graph's.
+    let _ = perms;
+    let order: Vec<crate::index::IndexPermutation> = vec![QUAD_FIRST];
     let gblocks_path = tmp.path("quad.gblocks");
     let mut gblocks = BufWriter::with_capacity(1 << 20, File::create(&gblocks_path)?);
     let mut gdir = crate::quad::GraphDirWriter::new(codec);
@@ -2463,7 +2463,13 @@ fn build_quad_section(
     part_lens.extend(dirs.iter().map(|d| d.len() as u64));
     part_lens.push(gblocks_len);
     part_lens.extend(payloads.iter().map(|(_, l)| *l));
-    let preamble = crate::quad::encode_preamble(perms, graph_count, quad_count, &part_lens);
+    let preamble = crate::quad::encode_preamble_mask(
+        1,
+        crate::quad::QUAD_VERSION_SUBSET,
+        graph_count,
+        quad_count,
+        &part_lens,
+    );
 
     let path = tmp.path("quad.sec");
     let mut out = BufWriter::with_capacity(1 << 20, File::create(&path)?);
@@ -4710,9 +4716,10 @@ mod tests {
         }
     }
 
-    /// The quad layout needs the 3- or 6-permutation set (see `quad::check_perms`).
+    /// `0x07`'s quad orders do not depend on the permutation set: any legal set
+    /// of the default graph's builds, with the same four quad orders.
     #[test]
-    fn quad_external_build_refuses_other_permutation_sets() {
+    fn quad_external_build_takes_any_permutation_set() {
         let dir = std::env::temp_dir().join(format!("rete-extbuild-q5-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let r = build_external(
@@ -4725,7 +4732,14 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(r.is_err());
+        r.unwrap();
+        let bytes = std::fs::read(dir.join("out.rete")).unwrap();
+        let (h, root) =
+            crate::v06::open::read_front(&crate::reader::SliceReader::new(&bytes)).unwrap();
+        assert_eq!(h.perm_mask, 0b0001_1111);
+        let q = crate::v06::decode_quad_root(root.unit(crate::v06::tag::QUAD).unwrap()).unwrap();
+        let sis: Vec<usize> = q.orders.iter().map(|o| o.si).collect();
+        assert_eq!(sis, vec![0, 6, 7, 8]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

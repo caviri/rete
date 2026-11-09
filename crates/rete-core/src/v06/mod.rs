@@ -25,8 +25,10 @@
 //! [`write`](mod@write) assembles a `0x06` file from them, [`open`] reads one.
 
 pub mod annex;
+pub(crate) mod neworders;
 pub mod open;
 pub mod parts;
+pub use neworders::check_orders;
 pub mod write;
 
 #[cfg(test)]
@@ -904,6 +906,11 @@ pub fn decode_label_root(p: &[u8]) -> Result<LabelRoot, FileError> {
     Ok(LabelRoot { data_len, head })
 }
 
+/// `G+SPO`, `SPO+G`, ...: the name of a quad order by its slot (SPEC.md §6.5).
+pub fn quad_order_name(si: usize) -> String {
+    crate::quad7::slot_name(si)
+}
+
 /// The root of the quad index.
 #[derive(Debug, Clone, Default)]
 pub struct QuadRoot {
@@ -973,10 +980,10 @@ pub fn decode_quad_root(p: &[u8]) -> Result<QuadRoot, FileError> {
     let block_graphs = c.uv()?;
     let p0 = c.lp()?.to_vec();
     let gdir_len = c.uv()?;
-    let no = c.count(6)?;
+    let no = c.count(crate::quad7::NUM_SLOTS as u64)?;
     let mut orders = Vec::with_capacity(no);
     for _ in 0..no {
-        let si = c.count(5)?;
+        let si = c.count(crate::quad7::NUM_SLOTS as u64 - 1)?;
         let n_tiles = c.count(u32::MAX as u64)?;
         let nl = c.count(p.len() as u64)?;
         let mut leaves = Vec::with_capacity(nl.min(p.len() / 5));
@@ -1197,7 +1204,8 @@ pub fn decode_token_leaf(b: &[u8], n: usize) -> Result<Vec<TokenEnt>, FileError>
 /// One quad tile as a leaf lists it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QTileEnt {
-    /// Leading key of the first row.
+    /// Leading key of the first row: `(g, a)` of a graph-leading order, `(a, b)`
+    /// of a graph-last one.
     pub first: (u32, u32),
     /// Leading key of the last row.
     pub last: (u32, u32),
@@ -1205,7 +1213,8 @@ pub struct QTileEnt {
     pub clen: u64,
     /// Stored raw (not compressed).
     pub raw: bool,
-    /// `(min_b, max_b, min_c, max_c)`.
+    /// `(min_b, max_b, min_c, max_c)` of a graph-leading order; `(min_c, max_c,
+    /// min_g, max_g)` of a graph-last one.
     pub syn: (u32, u32, u32, u32),
     /// Absolute offset of the tile within QUAD_DATA.
     pub off: u64,
@@ -1213,8 +1222,10 @@ pub struct QTileEnt {
 
 /// Encode quad tile entries. A tile's offset is written as `0` when it follows
 /// the previous tile of the leaf (or, for the first, sits at the leaf's root
-/// offset), else as `offset + 1` (PMTiles' clustered encoding).
-pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64) -> Vec<u8> {
+/// offset), else as `offset + 1` (PMTiles' clustered encoding). A `0x07` file
+/// is order-major, so its tiles always follow each other and the field is
+/// not written (`contiguous`).
+pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64, contiguous: bool) -> Vec<u8> {
     let mut o = Vec::new();
     let mut prev_g = 0u32;
     let mut next = leaf_off;
@@ -1235,7 +1246,9 @@ pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64) -> Vec<u8> {
         write_uvarint(&mut o, e.syn.1.wrapping_sub(e.syn.0) as u64);
         write_uvarint(&mut o, e.syn.2 as u64);
         write_uvarint(&mut o, e.syn.3.wrapping_sub(e.syn.2) as u64);
-        write_uvarint(&mut o, if e.off == next { 0 } else { e.off + 1 });
+        if !contiguous {
+            write_uvarint(&mut o, if e.off == next { 0 } else { e.off + 1 });
+        }
         next = e.off + e.clen;
         prev_g = e.first.0;
     }
@@ -1243,7 +1256,12 @@ pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64) -> Vec<u8> {
 }
 
 /// Decode `n` quad tile entries of a leaf whose first tile sits at `leaf_off`.
-pub fn decode_qtile_leaf(b: &[u8], n: usize, leaf_off: u64) -> Result<Vec<QTileEnt>, FileError> {
+pub fn decode_qtile_leaf(
+    b: &[u8],
+    n: usize,
+    leaf_off: u64,
+    contiguous: bool,
+) -> Result<Vec<QTileEnt>, FileError> {
     let mut c = Cur::new(b);
     let mut out = Vec::with_capacity(n.min(b.len()));
     let mut prev_g = 0u32;
@@ -1265,8 +1283,14 @@ pub fn decode_qtile_leaf(b: &[u8], n: usize, leaf_off: u64) -> Result<Vec<QTileE
         let db = c.u32v()?;
         let mc = c.u32v()?;
         let dc = c.u32v()?;
-        let oc = c.uv()?;
-        let off = if oc == 0 { next } else { oc - 1 };
+        let off = if contiguous {
+            next
+        } else {
+            match c.uv()? {
+                0 => next,
+                oc => oc - 1,
+            }
+        };
         let clen = packed >> 1;
         out.push(QTileEnt {
             first: (g, fa),
@@ -1491,7 +1515,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            decode_qtile_leaf(&encode_qtile_leaf(&q, 100), 2, 100).unwrap(),
+            decode_qtile_leaf(&encode_qtile_leaf(&q, 100, false), 2, 100, false).unwrap(),
             q
         );
     }

@@ -69,10 +69,23 @@ pub(crate) fn convert(
     input: &str,
     output: &str,
     quad: Option<&str>,
+    tmp_dir: Option<&str>,
     label_index: bool,
     costs: CardCosts,
 ) -> anyhow::Result<()> {
     use rete_core::v06::write::QuadClustering;
+    // The sort that derives the `0x07` quad orders spills beside the output
+    // unless told otherwise (a big file's spill is 16 bytes a quad).
+    rete_core::write_opts::set_scratch_dir(Some(match tmp_dir {
+        Some(d) => std::path::PathBuf::from(d),
+        None => std::path::Path::new(output)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(
+                || std::path::PathBuf::from("."),
+                std::path::Path::to_path_buf,
+            ),
+    }));
     if std::path::Path::new(input) == std::path::Path::new(output) {
         anyhow::bail!("convert writes a new file: OUT must differ from IN");
     }

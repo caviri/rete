@@ -68,6 +68,7 @@ pub mod parallel;
 #[doc(hidden)]
 pub mod pyramid;
 mod quad;
+mod quad7;
 #[doc(hidden)]
 pub mod reach;
 #[doc(hidden)]
