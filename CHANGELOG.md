@@ -7,6 +7,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **Python `Builder.card(base_iri=...)` sets the curated field, and an unknown keyword is an error** (G40). `base_iri` was written into the card's `extra` bag while the card reference calls it a curated field. It now overrides `signals.base_iri` as in `--card-file` (it needs `derive_card()`, and `run()` says so without it). A keyword that is not a curated field raises `TypeError` and names the fields; custom fields go in `extra={...}`.
+
+- **The Python build record has the CLI's `run` block and names its inputs** (G41). `run` holds `wall_ms`, the phases, `peak_rss_bytes`, `memory_limit_bytes` and `cpus`, and is left out under `RETE_BUILD_RECORD=reproducible`. `add_file` records the file name instead of `string`, and `add(text, name=...)` names in-memory text.
+
+- **`rete card-url` reads the front of a file in one first read and at most one sized follow-up** (G41). It no longer fetches a small remote file whole, and it reports the requests that went over the wire, not the reads of memory it already held. The test counts the requests at a local range server.
+
+- **`rete info` prints a summary, not a Rust `Debug` dump** (G41). Format, size, content hash, flags, counts, codecs, pyramid levels and the sections, one line each. `--raw` prints the header's fields as `Debug` output.
+
 - **The `0x06` writer keeps directory leaves small** (A1). A directory leaf is what a cold lookup transfers, but the writer doubled the leaf size of the largest directory while the stored root exceeded 40 KiB, with no ceiling. On a big file the root never gets there (the 3.88 GB nanopub dump has a 73,890 B root, mostly the graph directory's block index), so every directory ended as one leaf: 0.73 to 0.99 MB per quad order and a 1.27 MB dictionary directory, read on the first lookup. Leaves now start at 16 KiB and grow (to at most 64 KiB) only to bring the root under 40 KiB, and only if one leaf per directory would get it there; the leaf lists may add at most 256 KiB to the root, past which leaves grow again. No format change: readers need no change and a file written either way reads the same. **A file benefits only once it is rebuilt or converted**: `rete convert old.rete -o new.rete` now accepts a `0x06` input and rewrites its directories under the new policy, copying the payload (3.88 GB in 2.4 s, about 100 MB of memory). On the nanopub dump, `GRAPH <g> { ?s ?p ?o }` cold without the block cache goes from 2.56 MB to 0.66 MB, at 11 dependent round trips instead of 9 (the G48 bound join: 2.55 MB to 0.66 MB, 20 to 29 round trips, because each distinct dictionary or tile-directory leaf is now a read of its own); the root grows from 73.9 KB to 104.2 KB (+30 KB). A file whose root is already under 40 KiB (the 202 MB OpenCitations sample) comes out byte for byte the same. `rete info` lists the leaves per directory.
 
 ## [0.5.5] - 2026-11-09

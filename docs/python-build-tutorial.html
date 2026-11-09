@@ -682,10 +682,11 @@ N-Quads (or rdflib <code>Dataset</code>s with named graphs), a bare <code>{ ?s &
 correctly returns nothing — scope it with <code>GRAPH ?g { … }</code>. Details in
 <a href="#2-the-dataset-card">§2's closing note</a>.</p>
 </blockquote>
-<p>Beyond the named keyword arguments, <code>card()</code> passes <strong>any extra field</strong>
-straight into the card JSON — which is how you set the curated <strong>identity and
-provenance</strong> fields the card schema defines (the same ones the CLI's
-<code>--card-file</code> takes):</p>
+<p>Beyond the named keyword arguments, <code>card()</code> takes the other curated fields
+the card schema defines — the <strong>identity and provenance</strong> ones, the same list as
+the CLI's <code>--card-file</code>. A keyword that is not on that list is an error
+(<code>TypeError</code>, naming it): a field of your own goes in <code>extra={...}</code> (see
+<a href="dataset-card-reference.html#custom-fields-the-extra-bag">Custom fields</a>).</p>
 <pre><code class="language-python">builder.card(
     version="1.0.0",                             # Croissant requires one
     creators=[{"name": "Ada Lovelace",
@@ -717,6 +718,8 @@ provenance</strong> fields the card schema defines (the same ones the CLI's
 <tr><td><code>doi</code></td><td>The dataset's DOI, as an IRI (<code>https://doi.org/…</code>)</td></tr>
 <tr><td><code>cite_as</code></td><td>Preferred citation text</td></tr>
 <tr><td><code>keywords</code></td><td>Free-text tags — projected as <code>dcat:keyword</code> / <code>schema:keywords</code></td></tr>
+<tr><td><code>base_iri</code></td><td>An absolute IRI that overrides the derived <code>signals.base_iri</code>; needs <code>derive_card()</code> (see <a href="#deriving-the-profile">Deriving the profile</a>)</td></tr>
+<tr><td><code>extra</code></td><td>A dict of your own fields, bounded as in the CLI</td></tr>
 <tr><td><code>theme</code></td><td>Controlled-vocabulary IRIs (e.g. EU data themes) — projected as <code>dcat:theme</code>; free text is rejected, it belongs in <code>keywords</code>. (No curated language field: the card <em>measures</em> <code>languages</code> from the literals' own tags.)</td></tr>
 </tbody></table>
 <p>The <strong>statistics</strong> — <code>triple_count</code>, <code>quad_count</code>, <code>named_graph_count</code>,
@@ -759,10 +762,14 @@ exact rules <code>rete build --card-file</code> enforces (reserved top level, <c
 must be a controlled-vocabulary IRI, the <code>extra</code> bag is bounded), so a card
 this accepts is one the CLI accepts.</li>
 </ul>
-<p>What stays CLI-only: the adjacent <strong>build-info record</strong> (timestamp, builder,
-parameters, measured starter-query costs — its cost figures come from <em>running</em>
-the starter queries, which is a benchmark, not a build) and the JSON-LD /
-Croissant <strong>projections</strong> (<code>rete card --format jsonld|croissant</code>).</p>
+<p>What stays CLI-only: the measured starter-query costs in the build record (they
+come from <em>running</em> the starter queries, which is a benchmark, not a build) and
+the JSON-LD / Croissant <strong>projections</strong> (<code>rete card --format jsonld|croissant</code>).
+The build record itself is written here too: <code>rete_graph.build_record(image)</code>
+has the <code>inputs</code> (file name, size, BLAKE3; <code>add_file</code> records the file's name,
+<code>add(text, name=...)</code> names in-memory text), the <code>counts</code> and a <code>run</code> block with
+the wall time, the phases, the peak RSS and the CPUs, as in the CLI's record.
+<code>RETE_BUILD_RECORD=reproducible</code> leaves the <code>run</code> block out, as in the CLI.</p>
 <p>One shape to watch: every example query in this tutorial matches the
 <strong>default graph</strong>. If your sources are N-Quads (or rdflib <code>Dataset</code>s with
 named graphs), a bare pattern like <code>{ ?s &lt;urn:knows&gt; ?o }</code> correctly returns

@@ -46,7 +46,7 @@ curl -sI -r 0-1023 -H "Origin: https://example.org" https://host/path/data.rete 
 ```
 
 If both pass, `rete card-url https://host/path/data.rete` should print the
-dataset card in two range requests — and the same URL pasted into the
+dataset card in one or two range requests — and the same URL pasted into the
 [playground](playground-guide.md)'s **+ Add source → Connect (lazy)** queries it
 live.
 
@@ -141,7 +141,7 @@ the bytes.
 
 - Embed a [Dataset Card](dataset-cards.md) at build time (`rete build --card`)
   so anyone who finds the URL gets the title, license, counts, and runnable
-  starter queries from two range requests — `rete card-url <url>`.
+  starter queries from one or two range requests — `rete card-url <url>`.
 - Register it in the [playground](playground-guide.md) catalog to give it a
   browsable home with examples, media rendering, and SQL companions — see
   [Media & SQL companions](media-companions.md).

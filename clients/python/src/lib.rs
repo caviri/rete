@@ -543,17 +543,21 @@ fn rdf12_triple_term(token: &str) -> Option<String> {
 /// (the one step the CLI, the browser and every binding share,
 /// [`rete_core::build_record::finish_in_ram`]), with the build record beside
 /// the card: engine, options, the inputs (a label, length and BLAKE3 each),
-/// counts, and `front_end: "python"`.
+/// counts, `front_end: "python"` and the `run` block (see [`run_block`]).
+///
+/// `sources` is `(name, format, data)` per input: the name is a file name
+/// (never a path) when the caller gave one, as in the CLI's record.
 #[allow(clippy::too_many_arguments)]
 fn finish_build(
     bytes: Vec<u8>,
     stats: &rete_core::ingest::BuildStats,
     command: &str,
-    sources: &[(&Source, &str)],
+    sources: &[(&str, &str, &[u8])],
     no_pyramid: Option<bool>,
     text_index: bool,
     pyramid_algo: Option<&str>,
     read: u64,
+    run: Option<serde_json::Value>,
 ) -> PyResult<Vec<u8>> {
     use rete_core::build_record as br;
     let record = br::to_json(
@@ -564,7 +568,7 @@ fn finish_build(
             options: br::Options {
                 command: command.into(),
                 format: match sources {
-                    [(_, f)] => Some((*f).to_string()),
+                    [(_, f, _)] => Some((*f).to_string()),
                     _ => None,
                 },
                 no_pyramid: no_pyramid.unwrap_or(false),
@@ -574,7 +578,7 @@ fn finish_build(
             },
             inputs: sources
                 .iter()
-                .map(|(src, format)| br::Input::from_bytes(src.kind(), format, src.data()))
+                .map(|(name, format, data)| br::Input::from_bytes(name, format, data))
                 .collect(),
             // What the parser handed over: the record's duplicates dropped are
             // this less the unique count.
@@ -582,7 +586,84 @@ fn finish_build(
         },
         Some(stats),
     );
+    // The core's record has no `run` block (it has no clock on every target),
+    // so it is added here, in the CLI's shape.
+    let record = match run {
+        Some(run) => match serde_json::from_slice::<serde_json::Value>(&record) {
+            Ok(serde_json::Value::Object(mut o)) => {
+                o.insert("run".into(), run);
+                serde_json::to_vec(&o).unwrap_or(record)
+            }
+            _ => record,
+        },
+        None => record,
+    };
     br::finish_in_ram(bytes, Some(&record)).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// Peak resident set size of this process (`VmHWM`); `None` off Linux.
+fn peak_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
+}
+
+/// The memory limit of this process's cgroup (v2 `memory.max`, else v1
+/// `memory.limit_in_bytes`); `None` when unlimited or not on Linux.
+fn memory_limit_bytes() -> Option<u64> {
+    let v2 = std::fs::read_to_string("/proc/self/cgroup")
+        .ok()
+        .and_then(|c| {
+            c.lines()
+                .find_map(|l| l.strip_prefix("0::").map(str::to_string))
+        })
+        .map(|rel| format!("/sys/fs/cgroup{}/memory.max", rel.trim_end_matches('/')));
+    for path in v2.into_iter().chain([
+        "/sys/fs/cgroup/memory.max".to_string(),
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes".to_string(),
+    ]) {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let t = text.trim();
+            if t == "max" {
+                return None;
+            }
+            if let Ok(n) = t.parse::<u64>() {
+                // cgroup v1 reports "unlimited" as a page-rounded i64::MAX.
+                return (n < (1u64 << 60)).then_some(n);
+            }
+        }
+    }
+    None
+}
+
+/// The record's `run` block, in the CLI's shape: wall time, per-phase time
+/// (the phases the in-RAM build laps), the process's peak RSS, its cgroup
+/// memory limit and the CPUs it can use. Left out under
+/// `RETE_BUILD_RECORD=reproducible`, as in the CLI: it differs between two
+/// builds of the same data.
+///
+/// The peak RSS is the whole Python process's, not only the build's.
+fn run_block(
+    started: std::time::Instant,
+    collector: &rete_core::build_trace::Collector,
+) -> Option<serde_json::Value> {
+    if rete_core::build_record::reproducible() {
+        return None;
+    }
+    let phases: Vec<serde_json::Value> = collector
+        .snapshot()
+        .phases
+        .into_iter()
+        .map(|(p, d)| serde_json::json!({"phase": p.as_str(), "ms": d.as_millis() as u64}))
+        .collect();
+    Some(serde_json::json!({
+        "wall_ms": started.elapsed().as_millis() as u64,
+        "phases": phases,
+        "peak_rss_bytes": peak_rss_bytes(),
+        "memory_limit_bytes": memory_limit_bytes(),
+        "cpus": std::thread::available_parallelism().ok().map(|n| n.get() as u64),
+    }))
 }
 
 /// Build a complete `.rete` file image from RDF text (or bytes). `format` is
@@ -599,23 +680,27 @@ fn build(
 ) -> PyResult<Py<PyBytes>> {
     let text = Source::extract(text)?;
     let bytes = py.detach(|| -> PyResult<Vec<u8>> {
+        let collector = rete_core::build_trace::Collector::start();
+        let started = std::time::Instant::now();
         let quads = parse_source(&text, format, quoted_triple_syntax)?;
         if quads.is_empty() {
             return Err(PyValueError::new_err(
                 "no statements parsed (empty input or only comments)",
             ));
         }
+        rete_core::build_trace::lap(rete_core::build_trace::Phase::Parse);
         let read = quads.len() as u64;
         let (bytes, stats) = rete_core::ingest::assemble_dataset_quad(quads, &[]);
         finish_build(
             bytes,
             &stats,
             "build",
-            &[(&text, format)],
+            &[(text.kind(), format, text.data())],
             Some(false),
             false,
             Some("louvain"),
             read,
+            run_block(started, &collector),
         )
     })?;
     Ok(PyBytes::new(py, &bytes).unbind())
@@ -702,7 +787,8 @@ fn curated_for_derivation(
 }
 
 /// Full-option build behind `rete_graph.Builder`: multiple parsed sources
-/// (`(text_or_bytes, format, quoted_triple_syntax)` each), an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
+/// (`(text_or_bytes, format, quoted_triple_syntax, name)` each; `name` is the
+/// input's file name for the build record, or `None` for a label), an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
 /// a forced type predicate, and opt-in card derivation. Returns
 /// `(file_bytes, stats_json)`.
 ///
@@ -718,7 +804,7 @@ fn curated_for_derivation(
 #[pyo3(signature = (sources, card=None, pyramid=true, pyramid_algo="louvain", text_index=false, type_predicate=None, derive_card=false))]
 fn build_dataset(
     py: Python<'_>,
-    sources: Vec<(Bound<'_, PyAny>, String, String)>,
+    sources: Vec<(Bound<'_, PyAny>, String, String, Option<String>)>,
     card: Option<String>,
     pyramid: bool,
     pyramid_algo: &str,
@@ -755,11 +841,20 @@ fn build_dataset(
     };
     let sources = sources
         .iter()
-        .map(|(src, format, syntax)| Ok((Source::extract(src)?, format.clone(), syntax.clone())))
-        .collect::<PyResult<Vec<(Source, String, String)>>>()?;
+        .map(|(src, format, syntax, name)| {
+            Ok((
+                Source::extract(src)?,
+                format.clone(),
+                syntax.clone(),
+                name.clone(),
+            ))
+        })
+        .collect::<PyResult<Vec<(Source, String, String, Option<String>)>>>()?;
     let (bytes, stats) = py.detach(|| -> PyResult<_> {
+        let collector = rete_core::build_trace::Collector::start();
+        let started = std::time::Instant::now();
         let mut quads = Vec::new();
-        for (src, format, syntax) in &sources {
+        for (src, format, syntax, _) in &sources {
             quads.extend(parse_source(src, format, syntax)?);
         }
         if quads.is_empty() {
@@ -767,9 +862,16 @@ fn build_dataset(
                 "no statements parsed (empty input or only comments)",
             ));
         }
-        let refs: Vec<(&Source, &str)> = sources
+        rete_core::build_trace::lap(rete_core::build_trace::Phase::Parse);
+        let refs: Vec<(&str, &str, &[u8])> = sources
             .iter()
-            .map(|(src, f, _)| (src, f.as_str()))
+            .map(|(src, f, _, name)| {
+                (
+                    name.as_deref().unwrap_or(src.kind()),
+                    f.as_str(),
+                    src.data(),
+                )
+            })
             .collect();
         let read = quads.len() as u64;
         if let Some((input, examples)) = derived_input {
@@ -804,6 +906,7 @@ fn build_dataset(
                 text_index,
                 pyramid.then_some(pyramid_algo),
                 read,
+                run_block(started, &collector),
             )?;
             return Ok((bytes, stats));
         }
@@ -824,6 +927,7 @@ fn build_dataset(
             text_index,
             pyramid.then_some(pyramid_algo),
             read,
+            run_block(started, &collector),
         )?;
         Ok((bytes, stats))
     })?;

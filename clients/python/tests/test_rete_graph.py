@@ -840,3 +840,89 @@ def test_the_record_counts_the_duplicates_it_dropped():
     assert (c["statements_read"], c["statements_unique"], c["duplicates_dropped"]) == (3, 2, 1)
     c = rete.build_record(rete.Builder().add(nt).run())["counts"]
     assert (c["statements_read"], c["statements_unique"], c["duplicates_dropped"]) == (3, 2, 1)
+
+
+# -- G40: card(base_iri=...) and unknown keywords --------------------------------
+
+
+def test_card_base_iri_is_the_curated_field(nt_text):
+    """`base_iri` overrides the derived `signals.base_iri`; it is not an `extra` field."""
+    b = rete.Builder().add(nt_text).card(title="t", base_iri="https://doi.org/")
+    assert b._card["base_iri"] == "https://doi.org/"
+    assert "extra" not in b._card
+    card = b.derive_card().graph().card()
+    assert card["signals"]["base_iri"] == "https://doi.org/"
+    assert "extra" not in card
+
+
+def test_card_base_iri_must_be_an_absolute_iri(nt_text):
+    with pytest.raises(ValueError, match="base_iri"):
+        rete.Builder().add(nt_text).card(base_iri="not an iri").derive_card().run()
+
+
+def test_card_base_iri_without_derive_card_is_refused(nt_text):
+    """Without derivation there is no `signals` to override: say so, do not drop it."""
+    with pytest.raises(ValueError, match="derive_card"):
+        rete.Builder().add(nt_text).card(base_iri="https://doi.org/").run()
+
+
+def test_card_refuses_unknown_keywords(nt_text):
+    with pytest.raises(TypeError) as err:
+        rete.Builder().add(nt_text).card(title="t", pipeline="x", seed=7)
+    msg = str(err.value)
+    assert "'pipeline'" in msg and "'seed'" in msg
+    assert "extra={...}" in msg  # where a publisher's own field goes
+    assert "base_iri" in msg  # and the curated names are listed
+
+
+def test_card_extra_dict_still_carries_custom_fields(nt_text):
+    card = (
+        rete.Builder()
+        .add(nt_text)
+        .card(title="t", extra={"pipeline": {"seed": 7}})
+        .graph()
+        .card()
+    )
+    assert card["extra"] == {"pipeline": {"seed": 7}}
+
+
+# -- G41: the Python build record has the CLI's run block and input names --------
+
+
+def test_build_record_has_a_run_block(nt_text):
+    for image in (rete.build(nt_text), rete.Builder().add(nt_text).run()):
+        run = rete.build_record(image)["run"]
+        assert isinstance(run["wall_ms"], int) and run["wall_ms"] >= 0
+        assert run["peak_rss_bytes"] is None or run["peak_rss_bytes"] > 0
+        assert run["memory_limit_bytes"] is None or run["memory_limit_bytes"] > 0
+        assert run["cpus"] is None or run["cpus"] >= 1
+        assert isinstance(run["phases"], list)
+        assert all({"phase", "ms"} <= set(p) for p in run["phases"])
+        assert "parse" in [p["phase"] for p in run["phases"]]
+
+
+def test_reproducible_record_has_no_run_block(nt_text, monkeypatch):
+    """As in the CLI: the figures that differ between two builds of one input
+    are left out under RETE_BUILD_RECORD=reproducible."""
+    monkeypatch.setenv("RETE_BUILD_RECORD", "reproducible")
+    assert "run" not in rete.build_record(rete.Builder().add(nt_text).run())
+    assert "run" not in rete.build_record(rete.build(nt_text))
+
+
+def test_build_record_names_a_file_input_by_its_file_name(tmp_path, nt_text):
+    path = tmp_path / "sub" / "people.nt"
+    path.parent.mkdir()
+    path.write_text(nt_text, encoding="utf-8")
+    rec = rete.build_record(rete.Builder().add_file(path).run())
+    (inp,) = rec["inputs"]
+    assert inp["name"] == "people.nt"  # the name, never the path
+    assert inp["format"] == "nt"
+    assert inp["bytes"] == len(nt_text.encode())
+
+
+def test_build_record_input_name_can_be_given_for_in_memory_text(nt_text):
+    rec = rete.build_record(rete.Builder().add(nt_text, name="people.nt").run())
+    assert rec["inputs"][0]["name"] == "people.nt"
+    # Unnamed in-memory text keeps its label.
+    rec = rete.build_record(rete.Builder().add(nt_text).run())
+    assert rec["inputs"][0]["name"] == "string"

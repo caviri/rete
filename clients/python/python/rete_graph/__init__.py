@@ -866,7 +866,7 @@ class Builder:
     """
 
     def __init__(self) -> None:
-        self._sources: List[Tuple[Union[str, bytes], str, str]] = []
+        self._sources: List[Tuple[Union[str, bytes], str, str, Optional[str]]] = []
         self._card: Optional[Dict[str, Any]] = None
         self._pyramid: bool = True
         self._pyramid_algo: str = "louvain"
@@ -885,15 +885,24 @@ class Builder:
     # -- sources ------------------------------------------------------------
 
     def add(
-        self, source: Any, format: str = "nt", *, quoted_triple_syntax: str = "rdf-star"
+        self,
+        source: Any,
+        format: str = "nt",
+        *,
+        quoted_triple_syntax: str = "rdf-star",
+        name: Optional[str] = None,
     ) -> "Builder":
         """Queue RDF text (``"nt"``/``"nq"``/``"ttl"``/``"trig"``/``"rdfxml"``),
         the bytes of a Jelly file (``"jelly"``), or a graph object from another
         RDF library. May be called many times;
         all sources merge into one graph (named graphs from N-Quads/TriG
         sources survive). ``quoted_triple_syntax`` is per source, as in
-        :func:`build`."""
-        self._sources.append((*_as_text_source(source, format), quoted_triple_syntax))
+        :func:`build`. ``name`` is how the build record names this input
+        (a file name, never a path); without it the record says ``string`` or
+        ``bytes``."""
+        self._sources.append(
+            (*_as_text_source(source, format), quoted_triple_syntax, name)
+        )
         self._invalidate()
         return self
 
@@ -906,8 +915,11 @@ class Builder:
     ) -> "Builder":
         """Queue an RDF file; the format is inferred from the suffix
         (``.nt``, ``.nq``, ``.ttl``, ``.trig``, ``.rdf``/``.owl``/``.xml``,
-        ``.jelly``) unless given. ``quoted_triple_syntax`` as in :func:`build`."""
+        ``.jelly``) unless given. ``quoted_triple_syntax`` as in :func:`build`.
+        The build record names the input by the file's name (no directory),
+        as the CLI's record does."""
         fspath = os.fspath(path)
+        name = os.path.basename(fspath)
         fmt = format or _FORMAT_BY_SUFFIX.get(os.path.splitext(fspath)[1].lower())
         if fmt is None:
             raise ValueError(
@@ -915,21 +927,24 @@ class Builder:
             )
         if fmt == "jelly":  # binary: the file's bytes, not text
             with io.open(fspath, "rb") as fb:
-                self._sources.append((fb.read(), fmt, quoted_triple_syntax))
+                self._sources.append((fb.read(), fmt, quoted_triple_syntax, name))
         else:
             with io.open(fspath, "r", encoding="utf-8") as fh:
-                self._sources.append((fh.read(), fmt, quoted_triple_syntax))
+                self._sources.append((fh.read(), fmt, quoted_triple_syntax, name))
         self._invalidate()
         return self
 
     # -- the dataset card -----------------------------------------------------
 
     #: The rete-defined curated card fields settable as bare keywords beyond
-    #: the named parameters of :meth:`card`. Anything else lands in the card's
-    #: bounded ``extra`` bag — the top level stays rete's namespace, so a
-    #: future official field can never collide with a custom one.
+    #: the named parameters of :meth:`card` (the list is the CLI's
+    #: ``--card-file`` one). Any other keyword is refused: a publisher's own
+    #: field goes in ``extra={...}``, the card's bounded custom bag — the top
+    #: level stays rete's namespace, so a future official field can never
+    #: collide with a custom one.
     _CARD_FIELDS = frozenset(
         {
+            "base_iri",
             "version",
             "creators",
             "publisher",
@@ -961,10 +976,11 @@ class Builder:
         ``publisher``, ``canonical_url``, ``sparql_endpoint``, ``source_date``,
         ``derived_from``, ``doi``, ``cite_as``, ``keywords`` [free-text tags →
         ``dcat:keyword``/``schema:keywords``], ``theme`` [controlled-vocabulary
-        IRIs → ``dcat:theme``]) set that field. **Any other
-        keyword is a publisher-defined custom field** and lands in the card's
-        ``extra`` bag — pass ``extra={...}`` to merge a whole dict (structured
-        values included). The bag is bounded (8 KB serialized, ≤64 keys,
+        IRIs → ``dcat:theme``], ``base_iri`` [an absolute IRI that overrides the
+        derived ``signals.base_iri``; needs :meth:`derive_card`]) set that
+        field. **Any other keyword raises** ``TypeError``: publisher-defined
+        custom fields go in ``extra={...}``, a dict merged into the card's
+        ``extra`` bag (structured values included). The bag is bounded (8 KB serialized, ≤64 keys,
         ≤128-byte keys, nesting ≤3 levels — enforced by the ``rete build``
         CLI; this client writes the card it is given) and folds into the
         file's content hash like every curated field.
@@ -978,6 +994,16 @@ class Builder:
         compute the auto-derived profile (predicates, classes, vocabularies,
         signals, the starter-query library) the way ``rete build --card`` does.
         """
+        unknown = sorted(k for k in extra if k != "extra" and k not in self._CARD_FIELDS)
+        if unknown:
+            raise TypeError(
+                "card() got unknown field(s) "
+                + ", ".join(repr(k) for k in unknown)
+                + ". Curated fields: title, description, license, source, created, "
+                + "example_queries, "
+                + ", ".join(sorted(self._CARD_FIELDS))
+                + ". Put publisher-defined fields in extra={...}."
+            )
         fields: Dict[str, Any] = {
             "title": title,
             "description": description,
@@ -994,10 +1020,8 @@ class Builder:
                 if not isinstance(value, dict):
                     raise ValueError("extra= must be a dict of custom fields")
                 bag.update(value)
-            elif key in self._CARD_FIELDS:
-                fields[key] = value
             else:
-                bag[key] = value
+                fields[key] = value
         merged = dict(self._card or {})
         merged.update({k: v for k, v in fields.items() if v is not None})
         if bag:
@@ -1115,6 +1139,12 @@ class Builder:
         if self._bytes is None:
             if not self._sources:
                 raise ValueError("add at least one source before run()")
+            if self._card and "base_iri" in self._card and not self._derive_card:
+                raise ValueError(
+                    "card(base_iri=...) overrides the derived signals.base_iri, "
+                    "so it needs .derive_card(); without it the card has no "
+                    "signals to override"
+                )
             card_json = json.dumps(self._card) if self._card else None
             data, stats_json = _rete.build_dataset(
                 self._sources,

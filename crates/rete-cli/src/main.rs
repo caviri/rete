@@ -449,10 +449,14 @@ enum Command {
         #[command(flatten)]
         progress: commands::progress::ProgressArgs,
     },
-    /// Print the header of a `.rete` file.
+    /// Print what a `.rete` file's header says: format, counts, codecs, flags and
+    /// where each section is, plus the Dataset Card when it has one.
     Info {
         /// Path to the `.rete` file.
         file: String,
+        /// Also print the header's fields as Rust Debug output (for a bug report).
+        #[arg(long)]
+        raw: bool,
     },
     /// Human-friendly overview: size, counts, graphs, pyramid, top predicates.
     Stats {
@@ -1751,7 +1755,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 !no_card_costs,
             )
         }
-        Command::Info { file } => commands::inspect::info(&file),
+        Command::Info { file, raw } => commands::inspect::info(&file, raw),
         Command::Stats { file } => commands::inspect::stats(&file),
         Command::Verify { file, section } => {
             commands::inspect::verify_cmd(&file, section.as_deref())

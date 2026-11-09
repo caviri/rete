@@ -345,6 +345,22 @@ impl RangedSourceReader {
             Ok(Self::Local(LocalRangeReader::open(source)?))
         }
     }
+
+    /// [`open`](Self::open) for a command that only reads the front of the
+    /// file (`card-url`): a remote file is never fetched whole, however small.
+    /// The open is then the one first read (the first 64 KiB, which also gives
+    /// the length) and nothing else.
+    pub(crate) fn open_front(source: &str) -> anyhow::Result<Self> {
+        if is_url(source) {
+            let policy = rete_core::http::FetchPolicy {
+                whole_max: 0,
+                ..rete_core::http::FetchPolicy::from_env()
+            };
+            Ok(Self::Http(HttpRangeReader::open_with(source, policy)?))
+        } else {
+            Ok(Self::Local(LocalRangeReader::open(source)?))
+        }
+    }
 }
 
 impl RangeReader for RangedSourceReader {
