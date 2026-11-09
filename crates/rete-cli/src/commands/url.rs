@@ -22,7 +22,7 @@ use crate::commands::render::print_query_output_warned;
 /// The open already holds the first 128 KiB (the length probe is that GET,
 /// SPEC §4.6), and a format `0x06` file keeps its header, root, card region
 /// and statistics inside it. Where the header says the front is longer, this
-/// fetches the missing part **once**, sized from the header, and serves every
+/// fetches the missing part **once**, sized from the header (to the end of the card, and of the record when it is printed), and serves every
 /// later read from it. It counts what goes over the wire, not the reads the
 /// card code makes of memory it already holds.
 struct FrontReader<R> {
@@ -34,7 +34,10 @@ struct FrontReader<R> {
 }
 
 impl<R: RangeReader> FrontReader<R> {
-    fn open(inner: R) -> anyhow::Result<Self> {
+    /// `want_record`: whether the build record will be printed. A `0x06` front is
+    /// then read to the end of the card (and the record), not to the end of the
+    /// card region, which holds as much slack again.
+    fn open(inner: R, want_record: bool) -> anyhow::Result<Self> {
         use std::sync::atomic::AtomicU64;
         let held = inner.resident_prefix();
         let mut me = FrontReader {
@@ -50,10 +53,15 @@ impl<R: RangeReader> FrontReader<R> {
         // The span of the file the card code will read after the header.
         let want = if head.get(4) == Some(&rete_core::v06::VERSION) {
             let h = rete_core::v06::Header06::from_bytes(&head)?;
-            Some((
-                0,
-                128 + u64::from(h.root_len) + u64::from(h.card_region_len),
-            ))
+            let (c, b) = (h.card_range(), h.build_range());
+            let mut hi = h.card_region_offset();
+            if c.len > 0 {
+                hi = hi.max(c.offset + c.len);
+            }
+            if want_record && b.len > 0 {
+                hi = hi.max(b.offset + b.len);
+            }
+            Some((0, hi))
         } else {
             let h = rete_core::Header::from_bytes(&head)?;
             let spans = [
@@ -136,9 +144,11 @@ pub(crate) fn card_url(
     sha256: Option<&str>,
 ) -> anyhow::Result<()> {
     let format = card::CardFormat::resolve(json, format)?;
-    let reader = FrontReader::open(RangedSourceReader::open_front(url)?)?;
+    // The Croissant projection does not print the build record.
+    let want_record = !matches!(format, card::CardFormat::Croissant);
+    let reader = FrontReader::open(RangedSourceReader::open_front(url)?, want_record)?;
     let total = reader.len();
-    let read = card::load_card_and_build_ranged(&reader)?;
+    let read = card::load_card_and_build_ranged_with(&reader, want_record)?;
     match &read.card {
         None => println!("(no dataset card — {})", read.text_index.describe()),
         Some(dataset_card) => {
@@ -551,11 +561,14 @@ mod front_reader_tests {
     fn a_front_inside_the_first_read_needs_no_follow_up() {
         let data = image();
         let held = data.len() as u64;
-        let front = FrontReader::open(Partial {
-            data,
-            held,
-            network: AtomicU64::new(0),
-        })
+        let front = FrontReader::open(
+            Partial {
+                data,
+                held,
+                network: AtomicU64::new(0),
+            },
+            true,
+        )
         .unwrap();
         let read = card::load_card_and_build_ranged(&front).unwrap();
         assert!(read.build.is_some());
@@ -563,7 +576,7 @@ mod front_reader_tests {
         assert_eq!(front.inner.network.load(Ordering::Relaxed), 0);
     }
 
-    /// A first read shorter than the front: one follow-up, sized from the
+    /// A first read shorter than the card: one follow-up, sized from the
     /// header, after which every read of the front is served from memory.
     #[test]
     fn a_longer_front_costs_one_sized_follow_up() {
@@ -571,11 +584,14 @@ mod front_reader_tests {
         let held = rete_core::HEADER_LEN as u64; // the header, not the card region
         let h = rete_core::v06::Header06::from_bytes(&data).unwrap();
         assert!(128 + u64::from(h.root_len) + u64::from(h.card_region_len) > held);
-        let front = FrontReader::open(Partial {
-            data,
-            held,
-            network: AtomicU64::new(0),
-        })
+        let front = FrontReader::open(
+            Partial {
+                data,
+                held,
+                network: AtomicU64::new(0),
+            },
+            true,
+        )
         .unwrap();
         let read = card::load_card_and_build_ranged(&front).unwrap();
         assert!(read.build.is_some());

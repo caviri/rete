@@ -238,3 +238,65 @@ fn a_front_between_64_and_128_kib_is_one_request() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("in 1 range request(s)"), "{stderr}");
 }
+
+/// 0.5.6 read on to the end of the front (the whole card region, which holds
+/// as much slack again as card and record). `card-url` now stops at the end of
+/// the card, and of the record when it is printed: here the front is past the
+/// first read and the card is not.
+#[test]
+fn card_url_stops_at_the_end_of_the_card() {
+    let fixture = common::fixture();
+    let image = wide_file(&fixture, 340);
+    let (front, card_end, record_end) = front_of(&image);
+    let first = 128 * 1024;
+    assert!(front > first, "the front {front} is past the first read");
+    assert!(record_end <= first, "the record ends at {record_end}");
+    assert!(card_end < record_end);
+    let (url, seen) = serve_counting(image);
+
+    let out = common::rete()
+        .arg("card-url")
+        .arg(&url)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let card: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(card["title"], "Wide card");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.ranges, vec!["0-131071".to_string()]);
+    assert_eq!(seen.bytes, first as usize, "{} bytes", seen.bytes);
+}
+
+/// When the record is printed and ends past the first read, the follow-up
+/// stops there, not at the end of the front.
+#[test]
+fn the_follow_up_ends_at_the_record_not_the_front() {
+    let fixture = common::fixture();
+    let image = wide_file(&fixture, 705);
+    let (front, card_end, record_end) = front_of(&image);
+    let first = 128 * 1024;
+    assert!(
+        card_end < first && record_end > first,
+        "{card_end} {record_end}"
+    );
+    assert!(front > record_end + 1024, "slack after the record");
+    for (format, end) in [("json", record_end), ("croissant", card_end)] {
+        let (url, seen) = serve_counting(image.clone());
+        let out = common::rete()
+            .arg("card-url")
+            .arg(&url)
+            .args(["--format", format])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{format}");
+        let seen = seen.lock().unwrap();
+        // Croissant never prints the record: the first read is enough.
+        let want = if end <= first {
+            vec!["0-131071".to_string()]
+        } else {
+            vec!["0-131071".to_string(), format!("131072-{}", end - 1)]
+        };
+        assert_eq!(seen.ranges, want, "{format}");
+    }
+}

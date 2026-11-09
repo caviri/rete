@@ -2263,7 +2263,7 @@ the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.</p>
 file that is <strong>one first read</strong> of the first 128 KiB, which holds the header, the
 root, the card region (card and build record) and the statistics
 (<a href="SPEC.html#46-opening-a-file">SPEC §4.6</a>), and <strong>at most one follow-up</strong>, sized
-from the header, when the front is longer than that. A small remote file is not
+from the header, when the card (and the build record, which every format but Croissant prints) ends past that; it stops there and does not read the slack that follows them. A small remote file is not
 fetched whole, as the other URL commands do. A <code>0x05</code> file has its card after
 the 1 KiB header, so it takes the first read and one range for the card and
 the build record. The dictionary, index, and pyramid are never fetched: this is the index-free <strong>CARD
