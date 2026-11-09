@@ -1182,7 +1182,7 @@ gets the whole self-description (counts, vocabulary, class graph, signals,
 starter queries, build record) without downloading the file. Measured on the
 published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
 1,161,874,550 bytes for Hugging Face, two range requests each (measured before
-the first read took the whole front: see [`card-url`](cli.md#rete-card-url-url---json---format-jsonldcroissant---sha256-hex)).
+the first read took the whole front: see [`card-url`](cli.md#rete-card-url-url---json---full---format-jsonldcroissant---sha256-hex)).
 
 ## The starter-query library
 

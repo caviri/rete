@@ -2043,7 +2043,7 @@ download.
 #### `--write-costs`: make the measurement durable
 
 Records the run in the file's build-info section, so the next reader gets the
-figures from the CARD tier (one first read, see [`card-url`](#rete-card-url-url---json---format-jsonldcroissant---sha256-hex)) instead of re-measuring. Local
+figures from the CARD tier (one first read, see [`card-url`](#rete-card-url-url---json---full---format-jsonldcroissant---sha256-hex)) instead of re-measuring. Local
 files only.
 
 The record sits **outside** the blake3 content hash — that is why two builds of
