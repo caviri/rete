@@ -5,6 +5,21 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rete estimate` measures the file instead of guessing it** (G38). On the 9.9 M-triple graph of the build tutorial, with `--memory-budget-mb 512`, it said 47.5 to 71.3 MB, 20 to 34 s and a 2.1 GB spill; the build wrote 105.9 MB in 50 s and spilled 114 MiB. Three errors. The size came from three constants fitted to scholarly graphs and had no term for the label index, the text index or the card. The spill was taken from the raw size of the input, 18 times too high here and 2.2 times too high on a 30 M-statement graph of long text. The time had no term for the card's starter queries (6 to 15 s, the larger part of a build of a million statements). Now the estimate keeps a sample of 1,000,000 statements (windows of consecutive statements drawn from the whole input, so a dump that opens with a block of one kind does not skew it), builds it in memory with the writer `rete build` uses, and measures every section: the index, label index, text index and directories are scaled by the statement count, the dictionary by the bytes of its distinct terms (counted from a hash-chosen sample of them over the whole input). An input no bigger than the sample is built whole, so its size is exact. The spill, the time and the number of chunks come from the measured sections and from the parse and the sample's build timed on the machine, with constants fitted to builds and named in the source. New flags `--label-index`, `--text-index`, `--card`, `--no-card-costs`, `--sample-statements` and `--json`. A bounded build (`--memory-budget-mb`) projects no pyramid. The sample adds 2 to 5 s and about 0.4 GB of memory to the estimate; it still writes nothing to disk. Against real builds of two shapes at 0.8, 7.8 and 29.9 M statements (scholarly, with long text) and 1.0, 9.9 and 29.8 M (the tutorial's solar graph), at budgets of 512 and 1500 MiB, every real size, spill and time fell inside the projected range:
+
+  | graph | size MB, before / after / real | time s, before / after / real | spill MB, before / after / real |
+  |---|---|---|---|
+  | solar 0.99 M | 5.1-7.7 / 10.3-10.9 / 10.6 | 2-4 / 10-22 / 17.7 | 212 / 9.9-16.5 / 11.2 |
+  | solar 9.91 M | 47.5-71.3 / 92.9-126.7 / 105.9 | 21-35 / 39-77 / 50.3 | 2,100 / 99-165 / 119.6 |
+  | solar 29.8 M | 140.8-211.2 / 278.3-379.5 / 322.8 | 58-97 / 107-202 / 127.3 | 6,400 / 297-494 / 381.6 |
+  | papers 0.78 M | 7.8-11.6 / 41.9-44.5 / 43.2 | 2-4 / 11-25 / 17.8 | 189 / 65-108 / 99.0 |
+  | papers 7.80 M | 54.5-81.7 / 361.2-492.6 / 449.2 | 20-34 / 66-126 / 98.0 | 1,900 / 617-1,028 / 880.9 |
+  | papers 29.9 M | 119.8-179.7 / 1,371.5-1,870.2 / 1,761.9 | 73-122 / 239-448 / 345.5 | 7,300 / 2,382-3,971 / 3,379.2 |
+
+  Not a format change. The weakest term is the dictionary of a graph of long text at 30 M statements (17% under). Peak memory is projected as 0.2 to 1.15 of the budget plus 128 MiB; the 30 M scholarly build went 27% past a budget of 512.
+
 ### Changed
 
 - **Python `Builder.card(base_iri=...)` sets the curated field, and an unknown keyword is an error** (G40). `base_iri` was written into the card's `extra` bag while the card reference calls it a curated field. It now overrides `signals.base_iri` as in `--card-file` (it needs `derive_card()`, and `run()` says so without it). A keyword that is not a curated field raises `TypeError` and names the fields; custom fields go in `extra={...}`.

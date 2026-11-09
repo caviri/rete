@@ -814,12 +814,16 @@ of triples or more. It writes no pyramid, so a file that needs the
 community pyramid has to be built in RAM or re-pyramided afterwards with
 `rete repyramid`.
 
-`rete estimate` projects the size, time and spill before you start. It reads the
-input and writes nothing. For the 9.9 M file, with `--memory-budget-mb 512
---no-pyramid`, it said 47.5 to 71.3 MB, 20 to 34 s and a 2.1 GB spill. The build
-took 43 to 53 s, wrote 105.9 MB and spilled 114 MB. Use it for the order of
-magnitude of the time. It does not model the label index or the card, and its
-spill figure was 18 times too high here.
+`rete estimate` projects the size, time and spill before you start. Give it the
+flags you will build with. It reads the input, builds a sample of it in memory
+with the same writer, and writes nothing. For the 9.9 M file, with
+`--memory-budget-mb 512 --no-pyramid --label-index --card`, it says 92.9 to
+126.7 MB, 40 to 90 s and a spill of 99 to 165 MB. The build took 50 to 53 s with
+the card's starter queries, wrote 105.9 MB and spilled 114 MiB (120 MB). In
+0.5.5 and earlier the same command said 47.5 to 71.3 MB, 20 to 34 s and 2.1 GB: it
+modelled neither the label index nor the card, and took the spill from the size
+of the input. The [CLI reference](cli.md#building) has the method and the error at
+the other sizes.
 
 ## 8. Use the file over HTTP
 
