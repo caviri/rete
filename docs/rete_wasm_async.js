@@ -2977,10 +2977,11 @@ let wasm_bindgen = (function(exports) {
             if (!bytes || bytes.length < 1024) return 0;
             if (bytes[0] !== 0x52 || bytes[1] !== 0x45 || bytes[2] !== 0x54 || bytes[3] !== 0x45) return 0; // "RETE"
             const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-            if (bytes[4] === 0x06) { // format 0x06 states its length at byte 24
+            if (bytes[4] === 0x06 || bytes[4] === 0x07) { // 0x06 and 0x07 state their length at byte 24
               const t6 = Number(dv.getBigUint64(24, true));
               return Number.isSafeInteger(t6) ? t6 : 0;
             }
+            if (bytes[4] !== 0x05) return 0; // a format this probe does not know: trust the transport
             const n = dv.getUint16(44, true);
             if (64 + n * 24 > 1024) return 0;
             let end = 1024n;
