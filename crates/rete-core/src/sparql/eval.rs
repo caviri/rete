@@ -652,6 +652,25 @@ fn inst_named(ctx: &Ctx, n: &NamedNodePattern, b: &Row) -> Option<String> {
 /// other stage streams, so the slice's demand reaches the index scan.
 pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
     let ctx = query_ctx(rete, sel);
+    // Rows that nothing blocks on (no aggregate, ORDER BY or HAVING) reach the
+    // projection as the plan yields them: the dictionary batches that
+    // canonicalize a variable predicate can fetch their terms too.
+    if sel.order.is_empty() && sel.group.is_none() && sel.having.is_empty() {
+        let mut slots = vec![false; ctx.slots.len()];
+        if sel.project.is_empty() {
+            slots.iter_mut().for_each(|s| *s = true);
+        } else {
+            for v in &sel.project {
+                if let Some(i) = ctx.slots.slot(v) {
+                    slots[i] = true;
+                }
+            }
+        }
+        let rows = sel
+            .limit
+            .map_or(usize::MAX, |l| l.saturating_add(sel.offset));
+        *ctx.decode_ahead.borrow_mut() = Some((rows, slots));
+    }
     let raw = select_rows(&ctx, sel);
     (sel.project.clone(), resolve_rows(&ctx, sel, raw))
 }

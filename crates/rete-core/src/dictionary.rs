@@ -660,6 +660,23 @@ impl Dictionary {
         pred_terms: impl IntoIterator<Item = &'a str>,
         all_predicates: bool,
     ) {
+        self.prefetch_lookups_and_terms(node_terms, pred_terms, all_predicates, &[], &[]);
+    }
+
+    /// [`prefetch_lookups_with`](Self::prefetch_lookups_with), and the chunks
+    /// that resolving `node_ids` and `predicate_ids` to strings
+    /// ([`prefetch_terms`](Self::prefetch_terms)) will read, in the same two
+    /// batches: every routing leaf of both in one read, every chunk of both in
+    /// one. Looking terms up and decoding ids are independent, so doing the one
+    /// after the other doubled the dependent reads on a leafed dictionary.
+    pub(crate) fn prefetch_lookups_and_terms<'a>(
+        &self,
+        node_terms: impl IntoIterator<Item = &'a str>,
+        pred_terms: impl IntoIterator<Item = &'a str>,
+        all_predicates: bool,
+        node_ids: &[u32],
+        predicate_ids: &[u32],
+    ) {
         if !self.faults_chunks() {
             return;
         }
@@ -684,6 +701,14 @@ impl Dictionary {
         if whole_preds {
             leaves[3].extend(self.sections[3].all_leaves());
         }
+        for &n in node_ids {
+            if let Some((si, local)) = self.node_section_id(n) {
+                leaves[si].extend(self.sections[si].leaf_of_id(local));
+            }
+        }
+        for &p in predicate_ids {
+            leaves[3].extend(self.sections[3].leaf_of_id(p));
+        }
         self.fault_leaves(&leaves);
         let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
         for term in node_terms {
@@ -703,6 +728,16 @@ impl Dictionary {
         }
         if whole_preds {
             want[3].extend(0..self.sections[3].chunk_total());
+        }
+        for &n in node_ids {
+            if let Some((si, ci)) = self.node_chunk(n) {
+                want[si].insert(ci);
+            }
+        }
+        for &p in predicate_ids {
+            if let Some(ci) = self.sections[3].chunk_of_id(p) {
+                want[3].insert(ci);
+            }
         }
         let want: [Vec<usize>; 4] = want.map(|set| set.into_iter().collect());
         self.prefetch_sections(&want, PREFETCH_BATCH_CHUNKS);
