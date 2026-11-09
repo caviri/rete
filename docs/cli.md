@@ -720,6 +720,49 @@ rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
   --card-file curated.json
 ```
 
+### `rete estimate <inputs…> [--memory-budget-mb N] [--label-index] [--text-index] [--card] [--no-card-costs] [--no-pyramid] [--sample-mb N] [--sample-statements N] [--json]`
+
+What a build would cost, before you run it: the size of the `.rete`, the wall
+time, the peak spill and the memory. Pass the flags you will pass to
+`rete build`, because the label index, the text index and the card each add to
+the file and to the time.
+
+```sh
+rete estimate solar-big.nt --memory-budget-mb 512 --label-index --card --no-pyramid
+```
+
+It reads the whole input once (`--sample-mb N` reads only the first N MiB and
+extrapolates), counting statements and distinct terms. It keeps a sample of
+`--sample-statements` statements (default 1,000,000), cut from windows spread
+over the input, and builds them in memory with the writer `rete build` uses. It
+measures each section of that file (dictionary, index, label index, text index,
+directories) and scales it up: the index, labels and text by the statement
+count, the dictionary by the bytes of its distinct terms. An input no bigger
+than the sample is built whole, so its size is exact. Nothing is written to
+disk. The sample costs 2 to 5 seconds and about 0.4 GB, whatever the size of the
+input; the rest of the time is the pass over it.
+
+The spill and the time are projected from those sections and from the parse and
+the sample's build timed on this machine, with constants fitted to measured
+builds. Every figure is a range. The starter-query measurement of a card (about
+6 to 15 seconds, whatever the graph) is a separate line of the time, and
+`--no-card-costs` removes it. A build with `--memory-budget-mb` writes no
+pyramid; without it a pyramid is projected at 18% of dictionary and index,
+which is the one figure the sample does not measure. `--json` prints the same
+projection for a script.
+
+Against real builds of two synthetic graphs, from 0.8 to 29.9 million statements,
+at budgets of 512 and 1500 MiB (the numbers are in the
+[build tutorial](build-tutorial.md#7-time-and-memory) and the pull request), every
+projected range held the real value. The file size was exact to 1% when the sample
+was the whole input and within 8% of the middle of the range when it was scaled
+(the 30 M scholarly graph came out 8% over: its dictionary 17% and its index 13%
+under, because ids and long terms cost more as a graph grows, which a sample
+cannot show). The spill was within 18% of the middle and the time within 21%.
+Memory is given as a fraction of the budget (0.2 of it up to 1.15 of it plus
+128 MiB): a small graph does not use a large budget, and the 30 M scholarly graph
+went 27% past a budget of 512.
+
 ### Progress
 
 `rete build` (in RAM and with `--memory-budget-mb`), `rete merge` and
@@ -767,8 +810,8 @@ the content hash and a re-card's copy. A step with nothing to count shows a
 spinner and its counts, not a percentage.
 
 **The ETA** is the current step's measured rate plus the steps still to come,
-each priced as a multiple of the parse step's duration: the `rete estimate`
-rule that a build takes 3–5× its parse, split per step from recorded builds,
+each priced as a multiple of the parse step's duration: the rule of thumb that
+a build takes 3–5× its parse, split per step from recorded builds,
 so it follows the speed the parse actually reaches. It is marked an estimate (`~` on the bar, `(estimate)` in
 `plain`, `eta_estimate` in `json`) until the parse is 5% done and, in the
 memory-bounded build and `merge`, until the first chunk is sealed — the seals

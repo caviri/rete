@@ -1283,11 +1283,16 @@ plus a margin) would not fit in memory, or when the graph is tens of millions
 of triples or more. It writes no pyramid, so a file that needs the
 community pyramid has to be built in RAM or re-pyramided afterwards with
 <code>rete repyramid</code>.</p>
-<p><code>rete estimate</code> projects the size, time and spill before you start. It reads the
-input and writes nothing. For the 9.9 M file, with <code>--memory-budget-mb 512 --no-pyramid</code>, it said 47.5 to 71.3 MB, 20 to 34 s and a 2.1 GB spill. The build
-took 43 to 53 s, wrote 105.9 MB and spilled 114 MB. Use it for the order of
-magnitude of the time. It does not model the label index or the card, and its
-spill figure was 18 times too high here.</p>
+<p><code>rete estimate</code> projects the size, time and spill before you start. Give it the
+flags you will build with. It reads the input, builds a sample of it in memory
+with the same writer, and writes nothing. For the 9.9 M file, with
+<code>--memory-budget-mb 512 --no-pyramid --label-index --card</code>, it says 92.9 to
+126.7 MB, 40 to 90 s and a spill of 99 to 165 MB. The build took 50 to 53 s with
+the card's starter queries, wrote 105.9 MB and spilled 114 MiB (120 MB). In
+0.5.5 and earlier the same command said 47.5 to 71.3 MB, 20 to 34 s and 2.1 GB: it
+modelled neither the label index nor the card, and took the spill from the size
+of the input. The <a href="cli.html#building">CLI reference</a> has the method and the error at
+the other sizes.</p>
 <h2 id="8-use-the-file-over-http">8. Use the file over HTTP</h2>
 <p>A <code>.rete</code> file needs no database server. Any host that answers <code>Range</code> requests
 with <code>206 Partial Content</code> can serve it, and the client reads only the bytes a

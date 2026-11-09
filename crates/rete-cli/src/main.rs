@@ -383,8 +383,30 @@ enum Command {
         #[arg(long)]
         memory_budget_mb: Option<u64>,
         /// Project the size of a `--no-pyramid` build (what the huge graphs use).
+        /// A `--memory-budget-mb` build never writes a pyramid, so with a budget
+        /// this changes nothing.
         #[arg(long)]
         no_pyramid: bool,
+        /// The build will write a label index (`--label-index`).
+        #[arg(long)]
+        label_index: bool,
+        /// The build will write a text index (`--text-index`, default scope).
+        #[arg(long)]
+        text_index: bool,
+        /// The build will write a Dataset Card (`--card`, `--card-file`): adds the
+        /// card region and, unless `--no-card-costs`, the starter-query measurement.
+        #[arg(long)]
+        card: bool,
+        /// The build will pass `--no-card-costs`.
+        #[arg(long, requires = "card")]
+        no_card_costs: bool,
+        /// Statements the estimate builds in memory to measure the file's
+        /// sections (about 0.1 GB of memory and 2 to 5 s per million).
+        #[arg(long, default_value_t = commands::estimate::DEFAULT_SAMPLE_STATEMENTS)]
+        sample_statements: usize,
+        /// Print the projection as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Fold several `.rete` files into one, without going back through text.
     ///
@@ -1711,13 +1733,25 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             sample_mb,
             memory_budget_mb,
             no_pyramid,
-        } => commands::estimate::estimate(
-            &inputs,
-            format.as_deref(),
+            label_index,
+            text_index,
+            card,
+            no_card_costs,
+            sample_statements,
+            json,
+        } => commands::estimate::estimate(&commands::estimate::EstimateArgs {
+            inputs: &inputs,
+            format: format.as_deref(),
             sample_mb,
             memory_budget_mb,
             no_pyramid,
-        ),
+            label_index,
+            text_index,
+            card,
+            no_card_costs,
+            sample_statements,
+            json,
+        }),
         Command::Merge {
             inputs,
             output,
