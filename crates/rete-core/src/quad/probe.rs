@@ -171,7 +171,7 @@ impl QuadCore {
         }
         if !missing.is_empty() {
             let tiles: Vec<(usize, QTile)> = missing.into_iter().collect();
-            self.fault_tiles(si, &tiles)?;
+            self.fault_tiles_with(si, &tiles, true)?;
         }
         Some(
             subjects

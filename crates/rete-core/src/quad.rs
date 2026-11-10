@@ -1618,6 +1618,14 @@ impl QuadCore {
     /// ones into single reads. The tiles may come from several places of the
     /// directory (the runs of a clustered order): one batch whatever they are.
     fn fault_tiles(&self, si: usize, tiles: &[(usize, QTile)]) -> Option<()> {
+        self.fault_tiles_with(si, tiles, false)
+    }
+
+    /// [`Self::fault_tiles`]; `scattered` for the candidate tiles of a subject
+    /// probe, which lie far apart: the reader then gets the exact ranges
+    /// ([`RangeReader::read_many_scattered`]), not blocks rounded out around
+    /// them.
+    fn fault_tiles_with(&self, si: usize, tiles: &[(usize, QTile)], scattered: bool) -> Option<()> {
         let mut spans: Vec<(u64, u64)> = Vec::new();
         let mut members: Vec<Vec<(usize, QTile)>> = Vec::new();
         for &(ti, t) in tiles {
@@ -1633,7 +1641,12 @@ impl QuadCore {
                 }
             }
         }
-        let blobs = match self.reader.read_many(&spans) {
+        let got = if scattered {
+            self.reader.read_many_scattered(&spans)
+        } else {
+            self.reader.read_many(&spans)
+        };
+        let blobs = match got {
             Ok(b) if b.len() == spans.len() => b,
             _ => {
                 self.fail();
