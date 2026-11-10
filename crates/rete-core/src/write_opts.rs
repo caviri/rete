@@ -286,3 +286,42 @@ pub fn quad_view_synth_max() -> u64 {
 pub fn set_quad_view_synth_max(n: u64) {
     QUAD_SYNTH_MAX.store(n, Ordering::Relaxed);
 }
+
+/// Class clustering of the subject-leading permutations (`0x07`,
+/// `--cluster-subjects-by-class`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClusterOpts {
+    /// The most classes that get a run of their own (at most
+    /// [`crate::v06::MAX_CLUSTERS`]).
+    pub max_classes: usize,
+    /// A class needs at least this many subjects to get a run: a smaller class
+    /// would not fill a tile, and every run costs a point lookup one more tile.
+    pub min_subjects: u64,
+}
+
+/// Default of [`ClusterOpts::min_subjects`].
+pub const DEFAULT_CLUSTER_MIN_SUBJECTS: u64 = 1000;
+
+impl Default for ClusterOpts {
+    fn default() -> Self {
+        ClusterOpts {
+            max_classes: crate::v06::MAX_CLUSTERS,
+            min_subjects: DEFAULT_CLUSTER_MIN_SUBJECTS,
+        }
+    }
+}
+
+static CLUSTER: std::sync::Mutex<Option<ClusterOpts>> = std::sync::Mutex::new(None);
+
+/// The clustering the writers apply, `None` = off (the default). Process-wide
+/// like the other writer settings, so every writer path agrees.
+pub fn cluster() -> Option<ClusterOpts> {
+    CLUSTER.lock().ok().and_then(|g| *g)
+}
+
+/// Turn class clustering on (with these limits) or off.
+pub fn set_cluster(c: Option<ClusterOpts>) {
+    if let Ok(mut g) = CLUSTER.lock() {
+        *g = c;
+    }
+}

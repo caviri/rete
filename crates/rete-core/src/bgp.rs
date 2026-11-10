@@ -554,7 +554,8 @@ pub(crate) fn with_probe_floor<T>(floor: f64, f: impl FnOnce() -> T) -> T {
 /// Run `f` with every planner threshold set (tests only): probe floor, the
 /// streaming seed size and the hash-build size. Lets a test elsewhere in the
 /// crate drive each join path over a graph small enough to build in a test.
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn with_plan_limits<T>(
     probe_floor: f64,
     stream_seed: f64,
@@ -1312,6 +1313,10 @@ pub(crate) fn routed_scan_bytes(index: &GraphIndex, pattern: Pattern) -> u64 {
         // A leafed (0x06) directory answers from its root without faulting a
         // leaf: a cost estimate must not cost a round trip.
         best = best.min(match perm.order_pattern(pattern)[0] {
+            // A bound subject of a clustered file is one tile of an unknown run.
+            Some(_) if index.cluster_runs(perm.section_index()).is_some() => {
+                index.clustered_subject_bytes(perm.section_index())
+            }
             Some(id) => tiles.routed_bytes(id),
             None => tiles.total_bytes(),
         });

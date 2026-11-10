@@ -594,6 +594,69 @@ impl DeferredTiles {
     }
 }
 
+/// The class runs of a clustered permutation (format `0x07`, SPEC.md §6.6):
+/// its tiles are consecutive runs, each sorted by subject; a subject's tiles
+/// are in the one run of its primary class.
+pub struct ClusterRuns {
+    /// The tile range of each run, run 0 (no listed class) first.
+    pub runs: Vec<(usize, usize)>,
+    /// The class (object id) of run `i + 1`.
+    pub classes: Vec<u32>,
+    /// The run the last subject was found in: the first place the next is
+    /// looked for, so a join over one class's subjects reads one run.
+    hint: std::sync::atomic::AtomicUsize,
+    /// Subjects already placed (`ABSENT_RUN`: not in any run).
+    memo: std::sync::Mutex<std::collections::HashMap<u32, u8>>,
+}
+
+/// Memo value for a subject no run holds.
+const ABSENT_RUN: u8 = u8::MAX;
+/// Subjects the run memo keeps before it starts over.
+const RUN_MEMO_MAX: usize = 1 << 20;
+
+impl ClusterRuns {
+    /// Runs from the cluster root's per-run tile counts.
+    pub fn new(classes: Vec<u32>, run_tiles: &[usize]) -> Self {
+        let mut at = 0usize;
+        let runs = run_tiles
+            .iter()
+            .map(|&n| {
+                at += n;
+                (at - n, at)
+            })
+            .collect();
+        ClusterRuns {
+            runs,
+            classes,
+            hint: std::sync::atomic::AtomicUsize::new(0),
+            memo: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn remember(&self, a: u32, run: Option<usize>) {
+        if let Ok(mut m) = self.memo.lock() {
+            if m.len() >= RUN_MEMO_MAX {
+                m.clear();
+            }
+            m.insert(a, run.map_or(ABSENT_RUN, |r| r as u8));
+        }
+        if let Some(r) = run {
+            self.hint.store(r, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn recall(&self, a: u32) -> Option<Option<usize>> {
+        let m = self.memo.lock().ok()?;
+        m.get(&a).map(|&r| {
+            if r == ABSENT_RUN {
+                None
+            } else {
+                Some(r as usize)
+            }
+        })
+    }
+}
+
 /// A permutation's tile directory: resident in full (`0x05`, built indexes),
 /// or two-level with leaves faulted on demand (`0x06`).
 pub enum TileList {
@@ -732,6 +795,80 @@ impl TileList {
                 }
             }
         }
+    }
+
+    /// [`first_max_ge`](Self::first_max_ge) within the tiles `[lo, hi)` (one
+    /// class run of a clustered permutation): `hi` when none reaches `a`.
+    pub(crate) fn first_max_ge_in(&self, a: u32, lo: usize, hi: usize) -> usize {
+        if lo >= hi {
+            return lo;
+        }
+        match self {
+            TileList::Full(v) => lo + v[lo..hi].partition_point(|t| t.max_a < a),
+            TileList::Deferred(d) => lo + d.get()[lo..hi].partition_point(|t| t.max_a < a),
+            TileList::Leafed(l) => {
+                let (l0, l1) = (l.leaf_of(lo), l.leaf_of(hi - 1) + 1);
+                let li = l0 + l.leaves[l0..l1].partition_point(|lf| lf.max_a < a);
+                if li >= l1 {
+                    return hi;
+                }
+                let lf = &l.leaves[li];
+                l.ensure_leaves(&[li]);
+                match l.cells[li].get() {
+                    Some(v) => lf.first + v.partition_point(|(t, _)| t.max_a < a),
+                    None => lf.first,
+                }
+            }
+        }
+    }
+
+    /// [`first_min_gt`](Self::first_min_gt) within the tiles `[lo, hi)`: `lo`
+    /// when every tile starts past `a`.
+    pub(crate) fn first_min_gt_in(&self, a: u32, lo: usize, hi: usize) -> usize {
+        if lo >= hi {
+            return lo;
+        }
+        match self {
+            TileList::Full(v) => lo + v[lo..hi].partition_point(|t| t.min_a <= a),
+            TileList::Deferred(d) => lo + d.get()[lo..hi].partition_point(|t| t.min_a <= a),
+            TileList::Leafed(l) => {
+                let (l0, l1) = (l.leaf_of(lo), l.leaf_of(hi - 1) + 1);
+                let next = l0 + l.leaves[l0..l1].partition_point(|lf| lf.min_a <= a);
+                if next == l0 {
+                    return lo;
+                }
+                let li = next - 1;
+                let lf = &l.leaves[li];
+                l.ensure_leaves(&[li]);
+                match l.cells[li].get() {
+                    Some(v) => lf.first + v.partition_point(|(t, _)| t.min_a <= a),
+                    None => lf.first,
+                }
+            }
+        }
+    }
+
+    /// The directory leaves of tiles `[lo, hi)` the two searches above read for
+    /// `a` (none for a list that is not leafed), so a caller can fault them in
+    /// one batch.
+    pub(crate) fn leaves_for_in(&self, a: u32, lo: usize, hi: usize) -> Vec<usize> {
+        let TileList::Leafed(l) = self else {
+            return Vec::new();
+        };
+        if lo >= hi {
+            return Vec::new();
+        }
+        let (l0, l1) = (l.leaf_of(lo), l.leaf_of(hi - 1) + 1);
+        let mut out = Vec::new();
+        let li = l0 + l.leaves[l0..l1].partition_point(|lf| lf.max_a < a);
+        if li < l1 {
+            out.push(li);
+        }
+        let next = l0 + l.leaves[l0..l1].partition_point(|lf| lf.min_a <= a);
+        if next > l0 && !out.contains(&(next - 1)) {
+            out.push(next - 1);
+        }
+        out
     }
 
     /// Stored bytes of every tile (from the root on a leafed list).
@@ -1383,6 +1520,9 @@ pub struct GraphIndex {
     /// directory, so the planner sizes patterns inside `GRAPH <g>` against the
     /// graph rather than the whole file — see [`Self::size_hint`].
     size_hint: std::sync::atomic::AtomicU64,
+    /// Class runs of the subject-leading permutations of a clustered `0x07`
+    /// file; `None` for every other permutation.
+    clusters: [Option<Arc<ClusterRuns>>; NUM_PERMS],
 }
 
 impl GraphIndex {
@@ -1406,6 +1546,7 @@ impl GraphIndex {
             read_concurrency: 1,
             cache,
             size_hint: std::sync::atomic::AtomicU64::new(0),
+            clusters: Default::default(),
         }
     }
 
@@ -1502,6 +1643,7 @@ impl GraphIndex {
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
             size_hint: std::sync::atomic::AtomicU64::new(0),
+            clusters: Default::default(),
         }
     }
 
@@ -1526,6 +1668,7 @@ impl GraphIndex {
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
             size_hint: std::sync::atomic::AtomicU64::new(0),
+            clusters: Default::default(),
         }
     }
 
@@ -1615,10 +1758,15 @@ impl GraphIndex {
     /// resident directory).
     pub(crate) fn prefault_leaves(&self, patterns: &[Pattern]) {
         let mut want: [std::collections::BTreeSet<usize>; NUM_PERMS] = Default::default();
+        let mut subjects: [Vec<u32>; NUM_PERMS] = Default::default();
         for &pat in patterns {
             let perm = Self::best_permutation_in(self.perms, pat);
             let [pa, _, _] = perm.order_pattern(pat);
             let si = perm.section_index();
+            if self.clusters[si].is_some() {
+                subjects[si].extend(pa);
+                continue;
+            }
             if let (TileList::Leafed(l), Some(a)) = (&self.sections[si], pa) {
                 // Leaves ascend by leading id: the run whose range holds `a`.
                 let from = l.leaves.partition_point(|lf| lf.max_a < a);
@@ -1635,6 +1783,11 @@ impl GraphIndex {
                 if !lis.is_empty() {
                     l.ensure_leaves(&lis.iter().copied().collect::<Vec<_>>());
                 }
+            }
+        }
+        for (si, a) in subjects.iter().enumerate() {
+            if !a.is_empty() {
+                self.resolve_batch(si, a);
             }
         }
     }
@@ -1664,6 +1817,228 @@ impl GraphIndex {
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
             size_hint: std::sync::atomic::AtomicU64::new(0),
+            clusters: Default::default(),
+        }
+    }
+
+    /// Mark permutation section `si` as clustered into class runs (the reader of
+    /// a `0x07` file with the cluster root).
+    pub fn with_clusters(mut self, si: usize, runs: ClusterRuns) -> Self {
+        self.clusters[si] = Some(Arc::new(runs));
+        self
+    }
+
+    /// The class runs of permutation section `si`, when it is clustered.
+    pub fn cluster_runs(&self, si: usize) -> Option<&ClusterRuns> {
+        self.clusters.get(si)?.as_deref()
+    }
+
+    /// Stored bytes the planner assumes a bound subject reads in clustered
+    /// section `si`: one mean tile.
+    pub(crate) fn clustered_subject_bytes(&self, si: usize) -> u64 {
+        let t = &self.sections[si];
+        t.total_bytes() / t.len().max(1) as u64
+    }
+
+    /// The tiles of run `run` that can hold subject `a`.
+    fn run_span(&self, si: usize, run: usize, a: u32) -> (usize, usize) {
+        let Some(cr) = &self.clusters[si] else {
+            return (0, 0);
+        };
+        let (lo, hi) = cr.runs[run];
+        let t = &self.sections[si];
+        let i = t.first_max_ge_in(a, lo, hi);
+        let j = t.first_min_gt_in(a, lo, hi).max(i);
+        (i, j)
+    }
+
+    /// Does tile `ti` of section `si` hold leading id `a` (not just a range that
+    /// covers it)?
+    fn tile_holds(&self, si: usize, ti: usize, a: u32) -> bool {
+        let Some(entry) = self.tile_entry(si, ti) else {
+            return false;
+        };
+        let Ok(block) = TripleBlock::parse(entry.body()) else {
+            return false;
+        };
+        self.tile_dir(si, ti, &entry, &block).first_at_or_after(a) == Some(a)
+    }
+
+    /// Look for each of `subjects` in the runs `order` only: the directory
+    /// leaves of every run in one batch, then every candidate tile in one
+    /// batch, then the tiles are checked. Returns the run each was found in.
+    fn find_in_runs(&self, si: usize, subjects: &[u32], order: &[usize]) -> Vec<Option<usize>> {
+        let Some(cr) = &self.clusters[si] else {
+            return vec![None; subjects.len()];
+        };
+        let t = &self.sections[si];
+        // 1. The leaves (a no-op on a resident directory).
+        if let TileList::Leafed(l) = t {
+            let mut lis: Vec<usize> = Vec::new();
+            for &a in subjects {
+                for &r in order {
+                    let (lo, hi) = cr.runs[r];
+                    lis.extend(t.leaves_for_in(a, lo, hi));
+                }
+            }
+            lis.sort_unstable();
+            lis.dedup();
+            l.ensure_leaves(&lis);
+        }
+        // 2. The candidate tiles.
+        let spans: Vec<Vec<(usize, (usize, usize))>> = subjects
+            .iter()
+            .map(|&a| {
+                order
+                    .iter()
+                    .map(|&r| (r, self.run_span(si, r, a)))
+                    .filter(|(_, (i, j))| i < j)
+                    .collect()
+            })
+            .collect();
+        if self.is_remote() {
+            let mut missing: Vec<usize> = spans
+                .iter()
+                .flatten()
+                .flat_map(|(_, (i, j))| *i..*j)
+                .filter(|&ti| !self.tile_resident(si, ti))
+                .collect();
+            missing.sort_unstable();
+            missing.dedup();
+            self.bulk_fault(si, &missing);
+        }
+        // 3. Which tile holds the subject.
+        subjects
+            .iter()
+            .zip(&spans)
+            .map(|(&a, cands)| {
+                cands
+                    .iter()
+                    .find(|(_, (i, j))| (*i..*j).any(|ti| self.tile_holds(si, ti, a)))
+                    .map(|&(r, _)| r)
+            })
+            .collect()
+    }
+
+    /// The run of clustered section `si` that holds subject `a` (`None`: none
+    /// does, or a read failed and was recorded). The run the previous subject
+    /// was found in is tried alone first: a join over the subjects of one class
+    /// reads that class's run and no other. A subject in no guessed run is looked
+    /// for in all the others at once, one batch of leaves and one of tiles.
+    fn resolve_run(&self, si: usize, a: u32) -> Option<usize> {
+        let cr = self.clusters[si].as_ref()?;
+        if let Some(known) = cr.recall(a) {
+            return known;
+        }
+        let hint = cr.hint.load(std::sync::atomic::Ordering::Relaxed);
+        let mut found = self.find_in_runs(si, &[a], &[hint])[0];
+        if found.is_none() {
+            let rest: Vec<usize> = (0..cr.runs.len()).filter(|&r| r != hint).collect();
+            found = self.find_in_runs(si, &[a], &rest)[0];
+        }
+        if found.is_some() || !self.load_incomplete() {
+            cr.remember(a, found);
+        }
+        found
+    }
+
+    /// [`resolve_run`](Self::resolve_run) for a whole batch of subjects (a probe
+    /// window): the first fixes the guess, the rest are looked for in that run
+    /// in one coalesced read, and only the ones it does not hold fall back.
+    fn resolve_batch(&self, si: usize, subjects: &[u32]) {
+        let Some(cr) = self.clusters[si].as_ref() else {
+            return;
+        };
+        let mut todo: Vec<u32> = subjects
+            .iter()
+            .copied()
+            .filter(|&a| cr.recall(a).is_none())
+            .collect();
+        todo.sort_unstable();
+        todo.dedup();
+        let Some(&first) = todo.first() else {
+            return;
+        };
+        let _ = self.resolve_run(si, first);
+        let hint = cr.hint.load(std::sync::atomic::Ordering::Relaxed);
+        let rest: Vec<u32> = todo[1..]
+            .iter()
+            .copied()
+            .filter(|&a| cr.recall(a).is_none())
+            .collect();
+        let guessed = self.find_in_runs(si, &rest, &[hint]);
+        let mut missed: Vec<u32> = Vec::new();
+        for (&a, g) in rest.iter().zip(guessed) {
+            match g {
+                Some(r) => cr.remember(a, Some(r)),
+                None => missed.push(a),
+            }
+        }
+        if missed.is_empty() {
+            return;
+        }
+        let others: Vec<usize> = (0..cr.runs.len()).filter(|&r| r != hint).collect();
+        let found = self.find_in_runs(si, &missed, &others);
+        if !self.load_incomplete() {
+            for (&a, f) in missed.iter().zip(found) {
+                cr.remember(a, f);
+            }
+        }
+    }
+
+    /// The least and greatest leading id any tile of section `si` covers
+    /// (over every run of a clustered one); `None` for an empty section.
+    pub(crate) fn leading_bounds(&self, si: usize) -> Option<(u32, u32)> {
+        let t = &self.sections[si];
+        let ranges: Vec<(usize, usize)> = match &self.clusters[si] {
+            Some(cr) => cr.runs.clone(),
+            None => vec![(0, t.len())],
+        };
+        let mut out: Option<(u32, u32)> = None;
+        for (lo, hi) in ranges.into_iter().filter(|(l, h)| l < h) {
+            let (a, b) = (t[lo].leading_range().0, t[hi - 1].leading_range().1);
+            out = Some(out.map_or((a, b), |(x, y)| (x.min(a), y.max(b))));
+        }
+        out
+    }
+
+    /// The first leading id at or after `sid` that some tile of section `si` can
+    /// hold (from the directory alone), or `None` past the last tile.
+    pub(crate) fn next_tile_start(&self, si: usize, sid: u32) -> Option<u32> {
+        let t = &self.sections[si];
+        let ranges: Vec<(usize, usize)> = match &self.clusters[si] {
+            Some(cr) => cr.runs.clone(),
+            None => vec![(0, t.len())],
+        };
+        let mut best: Option<u32> = None;
+        for (lo, hi) in ranges {
+            let i = t.first_max_ge_in(sid, lo, hi);
+            if i < hi {
+                let x = t[i].leading_range().0.max(sid);
+                best = Some(best.map_or(x, |b| b.min(x)));
+            }
+        }
+        best
+    }
+
+    /// The tile spans that can hold leading id `pa` (every tile when unbound),
+    /// from the directory alone: one span, or one per class run that has a
+    /// tile covering a bound subject of a clustered section. For a reader that
+    /// cannot afford the reads [`tile_span`](Self::tile_span) makes to place a
+    /// subject in its run.
+    pub(crate) fn routed_spans(&self, si: usize, pa: Option<u32>) -> Vec<(usize, usize)> {
+        match (&self.clusters[si], pa) {
+            (Some(cr), Some(a)) => {
+                let spans: Vec<(usize, usize)> = (0..cr.runs.len())
+                    .map(|r| self.run_span(si, r, a))
+                    .filter(|(i, j)| i < j)
+                    .collect();
+                for &(i, j) in &spans {
+                    self.sections[si].ensure_span(i, j);
+                }
+                spans
+            }
+            _ => vec![self.tile_span(si, pa)],
         }
     }
 
@@ -2221,10 +2596,13 @@ impl GraphIndex {
         pattern: Pattern,
         sort_col: usize,
     ) -> Option<impl Iterator<Item = Triple> + '_> {
-        Some(self.scan_iter_with(
-            pattern,
-            Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?,
-        ))
+        let perm = Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?;
+        // A clustered permutation is sorted by subject only within a run: with no
+        // bound prefix the stream is not sorted on its leading column.
+        if self.clusters[perm.section_index()].is_some() && perm.leading_bound(pattern) == 0 {
+            return None;
+        }
+        Some(self.scan_iter_with(pattern, perm))
     }
 
     /// Stream `pattern`'s matches using a **specific** permutation `perm`; the
@@ -2388,6 +2766,9 @@ impl GraphIndex {
                     continue;
                 };
                 let si = perm.section_index();
+                if self.clusters[si].is_some() {
+                    continue;
+                }
                 if let TileList::Leafed(l) = &self.sections[si] {
                     want[si].extend(l.run_end_leaves(a));
                 }
@@ -2443,7 +2824,11 @@ impl GraphIndex {
             // thousands of tiles is thousands of tiles whichever layout stores
             // them. Counting "one tile" here made the planner see a 2 M-row
             // predicate as 7 k rows and hash-join it (see [`LeafedTiles::admitted_estimate`]).
+            // A clustered subject-leading permutation does not know which run a
+            // subject is in without reading: a subject is one tile, as in an
+            // unclustered file.
             let admitted = match (tiles, pa) {
+                (_, Some(_)) if self.clusters[si].is_some() => 1.0,
                 (TileList::Leafed(l), Some(a))
                     if !l
                         .leaves
@@ -2479,9 +2864,25 @@ impl GraphIndex {
     /// stepping through it id by id would never finish. Faults the tiles it
     /// reads; a failed fault ends the search (`load_incomplete` says so).
     pub(crate) fn next_leading(&self, section: usize, a: u32) -> Option<u32> {
+        if let Some(cr) = &self.clusters[section] {
+            // Each run holds its own ascending ids: the least one over the runs.
+            let mut best: Option<u32> = None;
+            for &(lo, hi) in &cr.runs {
+                if let Some(x) = self.next_leading_in(section, a, lo, hi) {
+                    best = Some(best.map_or(x, |b| b.min(x)));
+                }
+            }
+            return best;
+        }
+        let n = self.sections[section].len();
+        self.next_leading_in(section, a, 0, n)
+    }
+
+    /// [`next_leading`](Self::next_leading) within the tiles `[lo, hi)` of one run.
+    fn next_leading_in(&self, section: usize, a: u32, lo: usize, hi: usize) -> Option<u32> {
         let tiles = &self.sections[section];
-        let mut ti = tiles.first_max_ge(a);
-        while ti < tiles.len() {
+        let mut ti = tiles.first_max_ge_in(a, lo, hi);
+        while ti < hi {
             let from = a.max(tiles[ti].min_a);
             let entry = self.tile_entry(section, ti)?;
             if let Ok(block) = TripleBlock::parse(entry.body()) {
@@ -2508,6 +2909,14 @@ impl GraphIndex {
                 // An unbound scan visits every tile: fault every leaf at once.
                 tiles.ensure_span(0, tiles.len());
                 (0, tiles.len())
+            }
+            Some(a) if self.clusters[section].is_some() => {
+                let (i, j) = match self.resolve_run(section, a) {
+                    Some(run) => self.run_span(section, run, a),
+                    None => (0, 0),
+                };
+                tiles.ensure_span(i, j);
+                (i, j)
             }
             Some(a) => {
                 let i = tiles.first_max_ge(a);

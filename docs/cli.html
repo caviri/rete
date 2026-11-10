@@ -874,6 +874,24 @@ card's <code>signals.permutations</code> all report it.</p>
 refuses loudly (<code>malformed container: expected 6 permutation sections</code>, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see <a href="compatibility.html">compatibility.md</a>.</p>
+<p><code>--cluster-subjects-by-class</code> (off by default, format <code>0x07</code>) lays the default
+graph's subject-leading permutations (SPO, and SOP when stored) out in
+<code>(class, subject, predicate, object)</code> order instead of subject order
+(<a href="SPEC.html#66-class-clustering-of-the-subject-leading-permutations-0x07-optional">SPEC.md §6.6</a>).
+Ids are not renumbered: only the tile order changes. Up to 32 classes (the ones
+with the most subjects, at least 1,000 each) get a contiguous run of tiles, a
+subject of several classes goes to its rarest listed class, and every other or
+untyped subject to a run of its own. A scan of one class's subjects, or the join
+of them with a property (<code>?r a &lt;Software&gt; . ?r &lt;subject&gt; ?t</code>), then reads that
+class's few tiles instead of one tile in every few thousand; a lookup of one
+subject costs more, since it must look in every run (one batch of leaves and one
+of tiles, up to 33 tiles). The answers are the same either way; the order of an
+unsorted result may differ. The writer needs one byte of RAM per subject id
+(951 MB for OpenAIRE's 951 M subjects). <code>rete info</code> lists the runs and <code>rete verify</code> checks that every row is in the run of its subject's class;
+<code>rete convert</code> with the flag clusters a <code>0x06</code> or <code>0x07</code> file, without it undoes
+a clustering. It does nothing to a file with no default-graph subject of a
+listed class (the nanopub dump keeps everything in named graphs: its file comes
+out byte-identical).</p>
 <p><code>--named-graphs quad</code> (the default, and since format <code>0x06</code> the only layout)
 stores the named graphs of an N-Quads/TriG input in the <strong>quad index</strong>. The
 <code>0x05</code> alternative, <code>per-graph</code> (one permutation index per graph, the
@@ -1137,7 +1155,7 @@ one), and writes the SCHEMA section and the community-only pyramid-meta <code>re
 writes. The named-graph layout is kept the same way: a quad-index input
 (<code>--named-graphs quad</code>) comes out as a quad-index file, and <code>merge</code> writes one
 when any of its inputs is one.</p>
-<h3 id="rete-convert-inrete--o-outrete---tmp-dir-dir---quad-clustering-autographorder---no-label-index---no-card-costs---memory-budget-mb-n"><code>rete convert &lt;in.rete&gt; -o &lt;out.rete&gt; [--tmp-dir dir] [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]</code></h3>
+<h3 id="rete-convert-inrete--o-outrete---tmp-dir-dir---quad-clustering-autographorder---cluster-subjects-by-class---no-label-index---no-card-costs---memory-budget-mb-n"><code>rete convert &lt;in.rete&gt; -o &lt;out.rete&gt; [--tmp-dir dir] [--quad-clustering auto|graph|order] [--cluster-subjects-by-class] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]</code></h3>
 <p>Turn a format <code>0x05</code> or <code>0x06</code> file into format <code>0x07</code> (<a href="SPEC.html#4-file-layout">SPEC §4</a>)
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid

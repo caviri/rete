@@ -80,6 +80,17 @@ pub struct WriteOpts {
     /// [`VERSION_06`], which the tests use to make a `0x06` input for `convert`
     /// (label root inside the root, no annex).
     pub version: u8,
+    /// Cluster the subject-leading permutations by class (`0x07` only); `None`
+    /// writes them in subject order, and un-clusters a clustered input.
+    pub cluster: Option<crate::write_opts::ClusterOpts>,
+}
+
+impl WriteOpts {
+    /// These options with class clustering on (`Some`) or off.
+    pub fn with_cluster(mut self, c: Option<crate::write_opts::ClusterOpts>) -> Self {
+        self.cluster = c;
+        self
+    }
 }
 
 impl Default for WriteOpts {
@@ -89,6 +100,7 @@ impl Default for WriteOpts {
             quad: QuadClustering::from_env(),
             leaves: LeafPolicy::default(),
             version: VERSION,
+            cluster: crate::write_opts::cluster(),
         }
     }
 }
@@ -448,14 +460,34 @@ fn build_front(
     let mut proots = Vec::new();
     for (pi, p) in parts.index.iter().enumerate() {
         let ents: Vec<TileEnt> = p.tiles.iter().map(|(t, _)| *t).collect();
-        let leaves = leaves_of(
-            &ents,
-            t.index[p.si],
-            codec,
-            &mut f.index_leaves,
-            &mut f.leaf_max[1],
-            |e, _| encode_tile_leaf(e),
-        );
+        // A clustered permutation cuts its leaves at the runs: no leaf spans two.
+        let runs: Vec<(usize, usize)> = match parts.cluster.iter().find(|c| c.si == p.si) {
+            Some(c) => {
+                let mut at = 0;
+                c.run_tiles
+                    .iter()
+                    .map(|&n| {
+                        at += n;
+                        (at - n, at)
+                    })
+                    .collect()
+            }
+            None => vec![(0, ents.len())],
+        };
+        let mut leaves = Vec::new();
+        for (a, b) in runs {
+            for mut l in leaves_of(
+                &ents[a..b],
+                t.index[p.si],
+                codec,
+                &mut f.index_leaves,
+                &mut f.leaf_max[1],
+                |e, _| encode_tile_leaf(e),
+            ) {
+                l.first += a;
+                leaves.push(l);
+            }
+        }
         let mut toff = Vec::with_capacity(ents.len());
         let mut at = 0u64;
         for e in &ents {
@@ -480,6 +512,10 @@ fn build_front(
         });
     }
     f.units.push((tag::INDEX, encode_index_root(&proots)));
+    if !parts.cluster.is_empty() {
+        f.units
+            .push((tag::CLUSTER, encode_cluster_root(&parts.cluster)));
+    }
     // Quad.
     if let Some(q) = &parts.quad {
         f.quad_leaves.extend_from_slice(quad_gdir);
@@ -727,6 +763,14 @@ pub fn assemble_with<W: Write + Seek>(
         let (derived, extras) = super::neworders::derive(parts, input)?;
         let layered = super::neworders::Layered::new(input, &extras);
         return assemble_with(&derived, &layered, out, opts, hooks);
+    }
+    // `--cluster-subjects-by-class`: the subject-leading permutations by class
+    // (or back to subject order). Another pass over the input, same shape.
+    if opts.version == VERSION && super::cluster::needed(parts, opts.cluster) {
+        if let Some((derived, extras)) = super::cluster::derive(parts, input, opts.cluster)? {
+            let layered = super::neworders::Layered::new(input, &extras);
+            return assemble_with(&derived, &layered, out, opts, hooks);
+        }
     }
     let codec = opts.internal_codec;
     if parts.pyramid_levels > u8::MAX as u16 {
@@ -1047,7 +1091,12 @@ pub fn assemble_with<W: Write + Seek>(
             } else {
                 0
             })
-            | (if graph_major { F_QUAD_GRAPH_MAJOR } else { 0 }),
+            | (if graph_major { F_QUAD_GRAPH_MAJOR } else { 0 })
+            | (if parts.cluster.is_empty() {
+                0
+            } else {
+                F_CLUSTERED
+            }),
         content_hash: [0; 16],
         file_len: data_offset + data_len + FOOTER.len() as u64,
         root_len,
