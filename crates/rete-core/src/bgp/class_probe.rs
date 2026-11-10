@@ -13,8 +13,8 @@
 //!
 //! 1. the `(subject, graph)` pairs of `?s a <C>` from POSG, subjects ascending;
 //! 2. choose between this route and the walk by the bytes each reads, estimated
-//!    from the directory the root lists ([`QuadNamed::probe_vs_walk_bytes`]),
-//!    the walk where the probe does not read clearly less;
+//!    from the directory the root lists ([`QuadNamed::probe_vs_walk_bytes`]):
+//!    the probe unless it would read half as much again as the walk;
 //! 3. probe SPOG for the subjects in windows that grow fourfold from 256 to
 //!    65,536 subjects ([`QuadNamed::subject_rows`]: one batch of leaves and one
 //!    of tiles per window, the run of `C` first), the dictionary terms the
@@ -33,6 +33,8 @@ use crate::quad7::Row4;
 const FIRST_WINDOW: usize = 256;
 /// Subjects in the biggest window.
 const MAX_WINDOW: usize = 1 << 16;
+/// A demand this small keeps the walk.
+const SMALL_LIMIT: usize = 4096;
 /// Most `(subject, graph)` pairs the route collects (8 bytes each); a bigger
 /// class keeps the walk.
 const MAX_PAIRS: usize = 64 << 20;
@@ -84,6 +86,11 @@ pub(crate) fn class_probe_rows<'q>(
     if force == Some(false) || patterns.len() < 2 {
         return None;
     }
+    // A small LIMIT stops the walk after its first graphs: nothing to gain, and the
+    // probe would first place the class's subjects (measured: 1.8 s to 2.8 s).
+    if force != Some(true) && ctx.limit_hint.get().is_some_and(|n| n <= SMALL_LIMIT) {
+        return None;
+    }
     let quad = ctx.rete.quad_named()?;
     if !quad.has_subject_probe() {
         return None;
@@ -130,8 +137,11 @@ pub(crate) fn class_probe_rows<'q>(
     // 2. The route.
     if force != Some(true) {
         let (probe, walk) = quad.probe_vs_walk_bytes(&subjects, &graphs, Some(class))?;
-        // The walk is the proven route: the probe must read clearly less.
-        if probe.saturating_mul(5) >= walk.saturating_mul(4) {
+        // The walk also pays a request or two per graph and resolves every graph
+        // name, which the probe does not (measured on the nanopub dump: the same
+        // bytes, 213 s against 103 s), so the probe is taken unless it is
+        // estimated to read half as much again as the walk.
+        if probe.saturating_mul(2) > walk.saturating_mul(3) {
             return None;
         }
     }

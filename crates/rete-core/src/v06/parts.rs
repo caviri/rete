@@ -565,10 +565,7 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
                 .and_then(|q| q.orders.iter().find(|(si, _)| *si == c.si))
                 .map(|(_, t)| t.len())
         } else {
-            p.index
-                .iter()
-                .find(|x| x.si == c.si)
-                .map(|x| x.tiles.len())
+            p.index.iter().find(|x| x.si == c.si).map(|x| x.tiles.len())
         };
         if n != Some(c.run_tiles.iter().sum::<usize>()) {
             return Err(FileError::Container(

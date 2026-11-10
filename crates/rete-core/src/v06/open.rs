@@ -421,7 +421,11 @@ impl V06File {
                 .collect()
         });
         let mut index = GraphIndex::from_leafed(lists, perms, loader).with_bulk_loader(bulk);
-        for c in self.clusters(&perms_root)?.into_iter().filter(|c| c.si < NUM_PERMS) {
+        for c in self
+            .clusters(&perms_root)?
+            .into_iter()
+            .filter(|c| c.si < NUM_PERMS)
+        {
             index = index.with_clusters(
                 c.si,
                 crate::index::ClusterRuns::new(c.classes, &c.run_tiles),

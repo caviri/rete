@@ -607,12 +607,28 @@ pub fn check_orders(input: &dyn RangeReader) -> Result<(usize, Vec<String>), Fil
         let mut sum = 0u64;
         let mut prev: Option<(u32, u32, u32, u32)> = None;
         let mut ti = 0usize;
+        // A clustered SPOG ascends within each class run only.
+        let mut run_starts: std::collections::BTreeSet<usize> = Default::default();
+        if let Some(c) = parts
+            .cluster
+            .iter()
+            .find(|c| c.si == *si && *si == super::QUAD_SPOG)
+        {
+            let mut at = 0usize;
+            for &n in &c.run_tiles {
+                run_starts.insert(at);
+                at += n;
+            }
+        }
         for chunk in tiles.chunks(READ_BATCH) {
             let ranges: Vec<(u64, u64)> = chunk.iter().map(|t| (t.off, t.clen)).collect();
             let blobs = input.read_many(&ranges)?;
             for (t, stored) in chunk.iter().zip(&blobs) {
                 let here = ti;
                 ti += 1;
+                if run_starts.contains(&here) {
+                    prev = None;
+                }
                 let body = if t.raw {
                     Ok(stored.clone())
                 } else {

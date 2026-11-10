@@ -27,11 +27,18 @@ use crate::quad7::{self, Row4};
 /// Tiles read and decoded together while a window's rows are extracted.
 const PROBE_CHUNK: usize = 128;
 
+/// Bytes the estimate charges the graph walk for each graph it visits.
+const GRAPH_VISIT_BYTES: f64 = 512.0;
+
 /// Subjects an estimate samples to learn which runs they live in.
 const SAMPLE_SUBJECTS: usize = 24;
 
 /// A sorted run of leaf indices `[first, end)`.
 type Leaves = (usize, usize);
+/// The candidate tiles of one subject, per run: `(run, [(tile, entry)])`.
+type RunTiles = Vec<(usize, Vec<(usize, QTile)>)>;
+/// The rows of each subject and the run each was found in.
+type FoundRows = (Vec<Vec<Row4>>, Vec<Option<usize>>);
 
 impl QuadCore {
     /// Is order slot `si` clustered into class runs?
@@ -82,7 +89,12 @@ impl QuadCore {
 
     /// The directory of the tiles of `run` that can hold subject `a`: `(tiles,
     /// index of the first in the whole order)`. Faults the leaves it needs.
-    pub(super) fn dir_in_run(&self, si: usize, run: usize, a: u32) -> Option<(Arc<[QTile]>, usize)> {
+    pub(super) fn dir_in_run(
+        &self,
+        si: usize,
+        run: usize,
+        a: u32,
+    ) -> Option<(Arc<[QTile]>, usize)> {
         let v = self.v06.as_ref()?;
         let layout = self.layout(v, si);
         let lis = Self::leaves_in(v, si, *layout.get(run)?, a);
@@ -137,11 +149,16 @@ impl QuadCore {
         }
         let lis: Vec<usize> = lis.into_iter().collect();
         self.fault_leaves(v, si, &lis)?;
-        let cands: Vec<Vec<(usize, Vec<(usize, QTile)>)>> = subjects
+        let cands: Vec<RunTiles> = subjects
             .iter()
             .map(|&a| {
                 runs.iter()
-                    .map(|&r| (r, Self::candidates(v, si, Self::leaves_in(v, si, layout[r], a), a)))
+                    .map(|&r| {
+                        (
+                            r,
+                            Self::candidates(v, si, Self::leaves_in(v, si, layout[r], a), a),
+                        )
+                    })
                     .filter(|(_, c)| !c.is_empty())
                     .collect()
             })
@@ -196,12 +213,7 @@ impl QuadCore {
     /// `(s, p, o, g)`, and the run each was found in. Tiles are read in bounded
     /// batches and dropped once their rows are taken (a window of subjects of a
     /// big class does not fill the tile cache). `hint` is the run asked first.
-    fn subject_rows_in(
-        &self,
-        si: usize,
-        subjects: &[u32],
-        hint: usize,
-    ) -> Option<(Vec<Vec<Row4>>, Vec<Option<usize>>)> {
+    fn subject_rows_in(&self, si: usize, subjects: &[u32], hint: usize) -> Option<FoundRows> {
         let v = self.v06.as_ref()?;
         let layout = self.layout(v, si);
         let n = layout.len();
@@ -335,7 +347,8 @@ impl QuadCore {
     fn leaf_estimate(v: &V06Quad, si: usize, leaves: Leaves, wanted: &[u32], share: f64) -> f64 {
         let mut bytes = 0f64;
         for l in &v.orders[si][leaves.0..leaves.1] {
-            let k = wanted.partition_point(|&x| x <= l.last_g) - wanted.partition_point(|&x| x < l.first_g);
+            let k = wanted.partition_point(|&x| x <= l.last_g)
+                - wanted.partition_point(|&x| x < l.first_g);
             let touched = (k as f64 * share).min(l.n as f64);
             bytes += touched * v.tile_bytes[si] as f64;
         }
@@ -378,7 +391,11 @@ impl QuadNamed {
     /// SPOG, read in one batch of leaves and one of tiles (plus one more for the
     /// subjects the guessed run does not hold). `class` is the class the
     /// subjects were found by: its run is asked first. `None` on a failed read.
-    pub(crate) fn subject_rows(&self, subjects: &[u32], class: Option<u32>) -> Option<Vec<Vec<Row4>>> {
+    pub(crate) fn subject_rows(
+        &self,
+        subjects: &[u32],
+        class: Option<u32>,
+    ) -> Option<Vec<Vec<Row4>>> {
         let si = quad7::last_slot(crate::index::IndexPermutation::Spo);
         let v = self.core.v06.as_ref()?;
         let hint = match (class, v.clusters[si].as_ref()) {
@@ -413,7 +430,12 @@ impl QuadNamed {
             let step = (subjects.len() / SAMPLE_SUBJECTS).max(1);
             let sample: Vec<u32> = subjects.iter().step_by(step).copied().collect();
             let hint = match (class, v.clusters[spog].as_ref()) {
-                (Some(c), Some(cl)) => cl.runs.classes.iter().position(|&x| x == c).map_or(0, |i| i + 1),
+                (Some(c), Some(cl)) => cl
+                    .runs
+                    .classes
+                    .iter()
+                    .position(|&x| x == c)
+                    .map_or(0, |i| i + 1),
                 _ => 0,
             };
             let (_, found) = self.core.subject_rows_in(spog, &sample, hint)?;
@@ -437,6 +459,10 @@ impl QuadNamed {
             .iter()
             .map(|l| QuadCore::leaf_estimate(v, 0, *l, graphs, 1.0))
             .sum();
+        // The walk also resolves the name of every graph it visits (a dictionary
+        // chunk, a request on a lazy file) and opens a view of each: a fixed cost a
+        // graph that the byte count of its tiles leaves out.
+        let walk = walk + graphs.len() as f64 * GRAPH_VISIT_BYTES;
         Some((probe as u64, walk as u64))
     }
 }

@@ -1081,7 +1081,10 @@ impl V06Quad {
                 let l0 = leaves.partition_point(|l| l.first_tile < at);
                 let l1 = leaves.partition_point(|l| l.first_tile < at + n);
                 // A leaf holds the tiles of one run.
-                if leaves[l0..l1].last().is_some_and(|l| l.first_tile + l.n > at + n) {
+                if leaves[l0..l1]
+                    .last()
+                    .is_some_and(|l| l.first_tile + l.n > at + n)
+                {
                     return Err(bad("0x07 a quad directory leaf spans two cluster runs"));
                 }
                 run_leaves.push((l0, l1));

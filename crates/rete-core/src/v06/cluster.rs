@@ -222,11 +222,14 @@ fn cluster_array(
     fill_cluster_array(parts, classes, &mut |f| type_rows(parts, input, pid, f))
 }
 
+/// A source of `(class, subject)` rows: calls its argument with each.
+type RowSource<'a> = dyn FnMut(&mut dyn FnMut(u32, u32)) -> Result<(), FileError> + 'a;
+
 /// [`cluster_array`] over any source of `(class, subject)` rows.
 fn fill_cluster_array(
     parts: &Parts,
     classes: &[u32],
-    source: &mut dyn FnMut(&mut dyn FnMut(u32, u32)) -> Result<(), FileError>,
+    source: &mut RowSource,
 ) -> Result<Vec<u8>, FileError> {
     let cluster_of: HashMap<u32, u8> = classes
         .iter()
@@ -638,7 +641,9 @@ pub fn check_clusters(input: &dyn RangeReader) -> Result<(usize, Vec<String>), F
             let rows = check_quad_order(&parts, input, c, &arr, &mut bad_)?;
             let want = parts.quad.as_ref().map_or(0, |q| q.quad_count);
             if rows != want {
-                bad_.push(format!("SPOG: {rows} rows, the file has {want} named quads"));
+                bad_.push(format!(
+                    "SPOG: {rows} rows, the file has {want} named quads"
+                ));
             }
             continue;
         }
@@ -1034,8 +1039,8 @@ fn rewrite_quad(
             }
         }
     }
-    for c in 0..runs.len() {
-        if let Some(t) = runs[c].tiler.take() {
+    for (c, r) in runs.iter_mut().enumerate() {
+        if let Some(t) = r.tiler.take() {
             let mut emitted: Vec<Vec<Row4>> = Vec::new();
             t.finish(&mut |x| emitted.push(x));
             for x in emitted {

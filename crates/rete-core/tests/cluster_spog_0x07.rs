@@ -64,7 +64,12 @@ fn dataset() -> Vec<RawQuad> {
         }
         let name_in = if (13..=15).contains(&k) { &g2 } else { &g };
         q.push((s.clone(), iri("name"), format!("\"n{i}\""), name_in.clone()));
-        q.push((s.clone(), iri("v"), iri(&format!("o/{}", i % 50)), g.clone()));
+        q.push((
+            s.clone(),
+            iri("v"),
+            iri(&format!("o/{}", i % 50)),
+            g.clone(),
+        ));
         q.push((s.clone(), iri("cites"), subject((i * 31 + 7) % 6_000), g2));
         if i % 97 == 0 {
             q.push((s.clone(), iri("cites"), s.clone(), g.clone()));
@@ -226,7 +231,9 @@ fn battery() -> Vec<String> {
         qs.push(format!(
             "SELECT ?g ?s ?v ?n WHERE {{ GRAPH ?g {{ ?s {t} {c} . ?s <http://ex/v> ?v . ?s <http://ex/name> ?n }} }}"
         ));
-        qs.push(format!("SELECT ?s ?g WHERE {{ GRAPH ?g {{ ?s {t} {c} }} }}"));
+        qs.push(format!(
+            "SELECT ?s ?g WHERE {{ GRAPH ?g {{ ?s {t} {c} }} }}"
+        ));
         qs.push(format!(
             "SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH ?g {{ ?s {t} {c} . ?s ?p ?o }} }}"
         ));
@@ -256,9 +263,13 @@ fn battery() -> Vec<String> {
         "SELECT ?g ?s ?p ?o WHERE {{ GRAPH ?g {{ ?s {t} <http://ex/CE> . ?s {t} <http://ex/CA> . ?s ?p ?o }} }}"
     ));
     // Bound subject, over every graph.
-    for i in [0u32, 1, 8, 9, 13, 14, 16, 17, 18, 19, 20, 37, 5_999, 123, 4_567] {
+    for i in [
+        0u32, 1, 8, 9, 13, 14, 16, 17, 18, 19, 20, 37, 5_999, 123, 4_567,
+    ] {
         let s = subject(i);
-        qs.push(format!("SELECT ?g ?p ?o WHERE {{ GRAPH ?g {{ {s} ?p ?o }} }}"));
+        qs.push(format!(
+            "SELECT ?g ?p ?o WHERE {{ GRAPH ?g {{ {s} ?p ?o }} }}"
+        ));
         qs.push(format!(
             "SELECT ?g ?o WHERE {{ GRAPH ?g {{ {s} <http://ex/name> ?o }} }}"
         ));
@@ -314,7 +325,12 @@ fn spog_is_clustered_under_the_flag_and_the_unflagged_file_is_unchanged() {
     assert!(c.run_tiles.iter().all(|&n| n > 0), "{c:?}");
     let parts = from_v06(&SliceReader::new(clustered())).unwrap();
     let spog = &parts.quad.as_ref().unwrap().orders;
-    let n = spog.iter().find(|(si, _)| *si == QUAD_SPOG).unwrap().1.len();
+    let n = spog
+        .iter()
+        .find(|(si, _)| *si == QUAD_SPOG)
+        .unwrap()
+        .1
+        .len();
     assert_eq!(c.run_tiles.iter().sum::<usize>(), n);
     assert!(rete_core::format::verify(clustered()).unwrap());
     // The default graph has no class with 100 subjects: only SPOG is clustered.
@@ -340,7 +356,10 @@ fn a_clustered_file_un_clusters_to_the_bytes_it_started_from() {
     assert!(clustered() == &again[..], "re-clustered bytes differ");
     // A clustered file kept under the flag keeps its clusters as they are.
     let kept = rw(clustered(), opts(Some(four())));
-    assert!(clustered() == &kept[..], "a clustered file changed under the flag");
+    assert!(
+        clustered() == &kept[..],
+        "a clustered file changed under the flag"
+    );
 }
 
 #[test]
@@ -371,7 +390,12 @@ fn every_shape_answers_the_same_by_either_route_clustered_or_not() {
             &format!("clustered lazy, {name}"),
         );
         let (l, _) = lazy(plain());
-        assert_same(&qs, &answers(&l, &qs), &want, &format!("plain lazy, {name}"));
+        assert_same(
+            &qs,
+            &answers(&l, &qs),
+            &want,
+            &format!("plain lazy, {name}"),
+        );
     }
     set_class_route(None);
     // The rows are not empty, or the comparison proves nothing.
@@ -435,7 +459,11 @@ fn a_class_scoped_query_reads_one_contiguous_run_of_spog() {
     );
     // And far less than the unclustered file's SPOG probe reads.
     let read: u64 = spog_reads.iter().map(|r| r.1).sum();
-    assert!(read < (whole.1 - whole.0) / 3, "{read} of {} bytes", whole.1 - whole.0);
+    assert!(
+        read < (whole.1 - whole.0) / 3,
+        "{read} of {} bytes",
+        whole.1 - whole.0
+    );
 }
 
 #[test]
@@ -461,7 +489,10 @@ fn the_estimate_picks_the_probe_on_a_clustered_file_for_a_rare_class() {
 fn a_point_lookup_reads_a_bounded_number_of_tiles() {
     let _g = ROUTE.lock().unwrap_or_else(|e| e.into_inner());
     set_class_route(None);
-    let q = format!("SELECT ?g ?p ?o WHERE {{ GRAPH ?g {{ {} ?p ?o }} }}", subject(8));
+    let q = format!(
+        "SELECT ?g ?p ?o WHERE {{ GRAPH ?g {{ {} ?p ?o }} }}",
+        subject(8)
+    );
     let (l, rec) = lazy(clustered());
     let want = rows(&Rete::open(v06()).unwrap(), &q);
     assert_eq!(rows(&l, &q), want);
@@ -469,7 +500,10 @@ fn a_point_lookup_reads_a_bounded_number_of_tiles() {
     // Dictionary, directory leaves and tiles of five runs: bounded.
     assert!(n < 80, "{n} reads");
     // A second subject, then the first again (the placement is remembered).
-    let q2 = format!("SELECT ?g ?p ?o WHERE {{ GRAPH ?g {{ {} ?p ?o }} }}", subject(9));
+    let q2 = format!(
+        "SELECT ?g ?p ?o WHERE {{ GRAPH ?g {{ {} ?p ?o }} }}",
+        subject(9)
+    );
     assert_eq!(rows(&l, &q2), rows(&Rete::open(v06()).unwrap(), &q2));
     rec.take();
     assert_eq!(rows(&l, &q), want);
