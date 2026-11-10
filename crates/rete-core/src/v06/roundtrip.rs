@@ -150,7 +150,7 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
         quad: write::QuadClustering::GraphMajor,
         ..WriteOpts::default()
     };
-    assert_eq!(convert_image(&v5, seven).unwrap(), a);
+    assert_eq!(convert_image(&v5, seven.clone()).unwrap(), a);
     seven.quad = write::QuadClustering::OrderMajor;
     assert_eq!(convert_image(&v5, seven).unwrap(), a);
     // `0x06`: order-major and graph-major hold the same content.
@@ -158,7 +158,7 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
         quad: write::QuadClustering::OrderMajor,
         ..v06_opts()
     };
-    let om = convert_image(&v5, o).unwrap();
+    let om = convert_image(&v5, o.clone()).unwrap();
     o.quad = write::QuadClustering::GraphMajor;
     let gm = convert_image(&v5, o).unwrap();
     let want = answers(&Rete::open(&om).unwrap());

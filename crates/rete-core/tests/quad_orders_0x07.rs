@@ -631,3 +631,78 @@ fn the_deep_check_passes_a_sound_file_and_names_a_damaged_order() {
         assert!(bad.iter().any(|p| p.contains(name)), "{name}: {bad:?}");
     }
 }
+
+/// A memory-bounded build with its own spill directory, which the build deletes
+/// when it finishes. Returns the output's bytes.
+fn ext_build(tag: &str, round: usize) -> Vec<u8> {
+    use rete_core::extbuild::{build_external, ExternalBuildOptions};
+    let dir =
+        std::env::temp_dir().join(format!("rete-q7-conc-{}-{tag}-{round}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("out.rete");
+    let quads = dataset();
+    build_external(
+        |visit| {
+            for q in &quads {
+                visit(q.clone())?;
+            }
+            Ok(())
+        },
+        &out,
+        ExternalBuildOptions {
+            tmp_dir: Some(dir.clone()),
+            graphs: GraphLayout::Quad,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    bytes
+}
+
+#[test]
+fn writers_spilling_at_once_do_not_share_a_spill_directory() {
+    small_tiles();
+    // The in-RAM reference of each writer.
+    let want_conv = v07().to_vec();
+    let want_ext = ext_build("ref", 0);
+    // Spill everywhere from here on (the bytes do not depend on it).
+    set_quad_run_rows(1_000);
+    let results = std::thread::scope(|s| {
+        // One build deletes its private spill directory again and again while
+        // the others, with the system temp dir and with a directory of their
+        // own, spill at the same time.
+        let ext = s.spawn(|| (0..4).map(|i| ext_build("a", i)).collect::<Vec<_>>());
+        let ext2 = s.spawn(|| (0..4).map(|i| ext_build("b", i)).collect::<Vec<_>>());
+        let conv = s.spawn(|| {
+            (0..6)
+                .map(|_| convert_image(v5(), WriteOpts::default()).unwrap())
+                .collect::<Vec<_>>()
+        });
+        let own = s.spawn(|| {
+            let dir = std::env::temp_dir().join(format!("rete-q7-own-{}", std::process::id()));
+            let got: Vec<_> = (0..6)
+                .map(|_| {
+                    convert_image(v5(), WriteOpts::default().with_spill_dir(Some(dir.clone())))
+                        .unwrap()
+                })
+                .collect();
+            let _ = std::fs::remove_dir_all(&dir);
+            got
+        });
+        (
+            ext.join().unwrap(),
+            ext2.join().unwrap(),
+            conv.join().unwrap(),
+            own.join().unwrap(),
+        )
+    });
+    set_quad_run_rows(0);
+    for b in results.0.iter().chain(&results.1) {
+        assert!(*b == want_ext, "a concurrent memory-bounded build differs");
+    }
+    for b in results.2.iter().chain(&results.3) {
+        assert!(*b == want_conv, "a concurrent conversion differs");
+    }
+}
