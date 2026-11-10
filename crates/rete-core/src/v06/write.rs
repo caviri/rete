@@ -98,7 +98,15 @@ impl WriteOpts {
 
     /// The directory the spill runs go to.
     pub(crate) fn spill(&self) -> std::path::PathBuf {
-        self.spill_dir.clone().unwrap_or_else(std::env::temp_dir)
+        // A browser build has no disk (and no temporary directory to ask for).
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.spill_dir.clone().unwrap_or_default()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.spill_dir.clone().unwrap_or_else(std::env::temp_dir)
+        }
     }
 
     /// These options with class clustering on (`Some`) or off.
