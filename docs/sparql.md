@@ -792,6 +792,14 @@ These are **rejected with a clear error** — never silently mis-evaluated:
 - Complex `ORDER BY` **key expressions** beyond a bare variable/constant are not
   yet evaluated for ordering.
 
+## Graph names are ids
+
+On a quad-index file a graph variable binds the graph as a dictionary id, and a
+later `GRAPH ?g { … }` that reuses it finds the graph by that id: no graph name is
+decoded to run the join, the walk or the grouping. Only the names a result
+shows are decoded. A file with a graph per container, and any query with `FROM NAMED`,
+still compare names.
+
 ## Examples
 
 ```sparql

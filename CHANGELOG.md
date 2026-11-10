@@ -3,6 +3,12 @@
 All notable user-facing changes are recorded here. Rete follows semantic
 versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
+## [Unreleased]
+
+### Fixed
+
+- **A graph variable joined twice decoded every graph name.** `GRAPH ?g { ?x <p> ?e } OPTIONAL { GRAPH ?g { ?e <q> ?l } }` looked the right-hand graph up by name for each left row: it decoded the graph IRI to text (a 64 KiB chunk fault for a scattered one), then looked the text up again in the dictionary. The row already held the graph's dictionary id, and the quad directory is keyed by it. The join, and the `GRAPH ?g` walk that binds each graph, now go by id, and no name is decoded unless the query has `FROM NAMED` or the file has a graph per container. The nanopub explorer's `evidence` query (18 rows) decoded 10.1 M terms and read 799 MB; see the PR for the numbers. `rete_core::terms_decoded()` counts the terms decoded from the dictionary sections, for tests and diagnostics (`crates/rete-core/tests/decode_count.rs`).
+
 ## [0.6.0] - 2026-11-10
 
 The writer now produces format 0x07. This release reads 0x05, 0x06 and 0x07; readers up to 0.5.7 refuse a 0x07 file by name, so a published file should be converted (`rete convert`) only once its readers are on 0.6.0.
