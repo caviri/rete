@@ -14,20 +14,20 @@ The published CLI container runs the same commands as a local `rete` binary.
 Define a wrapper in your current shell so that files in your working directory
 are available inside the container.
 
-This example pins the published 0.5.6 image, which writes format `0x06` and
+This example pins the published 0.5.7 image, which writes format `0x06` and
 reads `0x05` and `0x06`. Readers up to 0.4.x cannot open `0x06` files. See
 [Compatibility](compatibility.md) before exchanging files with older readers.
 
 On a POSIX shell (Linux or macOS):
 
 ```sh
-alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.5.6'
+alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.5.7'
 ```
 
 On PowerShell:
 
 ```powershell
-function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.5.6 @args }
+function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.5.7 @args }
 ```
 
 `-v` shares your directory with `/data`, `-w` makes relative filenames work,
@@ -144,7 +144,7 @@ analysis, [Query and analyze](query-and-analyze.md).
 ### Python
 
 ```sh
-pip install rete-graph==0.5.6
+pip install rete-graph==0.5.7
 ```
 
 Save as `query.py`:
@@ -177,7 +177,7 @@ dict per row, with each value a `Term` that has `.value`. See [Python](python.md
 ### JavaScript
 
 ```sh
-npm install rete-graph@0.5.6
+npm install rete-graph@0.5.7
 ```
 
 Save as `query.mjs`:
