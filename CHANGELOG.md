@@ -3,7 +3,9 @@
 All notable user-facing changes are recorded here. Rete follows semantic
 versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-10
+
+The writer now produces format 0x07. This release reads 0x05, 0x06 and 0x07; readers up to 0.5.7 refuse a 0x07 file by name, so a published file should be converted (`rete convert`) only once its readers are on 0.6.0.
 
 ### Changed
 
