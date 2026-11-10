@@ -113,7 +113,7 @@ and the small unit roots.
 |---|---|---|
 | 0 | 4 | magic `RETE` |
 | 4 | 1 | format version: `0x07` (written), or `0x06` (read, §4.10) |
-| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 `0x07`: the subject-leading permutations are clustered by class (§6.6) |
+| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 `0x07`: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6) |
 | 6 | 2 | header length (128) |
 | 8 | 16 | content hash (§4.7) — also an ETag-like id |
 | 24 | 8 | file length (a client needs no `Content-Range` and no `HEAD`) |
@@ -212,12 +212,13 @@ unsigned LEB128 varints, byte strings are length-prefixed.
   permutation's offset and length within `index`, then per leaf: entry count,
   offset, stored length, the first tile's lowest and the last tile's highest
   leading id, and the first tile's offset within the permutation.
-- **Class clusters** (`0x07`, flag bit4): the number of clustered permutations, and
-  per permutation: its number (`0` SPO, `3` SOP, the section index), the number
-  of classes *k* (at most 32), the *k* class ids (object ids, run 1 first), and
-  the tile count of each of the *k* + 1 runs, run 0 first (§6.6). The runs
-  partition the permutation's tiles, in order; no leaf of the index unit root
-  spans two runs.
+- **Class clusters** (`0x07`, flag bit4): the number of clustered orders, and
+  per order: its number (`0` SPO, `3` SOP, the section index of a default-graph
+  permutation; `6`, the quad order number of SPOG), the number of classes *k*
+  (at most 32), the *k* class ids (object ids, run 1 first), and the tile count
+  of each of the *k* + 1 runs, run 0 first (§6.6). The runs partition the
+  order's tiles, in order; no leaf of the index unit root (or, for SPOG, of the
+  quad unit root) spans two runs.
 - **Quad index**: graph count, quad count, graphs per directory block (1,024 in
   `0x06`, 8,192 in `0x07`), the block index `P0` (§6.5), the graph directory's
   length, then per order: order number, tile count and per leaf: entry count,
@@ -653,12 +654,12 @@ a file is.
    the 2018 nanopub dump goes from 104 KB to 33 KB.
 
 4. **Class clustering** (optional, header flag bit4, §6.6). The default graph's
-   subject-leading permutations (SPO and, when stored, SOP) may be laid out in
-   `(class run, subject, predicate, object)` order instead of subject order, so
-   the subjects of one class are a few contiguous tiles. Off by default
-   (`--cluster-subjects-by-class`); a file without the flag is byte-for-byte the
-   file the same writer wrote before the option existed. The quad index is
-   untouched.
+   subject-leading permutations (SPO and, when stored, SOP) and the quad index's
+   SPOG may be laid out in `(class run, subject, predicate, object)` order
+   instead of subject order, so the subjects of one class are a few contiguous
+   tiles. Off by default (`--cluster-subjects-by-class`); a file without the
+   flag is byte-for-byte the file the same writer wrote before the option
+   existed. GSPO, POSG and OSPG are untouched.
 
 Other differences: the version byte, the footer (`07 00 00 00 "RETE"`), the
 hash domain (`"rete/0x07"`) and the `format_version` a card is stamped with
@@ -1323,7 +1324,7 @@ orders hold the same quads.
 | OSPG | 412.3 MB | 14.5 MB |
 | file | 2.515 GB (0x06: 3.882 GB) | 157.9 MB (0x06: 202.5 MB) |
 
-### 6.6 Class clustering of the subject-leading permutations (`0x07`, optional)
+### 6.6 Class clustering of the subject-leading orders (`0x07`, optional)
 
 SPO sorts the default graph's rows by subject id, and ids are lexical, so the
 subjects of one class are spread over the whole id space: on OpenAIRE the 221,817
@@ -1333,76 +1334,139 @@ Renumbering subjects by class would break the dictionary's string-to-id search, 
 the clustering lives in the **tile order** only.
 
 With header flag bit4 (`--cluster-subjects-by-class`, off by default), SPO, and
-SOP when the file stores it, are sorted by `(cluster(s), s, p, o)` instead.
-`cluster(s)` is the number of the subject's **primary class**:
+SOP when the file stores it, are sorted by `(cluster(s), s, p, o)` instead, and
+so is the quad index's SPOG, by `(cluster(s), s, p, o, g)`. `cluster(s)` is the
+number of the subject's **primary class**:
 
-- The classes are the objects of `rdf:type` rows of the default graph. The *k*
-  most frequent by subject count (at most 32; at least 1,000 subjects each, so
-  that a run fills a tile; ties by object id) are numbered 1..*k*, most subjects
-  first. Every other subject, typed or not, is cluster 0.
+- The classes are the objects of `rdf:type` rows: of the default graph for SPO
+  and SOP, of any named graph for SPOG (a subject typed in several graphs counts
+  once). The *k* most frequent by subject count (at most 32 for SPO and SOP, at
+  most 10 for SPOG; at least 1,000 subjects each, so that a run fills a tile;
+  ties by object id) are numbered 1..*k*, most subjects first. Every other
+  subject, typed or not, is cluster 0.
 - A subject with several listed classes is in the **rarest** one (the highest
   number). Its type rows in unlisted classes are ignored.
 
-The permutation's tiles are *k* + 1 **runs**, cluster 0 first. A run is cut
-like any permutation (§6.2): tiles of whole leading-id groups to the budget, an
-oversize group cut mid-group. No tile spans two runs, and no directory leaf does
-either (the writer cuts leaves at the runs), so a reader knows a leaf's run from
-the cluster root alone. The cluster unit root (§4.2, tag 6) lists, per
-clustered permutation, the classes (object ids) and the tile count of each run.
+Each clustered order declares its own classes: SPO and SOP share theirs, SPOG has
+its own. SPOG gets fewer runs because a lookup of one subject reads one leaf in
+every run, and a dump with named graphs has long runs (measured below: 10 keeps
+the point lookup at its unclustered cost and most of the class gain).
+
+The order's tiles are *k* + 1 **runs**, cluster 0 first. A run is cut like any
+order (§6.2, §6.5): tiles of whole leading-id groups to the budget, an oversize
+group cut mid-group. No tile spans two runs, and no directory leaf does either
+(the writer cuts leaves at the runs), so a reader knows a leaf's run from the
+cluster root alone. The cluster unit root (§4.2, tag 6) lists, per clustered
+order, the classes (object ids) and the tile count of each run; SPOG is order 6.
 Everything else (header, dictionary, the leaf format, the tile coding, the other
-four permutations, the quad index) is as without the flag, and a file written
-without the flag is byte-identical to the one a writer without the option wrote.
-Within a run the tiles ascend by leading id; across runs they do not, so a
-tile's `[min_a, max_a]` of different runs overlap.
+orders) is as without the flag, and a file written without the flag is
+byte-identical to the one a writer without the option wrote. Within a run the
+tiles ascend by leading id; across runs they do not, so the tile ranges of
+different runs overlap.
 
 **Writer.** One implementation shared by every writer (the in-RAM build, the
 memory-bounded build, `convert`, like the quad orders of §6.5): the assembler
-reads the file's POS rows of `rdf:type` in two passes (counting the classes,
-then filling one byte per subject id: 951 MB for OpenAIRE's 951 M subjects),
-streams SPO (and SOP) in order, partitions the rows by cluster (a stable
-partition, so every run is still sorted and nothing is sorted again), cuts and
-encodes each run with the ordinary tiler, and lays the new tiles out past the
+reads the type rows (POS for SPO and SOP, POSG for SPOG) in two passes (counting
+the classes, then filling one byte per subject id: 951 MB for OpenAIRE's 951 M
+subjects), streams the order in sequence, partitions the rows by cluster (a
+stable partition, so every run is still sorted and nothing is sorted again), cuts
+and encodes each run with the ordinary tiler, and lays the new tiles out past the
 end of the input as extra address space, which it copies like any range. A
 clustered input is un-clustered by a *k*-way merge of its runs. `rete convert`
 with the flag clusters a `0x06` or `0x07` input; without it, a clustered input
 comes out in subject order, and the bytes are those of the file that was never
-clustered. A clustered input converted with the flag keeps its clusters.
-With no default-graph subject of a listed class nothing is clustered and the file
-is the unflagged one.
+clustered. A clustered input converted with the flag keeps its clusters. An
+order with no subject of a listed class is left as it is.
 
 **Reader.** A lookup that binds the subject does not know the run. For a
-clustered permutation the reader reads, in one batch, the directory leaf that
-covers the subject in each run, then, in one batch, the tiles those leaves list for it, and the
-run whose tile holds the subject answers (a tile whose range covers a subject
-need not hold it: ranges of different runs overlap). The run that held the
-last subject is tried alone first, so a probe join over the subjects of one
-class (`?r a <C> . ?r <p> ?x`, with G50a's bounded windows and batched reads)
-reads that class's run and no other. Subjects are remembered for the session.
-So a point lookup reads up to *k* + 1 tiles where an unclustered file reads one
-(measured below), and a scan or join of one class reads its run. Unbound scans
-visit the runs in order, so rows of a `?s ?p ?o` scan are no longer in subject
-order; the planner does not offer a clustered permutation as a stream sorted on
-the subject (no merge join over it), `rete verify` checks every tile of every
-run against the subject's class, and `rete info` lists the runs.
+clustered order the reader reads, in one batch, the directory leaf that covers the
+subject in each run (the root lists each leaf's subject range, so a run whose
+range does not hold the subject costs nothing), then, in one batch, the tiles those
+leaves list for it, and the run whose tile holds the subject answers (a tile whose
+range covers a subject need not hold it: ranges of different runs overlap). The
+run that held the last subject is tried alone first, so a probe join over the
+subjects of one class reads that class's run and no other. Subjects are
+remembered for the session. Unbound scans visit the runs in order, so rows of a
+`?s ?p ?o` scan are no longer in subject order; the planner does not offer a
+clustered permutation as a stream sorted on the subject (no merge join over it),
+`rete verify` checks every tile of every run against the subject's class, and
+`rete info` lists the runs. A `GRAPH <g>` view of a graph over the synthesis
+limit (§6.5) is built from its GSPO rows when SPOG is clustered, not filtered
+from SPOG, whose tiles are no longer one ascending list.
 
-**Measured** (local files under `--memory 4g`, range server with 120 ms a request and one 4 MB/s link, cold, same rows each time (md5 of the sorted output)). A synthetic OpenAIRE-shaped file (3.6 M records, 30.0 M triples, nine classes scattered by IRI, one of them, Software, 1,800 records):
+**The class-scoped graph query.** `GRAPH ?g { ?s a <C> . ?s ?p ?o … }`, a star on
+one subject variable with a constant class, has two routes. The walk finds the
+graphs that hold a `C` (POSG) and evaluates the block in each over its GSPO
+tiles: its cost is the tiles of every such graph, a request or more per graph,
+and the name of every graph. The probe takes the `(subject, graph)` pairs of
+`?s a <C>` from POSG, probes SPOG for the subjects in windows of 256 growing
+fourfold to 65,536 (one batch of leaves and one of tiles each, the run of `C`
+first, the other runs only for subjects it does not hold), and matches the block
+against each subject's rows in each graph where it is a `C`. The dictionary terms
+the final projection decodes are fetched a window at a time. The planner takes the
+probe unless the directory says it would read half as much again as the walk
+(the estimate counts, per leaf of the root, the tiles the subjects or graphs can
+touch, with a sample of the subjects to learn their runs, and charges the walk
+512 bytes a graph), and keeps the walk under a small `LIMIT` (4,096 or less), where
+it stops after its first graphs. Same rows either way; an unclustered file takes
+the probe too, since the walk's per-graph requests cost more than its bytes save.
+`RETE_CLASS_ROUTE=probe|walk` forces one (measurements, tests).
 
-| | unclustered | clustered |
+**Measured** on the 2018 nanopub dump (10.8 M nanopubs, 378.7 M quads in 43.2 M
+named graphs, all in named graphs, so SPO and SOP have nothing to cluster): the
+0x06 file converted to 0x07 unclustered and clustered in `--memory 4g`, then
+queried over a local range server with 120 ms a request and one 4 MB/s link, cold,
+same rows each time (md5 of the sorted output).
+
+| | unclustered | clustered (10 SPOG classes) |
 |---|---|---|
-| build (memory-bounded, 3,000 MB budget) | 69.4 s, 2.12 GB peak, 161.04 MB | 71.5 s, 2.12 GB peak, 163.46 MB (+1.5%) |
-| `?r a <Software> . ?r <subject> ?t` (5,400 rows) | 16.3 s, 9 requests, 59.0 MB | **1.13 s, 12 requests, 1.77 MB** |
-| the same for Project (6%, 72,000 rows; a scan, not a probe join) | 1.33 s, 1.1 MB | 1.14 s, 0.98 MB |
-| a bound subject, `<s> ?p ?o` (four subjects) | 0.67 to 0.75 s, 5 to 7 requests, 0.72 to 0.85 MB | 0.90 to 0.98 s, 12 to 14 requests, 1.64 to 1.90 MB |
+| convert | 74.9 s, 1.79 GB peak | 80.0 s, 1.78 GB peak, 1.66 GB spill |
+| file | 2,514,968,632 B | 2,482,116,370 B (-1.3%) |
+| SPOG | 407.4 MB | 374.6 MB (-8.1%) |
+| BAO_0002095 (653,639 subjects), walk | 213.7 s, 1,008 requests, 325 MB | 213.9 s, 1,011 requests, 325 MB |
+| the same, probe | 102.8 s, 138 requests, 332 MB | **59.1 s, 86 requests, 206 MB** (SPOG 22 MB) |
+| SO_0000409 (1.0 M rows), walk | 326.1 s, 2,001 requests, 325 MB | 326.5 s, 2,002 requests |
+| the same, probe | 93.6 s, 150 requests, 331 MB | **58.1 s, 143 requests, 207 MB** |
+| ECO_0000218 (8.8 M subjects), `COUNT`, walk | 268.8 s, 1,015 requests, 327 MB | |
+| the same, probe | 61.4 s, 162 requests, 152 MB | **6.6 s, 24 requests, 7.1 MB** |
+| np:Nanopublication (10.8 M), `COUNT`, probe | 136.7 s, 369 requests, 328 MB | 70.4 s, 240 requests, 153 MB |
+| the same, walk | not done in 600 s | not done in 600 s |
+| np:Nanopublication, `LIMIT 100` | 3.0 s, 20 requests | 3.0 s (the walk; the probe would take 3.9 s) |
+| a bound subject `GRAPH ?g { <s> ?p ?o }` | 1.8 s, 15 requests, 2.16 MB | 1.8 s, 15 requests, 2.03 MB |
 
-The OpenCitations sample (5.97 M default-graph triples, 12.9 M named quads, 14 listed classes, many subjects of two classes), converted in 3.2 s against 3.4 s, 157.89 MB against 157.65 MB: Book (12,957 records) with all its properties 2.6 s, 13 requests, 5.3 MB against 1.67 s, 14 requests, 2.0 MB; Book titles 4.3 s, 12.4 MB against 3.4 s, 9.1 MB; foaf:Agent (375,709 records, a common class) with all its properties 2.9 s, 16 requests, 3.9 MB against 4.5 s, 29 requests, 4.1 MB (a common class gains nothing and pays the run lookup); a bound subject 1.0 s, 10 to 11 requests against 1.03 to 1.12 s, 12 to 13 requests.
+The dictionary is a known remaining cost: of the 206 MB of the clustered BAO query,
+182 MB are the dictionary chunks that resolve the 653,639 result IRIs (88%); the
+other queries are 55% (unclustered) to 99% (K = 32) dictionary. The route changes
+what is read of the index, not that.
 
-The 2018 nanopub dump keeps every triple in a named graph: its default graph is empty, so the flag does nothing and the two conversions are byte-identical (2,514,968,632 B, 77.8 s and 68.4 s, 1.78 GB peak). What clustering SPOG would give it: `GRAPH ?g { ?s a <BAO_0002095> . ?s ?p ?o }` (653,639 subjects, one SPOG tile of the 407 MB order for almost every one of them) takes 213 s, 1,011 requests and 325 MB today; the same subjects packed together are a few MB. A class scan that SPOG does not need is already cheap (`COUNT` of `np:Nanopublication` 2.6 s, 16 requests, 3.1 MB; a bound subject across graphs 3.1 s, 22 requests, 3.7 MB).
+How many SPOG classes (the nanopub dump, clustered):
 
-**Not clustered.** The quad index: its graph-last SPOG would need the same two
-changes (a run per class, a lookup that finds the run) in a second reader path,
-which this step does not make. On the nanopub dump, where the default graph is
-empty and every triple is in a named graph, the flag does nothing, and the case
-for SPOG is measured above.
+| classes | file | convert | point lookup | BAO | SO | ECO `COUNT` |
+|---|---|---|---|---|---|---|
+| 4 | 2,500,958,537 B | 86.1 s | 1.7 s, 15 requests | 73.6 s | 72.8 s | 6.6 s |
+| 10 | 2,482,116,370 B | 80.0 s | 1.8 s, 15 requests | 59.1 s | 58.1 s | 6.6 s |
+| 32 | 2,480,297,880 B | 77.7 s | 2.5 s, 26 requests | 50.2 s | 50.5 s | 6.9 s |
+
+The default is 10: a bound subject costs nothing more than in an unclustered file
+(each run adds at most one leaf, and a subject outside a run's range none), 32
+costs +0.7 s and 11 requests per lookup for another 15% on the class queries. The
+runs carry no subject range of their own: the leaf entries of the root already give
+one, and the point lookup shows nothing left to skip.
+
+The OpenCitations sample (12.9 M named quads in 1.49 M graphs, converted in 1.2 s
+and 1.9 s, 157.89 MB and 157.65 MB) has one class in its named graphs,
+`prov:Entity`, so clustering SPOG changes nothing there (one run, a 235 KB
+smaller file). The probe still wins `COUNT` of its subjects' rows, 37.0 s, 86
+requests, 22.1 MB by the walk to 10.0 s, 44 requests, 13.6 MB, on either file; a
+bound subject is 1.3 s, 12 requests on both.
+
+SPO and SOP measured in the first step (the synthetic OpenAIRE-shaped file, 30.0 M
+triples, nine classes, one of them, Software, 1,800 records): `?r a <Software> .
+?r <subject> ?t` 16.3 s, 59.0 MB unclustered, 1.13 s, 1.77 MB clustered; a bound
+subject 0.67 to 0.75 s, 5 to 7 requests unclustered, 0.90 to 0.98 s, 12 to 14
+requests clustered; the OpenCitations sample's default graph: Book (12,957
+records) 2.6 s, 5.3 MB to 1.67 s, 2.0 MB; foaf:Agent (375,709, a common class) 2.9 s
+to 4.5 s.
 
 ---
 

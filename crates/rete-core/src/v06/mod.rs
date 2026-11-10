@@ -96,6 +96,8 @@ pub const F_QUAD_GRAPH_MAJOR: u8 = 0b1000;
 /// clustered by class: their tiles are in `(cluster, s, p, o)` order, listed
 /// by the cluster root ([`tag::CLUSTER`]).
 pub const F_CLUSTERED: u8 = 0b1_0000;
+/// `ClusterOrder::si` of the quad index's SPOG (its quad slot).
+pub const QUAD_SPOG: usize = crate::quad7::FIRST_LAST_SLOT;
 /// The most classes a clustered permutation has a run for (the rest are run 0).
 pub const MAX_CLUSTERS: usize = 32;
 
@@ -832,14 +834,16 @@ pub fn decode_index_root(p: &[u8]) -> Result<Vec<PermRoot>, FileError> {
     Ok(out)
 }
 
-/// The class clusters of one subject-leading permutation (`0x07`, flag
-/// [`F_CLUSTERED`]). Its tiles are `k + 1` consecutive runs: run 0 holds the
+/// The class clusters of one subject-leading order (`0x07`, flag
+/// [`F_CLUSTERED`]): a permutation of the default graph (`si` 0 to 5, SPO or
+/// SOP) or the quad index's SPOG (`si` [`QUAD_SPOG`]). Its tiles are `k + 1` consecutive runs: run 0 holds the
 /// subjects of no listed class, run `i` (1-based) those whose primary class is
 /// `classes[i - 1]`. Within a run the tiles are in `(s, p, o)` order like an
 /// unclustered permutation; no tile and no directory leaf spans two runs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClusterOrder {
-    /// Section index of the permutation (`IndexPermutation::section_index`).
+    /// Section index of the permutation (`IndexPermutation::section_index`), or
+    /// [`QUAD_SPOG`] for the quad index's SPOG (its quad slot).
     pub si: usize,
     /// The class of runs `1..=k`, as object ids, rarest last.
     pub classes: Vec<u32>,
@@ -868,10 +872,10 @@ pub fn encode_cluster_root(orders: &[ClusterOrder]) -> Vec<u8> {
 pub fn decode_cluster_root(p: &[u8]) -> Result<Vec<ClusterOrder>, FileError> {
     let bad = FileError::Container;
     let mut c = Cur::new(p);
-    let n = c.count(6)?;
+    let n = c.count(7)?;
     let mut out: Vec<ClusterOrder> = Vec::with_capacity(n);
     for _ in 0..n {
-        let si = c.count(5)?;
+        let si = c.count(QUAD_SPOG as u64)?;
         let k = c.count(MAX_CLUSTERS as u64)?;
         let mut classes = Vec::with_capacity(k);
         for _ in 0..k {

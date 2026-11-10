@@ -921,6 +921,20 @@ pub(crate) struct V06Quad {
     /// Decompression bounds: a quad tile, and a leaf or graph-directory block.
     pub(crate) tile_max: u64,
     pub(crate) leaf_max: u64,
+    /// The class runs of a clustered order (SPOG, `0x07`), per slot.
+    clusters: [Option<QCluster>; NUM_SLOTS],
+    /// Mean stored bytes of one tile of each order, from the root (a cost hint).
+    tile_bytes: [u64; NUM_SLOTS],
+}
+
+/// The class runs of a clustered quad order: its tiles are consecutive runs,
+/// each sorted by `(a, b, c, g)`; a subject's rows are all in the run of its
+/// primary class (SPEC.md section 6.6).
+pub(crate) struct QCluster {
+    /// Tile ranges, class ids, the last-hit hint and the placed-subject memo.
+    pub(crate) runs: crate::index::ClusterRuns,
+    /// The leaves of each run, as `(first leaf, end leaf)`: no leaf spans two runs.
+    run_leaves: Vec<(usize, usize)>,
 }
 
 /// One leaf of an order's tile directory, as the root lists it.
@@ -1012,6 +1026,16 @@ impl V06Quad {
                 .collect();
             leaf_cells[o.si] = (0..o.leaves.len()).map(|_| OnceLock::new()).collect();
         }
+        // Mean stored tile of each order: the span from its first leaf's first tile
+        // to its last leaf's first, over the tiles between them (order-major).
+        let mut tile_bytes = [48u64 << 10; NUM_SLOTS];
+        for o in &root.orders {
+            if let (Some(first), Some(last)) = (o.leaves.first(), o.leaves.last()) {
+                if last.0.first > 0 && last.3 > first.3 {
+                    tile_bytes[o.si] = ((last.3 - first.3) / last.0.first as u64).max(1);
+                }
+            }
+        }
         Ok(V06Quad {
             pre: Preamble {
                 mask: 0,
@@ -1029,7 +1053,49 @@ impl V06Quad {
             leaf_codec,
             tile_max: u64::MAX,
             leaf_max: u64::MAX,
+            clusters: Default::default(),
+            tile_bytes,
         })
+    }
+
+    /// Mark the quad orders the cluster root lists as clustered: every run is
+    /// whole leaves and the runs cover the order's tiles.
+    pub(crate) fn with_clusters(
+        mut self,
+        orders: &[crate::v06::ClusterOrder],
+    ) -> Result<Self, FileError> {
+        let bad = |w: &'static str| FileError::Container(w);
+        for c in orders.iter().filter(|c| c.si >= quad7::FIRST_LAST_SLOT) {
+            let leaves = self
+                .orders
+                .get(c.si)
+                .filter(|l| !l.is_empty())
+                .ok_or(bad("0x07 cluster root names a quad order the file lacks"))?;
+            let total: usize = leaves.iter().map(|l| l.n).sum();
+            if c.run_tiles.iter().sum::<usize>() != total {
+                return Err(bad("0x07 cluster runs do not cover the quad tiles"));
+            }
+            let mut run_leaves = Vec::with_capacity(c.run_tiles.len());
+            let mut at = 0usize;
+            for &n in &c.run_tiles {
+                let l0 = leaves.partition_point(|l| l.first_tile < at);
+                let l1 = leaves.partition_point(|l| l.first_tile < at + n);
+                // A leaf holds the tiles of one run.
+                if leaves[l0..l1]
+                    .last()
+                    .is_some_and(|l| l.first_tile + l.n > at + n)
+                {
+                    return Err(bad("0x07 a quad directory leaf spans two cluster runs"));
+                }
+                run_leaves.push((l0, l1));
+                at += n;
+            }
+            self.clusters[c.si] = Some(QCluster {
+                runs: crate::index::ClusterRuns::new(c.classes.clone(), &c.run_tiles),
+                run_leaves,
+            });
+        }
+        Ok(self)
     }
 }
 
@@ -1540,18 +1606,30 @@ impl QuadCore {
         if missing.is_empty() {
             return Some(());
         }
+        let tiles: Vec<(usize, QTile)> = missing
+            .iter()
+            .map(|&ti| Some((ti, *dir.get(ti.checked_sub(base)?)?)))
+            .collect::<Option<_>>()?;
+        self.fault_tiles(si, &tiles)
+    }
+
+    /// Fault the tiles `tiles` (`(index in the order, entry)`, ascending by
+    /// offset) of order slot `si` into the shared cache, coalescing adjacent
+    /// ones into single reads. The tiles may come from several places of the
+    /// directory (the runs of a clustered order): one batch whatever they are.
+    fn fault_tiles(&self, si: usize, tiles: &[(usize, QTile)]) -> Option<()> {
         let mut spans: Vec<(u64, u64)> = Vec::new();
-        let mut members: Vec<Vec<usize>> = Vec::new();
-        for &ti in &missing {
-            let r = dir.get(ti.checked_sub(base)?)?.range;
+        let mut members: Vec<Vec<(usize, QTile)>> = Vec::new();
+        for &(ti, t) in tiles {
+            let r = t.range;
             match spans.last_mut() {
                 Some(last) if last.0 + last.1 == r.offset => {
                     last.1 += r.len;
-                    members.last_mut()?.push(ti);
+                    members.last_mut()?.push((ti, t));
                 }
                 _ => {
                     spans.push((r.offset, r.len));
-                    members.push(vec![ti]);
+                    members.push(vec![(ti, t)]);
                 }
             }
         }
@@ -1563,13 +1641,12 @@ impl QuadCore {
             }
         };
         for ((start, _), (blob, tis)) in spans.iter().zip(blobs.iter().zip(&members)) {
-            for &ti in tis {
-                let t = &dir[ti - base];
+            for (ti, t) in tis {
                 let lo = (t.range.offset - start) as usize;
                 let stored = blob.get(lo..lo + t.range.len as usize)?;
                 match self.unpack(t, stored) {
                     Some(body) => {
-                        self.tiles.insert((si as u8, ti as u32), body);
+                        self.tiles.insert((si as u8, *ti as u32), body);
                     }
                     None => {
                         self.fail();
@@ -1762,7 +1839,9 @@ impl QuadCore {
                     continue;
                 }
                 let last = quad7::last_slot(perm);
-                src[si] = if big && si < 3 && mask & (1 << last) != 0 {
+                // A clustered SPOG is sorted by subject only within a run: a view
+                // cannot take its tiles as one ascending list.
+                src[si] = if big && si < 3 && mask & (1 << last) != 0 && !self.is_clustered(last) {
                     ViewSrc::Filter(last)
                 } else {
                     ViewSrc::Synth
@@ -2216,6 +2295,8 @@ struct QuadEntry {
     view: OnceLock<Box<GraphIndex>>,
 }
 
+mod probe;
+
 /// The named graphs of a quad-index file, opened over a [`RangeReader`]:
 /// nothing is read at open. The graph count costs the preamble (one small
 /// read), a name one directory block plus one dictionary chunk, a graph's
@@ -2465,6 +2546,13 @@ impl QuadNamed {
         let last = quad7::is_last(slot);
         let abc = perm.order_pattern(pat);
         let (dir, base) = match abc[0] {
+            Some(a) if last && self.core.is_clustered(slot) => {
+                // Subject `a` is in the one run of its class.
+                match self.core.resolve_run(slot, a)? {
+                    Some(run) => self.core.dir_in_run(slot, run, a)?,
+                    None => (Arc::from(Vec::new()), 0),
+                }
+            }
             Some(a) if last => self.core.dir_for_graph(slot, a)?,
             _ => (self.core.dir(slot)?, 0),
         };

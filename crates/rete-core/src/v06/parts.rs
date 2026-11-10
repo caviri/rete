@@ -522,18 +522,6 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
     }
     if let Some(unit) = root.unit(tag::CLUSTER) {
         p.cluster = super::decode_cluster_root(unit)?;
-        for c in &p.cluster {
-            let ok = p
-                .index
-                .iter()
-                .find(|x| x.si == c.si)
-                .is_some_and(|x| x.tiles.len() == c.run_tiles.iter().sum::<usize>());
-            if !ok {
-                return Err(FileError::Container(
-                    "0x07 cluster root does not cover the tiles",
-                ));
-            }
-        }
     }
     // Quad index: the graph directory blocks come first in QUAD_LEAVES.
     if let Some(unit) = root.unit(tag::QUAD) {
@@ -568,6 +556,22 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
             },
             orders,
         });
+    }
+    // The cluster runs cover the tiles of the order they name.
+    for c in &p.cluster {
+        let n = if c.si == super::QUAD_SPOG {
+            p.quad
+                .as_ref()
+                .and_then(|q| q.orders.iter().find(|(si, _)| *si == c.si))
+                .map(|(_, t)| t.len())
+        } else {
+            p.index.iter().find(|x| x.si == c.si).map(|x| x.tiles.len())
+        };
+        if n != Some(c.run_tiles.iter().sum::<usize>()) {
+            return Err(FileError::Container(
+                "0x07 cluster root does not cover the tiles",
+            ));
+        }
     }
     // Labels.
     if let Some(unit) = root.unit(tag::LABELS) {

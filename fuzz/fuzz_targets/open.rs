@@ -44,11 +44,17 @@ fuzz_target!(|data: &[u8]| {
         // The quad orders of 0x07 (SPOG, POSG, OSPG): a graph variable with a
         // bound subject, predicate or object seeks them, and the deep check
         // decodes every tile.
+        // Half the inputs probe SPOG for a class-scoped block, half walk the graphs.
+        rete_core::bgp::set_class_route(Some(data.len() % 2 == 0));
         for q in [
             // Class-clustered SPO and SOP (`0x07` flag bit 4): a bound subject is
             // looked for in every class run, a type-scoped join reads one.
             "SELECT ?p ?o WHERE { <http://x/a> ?p ?o } LIMIT 5",
             "SELECT ?s ?o WHERE { ?s a <http://x/C> . ?s <http://x/p> ?o } LIMIT 5",
+            // Class-clustered SPOG (`0x07` flag bit 4): a bound subject of the quad
+            // index is looked for in every run, a class-scoped block probes one.
+            "SELECT ?g ?s ?p ?o WHERE { GRAPH ?g { ?s a <http://x/C> . ?s ?p ?o } } LIMIT 5",
+            "SELECT ?g ?s ?n WHERE { GRAPH ?g { ?s a <http://x/C> . ?s <http://x/p> ?n } } LIMIT 5",
             "SELECT ?g ?p ?o WHERE { GRAPH ?g { <http://x/a> ?p ?o } } LIMIT 5",
             "SELECT ?g ?s ?o WHERE { GRAPH ?g { ?s <http://x/p> ?o } } LIMIT 5",
             "SELECT ?g ?s ?p WHERE { GRAPH ?g { ?s ?p <http://x/b> } } LIMIT 5",

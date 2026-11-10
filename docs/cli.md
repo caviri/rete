@@ -293,7 +293,7 @@ published; see [compatibility.md](compatibility.md).
 `--cluster-subjects-by-class` (off by default, format `0x07`) lays the default
 graph's subject-leading permutations (SPO, and SOP when stored) out in
 `(class, subject, predicate, object)` order instead of subject order
-([SPEC.md §6.6](SPEC.md#66-class-clustering-of-the-subject-leading-permutations-0x07-optional)).
+([SPEC.md §6.6](SPEC.md#66-class-clustering-of-the-subject-leading-orders-0x07-optional)).
 Ids are not renumbered: only the tile order changes. Up to 32 classes (the ones
 with the most subjects, at least 1,000 each) get a contiguous run of tiles, a
 subject of several classes goes to its rarest listed class, and every other or
@@ -306,9 +306,22 @@ unsorted result may differ. The writer needs one byte of RAM per subject id
 (951 MB for OpenAIRE's 951 M subjects). `rete info` lists the runs and `rete
 verify` checks that every row is in the run of its subject's class;
 `rete convert` with the flag clusters a `0x06` or `0x07` file, without it undoes
-a clustering. It does nothing to a file with no default-graph subject of a
-listed class (the nanopub dump keeps everything in named graphs: its file comes
-out byte-identical).
+a clustering. It does nothing to the default graph when it has no subject of a
+listed class.
+
+The flag also clusters the quad index's SPOG, by its own classes: the
+`rdf:type` rows of any named graph, at most 10 of them (a lookup of one subject
+reads one leaf in every run, and a dump with named graphs is large, so the runs
+are fewer than the default graph's 32). `GRAPH ?g { ?s a <C> . ?s ?p ?o }` then
+probes SPOG for the subjects of `C`, which are one run of tiles, instead of
+walking every graph that holds a `C`. The planner takes the probe unless it
+estimates more reading than the walk would do, and keeps the walk under a small
+`LIMIT`; an unclustered file takes the probe too, which already saves requests
+(`RETE_CLASS_ROUTE=probe|walk` forces one). On the 2018 nanopub dump the flag
+takes 75 s to 80 s and shrinks the file by 1.3% (SPOG by 8%), and a class of
+653,639 subjects goes from 214 s to 59 s over a 120 ms, 4 MB/s link; see SPEC
+§6.6 for the rest.
+`rete info` lists the SPOG runs, `rete verify` checks them.
 
 `--named-graphs quad` (the default, and since format `0x06` the only layout)
 stores the named graphs of an N-Quads/TriG input in the **quad index**. The

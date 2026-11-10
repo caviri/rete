@@ -443,7 +443,11 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
         }
         // The class clusters: every row is in the run of its subject's class.
         let mut clusters = 0usize;
-        if bad.is_empty() && only.is_none_or(|k| k == rete_core::v06::kind::INDEX_DATA) {
+        if bad.is_empty()
+            && only.is_none_or(|k| {
+                k == rete_core::v06::kind::INDEX_DATA || k == rete_core::v06::kind::QUAD_DATA
+            })
+        {
             let (n, problems) = rete_core::v06::check_clusters(&reader)?;
             clusters = n;
             for p in problems {
@@ -457,7 +461,7 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
                 String::new()
             };
             let checked = if clusters > 0 {
-                format!("{checked}, and the {clusters} clustered permutations hold their classes")
+                format!("{checked}, and the {clusters} clustered orders hold their classes")
             } else {
                 checked
             };
@@ -766,7 +770,11 @@ fn print_clusters(root: &rete_core::v06::Root06) {
         return;
     };
     for o in orders {
-        let name = ["SPO", "POS", "OSP", "SOP", "PSO", "OPS"][o.si.min(5)];
+        let name = if o.si == rete_core::v06::QUAD_SPOG {
+            "SPOG"
+        } else {
+            ["SPO", "POS", "OSP", "SOP", "PSO", "OPS"][o.si.min(5)]
+        };
         println!(
             "  clusters     : {name}, {} class runs and the rest",
             o.classes.len()

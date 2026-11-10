@@ -163,7 +163,7 @@ fn builds_and_converts_agree_and_the_flag_is_reversible() {
     }
     let out = rete().arg("verify").arg(&ram).output().unwrap();
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("clustered permutations"),
+        String::from_utf8_lossy(&out.stdout).contains("clustered orders"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
@@ -180,6 +180,143 @@ fn builds_and_converts_agree_and_the_flag_is_reversible() {
         let want = rows(&plain, q);
         assert!(!want.is_empty(), "{q}");
         for f in [&ram, &bounded, &clustered] {
+            assert_eq!(rows(f, q), want, "{q} on {f:?}");
+        }
+    }
+}
+
+/// The same records in 13 named graphs (N-Quads): the default graph is empty, so
+/// only the quad index's SPOG has classes.
+fn nquads() -> String {
+    let mut s = String::new();
+    for i in 0..8_000u64 {
+        let subj = format!("<http://ex/r/{:06}>", (i * 7919) % 100_003);
+        let g = format!("<http://ex/g/{}>", i % 13);
+        let class = match i % 20 {
+            0..=7 => Some("A"),
+            8..=12 => Some("B"),
+            13..=15 => Some("C"),
+            16 => Some("D"),
+            _ => None,
+        };
+        if let Some(c) = class {
+            s.push_str(&format!(
+                "{subj} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/C{c}> {g} .\n"
+            ));
+        }
+        s.push_str(&format!("{subj} <http://ex/name> \"n{i}\" {g} .\n"));
+        s.push_str(&format!(
+            "{subj} <http://ex/v> <http://ex/o/{}> {g} .\n",
+            i % 50
+        ));
+    }
+    s
+}
+
+/// `info`'s quad-order and cluster lines, offsets left out.
+fn quad_lines(f: &Path) -> Vec<String> {
+    let out = rete().arg("info").arg(f).output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            t.contains("+G ")
+                || t.starts_with("clusters")
+                || t.starts_with("class ")
+                || t.starts_with("rest ")
+        })
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+#[test]
+fn spog_builds_and_converts_agree_and_the_flag_is_reversible() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("t.nq");
+    std::fs::write(&src, nquads()).unwrap();
+    let tmp = dir.path().join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let tiles = ("RETE_TILE_KIB", "4");
+    let build = |name: &str, extra: &[&str]| {
+        let out = dir.path().join(name);
+        let mut c = rete();
+        c.env(tiles.0, tiles.1)
+            .arg("build")
+            .arg(&src)
+            .arg("-o")
+            .arg(&out)
+            .arg("--no-pyramid")
+            .args(extra);
+        c.assert().success();
+        out
+    };
+    let plain = build("plain.rete", &[]);
+    let ram = build("ram.rete", &["--cluster-subjects-by-class"]);
+    let bounded = build(
+        "bounded.rete",
+        &[
+            "--cluster-subjects-by-class",
+            "--memory-budget-mb",
+            "64",
+            "--tmp-dir",
+            tmp.to_str().unwrap(),
+        ],
+    );
+    let convert = |from: &Path, name: &str, flag: bool| {
+        let out = dir.path().join(name);
+        let mut c = rete();
+        c.env(tiles.0, tiles.1)
+            .arg("convert")
+            .arg(from)
+            .arg("-o")
+            .arg(&out)
+            .arg("--no-card-costs");
+        if flag {
+            c.arg("--cluster-subjects-by-class");
+        }
+        c.assert().success();
+        out
+    };
+    let clustered = convert(&plain, "clustered.rete", true);
+    let back = convert(&clustered, "back.rete", false);
+
+    let p = quad_lines(&plain);
+    assert!(!p.iter().any(|l| l.starts_with("clusters")), "{p:?}");
+    let r = quad_lines(&ram);
+    assert!(
+        r.iter().any(|l| l.starts_with("clusters : SPOG")),
+        "SPOG has class runs: {r:?}"
+    );
+    assert_eq!(
+        r.iter().filter(|l| l.starts_with("class ")).count(),
+        3,
+        "{r:?}"
+    );
+    // The same quad layout from every writer, and back to the unclustered one.
+    assert_eq!(quad_lines(&bounded), r, "bounded against in RAM");
+    assert_eq!(quad_lines(&clustered), r, "convert against build");
+    assert_eq!(quad_lines(&back), p);
+    for f in [&ram, &bounded, &clustered, &back] {
+        rete().arg("verify").arg(f).assert().success();
+    }
+    let out = rete().arg("verify").arg(&ram).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("clustered orders"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let qs = [
+        "SELECT ?g ?s ?n WHERE { GRAPH ?g { ?s a <http://ex/CB> . ?s <http://ex/name> ?n } }",
+        "SELECT ?g ?s ?p ?o WHERE { GRAPH ?g { ?s a <http://ex/CD> . ?s ?p ?o } }",
+        "SELECT ?g ?p ?o WHERE { GRAPH ?g { <http://ex/r/000000> ?p ?o } }",
+        "SELECT ?g ?p ?o WHERE { GRAPH ?g { <http://ex/r/007919> ?p ?o } }",
+        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }",
+    ];
+    for q in qs {
+        let want = rows(&plain, q);
+        assert!(!want.is_empty(), "{q}");
+        for f in [&ram, &bounded, &clustered, &back] {
             assert_eq!(rows(f, q), want, "{q} on {f:?}");
         }
     }

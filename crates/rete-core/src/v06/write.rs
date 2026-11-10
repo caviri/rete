@@ -529,17 +529,41 @@ fn build_front(
                     ..*e
                 })
                 .collect();
-            let leaves = leaves_of(
-                &ents,
-                t.quad[*si],
-                codec,
-                &mut f.quad_leaves,
-                &mut f.leaf_max[2],
-                |e, i| {
-                    let _ = i;
-                    encode_qtile_leaf(e, e[0].off, version == VERSION)
-                },
-            );
+            // A clustered order (SPOG) cuts its leaves at the runs.
+            let runs: Vec<(usize, usize)> = match parts
+                .cluster
+                .iter()
+                .find(|c| c.si == QUAD_SPOG && *si == QUAD_SPOG)
+            {
+                Some(c) => {
+                    let mut at = 0;
+                    c.run_tiles
+                        .iter()
+                        .map(|&n| {
+                            at += n;
+                            (at - n, at)
+                        })
+                        .collect()
+                }
+                None => vec![(0, ents.len())],
+            };
+            let mut leaves = Vec::new();
+            for (a, b) in runs {
+                for mut l in leaves_of(
+                    &ents[a..b],
+                    t.quad[*si],
+                    codec,
+                    &mut f.quad_leaves,
+                    &mut f.leaf_max[2],
+                    |e, i| {
+                        let _ = i;
+                        encode_qtile_leaf(e, e[0].off, version == VERSION)
+                    },
+                ) {
+                    l.first += a;
+                    leaves.push(l);
+                }
+            }
             f.counts.push((10 + si, leaves.len()));
             orders.push(QuadOrderRoot {
                 si: *si,
