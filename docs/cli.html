@@ -2222,6 +2222,11 @@ sections are found through their length prefixes), and the header says
 where both start;</li>
 <li>merges ranges of one batch that lie at most 32 KiB apart into one request
 (never past 8 MiB), and slices them apart again;</li>
+<li>reads the tiles of a probe join window (scattered by construction) as <strong>exact
+ranges</strong>: the block cache does not round each one out to its 64 or 128 KiB
+block, two of them are merged only when at most 32 KiB apart
+(<code>RETE_HTTP_SPARSE_GAP_KB</code>), and up to twice <code>RETE_HTTP_CONCURRENCY</code> (at most
+64) requests are in flight, since they are many and small;</li>
 <li>opens with one <code>bytes=0-131071</code> GET, which is also the length probe (the
 total in its <code>Content-Range</code>): no <code>HEAD</code>. A file of at most <strong>8 MiB</strong>
 (<code>RETE_HTTP_WHOLE_MB</code>, <code>0</code> = never) is then fetched whole in one more

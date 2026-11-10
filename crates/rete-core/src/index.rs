@@ -1367,6 +1367,10 @@ pub struct GraphIndex {
     /// Optional batched fetch for multi-tile scans (`None` falls back to
     /// one [`TileLoader`] call per tile).
     bulk: Option<TileBulkLoader>,
+    /// The batched fetch for tiles known to lie far apart (a window of probes):
+    /// exact ranges, not rounded out to cache blocks or merged across wide
+    /// gaps. `None` falls back to [`bulk`](Self::bulk).
+    scattered: Option<TileBulkLoader>,
     /// Set when the loader failed for some tile: results may be incomplete and
     /// the caller must surface an error rather than the partial answer.
     load_failed: std::sync::atomic::AtomicBool,
@@ -1402,6 +1406,7 @@ impl GraphIndex {
             perms,
             loader: None,
             bulk: None,
+            scattered: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             cache,
@@ -1498,6 +1503,7 @@ impl GraphIndex {
             perms,
             loader: Some(loader),
             bulk: None,
+            scattered: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
@@ -1522,6 +1528,7 @@ impl GraphIndex {
             perms,
             loader: Some(loader),
             bulk: None,
+            scattered: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
@@ -1533,6 +1540,14 @@ impl GraphIndex {
     /// scans prefetch their span through it instead of faulting tile by tile.
     pub fn with_bulk_loader(mut self, bulk: TileBulkLoader) -> Self {
         self.bulk = Some(bulk);
+        self
+    }
+
+    /// Attach the fetcher for scattered tiles ([`GraphIndex::probe_batch_fault`]):
+    /// a probe window's tiles are far apart, so it asks for each one's exact
+    /// range instead of the block-aligned, gap-merged spans a scan wants.
+    pub fn with_scattered_loader(mut self, scattered: TileBulkLoader) -> Self {
+        self.scattered = Some(scattered);
         self
     }
 
@@ -1660,6 +1675,7 @@ impl GraphIndex {
             perms,
             loader: Some(loader),
             bulk: None,
+            scattered: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             cache: ChunkCache::unlimited_arc(),
@@ -1686,10 +1702,15 @@ impl GraphIndex {
     /// unloaded for the per-tile loader to retry. Shared by the consecutive-span
     /// scan prefetch and the scattered batch-probe prefetch.
     fn bulk_fault(&self, section: usize, tiles: &[usize]) {
+        self.fault_with(self.bulk.as_ref(), section, tiles);
+    }
+
+    /// [`bulk_fault`](Self::bulk_fault) through `loader`.
+    fn fault_with(&self, loader: Option<&TileBulkLoader>, section: usize, tiles: &[usize]) {
         if tiles.len() < 2 {
             return;
         }
-        let Some(bulk) = &self.bulk else { return };
+        let Some(bulk) = loader else { return };
         if let Some(images) = bulk(section, tiles) {
             if images.len() == tiles.len() {
                 for (&ti, img) in tiles.iter().zip(images) {
@@ -1777,7 +1798,7 @@ impl GraphIndex {
     pub(crate) fn probe_batch_fault(&self, batch: ProbeBatch) {
         for (si, set) in batch.want.iter().enumerate() {
             let tiles: Vec<usize> = set.iter().copied().collect();
-            self.bulk_fault(si, &tiles);
+            self.fault_with(self.scattered.as_ref().or(self.bulk.as_ref()), si, &tiles);
         }
     }
 
