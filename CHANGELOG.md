@@ -5,6 +5,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-11-10
+
 ### Fixed
 
 - **`card-url` stops at the end of the card.** On OpenAIRE and OC Meta the card ends inside the first 64 KiB (61.6 KB and 50.6 KB), but 0.5.6 read on to the end of the front (the card region holds as much slack again as card and record: 95 KB and 81 KB), a second request. `card-url` now reads to the end of the card, and of the build record when the format prints it (every format but `--format croissant`), no further. A new request-count test serves a file whose card ends before its front does: one request of 128 KiB, and a follow-up that ends at the record. No format change.
