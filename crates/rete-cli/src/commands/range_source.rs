@@ -37,7 +37,7 @@ const UNKNOWN_MEMORY_LAZY_ABOVE_BYTES: u64 = 256 << 20; // 256 MiB
 /// RSS on every query, the lazy open 32–305 ms and 21–165 MiB, and the lazy
 /// open also won every full scan (81 local jobs: 28.9 s eager, 4.8 s lazy;
 /// a 16 MB file: 85 ms eager, 40 ms lazy). Below this the two cost the same:
-/// a format `0x06` open reads the first 64 KiB, which on a file this small is
+/// a format `0x06` open reads the first 128 KiB, which on a file this small is
 /// most of it.
 pub(crate) const QUERY_EAGER_MAX_BYTES: u64 = 1 << 20; // 1 MiB
 
@@ -348,7 +348,7 @@ impl RangedSourceReader {
 
     /// [`open`](Self::open) for a command that only reads the front of the
     /// file (`card-url`): a remote file is never fetched whole, however small.
-    /// The open is then the one first read (the first 64 KiB, which also gives
+    /// The open is then the one first read (the first 128 KiB, which also gives
     /// the length) and nothing else.
     pub(crate) fn open_front(source: &str) -> anyhow::Result<Self> {
         if is_url(source) {
@@ -387,6 +387,13 @@ impl RangeReader for RangedSourceReader {
         match self {
             Self::Local(r) => r.read_many(ranges),
             Self::Http(r) => r.read_many(ranges),
+        }
+    }
+
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> io::Result<Vec<Vec<u8>>> {
+        match self {
+            Self::Local(r) => r.read_many_scattered(ranges),
+            Self::Http(r) => r.read_many_scattered(ranges),
         }
     }
 

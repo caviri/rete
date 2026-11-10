@@ -1937,7 +1937,12 @@ URL):
   where both start;
 - merges ranges of one batch that lie at most 32 KiB apart into one request
   (never past 8 MiB), and slices them apart again;
-- opens with one `bytes=0-65535` GET, which is also the length probe (the
+- reads the tiles of a probe join window (scattered by construction) as **exact
+  ranges**: the block cache does not round each one out to its 64 or 128 KiB
+  block, two of them are merged only when at most 32 KiB apart
+  (`RETE_HTTP_SPARSE_GAP_KB`), and up to twice `RETE_HTTP_CONCURRENCY` (at most
+  64) requests are in flight, since they are many and small;
+- opens with one `bytes=0-131071` GET, which is also the length probe (the
   total in its `Content-Range`): no `HEAD`. A file of at most **8 MiB**
   (`RETE_HTTP_WHOLE_MB`, `0` = never) is then fetched whole in one more
   request, and no query on it reads the network again: 2 round trips per query
@@ -1978,10 +1983,10 @@ the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.
 
 ### `rete card-url <url> [--json] [--full] [--format jsonld|croissant] [--sha256 <hex>]`
 Fetch only the embedded [Dataset Card](dataset-cards.md). On a format `0x06`
-file that is **one first read** of the first 64 KiB, which holds the header, the
+file that is **one first read** of the first 128 KiB, which holds the header, the
 root, the card region (card and build record) and the statistics
 ([SPEC §4.6](SPEC.md#46-opening-a-file)), and **at most one follow-up**, sized
-from the header, when the front is longer than that. A small remote file is not
+from the header, when the card (and the build record, which every format but Croissant prints) ends past that; it stops there and does not read the slack that follows them. A small remote file is not
 fetched whole, as the other URL commands do. A `0x05` file has its card after
 the 1 KiB header, so it takes the first read and one range for the card and
 the build record. The dictionary, index, and pyramid are never fetched: this is the index-free **CARD

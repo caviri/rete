@@ -802,6 +802,26 @@ pub(crate) fn read_coalesced<R: RangeReader + ?Sized>(
     ranges: &[ByteRange],
     gap: u64,
 ) -> Option<Vec<Vec<u8>>> {
+    coalesced(reader, ranges, gap, false)
+}
+
+/// [`read_coalesced`] for ranges known to be scattered (a probe window's
+/// tiles): the spans go through [`RangeReader::read_many_scattered`], so the
+/// reader asks for them as they are.
+pub(crate) fn read_coalesced_scattered<R: RangeReader + ?Sized>(
+    reader: &R,
+    ranges: &[ByteRange],
+    gap: u64,
+) -> Option<Vec<Vec<u8>>> {
+    coalesced(reader, ranges, gap, true)
+}
+
+fn coalesced<R: RangeReader + ?Sized>(
+    reader: &R,
+    ranges: &[ByteRange],
+    gap: u64,
+    scattered: bool,
+) -> Option<Vec<Vec<u8>>> {
     // Build the coalesced spans and remember which span each input range maps
     // into, so the fetched span blobs can be sliced back apart in order.
     let mut spans: Vec<(u64, u64)> = Vec::new();
@@ -826,7 +846,12 @@ pub(crate) fn read_coalesced<R: RangeReader + ?Sized>(
         }
         i = j;
     }
-    let blobs = reader.read_many(&spans).ok()?;
+    let blobs = if scattered {
+        reader.read_many_scattered(&spans)
+    } else {
+        reader.read_many(&spans)
+    }
+    .ok()?;
     if blobs.len() != spans.len() {
         return None;
     }

@@ -15,7 +15,7 @@
 ### Goals
 - **Single immutable file**, queryable in place over HTTP `Range` requests.
 - **Bounded request count** to answer a query — the client reads the first
-  64 KiB (the header, the root block with every section's byte range, the card,
+  128 KiB (the header, the root block with every section's byte range, the card,
   the statistics and, on a small file, every leaf directory), then fetches only
   the leaves and payload a query touches (§4.6).
 - **SPARQL** evaluation against the file (BGPs, joins, filters, paths, aggregates,
@@ -98,14 +98,14 @@ file_len - 8 FOOTER: 07 00 00 00 "RETE"
 ```
 
 `front_base = 128 + root length + card region length`. A reader's first
-request is `bytes=0-65535` (§4.6); it holds the header, the root, the card and
+request is `bytes=0-131071` (§4.6); it holds the header, the root, the card and
 the statistics of every measured file, and on a small file every leaf directory
 as well. In `0x06` the label index's root node sat in the root (37 KiB of
 OpenCitations Meta's 41 KiB root, 47 KiB of OpenAIRE's 48 KiB: it is
 incompressible); `0x07` moves it out (§4.10), so the root is the section table
 and the small unit roots.
 
-<img src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 64 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
+<img src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 128 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
 
 ### 4.1 Header (128 bytes, little-endian)
 
@@ -287,7 +287,7 @@ codec) and the build record (raw JSON, possibly followed by ASCII spaces up to
 its length, as in §4.9), each at the offset and length the header gives,
 relative to the region; the rest is free. The writer sizes the region
 `2 × (card + record) + 8 KiB` when it writes a card, the record alone when it
-writes none (that space is in the first 64 KiB the open reads, where slack
+writes none (that space is in the first 128 KiB the open reads, where slack
 would push the leaf directories out of it, so a file with no card is re-carded
 by a copy), and 0 when there is neither. The card is inside
 the content hash; the build record is not (it records when, how and how fast,
@@ -353,8 +353,8 @@ overrides it). **`0x07` is order-major, always**, and flag bit3 is never set
 
 ### 4.6 Opening a file
 
-1. Read `min(64 KiB, file length)` from offset 0. Over HTTP this is
-   `GET bytes=0-65535`, which also gives the length (`Content-Range`, whose
+1. Read `min(128 KiB, file length)` from offset 0. Over HTTP this is
+   `GET bytes=0-131071`, which also gives the length (`Content-Range`, whose
    start, end and total must all match); no `HEAD` is sent. A remote file of
    at most 8 MiB is then fetched whole in one more read. Byte 4 picks the
    reader: `0x05` continues with the generation-1 open (§4.9), served from
@@ -362,7 +362,7 @@ overrides it). **`0x07` is order-major, always**, and flag bit3 is never set
 2. `0x06` or `0x07`: parse the header; take the root (and in the rare case it does not
    fit, read the rest of it); check the root digest; decode the section table
    and the unit roots. The card, the record and the statistics are in hand, and
-   so is every leaf inside the first 64 KiB.
+   so is every leaf inside the first 128 KiB.
 3. A query faults the leaves it needs, then the payload. The dictionary and the
    index route through the unit roots to a leaf, then to a chunk or a tile.
    Sequential dictionary misses read ahead (2, 4, 8, up to 16 chunks a batch);
@@ -1720,7 +1720,7 @@ dominated by range-request count and block sizes.
 A generation-2 file is planned from its front (§4.6):
 
 ```
-1. GET bytes=0-65535        → header, root block (section table + directory
+1. GET bytes=0-131071        → header, root block (section table + directory
                               roots), card, statistics; on a small file every
                               leaf directory too. Doubles as the length probe:
                               no HEAD.

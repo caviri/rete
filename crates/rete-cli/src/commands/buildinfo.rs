@@ -1907,7 +1907,7 @@ pub(crate) fn query_costs(queries: Vec<QueryCost>) -> QueryCosts {
 /// reserve when the costs are measured again on the final `0x06` layout.
 ///
 /// In `0x06` a starter query's bytes are a property of the layout *including
-/// the card region*: the open reads the first 64 KiB, so what else that read
+/// the card region*: the open reads the first 128 KiB, so what else that read
 /// covers moves with the card and the record (a small file is read whole). The
 /// costs are therefore measured on the file as written, record reserved, and
 /// the sealed record — never wider than this — patched into the reservation.

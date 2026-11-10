@@ -231,14 +231,23 @@ pub(crate) struct CardRead {
 pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
     reader: &R,
 ) -> anyhow::Result<CardRead> {
+    load_card_and_build_ranged_with(reader, true)
+}
+
+/// [`load_card_and_build_ranged`], leaving the build record unread when
+/// `want_record` is false (a `0x06` read then ends at the end of the card).
+pub(crate) fn load_card_and_build_ranged_with<R: rete_core::RangeReader>(
+    reader: &R,
+    want_record: bool,
+) -> anyhow::Result<CardRead> {
     let head = reader.read_at(0, rete_core::HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
     let meta = (header.metadata_offset, header.metadata_len);
     let build = (header.build_info_offset, header.build_info_len);
     let (m, b) = if rete_core::v06::reads(header.version) {
         // 0x06: card and record share the card region, right after the root.
-        let (_, m, b) = rete_core::read_card_and_build_info_with_header(reader)?;
-        (m, b)
+        let h06 = rete_core::v06::Header06::from_bytes(&head)?;
+        rete_core::v06::open::read_card_build_with(reader, &h06, want_record)?
     } else if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
         // Adjacent (the layout the writers produce): one read spans both.
         let both = reader.read_at(meta.0, meta.1 + build.1)?;

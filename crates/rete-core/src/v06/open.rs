@@ -40,6 +40,18 @@ fn read_coalesced(
     crate::file::read_coalesced(r, &rs, gap)
 }
 
+/// [`read_coalesced`] for tiles far apart: the reader gets the exact ranges.
+fn read_scattered(
+    r: &(dyn RangeReader + Send + Sync),
+    ranges: &[(u64, u64)],
+) -> Option<Vec<Vec<u8>>> {
+    let rs: Vec<ByteRange> = ranges
+        .iter()
+        .map(|&(offset, len)| ByteRange { offset, len })
+        .collect();
+    crate::file::read_coalesced_scattered(r, &rs, 0)
+}
+
 impl V06File {
     /// Open from `first`, the file's leading bytes (at least the header; the
     /// root is read from it when it fits, else fetched).
@@ -420,7 +432,19 @@ impl V06File {
                 .map(|b| decompress_bounded(codec, b, max).ok())
                 .collect()
         });
-        let mut index = GraphIndex::from_leafed(lists, perms, loader).with_bulk_loader(bulk);
+        let (r, l) = (self.reader.clone(), lists.clone());
+        let scattered: crate::index::TileBulkLoader = Box::new(move |si, tis| {
+            let list = l.get(si)?.as_ref()?;
+            let ranges: Option<Vec<(u64, u64)>> = tis.iter().map(|&ti| list.range(ti)).collect();
+            let blobs = read_scattered(&*r, &ranges?)?;
+            blobs
+                .iter()
+                .map(|b| decompress_bounded(codec, b, max).ok())
+                .collect()
+        });
+        let mut index = GraphIndex::from_leafed(lists, perms, loader)
+            .with_bulk_loader(bulk)
+            .with_scattered_loader(scattered);
         for c in self
             .clusters(&perms_root)?
             .into_iter()
@@ -673,8 +697,22 @@ pub fn read_card_build<R: RangeReader + ?Sized>(
     r: &R,
     h: &Header06,
 ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
+    read_card_build_with(r, h, true)
+}
+
+/// [`read_card_build`], reading the build record only when `want_build`: a
+/// caller that never prints it stops its read at the end of the card.
+#[allow(clippy::type_complexity)]
+pub fn read_card_build_with<R: RangeReader + ?Sized>(
+    r: &R,
+    h: &Header06,
+    want_build: bool,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
     let c = h.card_range();
-    let b = h.build_range();
+    let mut b = h.build_range();
+    if !want_build {
+        b.len = 0;
+    }
     if c.len == 0 && b.len == 0 {
         return Ok((None, None));
     }

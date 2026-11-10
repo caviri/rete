@@ -470,7 +470,10 @@ pub(crate) struct Ctx<'a> {
     /// many rows at most, and which slots are projected. Only a *fetch
     /// strategy* hint: a batch that canonicalizes a variable predicate also
     /// faults the terms of the rows the projection will decode, in the same
-    /// round trips. Never an input to an answer.
+    /// round trips. Set only when the plan is one triple pattern (so every
+    /// scanned row reaches the projection), and the rows prefetched are capped
+    /// across the whole scan (`bgp::CanonAhead`), not per run. Never an input
+    /// to an answer.
     pub(crate) decode_ahead: std::cell::RefCell<Option<(usize, Vec<bool>)>>,
 }
 

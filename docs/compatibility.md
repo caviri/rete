@@ -26,7 +26,7 @@ GSPO, SPOG, POSG and OSPG (SPEC §6.5), declared by the root and independent of
 
 Every writer now writes format byte `0x06`, generation 2 ([SPEC §4](SPEC.md#4-file-layout)):
 a 128-byte header, a root block and the Dataset Card at the front of the file,
-inside the first 64 KiB a reader fetches, and the data after them. Readers of
+inside the first 128 KiB a reader fetches, and the data after them. Readers of
 this release read both generations; **readers up to 0.4.2 cannot read `0x06`**.
 They refuse it by name (`unsupported .rete format 0x06; this Rete build reads
 0x05..=0x05`), never misread it.

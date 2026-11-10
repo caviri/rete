@@ -296,7 +296,7 @@ fn pyramid_image() -> Vec<u8> {
     let node = mt_node;
     let knows = "<http://ex/knows>";
     let mut edges: Vec<(u32, u32)> = Vec::new();
-    for c in 0..30u32 {
+    for c in 0..60u32 {
         for i in 0..60u32 {
             for j in 0..60u32 {
                 if i != j {

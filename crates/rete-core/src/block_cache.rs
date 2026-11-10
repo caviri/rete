@@ -133,6 +133,12 @@ impl<R: RangeReader> BlockCacheReader<R> {
         self.cache.lock().unwrap().used
     }
 
+    /// Is every block of `[offset, offset+len)` resident in the cache?
+    fn resident(&self, offset: u64, len: u64) -> bool {
+        let st = self.cache.lock().unwrap();
+        (offset / self.block..=(offset + len - 1) / self.block).all(|b| st.map.contains_key(&b))
+    }
+
     /// Does the inner reader already hold `[offset, offset+len)` in memory?
     fn held(&self, offset: u64, len: u64) -> bool {
         offset
@@ -408,6 +414,47 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
         self.trim();
         Ok(out)
     }
+
+    /// Ranges the caller knows lie far apart: those the cache holds are served
+    /// from it; the rest go to the inner reader as they are, not rounded out to
+    /// blocks (a 19 KB tile would cost its 128 KiB block, or two) and not
+    /// cached here, since a scattered tile is not near the next one wanted.
+    fn read_many_scattered(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        let mut out: Vec<Option<Vec<u8>>> = vec![None; ranges.len()];
+        let mut rest: Vec<(usize, (u64, u64))> = Vec::new();
+        for (i, &(o, l)) in ranges.iter().enumerate() {
+            if l == 0 {
+                out[i] = Some(Vec::new());
+                continue;
+            }
+            self.bounds(o, l)?;
+            if self.held(o, l) {
+                out[i] = Some(self.inner.read_at(o, l)?);
+            } else if self.resident(o, l) {
+                out[i] = Some(self.assemble(o, l)?);
+            } else {
+                rest.push((i, (o, l)));
+            }
+        }
+        if !rest.is_empty() {
+            let asked: Vec<(u64, u64)> = rest.iter().map(|r| r.1).collect();
+            let got = self.inner.read_many_scattered(&asked)?;
+            if got.len() != asked.len() {
+                return Err(std::io::Error::other("scattered read returned wrong count"));
+            }
+            for ((i, (o, l)), blob) in rest.into_iter().zip(got) {
+                if blob.len() as u64 != l {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        format!("read at {o} returned {} bytes, not {l}", blob.len()),
+                    ));
+                }
+                out[i] = Some(blob);
+            }
+        }
+        self.trim();
+        Ok(out.into_iter().map(|b| b.unwrap_or_default()).collect())
+    }
 }
 
 #[cfg(test)]
@@ -458,6 +505,28 @@ mod tests {
         let before = counting.requests();
         assert_eq!(r.read_at(200, 16).unwrap(), data[200..216]);
         assert_eq!(counting.requests(), before);
+    }
+
+    /// Scattered ranges are fetched as asked: no block rounding, nothing cached;
+    /// a range whose blocks are resident is still served from the cache.
+    #[test]
+    fn read_many_scattered_is_exact_and_uncached() {
+        let data: Vec<u8> = (0..200_000u32).map(|i| (i * 7) as u8).collect();
+        let counting = Arc::new(CountingReader::new(SliceReader::new(&data)));
+        let r = BlockCacheReader::new(counting.clone(), 32 * 1024);
+        let ranges = [(1000u64, 100u64), (100_000, 50), (150_000, 10), (7, 0)];
+        let out = r.read_many_scattered(&ranges).unwrap();
+        for (&(o, l), got) in ranges.iter().zip(&out) {
+            assert_eq!(got.as_slice(), &data[o as usize..(o + l) as usize]);
+        }
+        assert_eq!(counting.bytes_read(), 160);
+        assert_eq!(r.cached_bytes(), 0);
+        // Block 0 resident: a scattered range inside it costs nothing more.
+        r.read_at(5, 8).unwrap();
+        let before = counting.bytes_read();
+        let got = r.read_many_scattered(&[(2000, 10)]).unwrap();
+        assert_eq!(got[0].as_slice(), &data[2000..2010]);
+        assert_eq!(counting.bytes_read(), before);
     }
 
     #[test]

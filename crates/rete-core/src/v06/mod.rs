@@ -55,7 +55,7 @@ pub fn reads(v: u8) -> bool {
 pub const HEADER_LEN: usize = 128;
 /// What a reader fetches first: header, root, card, statistics and, on a small
 /// file, every leaf directory (SPEC.md §9).
-pub const FIRST_READ: u64 = 64 * 1024;
+pub const FIRST_READ: u64 = 128 * 1024;
 /// The 8-byte footer of the current generation: the generation, then `RETE`
 /// — so every reader that confirms a length by the file's last four bytes
 /// finds the magic there.
