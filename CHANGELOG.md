@@ -5,7 +5,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
-## [0.5.7] - 2026-11-09
+## [0.5.7] - 2026-11-10
 
 ### Fixed
 
