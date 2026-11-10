@@ -1121,6 +1121,10 @@ pub(crate) fn quad_scan_rows<'q>(
     })))
 }
 
+mod class_probe;
+pub(crate) use class_probe::class_probe_rows;
+pub use class_probe::set_class_route;
+
 /// A triple pattern as the dictionary ids of its constants (subject, predicate, object).
 pub(crate) type ScanPattern = (Option<u32>, Option<u32>, Option<u32>);
 

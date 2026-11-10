@@ -304,14 +304,33 @@ impl V06File {
             return Ok(Vec::new());
         };
         let orders = decode_cluster_root(unit)?;
+        let quad = self.quad_root().transpose()?;
         for c in &orders {
-            let p = perms
-                .iter()
-                .find(|p| p.si == c.si)
-                .ok_or(FileError::Container(
-                    "0x07 cluster root names a permutation the index lacks",
-                ))?;
-            if c.run_tiles.iter().sum::<usize>() != p.n_tiles {
+            // The order's tile count and its leaves, `(first tile, tiles)`.
+            let (n_tiles, leaves): (usize, Vec<(usize, usize)>) = if c.si == QUAD_SPOG {
+                let o = quad
+                    .as_ref()
+                    .and_then(|q| q.orders.iter().find(|o| o.si == c.si))
+                    .ok_or(FileError::Container(
+                        "0x07 cluster root names an order the quad index lacks",
+                    ))?;
+                (
+                    o.n_tiles,
+                    o.leaves.iter().map(|(l, _, _, _)| (l.first, l.n)).collect(),
+                )
+            } else {
+                let p = perms
+                    .iter()
+                    .find(|p| p.si == c.si)
+                    .ok_or(FileError::Container(
+                        "0x07 cluster root names a permutation the index lacks",
+                    ))?;
+                (
+                    p.n_tiles,
+                    p.leaves.iter().map(|(l, _, _, _)| (l.first, l.n)).collect(),
+                )
+            };
+            if c.run_tiles.iter().sum::<usize>() != n_tiles {
                 return Err(FileError::Container(
                     "0x07 cluster runs do not cover the tiles",
                 ));
@@ -323,9 +342,9 @@ impl V06File {
                 at += n;
                 ends.push(at);
             }
-            for (l, _, _, _) in &p.leaves {
-                let r = ends.partition_point(|&e| e <= l.first);
-                if l.first + l.n > ends[r.min(ends.len() - 1)] {
+            for (first, n) in leaves {
+                let r = ends.partition_point(|&e| e <= first);
+                if first + n > ends[r.min(ends.len() - 1)] {
                     return Err(FileError::Container(
                         "0x07 a directory leaf spans two cluster runs",
                     ));
@@ -402,7 +421,7 @@ impl V06File {
                 .collect()
         });
         let mut index = GraphIndex::from_leafed(lists, perms, loader).with_bulk_loader(bulk);
-        for c in self.clusters(&perms_root)? {
+        for c in self.clusters(&perms_root)?.into_iter().filter(|c| c.si < NUM_PERMS) {
             index = index.with_clusters(
                 c.si,
                 crate::index::ClusterRuns::new(c.classes, &c.run_tiles),
@@ -530,6 +549,12 @@ impl V06File {
         };
         let leaves = self.section(kind::QUAD_LEAVES).map_or(0, |r| r.offset);
         let data = self.section(kind::QUAD_DATA).map_or(0, |r| r.offset);
+        // The class runs of SPOG, when the file clusters it.
+        let clusters = match self.root.unit(tag::CLUSTER).map(decode_cluster_root) {
+            Some(Ok(c)) => c,
+            Some(Err(e)) => return Some(Err(e)),
+            None => Vec::new(),
+        };
         Some(
             crate::quad::V06Quad::new(
                 &root,
@@ -538,6 +563,7 @@ impl V06File {
                 self.h.internal_codec,
                 self.h.version == VERSION,
             )
+            .and_then(|v| v.with_clusters(&clusters))
             .map(|mut v| {
                 v.tile_max = self.bound(kind::QUAD_DATA);
                 v.leaf_max = self.bound(kind::QUAD_LEAVES);

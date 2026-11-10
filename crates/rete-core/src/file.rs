@@ -5241,6 +5241,14 @@ impl Rete {
         }
     }
 
+    /// The quad index, when the file has one.
+    pub(crate) fn quad_named(&self) -> Option<&crate::quad::QuadNamed> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => Some(q),
+            _ => None,
+        }
+    }
+
     /// [`named_graph_at`](Self::named_graph_at) under a declared demand: see
     /// [`named_graph_name_owned_demand`](Self::named_graph_name_owned_demand).
     pub(crate) fn named_graph_at_demand(

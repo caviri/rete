@@ -604,7 +604,7 @@ pub struct ClusterRuns {
     pub classes: Vec<u32>,
     /// The run the last subject was found in: the first place the next is
     /// looked for, so a join over one class's subjects reads one run.
-    hint: std::sync::atomic::AtomicUsize,
+    pub(crate) hint: std::sync::atomic::AtomicUsize,
     /// Subjects already placed (`ABSENT_RUN`: not in any run).
     memo: std::sync::Mutex<std::collections::HashMap<u32, u8>>,
 }
@@ -633,7 +633,7 @@ impl ClusterRuns {
         }
     }
 
-    fn remember(&self, a: u32, run: Option<usize>) {
+    pub(crate) fn remember(&self, a: u32, run: Option<usize>) {
         if let Ok(mut m) = self.memo.lock() {
             if m.len() >= RUN_MEMO_MAX {
                 m.clear();
@@ -645,7 +645,7 @@ impl ClusterRuns {
         }
     }
 
-    fn recall(&self, a: u32) -> Option<Option<usize>> {
+    pub(crate) fn recall(&self, a: u32) -> Option<Option<usize>> {
         let m = self.memo.lock().ok()?;
         m.get(&a).map(|&r| {
             if r == ABSENT_RUN {

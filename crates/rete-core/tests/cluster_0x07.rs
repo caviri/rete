@@ -101,6 +101,7 @@ fn opts(cluster: Option<ClusterOpts>) -> WriteOpts {
 
 fn four() -> ClusterOpts {
     ClusterOpts {
+        quad_classes: 3,
         max_classes: 4,
         min_subjects: 100,
     }

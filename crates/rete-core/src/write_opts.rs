@@ -297,16 +297,28 @@ pub struct ClusterOpts {
     /// A class needs at least this many subjects to get a run: a smaller class
     /// would not fill a tile, and every run costs a point lookup one more tile.
     pub min_subjects: u64,
+    /// The most classes the quad index's SPOG gets a run for. Fewer than the
+    /// default graph's: a bound subject of SPOG reads one leaf in every run, and
+    /// a named-graph dump is far larger than a default graph, so each run costs
+    /// more to look past (SPEC.md section 6.6).
+    pub quad_classes: usize,
 }
 
 /// Default of [`ClusterOpts::min_subjects`].
 pub const DEFAULT_CLUSTER_MIN_SUBJECTS: u64 = 1000;
+
+/// Default of [`ClusterOpts::quad_classes`].
+pub const DEFAULT_CLUSTER_QUAD_CLASSES: usize = 10;
 
 impl Default for ClusterOpts {
     fn default() -> Self {
         ClusterOpts {
             max_classes: crate::v06::MAX_CLUSTERS,
             min_subjects: DEFAULT_CLUSTER_MIN_SUBJECTS,
+            quad_classes: std::env::var("RETE_CLUSTER_QUAD_CLASSES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_CLUSTER_QUAD_CLASSES),
         }
     }
 }

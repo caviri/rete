@@ -1444,6 +1444,11 @@ fn graph_var_scan<'q>(ctx: &'q Ctx<'q>, var: &'q str, inner: &'q Plan) -> Option
     if patterns.len() < 2 {
         return None;
     }
+    // A star on one class-typed subject: probe SPOG for the class's subjects
+    // when that reads less than walking the graphs (`bgp::class_probe`).
+    if let Some(rows) = crate::bgp::class_probe_rows(ctx, patterns, slot) {
+        return Some(rows);
+    }
     // Several patterns: the graphs holding a match of the most constrained one.
     let driver = crate::bgp::driver_pattern(ctx, patterns)?;
     let scan = ctx.rete.named_quad_scan(driver)?;
