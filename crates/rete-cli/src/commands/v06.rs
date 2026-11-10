@@ -76,7 +76,7 @@ pub(crate) fn convert(
     use rete_core::v06::write::QuadClustering;
     // The sort that derives the `0x07` quad orders spills beside the output
     // unless told otherwise (a big file's spill is 16 bytes a quad).
-    rete_core::write_opts::set_scratch_dir(Some(match tmp_dir {
+    let spill_dir = match tmp_dir {
         Some(d) => std::path::PathBuf::from(d),
         None => std::path::Path::new(output)
             .parent()
@@ -85,11 +85,11 @@ pub(crate) fn convert(
                 || std::path::PathBuf::from("."),
                 std::path::Path::to_path_buf,
             ),
-    }));
+    };
     if std::path::Path::new(input) == std::path::Path::new(output) {
         anyhow::bail!("convert writes a new file: OUT must differ from IN");
     }
-    let mut opts = WriteOpts::default();
+    let mut opts = WriteOpts::default().with_spill_dir(Some(spill_dir));
     match quad {
         Some("graph") => opts.quad = QuadClustering::GraphMajor,
         Some("order") => opts.quad = QuadClustering::OrderMajor,

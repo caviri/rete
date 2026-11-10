@@ -241,24 +241,6 @@ pub fn set_quad_run_rows(n: usize) {
     QUAD_RUN_ROWS.store(n, Ordering::Relaxed);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-static SCRATCH_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
-
-/// Where a writer spills its sort runs when it has no directory of its own (the
-/// CLI's `--tmp-dir`); `None` = the system temporary directory.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn scratch_dir() -> Option<std::path::PathBuf> {
-    SCRATCH_DIR.lock().ok().and_then(|g| g.clone())
-}
-
-/// Set (or clear) the spill directory of [`scratch_dir`].
-#[cfg(not(target_arch = "wasm32"))]
-pub fn set_scratch_dir(dir: Option<std::path::PathBuf>) {
-    if let Ok(mut g) = SCRATCH_DIR.lock() {
-        *g = dir;
-    }
-}
-
 /// Default size above which a `0x07` graph view does not build its POS and OSP
 /// orders from its own GSPO slice (see `quad::view`).
 pub const DEFAULT_QUAD_SYNTH_MAX: u64 = 1 << 20;

@@ -401,10 +401,12 @@ fn drain(
 
 /// Rewrite one permutation: its rows in subject order (merged from the runs of
 /// its current clustering, if any), partitioned by `arr` into `k + 1` runs.
+#[allow(clippy::too_many_arguments)]
 fn rewrite(
     parts: &Parts,
     input: &dyn RangeReader,
     extras: &mut Extras,
+    spill_dir: &std::path::Path,
     ps: &PermPart,
     current: Option<&ClusterOrder>,
     arr: Option<&[u8]>,
@@ -448,7 +450,7 @@ fn rewrite(
     let mut runs: Vec<RunOut> = Vec::with_capacity(k + 1);
     for r in 0..=k {
         runs.push(RunOut {
-            sink: Sink::new(in_memory, &format!("{tag}-{r}.tiles"))?,
+            sink: Sink::new(in_memory, spill_dir, &format!("{tag}-{r}.tiles"))?,
             ents: Vec::new(),
             at: 0,
         });
@@ -525,6 +527,7 @@ pub(crate) fn derive(
     parts: &Parts,
     input: &dyn RangeReader,
     want: Option<ClusterOpts>,
+    spill_dir: &std::path::Path,
 ) -> Result<Option<(Parts, Extras)>, FileError> {
     let mut extras = Extras::new(input.len());
     let mut out = parts.clone();
@@ -549,6 +552,7 @@ pub(crate) fn derive(
                         parts,
                         input,
                         &mut extras,
+                        spill_dir,
                         ps,
                         None,
                         Some(&arr),
@@ -568,6 +572,7 @@ pub(crate) fn derive(
                         parts,
                         input,
                         &mut extras,
+                        spill_dir,
                         tiles,
                         None,
                         Some(&arr),
@@ -592,16 +597,32 @@ pub(crate) fn derive(
                     let Some(tiles) = spog_tiles(parts) else {
                         continue;
                     };
-                    let (new, _) =
-                        rewrite_quad(parts, input, &mut extras, tiles, Some(c), None, 0)?;
+                    let (new, _) = rewrite_quad(
+                        parts,
+                        input,
+                        &mut extras,
+                        spill_dir,
+                        tiles,
+                        Some(c),
+                        None,
+                        0,
+                    )?;
                     set_spog(&mut out, new);
                     continue;
                 }
                 let Some(i) = parts.index.iter().position(|p| p.si == c.si) else {
                     continue;
                 };
-                let (tiles, _) =
-                    rewrite(parts, input, &mut extras, &parts.index[i], Some(c), None, 0)?;
+                let (tiles, _) = rewrite(
+                    parts,
+                    input,
+                    &mut extras,
+                    spill_dir,
+                    &parts.index[i],
+                    Some(c),
+                    None,
+                    0,
+                )?;
                 out.index[i].tiles = tiles;
             }
             out.cluster = Vec::new();
@@ -946,10 +967,12 @@ fn drain_quad(
 /// Rewrite SPOG: its rows in subject order (merged from the runs of its current
 /// clustering, if any), partitioned by `arr` into `k + 1` runs. Returns the
 /// tiles (offsets into the input, then into `extras`) and each run's count.
+#[allow(clippy::too_many_arguments)]
 fn rewrite_quad(
     parts: &Parts,
     input: &dyn RangeReader,
     extras: &mut Extras,
+    spill_dir: &std::path::Path,
     tiles: &[QTileEnt],
     current: Option<&ClusterOrder>,
     arr: Option<&[u8]>,
@@ -992,7 +1015,7 @@ fn rewrite_quad(
     for r in 0..=k {
         runs.push(QRunOut {
             tiler: Some(quad7::Tiler::new(IndexPermutation::Spo)),
-            sink: Sink::new(in_memory, &format!("{tag}-{r}.tiles"))?,
+            sink: Sink::new(in_memory, spill_dir, &format!("{tag}-{r}.tiles"))?,
             ents: Vec::new(),
             at: 0,
         });

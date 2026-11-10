@@ -735,10 +735,15 @@ where
         // Each spill file is deleted as soon as every range of it is in the
         // output, so the output grows as the spill shrinks.
         // The graph-last quad orders sort in the build's own spill directory.
-        crate::write_opts::set_scratch_dir(Some(tmp.dir.clone()));
-        let written = write_v06(output, &image, &metadata, &build_info, true, &partial);
-        crate::write_opts::set_scratch_dir(None);
-        written?;
+        write_v06(
+            output,
+            &image,
+            &metadata,
+            &build_info,
+            true,
+            &partial,
+            &tmp.dir,
+        )?;
         stats.pyramid_levels = 0;
         note_scratch(&tmp);
         trace::lap(Phase::Write);
@@ -2991,6 +2996,7 @@ fn write_v06(
     record: &[u8],
     consume: bool,
     partial: &PartialFile,
+    spill_dir: &Path,
 ) -> Result<(), ExtBuildError> {
     let src = crate::extbuild_v06::SharedImage(image.clone());
     let mut parts = crate::v06::parts::from_v05(&src).map_err(file_err)?;
@@ -3017,7 +3023,7 @@ fn write_v06(
             &parts,
             &src,
             &mut out,
-            crate::v06::write::WriteOpts::default(),
+            crate::v06::write::WriteOpts::default().with_spill_dir(Some(spill_dir.to_path_buf())),
             &mut crate::v06::write::Hooks {
                 copied: &mut |kind| {
                     if consume {
@@ -3162,7 +3168,15 @@ mod tests {
             &[],
         )?);
         let partial = PartialFile::create(output)?;
-        write_v06(output, &image, metadata, build_info, consume, &partial)
+        write_v06(
+            output,
+            &image,
+            metadata,
+            build_info,
+            consume,
+            &partial,
+            &std::env::temp_dir(),
+        )
     }
 
     /// Generate a graph that exercises the merge machinery: terms shared across

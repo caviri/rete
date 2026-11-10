@@ -68,7 +68,7 @@ impl Default for LeafPolicy {
 }
 
 /// Assembly options.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WriteOpts {
     /// Codec of the root, leaves, card and stats (`writer_codec()`).
     pub internal_codec: u8,
@@ -83,9 +83,32 @@ pub struct WriteOpts {
     /// Cluster the subject-leading permutations by class (`0x07` only); `None`
     /// writes them in subject order, and un-clusters a clustered input.
     pub cluster: Option<crate::write_opts::ClusterOpts>,
+    /// Where this writer spills the sort runs of the `0x07` quad orders and of
+    /// class clustering; `None` = the system temporary directory. Per writer,
+    /// never shared: another writer in the process may delete its own.
+    pub spill_dir: Option<std::path::PathBuf>,
 }
 
 impl WriteOpts {
+    /// These options spilling into `dir`.
+    pub fn with_spill_dir(mut self, dir: Option<std::path::PathBuf>) -> Self {
+        self.spill_dir = dir;
+        self
+    }
+
+    /// The directory the spill runs go to.
+    pub(crate) fn spill(&self) -> std::path::PathBuf {
+        // A browser build has no disk (and no temporary directory to ask for).
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.spill_dir.clone().unwrap_or_default()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.spill_dir.clone().unwrap_or_else(std::env::temp_dir)
+        }
+    }
+
     /// These options with class clustering on (`Some`) or off.
     pub fn with_cluster(mut self, c: Option<crate::write_opts::ClusterOpts>) -> Self {
         self.cluster = c;
@@ -101,6 +124,7 @@ impl Default for WriteOpts {
             leaves: LeafPolicy::default(),
             version: VERSION,
             cluster: crate::write_opts::cluster(),
+            spill_dir: None,
         }
     }
 }
@@ -784,16 +808,18 @@ pub fn assemble_with<W: Write + Seek>(
     // `0x07` writes SPOG, POSG and OSPG next to GSPO: derive them from the GSPO
     // tiles first (the other graph-leading orders of the input are dropped).
     if opts.version == VERSION && super::neworders::needed(parts) {
-        let (derived, extras) = super::neworders::derive(parts, input)?;
+        let (derived, extras) = super::neworders::derive(parts, input, &opts.spill())?;
         let layered = super::neworders::Layered::new(input, &extras);
-        return assemble_with(&derived, &layered, out, opts, hooks);
+        return assemble_with(&derived, &layered, out, opts.clone(), hooks);
     }
     // `--cluster-subjects-by-class`: the subject-leading permutations by class
     // (or back to subject order). Another pass over the input, same shape.
     if opts.version == VERSION && super::cluster::needed(parts, opts.cluster) {
-        if let Some((derived, extras)) = super::cluster::derive(parts, input, opts.cluster)? {
+        if let Some((derived, extras)) =
+            super::cluster::derive(parts, input, opts.cluster, &opts.spill())?
+        {
             let layered = super::neworders::Layered::new(input, &extras);
-            return assemble_with(&derived, &layered, out, opts, hooks);
+            return assemble_with(&derived, &layered, out, opts.clone(), hooks);
         }
     }
     let codec = opts.internal_codec;

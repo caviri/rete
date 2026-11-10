@@ -189,11 +189,14 @@ pub(super) enum Sink {
 
 impl Sink {
     /// A sink in memory, or (not in a browser) a file `name` in the scratch directory.
-    pub(super) fn new(in_memory: bool, name: &str) -> Result<Sink, FileError> {
+    pub(super) fn new(
+        in_memory: bool,
+        dir: &std::path::Path,
+        name: &str,
+    ) -> Result<Sink, FileError> {
         #[cfg(not(target_arch = "wasm32"))]
         if !in_memory {
-            let dir = scratch_dir();
-            std::fs::create_dir_all(&dir)?;
+            std::fs::create_dir_all(dir)?;
             let path = dir.join(name);
             let f = std::fs::File::create(&path)?;
             return Ok(Sink::File(
@@ -201,7 +204,7 @@ impl Sink {
                 path,
             ));
         }
-        let _ = (in_memory, name);
+        let _ = (in_memory, dir, name);
         Ok(Sink::Mem(Vec::new()))
     }
 
@@ -341,10 +344,12 @@ fn sort_rows(v: &mut [Row4]) {
     v.sort_unstable();
 }
 
-/// The directory the spill runs go to.
+/// A per-process sequence number: two spills of one process never share a name,
+/// whatever the clock says.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn scratch_dir() -> PathBuf {
-    crate::write_opts::scratch_dir().unwrap_or_else(std::env::temp_dir)
+pub(super) fn spill_seq() -> u64 {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Record the size of this order's sort runs in the build record's
@@ -376,7 +381,10 @@ fn build_order(
     input: &dyn RangeReader,
     gspo: &[QTileEnt],
     total: u64,
+    spill_dir: &std::path::Path,
 ) -> Result<(Vec<QTileEnt>, Sink), FileError> {
+    #[cfg(target_arch = "wasm32")]
+    let _ = spill_dir;
     let run_rows = crate::write_opts::quad_run_rows();
     let mismatch = || FileError::Container("the G+SPO tiles hold another quad count than the root");
     // A browser build has no disk to spill to and sorts in RAM whatever the size.
@@ -401,15 +409,16 @@ fn build_order(
     #[cfg(not(target_arch = "wasm32"))]
     {
         use crate::extbuild_spill::{merge_runs, RunSpiller};
-        let dir = scratch_dir();
+        let dir = spill_dir.to_path_buf();
         std::fs::create_dir_all(&dir)?;
         let tag = format!(
-            "q7-{}-{:x}-{}",
+            "q7-{}-{:x}-{}-{}",
             quad7::slot_name(quad7::last_slot(perm)).replace('+', ""),
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
+                .map_or(0, |d| d.as_nanos()),
+            spill_seq()
         );
         let mut sp = RunSpiller::<Row4>::new_exact(&dir, &tag, run_rows);
         for_each_gspo(codec, input, gspo, &mut |g, s, p, o| {
@@ -507,7 +516,11 @@ fn reblock(
 /// Build the graph-last orders of `parts`' quad index and return the parts
 /// with the orders `[G+SPO, SPOG, POSG, OSPG]`, and the payload the new orders'
 /// tile offsets point into (past the end of `input`).
-pub(crate) fn derive(parts: &Parts, input: &dyn RangeReader) -> Result<(Parts, Extras), FileError> {
+pub(crate) fn derive(
+    parts: &Parts,
+    input: &dyn RangeReader,
+    spill_dir: &std::path::Path,
+) -> Result<(Parts, Extras), FileError> {
     let q = parts
         .quad
         .as_ref()
@@ -529,7 +542,14 @@ pub(crate) fn derive(parts: &Parts, input: &dyn RangeReader) -> Result<(Parts, E
         IndexPermutation::Pos,
         IndexPermutation::Osp,
     ] {
-        let (mut ents, sink) = build_order(perm, parts.block_codec, input, gspo, q.quad_count)?;
+        let (mut ents, sink) = build_order(
+            perm,
+            parts.block_codec,
+            input,
+            gspo,
+            q.quad_count,
+            spill_dir,
+        )?;
         let len = ents.last().map_or(0, |e| e.off + e.clen);
         for e in &mut ents {
             e.off += next;
