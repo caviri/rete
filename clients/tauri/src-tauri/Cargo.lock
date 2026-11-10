@@ -2692,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "rete-file-explorer"
-version = "0.5.7"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "rete-core",
