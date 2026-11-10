@@ -270,6 +270,19 @@ enum Command {
         /// the output file). Needs free space on the order of the input size.
         #[arg(long = "tmp-dir")]
         tmp_dir: Option<String>,
+        /// Cluster the subjects of the default graph by class: the subject-leading
+        /// permutations (SPO, SOP) are written in `(class, subject, predicate,
+        /// object)` order, so the subjects of one class are a few contiguous
+        /// tiles rather than one tile in every few thousand. A scan of a class
+        /// and the join of its subjects read those tiles (on OpenAIRE: about 7 MB
+        /// for the Software records instead of 463 MB); a lookup of one subject
+        /// reads a tile in each of up to 33 runs instead of one. Up to 32
+        /// classes (those with the most subjects, at least 1,000 each) get a
+        /// run; a subject with several classes goes to the rarest one. Answers
+        /// are the same either way; `rete convert` without the flag undoes it.
+        /// Needs one byte of RAM per subject.
+        #[arg(long = "cluster-subjects-by-class")]
+        cluster_subjects_by_class: bool,
         /// How many index permutations to store: `6` (default) or `3`.
         ///
         /// `6` stores SPO, POS, OSP, SOP, PSO and OPS. `3` stores only SPO,
@@ -292,11 +305,13 @@ enum Command {
         /// anything published.
         #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
         permutations: String,
-        /// How to store the **named graphs**. Format `0x06` has one layout,
-        /// `quad` (the default): the **quad index** (SPEC.md), every
-        /// named-graph quad once, the graph as a fourth column of
-        /// graph-leading permutations behind a sorted graph directory, with
-        /// graph names as dictionary terms.
+        /// How to store the **named graphs**. Format `0x07` has one layout,
+        /// `quad` (the default): the **quad index** (SPEC.md §6.5), every
+        /// named-graph quad stored four times, as GSPO (graph first, behind a
+        /// sorted graph directory) and as SPOG, POSG and OSPG (graph last),
+        /// with graph names as dictionary terms. `--permutations` is the
+        /// default graph's alone: the quad orders are the same four whatever
+        /// it says.
         ///
         /// `per-graph` (the `0x05` NAMED_GRAPHS section) is no longer
         /// written and is refused; `rete convert` turns a per-graph `0x05`
@@ -510,10 +525,22 @@ enum Command {
         /// The 0x06 output path.
         #[arg(short, long)]
         output: String,
-        /// Quad-tile clustering: `auto` (graph-major when graphs are small),
-        /// `graph`, or `order`.
+        /// Quad-tile clustering of a `0x06` output: `auto` (graph-major when
+        /// graphs are small), `graph`, or `order`. Ignored for the `0x07`
+        /// `convert` writes, which is always order-major.
         #[arg(long = "quad-clustering", value_name = "MODE")]
         quad_clustering: Option<String>,
+        /// Directory for the spill of the sort that derives the `0x07` quad
+        /// orders (SPOG, POSG, OSPG) from GSPO when the file is big (default:
+        /// alongside the output). Needs free space of about 16 bytes per
+        /// named quad, one order at a time.
+        #[arg(long = "tmp-dir")]
+        tmp_dir: Option<String>,
+        /// Cluster the default graph's subjects by class (`rete build
+        /// --cluster-subjects-by-class`). Without it, a clustered input is
+        /// written in subject order again.
+        #[arg(long = "cluster-subjects-by-class")]
+        cluster_subjects_by_class: bool,
         /// Do not build the label index for a file that has only the
         /// pyramid's legacy label block.
         #[arg(long = "no-label-index")]
@@ -604,6 +631,10 @@ enum Command {
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Also read the card annex (format 0x07): the fields too big for the
+        /// hot card (`extra`, `description` over 8 KiB), one more cold read.
+        #[arg(long)]
+        full: bool,
         /// Output format: json | jsonld | croissant (default: human text).
         #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
         format: Option<String>,
@@ -624,6 +655,9 @@ enum Command {
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Also read the card annex (see `rete card --full`): one more range.
+        #[arg(long)]
+        full: bool,
         /// Output format: json | jsonld | croissant (default: human text).
         #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
         format: Option<String>,
@@ -1640,6 +1674,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             no_card_costs,
             memory_budget_mb,
             tmp_dir,
+            cluster_subjects_by_class,
             permutations,
             named_graphs,
             strict,
@@ -1648,6 +1683,9 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             progress,
         } => {
             write.apply();
+            rete_core::write_opts::set_cluster(
+                cluster_subjects_by_class.then(rete_core::write_opts::ClusterOpts::default),
+            );
             let _progress = progress.start("build")?;
             let sections = commands::build::BuildSections {
                 label_index,
@@ -1801,19 +1839,27 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             input,
             output,
             quad_clustering,
+            tmp_dir,
+            cluster_subjects_by_class,
             no_label_index,
             no_card_costs,
             memory_budget_mb,
-        } => commands::v06::convert(
-            &input,
-            &output,
-            quad_clustering.as_deref(),
-            !no_label_index,
-            commands::v06::CardCosts {
-                skip: no_card_costs,
-                memory_budget_mb,
-            },
-        ),
+        } => {
+            rete_core::write_opts::set_cluster(
+                cluster_subjects_by_class.then(rete_core::write_opts::ClusterOpts::default),
+            );
+            commands::v06::convert(
+                &input,
+                &output,
+                quad_clustering.as_deref(),
+                tmp_dir.as_deref(),
+                !no_label_index,
+                commands::v06::CardCosts {
+                    skip: no_card_costs,
+                    memory_budget_mb,
+                },
+            )
+        }
         Command::Search {
             file,
             prefix,
@@ -1852,15 +1898,17 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Card {
             file,
             json,
+            full,
             format,
             sha256,
-        } => commands::card::card_cmd(&file, json, format.as_deref(), sha256.as_deref()),
+        } => commands::card::card_cmd(&file, json, format.as_deref(), sha256.as_deref(), full),
         Command::CardUrl {
             url,
             json,
+            full,
             format,
             sha256,
-        } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref()),
+        } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref(), full),
         Command::CardAudit {
             path,
             json,

@@ -212,3 +212,110 @@ pub fn set_write_options(o: WriteOptions) {
     );
     FREQUENT_OBJECTS.store(o.frequent_objects, Ordering::Relaxed);
 }
+
+/// Default rows of one sort run of the `0x07` quad orders: 100 M rows are 1.6 GB
+/// of `(u32, u32, u32, u32)`, which with the tile buffers stays under a 4 GB
+/// container. A file with at most this many named quads is sorted in RAM.
+pub const DEFAULT_QUAD_RUN_ROWS: usize = 100_000_000;
+
+static QUAD_RUN_ROWS: AtomicUsize = AtomicUsize::new(0);
+
+/// Rows per sort run of the `0x07` quad orders (`RETE_QUAD_RUN_ROWS`, default
+/// [`DEFAULT_QUAD_RUN_ROWS`]). Changes how a build uses RAM and disk, never the
+/// bytes it writes.
+pub fn quad_run_rows() -> usize {
+    match QUAD_RUN_ROWS.load(Ordering::Relaxed) {
+        0 => {
+            let v = env_parse::<usize>("RETE_QUAD_RUN_ROWS")
+                .filter(|&n| n > 0)
+                .unwrap_or(DEFAULT_QUAD_RUN_ROWS);
+            QUAD_RUN_ROWS.store(v, Ordering::Relaxed);
+            v
+        }
+        v => v,
+    }
+}
+
+/// Set the rows per sort run (0 = back to the default).
+pub fn set_quad_run_rows(n: usize) {
+    QUAD_RUN_ROWS.store(n, Ordering::Relaxed);
+}
+
+/// Default size above which a `0x07` graph view does not build its POS and OSP
+/// orders from its own GSPO slice (see `quad::view`).
+pub const DEFAULT_QUAD_SYNTH_MAX: u64 = 1 << 20;
+
+static QUAD_SYNTH_MAX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Quads of a named graph up to which a `0x07` view builds its POS and OSP
+/// orders from the graph's GSPO tiles (`RETE_QUAD_SYNTH_MAX`, default
+/// [`DEFAULT_QUAD_SYNTH_MAX`]); a bigger graph reads them from the graph-last
+/// POSG and OSPG tiles. Changes what a query reads, never what it returns.
+pub fn quad_view_synth_max() -> u64 {
+    match QUAD_SYNTH_MAX.load(Ordering::Relaxed) {
+        0 => {
+            let v = env_parse::<u64>("RETE_QUAD_SYNTH_MAX")
+                .filter(|&n| n > 0)
+                .unwrap_or(DEFAULT_QUAD_SYNTH_MAX);
+            QUAD_SYNTH_MAX.store(v, Ordering::Relaxed);
+            v
+        }
+        v => v,
+    }
+}
+
+/// Set [`quad_view_synth_max`] (0 = back to the default).
+pub fn set_quad_view_synth_max(n: u64) {
+    QUAD_SYNTH_MAX.store(n, Ordering::Relaxed);
+}
+
+/// Class clustering of the subject-leading permutations (`0x07`,
+/// `--cluster-subjects-by-class`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClusterOpts {
+    /// The most classes that get a run of their own (at most
+    /// [`crate::v06::MAX_CLUSTERS`]).
+    pub max_classes: usize,
+    /// A class needs at least this many subjects to get a run: a smaller class
+    /// would not fill a tile, and every run costs a point lookup one more tile.
+    pub min_subjects: u64,
+    /// The most classes the quad index's SPOG gets a run for. Fewer than the
+    /// default graph's: a bound subject of SPOG reads one leaf in every run, and
+    /// a named-graph dump is far larger than a default graph, so each run costs
+    /// more to look past (SPEC.md section 6.6).
+    pub quad_classes: usize,
+}
+
+/// Default of [`ClusterOpts::min_subjects`].
+pub const DEFAULT_CLUSTER_MIN_SUBJECTS: u64 = 1000;
+
+/// Default of [`ClusterOpts::quad_classes`].
+pub const DEFAULT_CLUSTER_QUAD_CLASSES: usize = 10;
+
+impl Default for ClusterOpts {
+    fn default() -> Self {
+        ClusterOpts {
+            max_classes: crate::v06::MAX_CLUSTERS,
+            min_subjects: DEFAULT_CLUSTER_MIN_SUBJECTS,
+            quad_classes: std::env::var("RETE_CLUSTER_QUAD_CLASSES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_CLUSTER_QUAD_CLASSES),
+        }
+    }
+}
+
+static CLUSTER: std::sync::Mutex<Option<ClusterOpts>> = std::sync::Mutex::new(None);
+
+/// The clustering the writers apply, `None` = off (the default). Process-wide
+/// like the other writer settings, so every writer path agrees.
+pub fn cluster() -> Option<ClusterOpts> {
+    CLUSTER.lock().ok().and_then(|g| *g)
+}
+
+/// Turn class clustering on (with these limits) or off.
+pub fn set_cluster(c: Option<ClusterOpts>) {
+    if let Ok(mut g) = CLUSTER.lock() {
+        *g = c;
+    }
+}

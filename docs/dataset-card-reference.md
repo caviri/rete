@@ -670,6 +670,17 @@ bounded, and the bounds are checked at build time:
 | key length | **128 bytes** | Keys are identifiers, not values. |
 | nesting depth | **3** | A list of objects whose fields may be lists of scalars — `[{"query": "…", "words": ["a", "b"]}]` — no deeper. An array or an object is one level. |
 
+**The card annex (format `0x07`).** The 8,192 B is the *hot* limit: what every reader
+fetches on every open. The CLI accepts up to 1 MiB for `extra` and for `description`,
+and the writer moves a field that is over 8,192 B, whole, into a cold **card annex**
+(the file's last section, inside the content hash). The hot card then has no such
+field and an `annex` marker (`fields`, `bytes`) instead; `rete card --full`,
+`rete card-url --full` and the library's `read_card_full_ranged` read the annex and put
+the fields back. Nothing to switch on: a card under the hot limit has no annex. The
+library's `CardInput::normalize` still rejects over 8,192 B; `normalize_with_annex` is
+the 1 MiB one. A `0x06` file has no annex (convert it first). The keys, key length and
+depth limits above apply either way.
+
 **Why three, and why not more.** The cap was 2 until 0.4.0, and that refused
 the first natural shape a real card needed: the OpenCitations full-text
 examples — a list of objects, each holding a word list — had to be flattened
@@ -1171,7 +1182,7 @@ gets the whole self-description (counts, vocabulary, class graph, signals,
 starter queries, build record) without downloading the file. Measured on the
 published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
 1,161,874,550 bytes for Hugging Face, two range requests each (measured before
-the first read took the whole front: see [`card-url`](cli.md#rete-card-url-url---json---format-jsonldcroissant---sha256-hex)).
+the first read took the whole front: see [`card-url`](cli.md#rete-card-url-url---json---full---format-jsonldcroissant---sha256-hex)).
 
 ## The starter-query library
 

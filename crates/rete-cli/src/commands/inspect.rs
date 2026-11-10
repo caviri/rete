@@ -17,7 +17,7 @@ pub(crate) fn info(file: &str, raw: bool) -> anyhow::Result<()> {
     let reader = LocalRangeReader::open(file)?;
     let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
     let header = rete_core::Header::from_bytes(&head)?;
-    if header.version == rete_core::v06::VERSION {
+    if rete_core::v06::reads(header.version) {
         print_v06_layout(&reader, raw)?;
     } else {
         print_v05_layout(&header, raw);
@@ -131,7 +131,14 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     }
     println!("  distinct terms        : {}", h.term_count);
     if h.has_quad_index() {
-        println!("  named-graph layout    : quad index (graph-leading permutations, kind 10)");
+        println!(
+            "  named-graph layout    : quad index ({})",
+            if h.version >= 7 {
+                "GSPO, SPOG, POSG, OSPG"
+            } else {
+                "graph-leading permutations, kind 10"
+            }
+        );
     }
     println!("  pyramid levels        : {}", h.pyramid_levels);
     if h.id_widths == 0 && h.version == 6 {
@@ -423,14 +430,48 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
                     .ok_or_else(|| anyhow::anyhow!("unknown section {name:?}"))?,
             ),
         };
-        let bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
+        let mut bad = rete_core::file::verify_ranged_v06(&reader, &head, only)?;
+        // The quad orders, tile by tile: the digests say the bytes are the
+        // writer's, this says the orders are sound and hold the same quads.
+        let mut orders = 0usize;
+        if bad.is_empty() && only.is_none_or(|k| k == rete_core::v06::kind::QUAD_DATA) {
+            let (n, problems) = rete_core::v06::check_orders(&reader)?;
+            orders = n;
+            for p in problems {
+                bad.push(format!("quad order ({p})"));
+            }
+        }
+        // The class clusters: every row is in the run of its subject's class.
+        let mut clusters = 0usize;
+        if bad.is_empty()
+            && only.is_none_or(|k| {
+                k == rete_core::v06::kind::INDEX_DATA || k == rete_core::v06::kind::QUAD_DATA
+            })
+        {
+            let (n, problems) = rete_core::v06::check_clusters(&reader)?;
+            clusters = n;
+            for p in problems {
+                bad.push(format!("cluster ({p})"));
+            }
+        }
         if bad.is_empty() {
+            let checked = if orders > 0 {
+                format!(", and the {orders} quad orders agree")
+            } else {
+                String::new()
+            };
+            let checked = if clusters > 0 {
+                format!("{checked}, and the {clusters} clustered orders hold their classes")
+            } else {
+                checked
+            };
             println!(
-                "OK — {} (format 0x06)",
+                "OK — {}{checked} (format 0x{:02x})",
                 match section {
                     Some(s) => format!("section {s} matches its digest"),
                     None => "content hash matches, and every section digest".to_string(),
-                }
+                },
+                head[4]
             );
             return Ok(());
         }
@@ -441,7 +482,7 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
         );
     }
     if section.is_some() {
-        anyhow::bail!("--section needs a format 0x06 file");
+        anyhow::bail!("--section needs a format 0x06 or 0x07 file");
     }
     if rete_core::verify_ranged(&reader)? {
         println!("OK — content hash matches");
@@ -631,10 +672,10 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
 /// section table — where every part of the file is, and its digest.
 fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> {
     use rete_core::v06::{kind, open};
-    use rete_core::v06::{F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
+    use rete_core::v06::{F_CLUSTERED, F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
     let (h, root) = open::read_front(reader)?;
     let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
-    println!("format version: 0x06");
+    println!("format version: 0x{:02x}", h.version);
     if raw {
         println!("{h:#?}");
     }
@@ -643,13 +684,15 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         (F_QUOTED, "quoted triples"),
         (F_TEXT_NAMED, "text covers named graphs"),
         (F_QUAD_GRAPH_MAJOR, "quad tiles graph-major"),
+        (F_CLUSTERED, "subjects clustered by class"),
     ]
     .into_iter()
     .filter(|&(b, _)| h.flags & b != 0)
     .map(|(_, n)| n)
     .collect();
     println!(
-        "format 0x06 — {} bytes, content hash {}",
+        "format 0x{:02x} — {} bytes, content hash {}",
+        h.version,
         h.file_len,
         hex(&h.content_hash)
     );
@@ -665,6 +708,29 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         "  front        : root {} B at 128, card region {} B (card {} B, record {} B), data at {}",
         h.root_len, h.card_region_len, h.card_len, h.build_len, h.data_offset
     );
+    // What the root holds, decompressed, by unit: the label index's root node
+    // is its own section in 0x07 and no longer in here.
+    {
+        use rete_core::v06::tag;
+        let sizes: Vec<String> = [
+            (tag::DICT, "dict"),
+            (tag::INDEX, "index"),
+            (tag::CLUSTER, "cluster"),
+            (tag::QUAD, "quad"),
+            (tag::LABELS, "labels"),
+            (tag::TEXT, "text"),
+        ]
+        .into_iter()
+        .filter_map(|(t, n)| root.unit(t).map(|u| format!("{n} {}", u.len())))
+        .collect();
+        println!("  root units   : {} B (decompressed)", sizes.join(", "));
+    }
+    if let Some(s) = root.section(kind::CARD_ANNEX) {
+        println!(
+            "  card annex   : {} B stored, cold (`rete card --full`)",
+            s.len
+        );
+    }
     // The counts and the record's size under the keys the gate's fixture check
     // (tests/gate/fixtures.sh) and the scripts read them by.
     println!("  counts       :");
@@ -691,7 +757,70 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         );
     }
     print_leaf_counts(&root);
+    print_clusters(&root);
+    print_quad_orders(&h, &root);
     Ok(())
+}
+
+/// The class runs of a clustered file, from the root alone: per permutation,
+/// each run's class (an object id) and tiles.
+fn print_clusters(root: &rete_core::v06::Root06) {
+    use rete_core::v06::{decode_cluster_root, tag};
+    let Some(Ok(orders)) = root.unit(tag::CLUSTER).map(decode_cluster_root) else {
+        return;
+    };
+    for o in orders {
+        let name = if o.si == rete_core::v06::QUAD_SPOG {
+            "SPOG"
+        } else {
+            ["SPO", "POS", "OSP", "SOP", "PSO", "OPS"][o.si.min(5)]
+        };
+        println!(
+            "  clusters     : {name}, {} class runs and the rest",
+            o.classes.len()
+        );
+        println!("    rest      {:>10} tiles", o.run_tiles[0]);
+        for (c, n) in o.classes.iter().zip(&o.run_tiles[1..]) {
+            println!("    class {c:<10} {n:>10} tiles");
+        }
+    }
+}
+
+/// The quad index's orders, from the root alone: tiles, stored bytes, leaves.
+/// `0x07` stores GSPO, SPOG, POSG and OSPG (SPEC.md §6.5), each order's tiles
+/// contiguous, so an order's size is the distance to the next one's first tile.
+fn print_quad_orders(h: &rete_core::v06::Header06, root: &rete_core::v06::Root06) {
+    use rete_core::v06::{decode_quad_root, kind, tag};
+    let Some(Ok(q)) = root.unit(tag::QUAD).map(decode_quad_root) else {
+        return;
+    };
+    let total = root.section(kind::QUAD_DATA).map_or(0, |s| s.len);
+    println!(
+        "  quad orders  : {} ({} named quads in {} graphs)",
+        q.orders.len(),
+        q.quad_count,
+        q.graph_count
+    );
+    for (i, o) in q.orders.iter().enumerate() {
+        let name = rete_core::v06::quad_order_name(o.si);
+        let first = o.leaves.first().map_or(0, |l| l.3);
+        let next = q
+            .orders
+            .get(i + 1)
+            .and_then(|n| n.leaves.first().map(|l| l.3))
+            .unwrap_or(total);
+        // A graph-major (`0x06`) file interleaves its orders: no size per order.
+        let bytes = if h.flags & rete_core::v06::F_QUAD_GRAPH_MAJOR != 0 {
+            "interleaved".to_string()
+        } else {
+            format!("{} B", next.saturating_sub(first))
+        };
+        println!(
+            "    {name:<6} {:>10} tiles in {:>4} leaves, {bytes}",
+            o.n_tiles,
+            o.leaves.len()
+        );
+    }
 }
 
 /// `rete info` for a format 0x05 file: the header's fields and its section

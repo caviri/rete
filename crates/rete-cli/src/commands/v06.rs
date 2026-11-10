@@ -1,5 +1,5 @@
-//! Format `0x06` in the CLI: what the in-RAM writers finish with, and
-//! `rete convert` (a `0x05` file to `0x06`, reading sections only). The
+//! Format `0x06` and `0x07` in the CLI: what the in-RAM writers finish with, and
+//! `rete convert` (a `0x05` or `0x06` file to `0x07`, reading sections only). The
 //! memory-bounded writers (`build --memory-budget-mb`, `merge`) do not come
 //! through here: they write `0x06` themselves, once, from their spill.
 
@@ -12,12 +12,12 @@ pub(crate) fn writes_legacy() -> bool {
     rete_core::build_record::writes_legacy()
 }
 
-/// Turn a finished in-memory `0x05` image into the `0x06` file the writer
+/// Turn a finished in-memory `0x05` image into the `0x07` file the writer
 /// emits (unless [`writes_legacy`]). The same code `rete convert` runs, so a
 /// build and a converted build of the same input are the same bytes.
 pub(crate) fn finish(image: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     rete_core::build_record::finish_in_ram(image, None)
-        .map_err(|e| anyhow::anyhow!("writing 0x06: {e}"))
+        .map_err(|e| anyhow::anyhow!("writing 0x07: {e}"))
 }
 
 /// Is the file at `path` a `0x06` file? (Reads its first bytes.)
@@ -69,14 +69,27 @@ pub(crate) fn convert(
     input: &str,
     output: &str,
     quad: Option<&str>,
+    tmp_dir: Option<&str>,
     label_index: bool,
     costs: CardCosts,
 ) -> anyhow::Result<()> {
     use rete_core::v06::write::QuadClustering;
+    // The sort that derives the `0x07` quad orders spills beside the output
+    // unless told otherwise (a big file's spill is 16 bytes a quad).
+    let spill_dir = match tmp_dir {
+        Some(d) => std::path::PathBuf::from(d),
+        None => std::path::Path::new(output)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(
+                || std::path::PathBuf::from("."),
+                std::path::Path::to_path_buf,
+            ),
+    };
     if std::path::Path::new(input) == std::path::Path::new(output) {
         anyhow::bail!("convert writes a new file: OUT must differ from IN");
     }
-    let mut opts = WriteOpts::default();
+    let mut opts = WriteOpts::default().with_spill_dir(Some(spill_dir));
     match quad {
         Some("graph") => opts.quad = QuadClustering::GraphMajor,
         Some("order") => opts.quad = QuadClustering::OrderMajor,
@@ -158,7 +171,7 @@ pub(crate) fn convert(
     }
     std::fs::rename(&tmp, output)?;
     eprintln!(
-        "convert: wrote {output} — format 0x06, {} bytes ({:+.2}% vs {} bytes), content hash {}, {:.1}s",
+        "convert: wrote {output} — format 0x07, {} bytes ({:+.2}% vs {} bytes), content hash {}, {:.1}s",
         written.header.file_len,
         (written.header.file_len as f64 - in_len as f64) * 100.0 / in_len.max(1) as f64,
         in_len,
@@ -209,6 +222,9 @@ fn conversion_entry(
     }
     if !label_index {
         command.push_str(" --no-label-index");
+    }
+    if rete_core::write_opts::cluster().is_some() {
+        command.push_str(" --cluster-subjects-by-class");
     }
     Ok(bi::Conversion {
         at: bi::timestamp(),
@@ -404,7 +420,8 @@ fn rewrite_v06(
     std::fs::rename(&tmp, output)?;
     let in_len = rete_core::RangeReader::len(reader);
     eprintln!(
-        "convert: wrote {output} — format 0x06 again, {} bytes ({:+.2}% vs {} bytes), root {} bytes, content hash {}, {:.1}s",
+        "convert: wrote {output} — format 0x{:02x}, {} bytes ({:+.2}% vs {} bytes), root {} bytes, content hash {}, {:.1}s",
+        written.header.version,
         written.header.file_len,
         (written.header.file_len as f64 - in_len as f64) * 100.0 / in_len.max(1) as f64,
         in_len,

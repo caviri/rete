@@ -263,7 +263,7 @@ def test_builder_end_to_end(tmp_path, nt_text):
     # Counts + format_version are stamped automatically at build time.
     assert card["quad_count"] == 6
     assert card["term_count"] == g.terms
-    assert card["format_version"] == 6  # the client writes the 0x06 layout
+    assert card["format_version"] == 7  # the client writes the 0x07 layout
 
     # The opt-in text index was actually built and is queryable.
     assert "http://example.org/alice" in g.text_search("researcher")
@@ -790,7 +790,7 @@ def test_live_remote_smoke():
     assert g.stats()["bytes"] < g.stats()["fileLength"]  # lazy, not a download
 
 
-# --- format 0x06 and the build record: every writer writes both -------------
+# --- format 0x07 and the build record: every writer writes both -------------
 
 
 _RECORD_NT = (
@@ -799,11 +799,11 @@ _RECORD_NT = (
 )
 
 
-def test_build_writes_0x06_with_a_build_record():
+def test_build_writes_0x07_with_a_build_record():
     data = rete.build(_RECORD_NT)
-    # The header's format byte: 0x06, and the file verifies (content hash and
+    # The header's format byte: 0x07, and the file verifies (content hash and
     # every section digest).
-    assert data[:4] == b"RETE" and data[4] == 6
+    assert data[:4] == b"RETE" and data[4] == 7
     assert rete.verify(data)
     rec = rete.build_record(data)
     assert rec is not None
@@ -825,7 +825,7 @@ def test_build_writes_0x06_with_a_build_record():
 def test_build_dataset_record_names_its_options():
     b = rete.Builder().add(_RECORD_NT).text_index()
     data = b.run()
-    assert data[4] == 6 and rete.verify(data)
+    assert data[4] == 7 and rete.verify(data)
     rec = rete.build_record(data)
     assert rec["front_end"] == "python"
     assert rec["params"]["command"] == "build_dataset"

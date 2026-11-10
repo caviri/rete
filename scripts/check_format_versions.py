@@ -41,7 +41,7 @@ def probe(item):
         if b[:4] != b"RETE":
             return key, url, code, None, "NOT a .rete (bad magic)"
         ver = b[4]
-        return key, url, code, ver, ("OK" if ver in (5, 6) else "UNREADABLE — engine reads 0x05 and 0x06")
+        return key, url, code, ver, ("OK" if ver in (5, 6, 7) else "UNREADABLE — engine reads 0x05, 0x06 and 0x07")
     except Exception as e:
         return key, url, None, None, f"FETCH FAILED: {str(e)[:60]}"
 
@@ -56,7 +56,7 @@ def main():
             if note != "OK":
                 print(f"  !! {key:34s} v={ver} {note}", flush=True)
     bad = [r for r in rows if r["note"] != "OK"]
-    print(f"\n{len(rows) - len(bad)}/{len(rows)} serve format 0x05 or 0x06")
+    print(f"\n{len(rows) - len(bad)}/{len(rows)} serve format 0x05, 0x06 or 0x07")
     if bad:
         print("PROBLEMS:")
         for r in bad:

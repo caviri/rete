@@ -51,7 +51,7 @@ impl<R: RangeReader> FrontReader<R> {
             .inner
             .read_at(0, (rete_core::HEADER_LEN as u64).min(me.inner.len()))?;
         // The span of the file the card code will read after the header.
-        let want = if head.get(4) == Some(&rete_core::v06::VERSION) {
+        let want = if head.get(4).is_some_and(|&v| rete_core::v06::reads(v)) {
             let h = rete_core::v06::Header06::from_bytes(&head)?;
             let (c, b) = (h.card_range(), h.build_range());
             let mut hi = h.card_region_offset();
@@ -142,13 +142,17 @@ pub(crate) fn card_url(
     json: bool,
     format: Option<&str>,
     sha256: Option<&str>,
+    full: bool,
 ) -> anyhow::Result<()> {
     let format = card::CardFormat::resolve(json, format)?;
     // The Croissant projection does not print the build record.
     let want_record = !matches!(format, card::CardFormat::Croissant);
     let reader = FrontReader::open(RangedSourceReader::open_front(url)?, want_record)?;
     let total = reader.len();
-    let read = card::load_card_and_build_ranged_with(&reader, want_record)?;
+    let mut read = card::load_card_and_build_ranged_with(&reader, want_record)?;
+    if full {
+        card::merge_annex(&mut read, &reader)?;
+    }
     match &read.card {
         None => println!("(no dataset card — {})", read.text_index.describe()),
         Some(dataset_card) => {

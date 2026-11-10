@@ -33,11 +33,11 @@ class ReteTest {
     }
 
     @Test
-    void aBuildIsFormat0x06WithABuildRecord() {
+    void aBuildIsFormat0x07WithABuildRecord() {
         try (Rete rete = Rete.load()) {
             byte[] file = rete.build(NT, "nt");
-            // "RETE", then the format byte: 0x06.
-            assertEquals(6, file[4], "the Java client writes format 0x06");
+            // "RETE", then the format byte: 0x07.
+            assertEquals(7, file[4], "the Java client writes format 0x07");
             // The build record (kind 7) sits beside the card, uncompressed JSON.
             String text = new String(file, java.nio.charset.StandardCharsets.ISO_8859_1);
             assertTrue(text.contains("\"front_end\":\"java\""), "no build record naming the Java client");

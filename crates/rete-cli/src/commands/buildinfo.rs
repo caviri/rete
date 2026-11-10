@@ -138,7 +138,7 @@ pub(crate) struct Conversion {
 }
 
 /// [`CostContext::layout`] of the figures a conversion measured.
-pub(crate) const LAYOUT_CONVERTED: &str = "0x06 (converted)";
+pub(crate) const LAYOUT_CONVERTED: &str = "0x07 (converted)";
 
 impl BuildInfo {
     /// The starter-query costs that describe this file as it is now: the newest

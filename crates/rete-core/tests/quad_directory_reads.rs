@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rete_core::ingest::{assemble_dataset_with_layout, GraphLayout, RawQuad};
-use rete_core::v06::{kind, open::read_front, write::convert_image};
+use rete_core::v06::{kind, open::read_front, write::convert_image, write::WriteOpts, VERSION_06};
 use rete_core::write_opts::{set_write_options, write_options};
 use rete_core::{eval_query, PermSet, PyramidAlgo, QueryOutput, RangeReader, Rete, SliceReader};
 
@@ -61,6 +61,9 @@ fn image() -> &'static [u8] {
         let mut o = write_options();
         o.tile_budget = 4 * 1024;
         set_write_options(o);
+        // The legacy image keeps all six graph-leading orders (an in-RAM build for
+        // `0x07` carries GSPO alone), which is what this file reads.
+        std::env::set_var("RETE_WRITE_FORMAT", "5");
         let v5 = assemble_dataset_with_layout(
             fixture(),
             false,
@@ -72,7 +75,14 @@ fn image() -> &'static [u8] {
             |_, _| Vec::<u8>::new(),
         )
         .0;
-        convert_image(&v5, Default::default()).unwrap()
+        std::env::remove_var("RETE_WRITE_FORMAT");
+        // This file tests the `0x06` directories (six graph-leading orders); the
+        // `0x07` ones are in `quad_orders_0x07.rs`.
+        let o = WriteOpts {
+            version: VERSION_06,
+            ..Default::default()
+        };
+        convert_image(&v5, o).unwrap()
     })
 }
 

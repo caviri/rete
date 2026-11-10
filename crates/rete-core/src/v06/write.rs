@@ -68,7 +68,7 @@ impl Default for LeafPolicy {
 }
 
 /// Assembly options.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WriteOpts {
     /// Codec of the root, leaves, card and stats (`writer_codec()`).
     pub internal_codec: u8,
@@ -76,6 +76,44 @@ pub struct WriteOpts {
     pub quad: QuadClustering,
     /// Directory leaf sizes.
     pub leaves: LeafPolicy,
+    /// The generation to write: [`VERSION`] (always, for every real writer) or
+    /// [`VERSION_06`], which the tests use to make a `0x06` input for `convert`
+    /// (label root inside the root, no annex).
+    pub version: u8,
+    /// Cluster the subject-leading permutations by class (`0x07` only); `None`
+    /// writes them in subject order, and un-clusters a clustered input.
+    pub cluster: Option<crate::write_opts::ClusterOpts>,
+    /// Where this writer spills the sort runs of the `0x07` quad orders and of
+    /// class clustering; `None` = the system temporary directory. Per writer,
+    /// never shared: another writer in the process may delete its own.
+    pub spill_dir: Option<std::path::PathBuf>,
+}
+
+impl WriteOpts {
+    /// These options spilling into `dir`.
+    pub fn with_spill_dir(mut self, dir: Option<std::path::PathBuf>) -> Self {
+        self.spill_dir = dir;
+        self
+    }
+
+    /// The directory the spill runs go to.
+    pub(crate) fn spill(&self) -> std::path::PathBuf {
+        // A browser build has no disk (and no temporary directory to ask for).
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.spill_dir.clone().unwrap_or_default()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.spill_dir.clone().unwrap_or_else(std::env::temp_dir)
+        }
+    }
+
+    /// These options with class clustering on (`Some`) or off.
+    pub fn with_cluster(mut self, c: Option<crate::write_opts::ClusterOpts>) -> Self {
+        self.cluster = c;
+        self
+    }
 }
 
 impl Default for WriteOpts {
@@ -84,6 +122,9 @@ impl Default for WriteOpts {
             internal_codec: crate::file::writer_codec(),
             quad: QuadClustering::from_env(),
             leaves: LeafPolicy::default(),
+            version: VERSION,
+            cluster: crate::write_opts::cluster(),
+            spill_dir: None,
         }
     }
 }
@@ -116,10 +157,16 @@ struct DataSec {
     /// A largest block known without measuring (the dictionary's, from the
     /// rekey), or 0.
     known_max: u64,
+    /// Bytes written from memory rather than copied from the input (the card
+    /// annex); `segs` is empty then.
+    inline: Option<Vec<u8>>,
 }
 
 impl DataSec {
     fn len(&self) -> u64 {
+        if let Some(b) = &self.inline {
+            return b.len() as u64;
+        }
         self.segs.iter().map(|s| s.len).sum()
     }
 }
@@ -129,7 +176,7 @@ impl DataSec {
 struct Targets {
     dict: [usize; 4],
     index: [usize; 6],
-    quad: [usize; 6],
+    quad: [usize; crate::quad7::NUM_SLOTS],
     text: usize,
 }
 
@@ -146,6 +193,9 @@ struct Front {
     /// Leaves per group, to pick which group to grow: `(group id, count)`.
     counts: Vec<(usize, usize)>,
 }
+
+/// Leaf-group id of the text index (dictionary 0..4, index 4..10, quad 10..19).
+const TEXT_GROUP: usize = 19;
 
 /// Order in which dictionary sections are laid out (predicates first).
 const DICT_ORDER: [usize; 4] = [3, 0, 1, 2];
@@ -179,6 +229,7 @@ fn layout_data(
             segs,
             measure: None,
             known_max: parts.dict.iter().map(|d| d.max_raw).max().unwrap_or(0),
+            inline: None,
         });
     }
     // Index: permutations in section-index order.
@@ -202,6 +253,7 @@ fn layout_data(
             segs,
             measure: Some(parts.block_codec),
             known_max: 0,
+            inline: None,
         });
     }
     // Quad: order-major, or graph-major by directory block.
@@ -267,6 +319,7 @@ fn layout_data(
                 segs,
                 measure: Some(parts.block_codec),
                 known_max: 0,
+                inline: None,
             });
         }
     }
@@ -281,6 +334,7 @@ fn layout_data(
                 }],
                 measure: None,
                 known_max: 0,
+                inline: None,
             });
         }
     }
@@ -295,6 +349,7 @@ fn layout_data(
                 }],
                 measure: None,
                 known_max: 0,
+                inline: None,
             });
         }
     }
@@ -309,6 +364,7 @@ fn layout_data(
                 }],
                 measure: None,
                 known_max: 0,
+                inline: None,
             });
         }
     }
@@ -364,6 +420,7 @@ fn leaves_of<E>(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_front(
     parts: &Parts,
     t: &Targets,
@@ -372,6 +429,7 @@ fn build_front(
     perm_off: &[u64],
     quad_off: &[Vec<u64>],
     quad_gdir: &[u8],
+    version: u8,
 ) -> Front {
     let mut f = Front {
         units: Vec::new(),
@@ -426,14 +484,34 @@ fn build_front(
     let mut proots = Vec::new();
     for (pi, p) in parts.index.iter().enumerate() {
         let ents: Vec<TileEnt> = p.tiles.iter().map(|(t, _)| *t).collect();
-        let leaves = leaves_of(
-            &ents,
-            t.index[p.si],
-            codec,
-            &mut f.index_leaves,
-            &mut f.leaf_max[1],
-            |e, _| encode_tile_leaf(e),
-        );
+        // A clustered permutation cuts its leaves at the runs: no leaf spans two.
+        let runs: Vec<(usize, usize)> = match parts.cluster.iter().find(|c| c.si == p.si) {
+            Some(c) => {
+                let mut at = 0;
+                c.run_tiles
+                    .iter()
+                    .map(|&n| {
+                        at += n;
+                        (at - n, at)
+                    })
+                    .collect()
+            }
+            None => vec![(0, ents.len())],
+        };
+        let mut leaves = Vec::new();
+        for (a, b) in runs {
+            for mut l in leaves_of(
+                &ents[a..b],
+                t.index[p.si],
+                codec,
+                &mut f.index_leaves,
+                &mut f.leaf_max[1],
+                |e, _| encode_tile_leaf(e),
+            ) {
+                l.first += a;
+                leaves.push(l);
+            }
+        }
         let mut toff = Vec::with_capacity(ents.len());
         let mut at = 0u64;
         for e in &ents {
@@ -458,6 +536,10 @@ fn build_front(
         });
     }
     f.units.push((tag::INDEX, encode_index_root(&proots)));
+    if !parts.cluster.is_empty() {
+        f.units
+            .push((tag::CLUSTER, encode_cluster_root(&parts.cluster)));
+    }
     // Quad.
     if let Some(q) = &parts.quad {
         f.quad_leaves.extend_from_slice(quad_gdir);
@@ -471,17 +553,41 @@ fn build_front(
                     ..*e
                 })
                 .collect();
-            let leaves = leaves_of(
-                &ents,
-                t.quad[*si],
-                codec,
-                &mut f.quad_leaves,
-                &mut f.leaf_max[2],
-                |e, i| {
-                    let _ = i;
-                    encode_qtile_leaf(e, e[0].off)
-                },
-            );
+            // A clustered order (SPOG) cuts its leaves at the runs.
+            let runs: Vec<(usize, usize)> = match parts
+                .cluster
+                .iter()
+                .find(|c| c.si == QUAD_SPOG && *si == QUAD_SPOG)
+            {
+                Some(c) => {
+                    let mut at = 0;
+                    c.run_tiles
+                        .iter()
+                        .map(|&n| {
+                            at += n;
+                            (at - n, at)
+                        })
+                        .collect()
+                }
+                None => vec![(0, ents.len())],
+            };
+            let mut leaves = Vec::new();
+            for (a, b) in runs {
+                for mut l in leaves_of(
+                    &ents[a..b],
+                    t.quad[*si],
+                    codec,
+                    &mut f.quad_leaves,
+                    &mut f.leaf_max[2],
+                    |e, i| {
+                        let _ = i;
+                        encode_qtile_leaf(e, e[0].off, version == VERSION)
+                    },
+                ) {
+                    l.first += a;
+                    leaves.push(l);
+                }
+            }
             f.counts.push((10 + si, leaves.len()));
             orders.push(QuadOrderRoot {
                 si: *si,
@@ -513,9 +619,15 @@ fn build_front(
     if let Some(l) = &parts.labels {
         f.units.push((
             tag::LABELS,
+            // 0x07: the unit root keeps the 32-byte preamble only; the root
+            // node follows in its own section (kind LABEL_ROOT).
             encode_label_root(&LabelRoot {
                 data_len: l.data_len,
-                head: l.head.clone(),
+                head: if version == VERSION {
+                    l.head[..l.head.len().min(crate::label_index::PREAMBLE_LEN)].to_vec()
+                } else {
+                    l.head.clone()
+                },
             }),
         ));
     }
@@ -529,7 +641,7 @@ fn build_front(
             &mut f.leaf_max[3],
             |e, _| encode_token_leaf(e),
         );
-        f.counts.push((16, leaves.len()));
+        f.counts.push((TEXT_GROUP, leaves.len()));
         f.units.push((
             tag::TEXT,
             encode_text_root(&TextRoot {
@@ -693,6 +805,23 @@ pub fn assemble_with<W: Write + Seek>(
     opts: WriteOpts,
     hooks: &mut Hooks<'_>,
 ) -> Result<Written, FileError> {
+    // `0x07` writes SPOG, POSG and OSPG next to GSPO: derive them from the GSPO
+    // tiles first (the other graph-leading orders of the input are dropped).
+    if opts.version == VERSION && super::neworders::needed(parts) {
+        let (derived, extras) = super::neworders::derive(parts, input, &opts.spill())?;
+        let layered = super::neworders::Layered::new(input, &extras);
+        return assemble_with(&derived, &layered, out, opts.clone(), hooks);
+    }
+    // `--cluster-subjects-by-class`: the subject-leading permutations by class
+    // (or back to subject order). Another pass over the input, same shape.
+    if opts.version == VERSION && super::cluster::needed(parts, opts.cluster) {
+        if let Some((derived, extras)) =
+            super::cluster::derive(parts, input, opts.cluster, &opts.spill())?
+        {
+            let layered = super::neworders::Layered::new(input, &extras);
+            return assemble_with(&derived, &layered, out, opts.clone(), hooks);
+        }
+    }
     let codec = opts.internal_codec;
     if parts.pyramid_levels > u8::MAX as u16 {
         return Err(FileError::Container(
@@ -707,9 +836,12 @@ pub fn assemble_with<W: Write + Seek>(
         parts.term_count,
         parts.quad.as_ref().map_or(0, |q| q.graph_count),
     ])?;
-    // Quad clustering: graph-major when the mean graph is under a tile.
+    // `0x07` is order-major, always: its graph-leading order is one, and the
+    // graph-last orders have no graph neighbourhood to cluster on.
+    // Quad clustering (`0x06`): graph-major when the mean graph is under a tile.
     let graph_major = match (&parts.quad, opts.quad) {
         (None, _) => false,
+        (_, _) if opts.version == VERSION => false,
         (Some(_), QuadClustering::GraphMajor) => true,
         (Some(_), QuadClustering::OrderMajor) => false,
         (Some(q), QuadClustering::Auto) => {
@@ -768,21 +900,31 @@ pub fn assemble_with<W: Write + Seek>(
     let size_of = |t: &Targets, g: usize| match g {
         0..=3 => t.dict[g],
         4..=9 => t.index[g - 4],
-        10..=15 => t.quad[g - 10],
+        10..=18 => t.quad[g - 10],
         _ => t.text,
     };
     let grow = |t: &mut Targets, g: usize| match g {
         0..=3 => t.dict[g] = t.dict[g].saturating_mul(2),
         4..=9 => t.index[g - 4] = t.index[g - 4].saturating_mul(2),
-        10..=15 => t.quad[g - 10] = t.quad[g - 10].saturating_mul(2),
+        10..=18 => t.quad[g - 10] = t.quad[g - 10].saturating_mul(2),
         _ => t.text = t.text.saturating_mul(2),
     };
-    let build =
-        |t: &Targets| build_front(parts, t, codec, &dict_off, &perm_off, &quad_off, &quad_gdir);
+    let build = |t: &Targets| {
+        build_front(
+            parts,
+            t,
+            codec,
+            &dict_off,
+            &perm_off,
+            &quad_off,
+            &quad_gdir,
+            opts.version,
+        )
+    };
     let mut t = Targets {
         dict: [pol.start; 4],
         index: [pol.start; 6],
-        quad: [pol.start; 6],
+        quad: [pol.start; crate::quad7::NUM_SLOTS],
         text: pol.start,
     };
     let mut front = build(&t);
@@ -793,7 +935,7 @@ pub fn assemble_with<W: Write + Seek>(
         let floor = root_len_of(&build(&Targets {
             dict: [one; 4],
             index: [one; 6],
-            quad: [one; 6],
+            quad: [one; crate::quad7::NUM_SLOTS],
             text: one,
         }));
         if floor <= pol.root_budget {
@@ -866,14 +1008,43 @@ pub fn assemble_with<W: Write + Seek>(
             front.leaf_max[3],
         ));
     }
+    // The label index's root node: cold, read only by a label search.
+    if let (Some(l), true) = (&parts.labels, opts.version == VERSION) {
+        let pre = crate::label_index::PREAMBLE_LEN;
+        if l.head.len() > pre {
+            fronts.push((kind::LABEL_ROOT, l.head[pre..].to_vec(), 0));
+        }
+    }
     let clamp = |n: u64| n.min(u32::MAX as u64) as u32;
 
     // Card region: card | record | slack.
-    let card = parts
-        .card
+    // A card with a field over the hot cap is split: the field goes to the
+    // annex, the last data section. A card handed over with its annex (a
+    // `0x07` source) keeps both as they are.
+    let (hot_card, annex_raw) = match (&parts.card, &parts.annex) {
+        (Some(c), None) if !c.is_empty() => {
+            let s = super::annex::split(c);
+            (Some(s.hot), s.annex)
+        }
+        (c, a) => (c.clone(), a.clone()),
+    };
+    let card = hot_card
         .as_ref()
         .filter(|c| !c.is_empty())
         .map(|c| compress(codec, &stamp_card_version(c)));
+    let mut data = data;
+    if let Some(raw) = annex_raw.as_ref().filter(|a| !a.is_empty()) {
+        if opts.version != VERSION {
+            return Err(FileError::Container("0x06 has no card annex"));
+        }
+        data.push(DataSec {
+            kind: kind::CARD_ANNEX,
+            segs: Vec::new(),
+            measure: None,
+            known_max: raw.len() as u64,
+            inline: Some(compress(codec, raw)),
+        });
+    }
     let build = parts.build.clone().filter(|b| !b.is_empty());
     let card_len = card.as_ref().map_or(0, |c| c.len()) as u32;
     let build_len = build.as_ref().map_or(0, |b| b.len()) as u32;
@@ -932,16 +1103,22 @@ pub fn assemble_with<W: Write + Seek>(
         let progress = &mut hooks.progress;
         let consumed = &mut hooks.consumed;
         let settle = &mut hooks.settle;
-        let measured = copy_segs(
-            input,
-            &d.segs,
-            d.measure,
-            out,
-            &mut h,
-            &mut |n| progress(written_before + n, data_len),
-            &mut **consumed,
-            &mut **settle,
-        )?;
+        let measured = if let Some(b) = &d.inline {
+            h.update(b);
+            out.write_all(b)?;
+            0
+        } else {
+            copy_segs(
+                input,
+                &d.segs,
+                d.measure,
+                out,
+                &mut h,
+                &mut |n| progress(written_before + n, data_len),
+                &mut **consumed,
+                &mut **settle,
+            )?
+        };
         written_before += d.len();
         (hooks.copied)(d.kind);
         (hooks.settle)(out)?;
@@ -951,11 +1128,12 @@ pub fn assemble_with<W: Write + Seek>(
             sec.max_block = clamp(measured);
         }
     }
-    out.write_all(&FOOTER)?;
+    out.write_all(&footer(opts.version))?;
     let root_bytes = root.encode(codec);
     debug_assert_eq!(root_bytes.len() as u32, root_len);
 
     let mut header = Header06 {
+        version: opts.version,
         flags: (if parts.named { F_NAMED } else { 0 })
             | (if parts.quoted { F_QUOTED } else { 0 })
             | (if parts.text.as_ref().is_some_and(|t| t.named) {
@@ -963,7 +1141,12 @@ pub fn assemble_with<W: Write + Seek>(
             } else {
                 0
             })
-            | (if graph_major { F_QUAD_GRAPH_MAJOR } else { 0 }),
+            | (if graph_major { F_QUAD_GRAPH_MAJOR } else { 0 })
+            | (if parts.cluster.is_empty() {
+                0
+            } else {
+                F_CLUSTERED
+            }),
         content_hash: [0; 16],
         file_len: data_offset + data_len + FOOTER.len() as u64,
         root_len,
@@ -1050,11 +1233,11 @@ fn presence_of(p: &Parts) -> u16 {
     x
 }
 
-/// A card written into a `0x06` file says `"format_version":6`. The cards the
+/// A card written into a `0x07` file says `"format_version":7`. The cards the
 /// core builders derive stamp the `0x05` layout they were produced for
 /// (`LEGACY_FORMAT_VERSION`); every card entering a `0x06` file passes here, so
 /// a build, a converted build and a re-card agree on the stamp. Only the first
-/// compact `"format_version":N` with N below 6 is rewritten; anything else is
+/// compact `"format_version":N` with N below 7 is rewritten; anything else is
 /// returned unchanged.
 pub fn stamp_card_version(card: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     const KEY: &[u8] = b"\"format_version\":";
@@ -1208,73 +1391,204 @@ pub fn label_section(rete: &crate::file::Rete) -> Vec<u8> {
     crate::label_index::encode_section(&entries, crate::file::writer_codec())
 }
 
-/// Replace the card (and the build record) of a `0x06` image held in memory:
-/// the front is re-laid out with the new card region; every section is copied
-/// byte for byte. The content hash follows the card.
-pub fn replace_card(
-    image: &[u8],
-    card: Option<&[u8]>,
-    build: Option<&[u8]>,
-) -> Result<Vec<u8>, FileError> {
-    let h = Header06::from_bytes(image)?;
-    let front = image
-        .get(..h.data_offset as usize)
-        .ok_or(FileError::Container("0x06 front overruns"))?;
-    let data = image
-        .get(h.data_offset as usize..)
-        .ok_or(FileError::Container("0x06 data overruns"))?;
-    let stored = card
-        .filter(|c| !c.is_empty())
-        .map(|c| compress(h.internal_codec, &stamp_card_version(c)));
-    let (_, mut out) = recard_front(&h, front, stored.as_deref(), build)?;
-    out.extend_from_slice(data);
-    Ok(out)
-}
-
 /// The card a re-card writes.
 #[derive(Debug, Clone, Copy)]
 pub enum NewCard<'a> {
     /// The file's own card, byte for byte (only the build record changes, so
     /// the content hash does not).
     Keep,
-    /// This card (JSON), or none.
+    /// This card (JSON), or none. A field over the hot cap moves to the annex
+    /// ([`super::annex::split`]); the full card goes in, the hot one is stored.
     Set(Option<&'a [u8]>),
+}
+
+/// A card change, resolved: what is stored in the card region and what happens
+/// to the annex (the last data section).
+struct CardPlan {
+    /// The hot card, stored (compressed); `None` = no card.
+    stored: Option<Vec<u8>>,
+    /// The root block to write: the old one unless the annex changes (its
+    /// section-table entry then does, and with it the root digest).
+    root_bytes: Vec<u8>,
+    /// The annex changes: `(offset where the old tail starts, new stored annex
+    /// or empty for none)`. The data region is copied only up to the offset;
+    /// the new annex and the footer follow.
+    tail: Option<(u64, Vec<u8>)>,
+}
+
+/// Resolve `card` against the file `h` with root block `root_bytes`.
+/// `old_card` is the file's stored card (for [`NewCard::Keep`]).
+fn plan_card(
+    h: &Header06,
+    root_bytes: &[u8],
+    card: NewCard<'_>,
+    old_card: Option<Vec<u8>>,
+) -> Result<CardPlan, FileError> {
+    let codec = h.internal_codec;
+    let keep = |stored: Option<Vec<u8>>| CardPlan {
+        stored,
+        root_bytes: root_bytes.to_vec(),
+        tail: None,
+    };
+    let c = match card {
+        NewCard::Keep => return Ok(keep(old_card)),
+        NewCard::Set(c) => c.filter(|c| !c.is_empty()),
+    };
+    let (hot, annex_raw) = match c {
+        Some(c) => {
+            let s = annex::split(c);
+            (Some(s.hot), s.annex)
+        }
+        None => (None, None),
+    };
+    let stored = hot.map(|c| compress(codec, &stamp_card_version(&c)));
+    let root = Root06::decode(root_bytes, codec)?;
+    let old = root.section(kind::CARD_ANNEX).copied();
+    let new_stored = annex_raw.as_ref().map(|a| compress(codec, a));
+    let same = match (&old, &new_stored) {
+        (None, None) => true,
+        (Some(o), Some(n)) => o.len == n.len() as u64 && o.digest == digest16(n),
+        _ => false,
+    };
+    if same {
+        return Ok(keep(stored));
+    }
+    if h.version == VERSION_06 && new_stored.is_some() {
+        return Err(FileError::Container(
+            "this card has fields over the hot-card cap, which need a card annex; \
+             a 0x06 file has none: run `rete convert` to 0x07 first, or trim the card",
+        ));
+    }
+    let end = h.file_len - FOOTER.len() as u64;
+    let cut = match &old {
+        Some(o) => {
+            let a = o.abs(h)?;
+            if a.offset + a.len != end {
+                return Err(FileError::Container(
+                    "0x07 card annex is not the last section",
+                ));
+            }
+            a.offset
+        }
+        None => end,
+    };
+    let mut nr = root.clone();
+    nr.sections.retain(|s| s.kind != kind::CARD_ANNEX);
+    if let (Some(n), Some(raw)) = (&new_stored, &annex_raw) {
+        nr.sections.push(Sec06 {
+            kind: kind::CARD_ANNEX,
+            max_block: raw.len().min(u32::MAX as usize) as u32,
+            offset: cut - h.data_offset,
+            len: n.len() as u64,
+            digest: digest16(n),
+        });
+    }
+    Ok(CardPlan {
+        stored,
+        root_bytes: nr.encode(codec),
+        tail: Some((cut, new_stored.unwrap_or_default())),
+    })
+}
+
+/// The bytes after the copied part of the data region when the annex changes:
+/// the new annex, then the footer.
+fn tail_bytes(h: &Header06, annex: &[u8]) -> Vec<u8> {
+    let mut v = annex.to_vec();
+    v.extend_from_slice(&footer(h.version));
+    v
+}
+
+/// Replace the card (and the build record) of a `0x06`/`0x07` image held in
+/// memory: the front is re-laid out with the new card region; every section is
+/// copied byte for byte (a changed card annex replaces the last section). The
+/// content hash follows the card.
+pub fn replace_card(
+    image: &[u8],
+    card: Option<&[u8]>,
+    build: Option<&[u8]>,
+) -> Result<Vec<u8>, FileError> {
+    replace_card_with(image, NewCard::Set(card), build)
+}
+
+/// [`replace_card`] with the card given as a [`NewCard`]: `Keep` leaves the
+/// file's own card (and its annex) as they are, so only the record changes.
+pub fn replace_card_with(
+    image: &[u8],
+    card: NewCard<'_>,
+    build: Option<&[u8]>,
+) -> Result<Vec<u8>, FileError> {
+    let h = Header06::from_bytes(image)?;
+    let front = image
+        .get(..h.data_offset as usize)
+        .ok_or(FileError::Container("0x06 front overruns"))?;
+    let root_bytes = front
+        .get(HEADER_LEN..HEADER_LEN + h.root_len as usize)
+        .ok_or(FileError::Container("0x06 root overruns"))?;
+    let r = h.card_range();
+    let old = (r.len > 0)
+        .then(|| front.get(r.offset as usize..(r.offset + r.len) as usize))
+        .flatten()
+        .map(<[u8]>::to_vec);
+    let plan = plan_card(&h, root_bytes, card, old)?;
+    let end = plan.tail.as_ref().map_or(h.file_len, |t| t.0);
+    let mut rest = image
+        .get(h.data_offset as usize..end as usize)
+        .ok_or(FileError::Container("0x06 data overruns"))?
+        .to_vec();
+    if let Some((_, a)) = &plan.tail {
+        rest.extend_from_slice(&tail_bytes(&h, a));
+    }
+    let (_, mut out) = recard_front(
+        &h,
+        front,
+        &plan.root_bytes,
+        plan.stored.as_deref(),
+        build,
+        rest.len() as u64,
+    )?;
+    out.extend_from_slice(&rest);
+    Ok(out)
 }
 
 /// The header and front (everything before the data region) of `h`'s file
 /// with a new card and build record: the card region re-laid out (no slack
-/// reuse — a fresh region sized for the new pair), the root and the front
-/// sections copied, the data region shifted by the region's change.
+/// reuse: a fresh region sized for the new pair), the root block as given
+/// (`root_bytes`), the front sections copied, the data region (`new_data_len`
+/// bytes) shifted by the front's change.
 fn recard_front(
     h: &Header06,
     front: &[u8],
+    root_bytes: &[u8],
     card_stored: Option<&[u8]>,
     build: Option<&[u8]>,
+    new_data_len: u64,
 ) -> Result<(Header06, Vec<u8>), FileError> {
-    let root_bytes = front
-        .get(HEADER_LEN..HEADER_LEN + h.root_len as usize)
-        .ok_or(FileError::Container("0x06 root overruns"))?;
     let sections = front
         .get(h.front_base() as usize..h.data_offset as usize)
         .ok_or(FileError::Container("0x06 front overruns"))?;
     let card_len = card_stored.map_or(0, |c| c.len()) as u32;
     let build_len = build.map_or(0, |b| b.len()) as u32;
     let mut region_len = card_region_len(card_len, build_len);
-    let rest_len = h.file_len - h.front_base();
-    let total = HEADER_LEN as u64 + h.root_len as u64 + region_len as u64 + rest_len;
+    let total = HEADER_LEN as u64
+        + root_bytes.len() as u64
+        + region_len as u64
+        + sections.len() as u64
+        + new_data_len;
     if total < MIN_FILE_LEN {
         region_len += (MIN_FILE_LEN - total) as u32;
     }
     let mut nh = h.clone();
+    nh.root_len = root_bytes.len() as u32;
+    nh.root_digest = digest16(root_bytes);
     nh.card_region_len = region_len;
     nh.card_off = 0;
     nh.card_len = card_len;
     nh.card_digest = card_stored.map_or([0; 16], digest16);
     nh.build_off = card_len;
     nh.build_len = build_len;
-    let shift = region_len as i64 - h.card_region_len as i64;
-    nh.data_offset = (h.data_offset as i64 + shift) as u64;
-    nh.file_len = (h.file_len as i64 + shift) as u64;
+    nh.data_offset =
+        HEADER_LEN as u64 + root_bytes.len() as u64 + region_len as u64 + sections.len() as u64;
+    nh.file_len = nh.data_offset + new_data_len;
     nh.content_hash = content_hash(&nh);
     let mut out = Vec::with_capacity(nh.data_offset as usize);
     out.extend_from_slice(&nh.to_bytes());
@@ -1292,11 +1606,12 @@ fn recard_front(
     Ok((nh, out))
 }
 
-/// Rewrite a `0x06` file read through `src` into `out` with a new card and
-/// build record — [`replace_card`] without holding the file: the front is
-/// re-laid out around the new card region, the data region copied byte for
-/// byte (its digests, and so the root, unchanged). `progress` receives the
-/// data bytes copied so far.
+/// Rewrite a `0x06`/`0x07` file read through `src` into `out` with a new card
+/// and build record: [`replace_card`] without holding the file. The front is
+/// re-laid out around the new card region and the data region copied byte for
+/// byte (its digests unchanged); a changed card annex replaces the file's last
+/// section, and the root with it. `progress` receives the data bytes copied so
+/// far.
 pub fn rewrite_card_stream<W: Write>(
     src: &dyn RangeReader,
     out: &mut W,
@@ -1315,23 +1630,33 @@ pub fn rewrite_card_stream<W: Write>(
     // Everything before the data region is small: the header, the root, the
     // card region and the front sections.
     let front = src.read_at(0, h.data_offset)?;
-    let stored = match card {
-        NewCard::Keep => {
-            let r = h.card_range();
-            (r.len > 0).then(|| front[r.offset as usize..(r.offset + r.len) as usize].to_vec())
-        }
-        NewCard::Set(c) => c
-            .filter(|c| !c.is_empty())
-            .map(|c| compress(h.internal_codec, &stamp_card_version(c))),
-    };
-    let (nh, new_front) = recard_front(&h, &front, stored.as_deref(), build)?;
+    let root_bytes = front
+        .get(HEADER_LEN..HEADER_LEN + h.root_len as usize)
+        .ok_or(FileError::Container("0x06 root overruns"))?;
+    let r = h.card_range();
+    let old = (r.len > 0).then(|| front[r.offset as usize..(r.offset + r.len) as usize].to_vec());
+    let plan = plan_card(&h, root_bytes, card, old)?;
+    let end = plan.tail.as_ref().map_or(h.file_len, |t| t.0);
+    let tail = plan.tail.as_ref().map(|(_, a)| tail_bytes(&h, a));
+    let new_data_len = end - h.data_offset + tail.as_ref().map_or(0, |t| t.len() as u64);
+    let (nh, new_front) = recard_front(
+        &h,
+        &front,
+        &plan.root_bytes,
+        plan.stored.as_deref(),
+        build,
+        new_data_len,
+    )?;
     out.write_all(&new_front)?;
     let mut at = h.data_offset;
-    while at < h.file_len {
-        let n = (h.file_len - at).min(SPAN);
+    while at < end {
+        let n = (end - at).min(SPAN);
         out.write_all(&src.read_at(at, n)?)?;
         at += n;
         progress(at - h.data_offset);
+    }
+    if let Some(t) = tail {
+        out.write_all(&t)?;
     }
     out.flush()?;
     Ok(nh)
@@ -1354,11 +1679,17 @@ pub fn recard_in_place<F: std::io::Read + Write + Seek>(
     file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut head)?;
     let h = Header06::from_bytes(&head)?;
+    // A changed annex is the file's last section and its root entry: that is a
+    // copy, not an in-place write (the header is the one commit point).
+    let mut root_bytes = vec![0u8; h.root_len as usize];
+    file.read_exact(&mut root_bytes)?;
+    let plan = plan_card(&h, &root_bytes, card, None)?;
+    if plan.tail.is_some() {
+        return Ok(None);
+    }
     let card_stored = match card {
         NewCard::Keep => None,
-        NewCard::Set(c) => c
-            .filter(|c| !c.is_empty())
-            .map(|c| compress(h.internal_codec, &stamp_card_version(c))),
+        NewCard::Set(_) => plan.stored,
     };
     let keep_card = match (card, &card_stored) {
         (NewCard::Keep, _) => true,
@@ -1466,14 +1797,15 @@ mod stamp_tests {
         let s = |b: &[u8]| stamp_card_version(b).into_owned();
         assert_eq!(
             s(br#"{"a":1,"format_version":5}"#),
-            br#"{"a":1,"format_version":6}"#
+            br#"{"a":1,"format_version":7}"#
         );
         assert_eq!(
             s(br#"{"format_version":5,"z":2}"#),
-            br#"{"format_version":6,"z":2}"#
+            br#"{"format_version":7,"z":2}"#
         );
-        assert_eq!(s(br#"{"format_version":6}"#), br#"{"format_version":6}"#);
+        assert_eq!(s(br#"{"format_version":6}"#), br#"{"format_version":7}"#);
         assert_eq!(s(br#"{"format_version":7}"#), br#"{"format_version":7}"#);
+        assert_eq!(s(br#"{"format_version":8}"#), br#"{"format_version":8}"#);
         assert_eq!(s(br#"{"title":"x"}"#), br#"{"title":"x"}"#);
     }
 }

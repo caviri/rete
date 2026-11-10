@@ -77,6 +77,11 @@ impl V06File {
         }
         let root = Root06::decode(&root_bytes, h.internal_codec)?;
         for s in &root.sections {
+            if h.version == VERSION_06 && kind::is_v07_only(s.kind) {
+                return Err(FileError::Container(
+                    "0x06 file has a section only 0x07 defines",
+                ));
+            }
             let a = s.abs(&h)?;
             let end = a.offset + a.len;
             let ok = if kind::is_front(s.kind) {
@@ -133,6 +138,35 @@ impl V06File {
             return Ok(None);
         }
         Ok(Some(self.reader.read_at(r.offset, r.len)?))
+    }
+
+    /// The label index's root node (`0x07`: its own cold section), digest
+    /// checked. Fetched only when a label search runs.
+    pub fn label_root_node(&self) -> Result<Vec<u8>, FileError> {
+        let r = self
+            .section(kind::LABEL_ROOT)
+            .ok_or(FileError::Container("0x07 file has no label root section"))?;
+        let b = self.reader.read_at(r.offset, r.len)?;
+        check_digest(&self.root, kind::LABEL_ROOT, &b)?;
+        Ok(b)
+    }
+
+    /// The card annex (raw JSON, decompressed), if the file has one.
+    pub fn annex(&self) -> Result<Option<Vec<u8>>, FileError> {
+        read_annex(&*self.reader, &self.h, &self.root)
+    }
+
+    /// The full card: the hot card with its annex merged back in.
+    pub fn card_full(&self) -> Result<Option<Vec<u8>>, FileError> {
+        let Some(hot) = self.card()? else {
+            return Ok(None);
+        };
+        match self.annex()? {
+            None => Ok(Some(hot)),
+            Some(a) => annex::merge(&hot, &a)
+                .map(Some)
+                .map_err(|_| FileError::Container("0x07 card annex does not merge")),
+        }
     }
 
     /// The stats + schema section, as the `0x05` SCHEMA section bytes
@@ -270,6 +304,68 @@ impl V06File {
         Ok(dict)
     }
 
+    /// The class clusters the cluster root lists, checked against the index root:
+    /// every run is whole leaves, and the runs cover the permutation.
+    fn clusters(&self, perms: &[PermRoot]) -> Result<Vec<ClusterOrder>, FileError> {
+        let Some(unit) = self.root.unit(tag::CLUSTER) else {
+            if self.h.flags & F_CLUSTERED != 0 {
+                return Err(FileError::Container(
+                    "0x07 clustered file without a cluster root",
+                ));
+            }
+            return Ok(Vec::new());
+        };
+        let orders = decode_cluster_root(unit)?;
+        let quad = self.quad_root().transpose()?;
+        for c in &orders {
+            // The order's tile count and its leaves, `(first tile, tiles)`.
+            let (n_tiles, leaves): (usize, Vec<(usize, usize)>) = if c.si == QUAD_SPOG {
+                let o = quad
+                    .as_ref()
+                    .and_then(|q| q.orders.iter().find(|o| o.si == c.si))
+                    .ok_or(FileError::Container(
+                        "0x07 cluster root names an order the quad index lacks",
+                    ))?;
+                (
+                    o.n_tiles,
+                    o.leaves.iter().map(|(l, _, _, _)| (l.first, l.n)).collect(),
+                )
+            } else {
+                let p = perms
+                    .iter()
+                    .find(|p| p.si == c.si)
+                    .ok_or(FileError::Container(
+                        "0x07 cluster root names a permutation the index lacks",
+                    ))?;
+                (
+                    p.n_tiles,
+                    p.leaves.iter().map(|(l, _, _, _)| (l.first, l.n)).collect(),
+                )
+            };
+            if c.run_tiles.iter().sum::<usize>() != n_tiles {
+                return Err(FileError::Container(
+                    "0x07 cluster runs do not cover the tiles",
+                ));
+            }
+            // A leaf holds the tiles of one run.
+            let mut ends = Vec::with_capacity(c.run_tiles.len());
+            let mut at = 0usize;
+            for &n in &c.run_tiles {
+                at += n;
+                ends.push(at);
+            }
+            for (first, n) in leaves {
+                let r = ends.partition_point(|&e| e <= first);
+                if first + n > ends[r.min(ends.len() - 1)] {
+                    return Err(FileError::Container(
+                        "0x07 a directory leaf spans two cluster runs",
+                    ));
+                }
+            }
+        }
+        Ok(orders)
+    }
+
     /// The default graph's index, two-level, tiles faulted on demand.
     pub fn index(&self, read_concurrency: usize) -> Result<GraphIndex, FileError> {
         let unit = self
@@ -349,6 +445,16 @@ impl V06File {
         let mut index = GraphIndex::from_leafed(lists, perms, loader)
             .with_bulk_loader(bulk)
             .with_scattered_loader(scattered);
+        for c in self
+            .clusters(&perms_root)?
+            .into_iter()
+            .filter(|c| c.si < NUM_PERMS)
+        {
+            index = index.with_clusters(
+                c.si,
+                crate::index::ClusterRuns::new(c.classes, &c.run_tiles),
+            );
+        }
         index.set_read_concurrency(read_concurrency);
         Ok(index)
     }
@@ -403,7 +509,10 @@ impl V06File {
     pub fn label_index(&self) -> Option<Result<crate::label_index::LabelIndex, FileError>> {
         let unit = self.root.unit(tag::LABELS)?;
         Some((|| {
-            let l = decode_label_root(unit)?;
+            let mut l = decode_label_root(unit)?;
+            if self.section(kind::LABEL_ROOT).is_some() {
+                l.head.extend_from_slice(&self.label_root_node()?);
+            }
             let data = self
                 .section(kind::LABEL_DATA)
                 .unwrap_or(ByteRange { offset: 0, len: 0 });
@@ -468,8 +577,22 @@ impl V06File {
         };
         let leaves = self.section(kind::QUAD_LEAVES).map_or(0, |r| r.offset);
         let data = self.section(kind::QUAD_DATA).map_or(0, |r| r.offset);
+        // The class runs of SPOG, when the file clusters it.
+        let clusters = match self.root.unit(tag::CLUSTER).map(decode_cluster_root) {
+            Some(Ok(c)) => c,
+            Some(Err(e)) => return Some(Err(e)),
+            None => Vec::new(),
+        };
         Some(
-            crate::quad::V06Quad::new(&root, leaves, data, self.h.internal_codec).map(|mut v| {
+            crate::quad::V06Quad::new(
+                &root,
+                leaves,
+                data,
+                self.h.internal_codec,
+                self.h.version == VERSION,
+            )
+            .and_then(|v| v.with_clusters(&clusters))
+            .map(|mut v| {
                 v.tile_max = self.bound(kind::QUAD_DATA);
                 v.leaf_max = self.bound(kind::QUAD_LEAVES);
                 crate::quad::QuadNamed::new_v06(
@@ -521,10 +644,11 @@ impl V06File {
             }
         }
         if only.is_none() {
+            let want = footer(self.h.version);
             let foot = self
                 .reader
-                .read_at(self.h.file_len - FOOTER.len() as u64, FOOTER.len() as u64)?;
-            if foot != FOOTER {
+                .read_at(self.h.file_len - want.len() as u64, want.len() as u64)?;
+            if foot != want {
                 bad.push("footer".to_string());
             }
         }
@@ -532,9 +656,9 @@ impl V06File {
     }
 }
 
-/// Is this file (by its first bytes) a `0x06` file?
+/// Is this file (by its first bytes) a `0x06` or `0x07` file?
 pub fn is_v06(first: &[u8]) -> bool {
-    first.len() > 4 && first[0..4] == crate::header::MAGIC && first[4] == VERSION
+    first.len() > 4 && first[0..4] == crate::header::MAGIC && reads(first[4])
 }
 
 /// Read a `0x06` file's header and root through any reader (two reads at most;
@@ -749,10 +873,57 @@ pub fn read_signals<R: RangeReader + ?Sized>(
                 .ok()
                 .map(|p| p.entry_count);
             Some((
-                l.head.len() as u64 + len(kind::LABEL_DATA) + len(kind::LABEL_LEAVES),
+                l.head.len() as u64
+                    + len(kind::LABEL_ROOT)
+                    + len(kind::LABEL_DATA)
+                    + len(kind::LABEL_LEAVES),
                 entries,
             ))
         }
     };
     Ok((text, labels))
+}
+
+/// Check `bytes` against the digest the root records for section `k`.
+pub fn check_digest(root: &Root06, k: u8, bytes: &[u8]) -> Result<(), FileError> {
+    match root.section(k) {
+        Some(s) if s.digest == digest16(bytes) => Ok(()),
+        Some(_) => Err(FileError::Container("0x07 section digest mismatch")),
+        None => Ok(()),
+    }
+}
+
+/// The card annex of a `0x07` file (raw JSON, decompressed, digest checked).
+pub fn read_annex<R: RangeReader + ?Sized>(
+    r: &R,
+    h: &Header06,
+    root: &Root06,
+) -> Result<Option<Vec<u8>>, FileError> {
+    let Some(stored) = read_section(r, h, root, kind::CARD_ANNEX)? else {
+        return Ok(None);
+    };
+    check_digest(root, kind::CARD_ANNEX, &stored)?;
+    let max = root
+        .section(kind::CARD_ANNEX)
+        .map(|s| s.max_block as u64)
+        .filter(|&m| m > 0)
+        .unwrap_or(ANNEX_MAX);
+    Ok(Some(decompress_bounded(h.internal_codec, &stored, max)?))
+}
+
+/// The card of the file read through `r` with its annex merged back in (what
+/// `rete card --full` shows), and whether an annex was merged.
+pub fn read_card_full<R: RangeReader + ?Sized>(
+    r: &R,
+) -> Result<(Option<Vec<u8>>, bool), FileError> {
+    let (h, root) = read_front(r)?;
+    let Some(hot) = read_card_build(r, &h)?.0 else {
+        return Ok((None, false));
+    };
+    match read_annex(r, &h, &root)? {
+        None => Ok((Some(hot), false)),
+        Some(a) => annex::merge(&hot, &a)
+            .map(|c| (Some(c), true))
+            .map_err(|_| FileError::Container("0x07 card annex does not merge")),
+    }
 }

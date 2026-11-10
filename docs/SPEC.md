@@ -1,6 +1,6 @@
 # Rete — a cloud-native, range-queryable RDF graph file
 
-**Status:** Format generation **2** (header byte `0x06`), written by every writer; generation **1** (`0x05`, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · **File extension:** `.rete` · **Header magic:** `RETE`
+**Status:** Format generation **2** (header byte `0x07`), written by every writer; `0x06`, the same generation one step earlier, and generation **1** (`0x05`, frozen 2026-07-14) is read, never written (§4.9). No compatibility promise before 1.0.0 · **File extension:** `.rete` · **Header magic:** `RETE`
 
 > One file. Put it on S3, GitHub, or any HTTP server that honors `Range`.
 > Give a client the URL. Run SPARQL. No database server.
@@ -71,15 +71,16 @@ Three transformations make it range-queryable:
 
 ## 4. File layout
 
-The current layout is **format `0x06`**, stable generation **2**. Everything a
+The current layout is **format `0x07`**, stable generation **2** (`0x06`, its
+predecessor, is still read; §4.10 lists what `0x07` changed). Everything a
 reader needs to plan a query sits at the **front** of the file, inside the
 first read: a 128-byte header, the root block, the Dataset Card, the planner
 statistics and every leaf directory. The payload follows, clustered by
 section. The payload blocks themselves (dictionary chunks §5.1, permutation
 tiles §6.1–6.2, quad tiles §6.5, label blocks §6.4, text postings §6.3) are
 byte-identical to generation 1; only their framing and their directories
-moved. `rete convert` turns a `0x05` file into a `0x06` one by copying them
-(§4.9, [cli](cli.md)).
+moved. `rete convert` turns a `0x05` or `0x06` file into a `0x07` one by
+copying them (§4.9, §4.10, [cli](cli.md)).
 
 ```
 0            HEADER, 128 B: counts, codecs, presence bits, card and root
@@ -89,16 +90,20 @@ moved. `rete convert` turns a `0x05` file into a `0x06` one by copying them
              CARD REGION: card | build record | free space (§4.4)
 front_base   FRONT SECTIONS: stats + schema, then the leaf directories of
              the dictionary, the index, the quad index, the label index and
-             the text index (§4.3)
+             the text index (§4.3), then the label index's root node (§6.4)
 data_offset  DATA SECTIONS, clustered: dictionary chunks, index tiles, quad
-             tiles, label blocks, text postings, community pyramid (§4.5)
-file_len - 8 FOOTER: 06 00 00 00 "RETE"
+             tiles, label blocks, text postings, community pyramid (§4.5),
+             and last the card annex when there is one (§4.4)
+file_len - 8 FOOTER: 07 00 00 00 "RETE"
 ```
 
 `front_base = 128 + root length + card region length`. A reader's first
 request is `bytes=0-131071` (§4.6); it holds the header, the root, the card and
-the statistics of every measured file (OpenCitations Meta's root is 37 KiB),
-and on a small file every leaf directory as well.
+the statistics of every measured file, and on a small file every leaf directory
+as well. In `0x06` the label index's root node sat in the root (37 KiB of
+OpenCitations Meta's 41 KiB root, 47 KiB of OpenAIRE's 48 KiB: it is
+incompressible); `0x07` moves it out (§4.10), so the root is the section table
+and the small unit roots.
 
 <img src="img/file-layout.svg" alt="The front of a format 0x06 .rete file: a 128-byte header, the root block, the card region, the front sections and then the data sections, ending in an 8-byte footer. The first 128 KiB read covers the header, root, card and statistics. The header is drawn to scale in six groups of fields.">
 
@@ -107,8 +112,8 @@ and on a small file every leaf directory as well.
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version `0x06` |
-| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5) |
+| 4 | 1 | format version: `0x07` (written), or `0x06` (read, §4.10) |
+| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 `0x07`: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6) |
 | 6 | 2 | header length (128) |
 | 8 | 16 | content hash (§4.7) — also an ETag-like id |
 | 24 | 8 | file length (a client needs no `Content-Range` and no `HEAD`) |
@@ -180,18 +185,22 @@ order:
 | 4 | `quad-leaves` | front | the quad index's graph directory (§6.5), then its tile directories, in leaves |
 | 5 | `label-leaves` | front | the label index's directory nodes (§6.4) |
 | 6 | `text-leaves` | front | the text index's token table, in leaves |
+| 7 | `label-root` | front | `0x07`: the label index's root node (§6.4), stored as the label index encodes it (already compressed), after every other front section; read only when a label search runs |
 | 16 | `dict` | data | dictionary chunks: predicates, shared, subject-only, object-only |
 | 17 | `index` | data | permutation tiles: SPO, POS, OSP, SOP, PSO, OPS (those the mask stores) |
 | 18 | `quad` | data | quad tiles (§4.5) |
 | 19 | `labels` | data | label data blocks, in key order |
 | 20 | `text` | data | postings, in token order |
 | 21 | `pyramid` | data | the community pyramid-meta (§7.3); optional and cold, only the overview reads it |
+| 22 | `card-annex` | data | `0x07`: the card fields too big for the hot card (§4.4), the internal codec over a JSON object; optional, cold, always the **last** section |
 
-A reader ignores a kind it does not know (`verify` still checks its digest).
+A reader ignores a kind it does not know (`verify` still checks its digest),
+except that a `0x06` file has no kind 7 and no kind 22: a reader refuses one
+that does.
 
 The **unit roots** are the first level of every two-level directory, plus the
 small fixed facts that would otherwise cost a read. Tags: `1` dictionary, `2`
-index, `3` quad index, `4` label index, `5` text index. All integers are
+index, `3` quad index, `4` label index, `5` text index, `6` class clusters (`0x07`, only when header flag bit4 is set). All integers are
 unsigned LEB128 varints, byte strings are length-prefixed.
 
 - **Dictionary** (always four sections, in the order shared, subject-only,
@@ -203,13 +212,31 @@ unsigned LEB128 varints, byte strings are length-prefixed.
   permutation's offset and length within `index`, then per leaf: entry count,
   offset, stored length, the first tile's lowest and the last tile's highest
   leading id, and the first tile's offset within the permutation.
-- **Quad index**: graph count, quad count, graphs per directory block, the
-  block index `P0` (§6.5), the graph directory's length, then per order:
-  order number, tile count and per leaf: entry count, offset, stored length,
-  the first tile's first `(g, a)`, the last tile's last `(g, a)`, and the first
-  tile's offset within `quad`.
+- **Class clusters** (`0x07`, flag bit4): the number of clustered orders, and
+  per order: its number (`0` SPO, `3` SOP, the section index of a default-graph
+  permutation; `6`, the quad order number of SPOG), the number of classes *k*
+  (at most 32), the *k* class ids (object ids, run 1 first), and the tile count
+  of each of the *k* + 1 runs, run 0 first (§6.6). The runs partition the
+  order's tiles, in order; no leaf of the index unit root (or, for SPOG, of the
+  quad unit root) spans two runs.
+- **Quad index**: graph count, quad count, graphs per directory block (1,024 in
+  `0x06`, 8,192 in `0x07`), the block index `P0` (§6.5), the graph directory's
+  length, then per order: order number, tile count and per leaf: entry count,
+  offset, stored length, the first tile's first key, the last tile's last key,
+  and the first tile's offset within `quad`. The order numbers are the
+  **declaration of the order set**: `0` to `5` are the graph-leading orders
+  `G+SPO`, `G+POS`, `G+OSP`, `G+SOP`, `G+PSO`, `G+OPS` (the permutation's
+  section index), and `6`, `7`, `8` the graph-last `SPO+G`, `POS+G`, `OSP+G`
+  (`0x07`). A key is `(g, a)` in a graph-leading order and `(a, b)` in a
+  graph-last one (§6.5). A `0x06` file declares the file's permutation set
+  with a `G+` before each; a `0x07` file declares `0, 6, 7, 8` and no other
+  (`--permutations` is the default graph's alone), and a reader reads whatever
+  set the root declares that holds `G+SPO`.
 - **Label index**: the length of the data blocks, then the section's 32-byte
-  preamble (digest zeroed) and root node, as §6.4 encodes them.
+  preamble (digest zeroed), as §6.4 encodes it. `0x06` followed the preamble
+  with the root node; in `0x07` the root node is the `label-root` section, whose
+  offset, length and digest are its entry in the section table (the root's pointer
+  to it), and whose length is the preamble's `root_len`.
 - **Text index**: the scope block (§6.3; empty for the default scope), token
   count, then per leaf: entry count, offset, stored length and its first token.
 
@@ -225,9 +252,14 @@ internal codec. Entries are rows of varints:
   stored length; after every entry of the leaf, the synopsis columns (§6.2):
   lowest *b*, highest minus lowest *b*, lowest *c*, highest minus lowest *c*.
 - **quad tile**: first graph (a delta), first *a*, last graph minus first
-  graph, last *a*, `stored length × 2 + raw`, the four synopsis varints, and an
-  offset code: `0` when the tile follows the previous one, else its offset
-  within `quad` plus one (graph-major clustering interleaves the orders).
+  graph, last *a*, `stored length × 2 + raw`, the four synopsis varints, and (in
+  `0x06`) an offset code: `0` when the tile follows the previous one, else its
+  offset within `quad` plus one (graph-major clustering interleaves the
+  orders). In a graph-last order (`0x07`) the first two fields are the first
+  tile row's `(a, b)` and the next two the last row's, "graph" above reading
+  "first column"; the synopsis is `(min c, max c, min g, max g)`. `0x07` is
+  order-major, so a tile always follows the previous one and the offset code is
+  not written.
 - **text token**: bytes shared with the previous token, the rest
   (length-prefixed), the posting list's offset and length within `text`.
 - **label nodes** are §6.4's level-1 nodes, unchanged. Their offsets are those
@@ -273,6 +305,31 @@ equal to the current one stays where it is, so a record-only update
 
 A file shorter than 1 KiB is padded to 1 KiB inside its card region.
 
+**Card annex (`0x07`).** The hot card is what every reader fetches on every
+open, so its two open-ended authored fields, `description` and `extra`, stay
+under 8 KiB each. A card that has a field past that (the OpenCitations Index
+card's `extra` is 13 KB: 114 source checksums) keeps it in the **annex**, a
+cold section (kind 22) that only `rete card --full`, `rete card-url --full` and
+`rete_core::read_card_full_ranged` read. The writer moves a field **whole**: the
+annex is a JSON object whose keys are the moved fields, and the hot card has no
+such field but a marker, `"annex": {"fields": ["extra"], "bytes": N}`, so a
+reader knows there is more. The annex is the last data section, so its digest is
+in the root's section table and inside the content hash through the root
+digest, and `verify` checks it. The input side is a cap, not a flag: the CLI
+accepts up to 1 MiB for each of the two fields (`CARD_ANNEX_FIELD_MAX_BYTES`)
+and the format layer moves whichever is over 8 KiB; the library's
+`CardInput::normalize` keeps the 8 KiB rejection, and
+`normalize_with_annex` is the 1 MiB one.
+
+A re-card that keeps the annex unchanged (`--keep-curated` of a card whose
+fields did not change, or a record-only update) is in place as before. One that
+changes, adds or removes the annex rewrites the file's tail and the section
+table entry, hence the root digest: that is a copy (a new front, the data region
+byte for byte up to the annex, the new annex, the footer), never an in-place
+write, because the header alone is the commit point of an in-place re-card. A
+`0x06` file has no annex: re-carding it with a field over the cap fails and says
+to `rete convert` first.
+
 ### 4.5 Data region
 
 The data sections follow the front in the order of the kind table, each one
@@ -281,16 +338,18 @@ synopsis trailers, no restart tables. Dictionary chunks go predicates first, so
 the predicate routing every query needs is one short range. A scan of one
 permutation, or of one predicate's run in POS, is one contiguous range.
 
-Quad tiles are clustered one of two ways, and header flag bit3 says which:
+Quad tiles are clustered one of two ways in `0x06`, and header flag bit3 says
+which:
 
 - **graph-major** — for each block of graphs of the graph directory, the tiles
   of every order whose first graph falls in it, side by side, so a `GRAPH <g>`
   query finds the graph's slice in every order in one neighbourhood;
 - **order-major** — each order's tiles contiguous, as in generation 1.
 
-The writer chooses graph-major when the mean named graph is smaller than
+The `0x06` writer chooses graph-major when the mean named graph is smaller than
 64 KiB of quad tiles, else order-major (`rete convert --quad-clustering`
-overrides it). Readers route through the directories either way.
+overrides it). **`0x07` is order-major, always**, and flag bit3 is never set
+(§6.5 gives the reason). Readers route through the directories either way.
 
 ### 4.6 Opening a file
 
@@ -300,7 +359,7 @@ overrides it). Readers route through the directories either way.
    at most 8 MiB is then fetched whole in one more read. Byte 4 picks the
    reader: `0x05` continues with the generation-1 open (§4.9), served from
    these bytes where it can.
-2. `0x06`: parse the header; take the root (and in the rare case it does not
+2. `0x06` or `0x07`: parse the header; take the root (and in the rare case it does not
    fit, read the rest of it); check the root digest; decode the section table
    and the unit roots. The card, the record and the statistics are in hand, and
    so is every leaf inside the first 128 KiB.
@@ -321,12 +380,13 @@ to re-tile every permutation instead of copying its tiles.
 ### 4.7 Content hash and verify
 
 ```
-content hash = BLAKE3("rete/0x06" ‖ header[4..8] ‖ header[48..80]
+content hash = BLAKE3("rete/0x07" ‖ header[4..8] ‖ header[48..80]
                       ‖ card length (u32) ‖ card digest
                       ‖ root length (u32) ‖ root digest)[0..16]
 ```
 
-`header[4..8]` is the version, the flags and the header length;
+(`"rete/0x06"` for a `0x06` file.) `header[4..8]` is the version, the flags and
+the header length;
 `header[48..80]` the counts, the mask, the codecs, the pyramid levels and the
 presence bits. Through the root digest the hash covers every section digest, so
 every byte of every section; through the card digest, the card. It hashes no
@@ -562,6 +622,61 @@ range of the content hash itself, but its BLAKE3 digest is the **seal**, the las
 section of the index container (kind `3`), which is — so it stays part of the
 file's identity, a current `verify` checks it against the seal, and an older
 `verify` (which refuses to open such a file anyway, on the seal) still passes.
+
+### 4.10 Format `0x07` and compatibility
+
+`0x07` is `0x06` plus three changes; every payload block and every leaf other than the
+quad index's, and every unit root other than the label and the quad ones, is
+byte-identical. The same code reads both: the header's version byte says which one
+a file is.
+
+1. **The label index's root node leaves the root.** In `0x06` the label unit root
+   held the 32-byte preamble and the root node, 47 KB of OpenAIRE's 48 KB root and
+   37 KB of Meta's 41 KB, and it does not compress. In `0x07` the unit root keeps
+   the preamble (the entry count, the root's length, and the data length), and
+   the root node is a front section of its own (kind 7, `label-root`, placed after
+   the other leaves, so the statistics and the leaf directories sit nearer the
+   front). The root's pointer to it is its table entry (offset, length, digest), and
+   it is read, digest-checked, only when a label search first runs (the label
+   index is already opened lazily). A search over a small file whose front is in the first read
+   is already in hand; over a big one it costs one more request, the same bytes
+   it used to carry in every open.
+2. **The card annex** (kind 22, §4.4).
+
+3. **The quad index's order set** (§6.5). `0x06` stores a graph-leading order
+   `G+X` for every permutation the file has (three or six); `0x07` stores four
+   orders and no other: `G+SPO` as before, and the graph-last **SPOG**, **POSG**
+   and **OSPG**, which answer `GRAPH ?g { <s> ... }`, `GRAPH ?g { ?s <p> ... }` and
+   `GRAPH ?g { ?s ?p <o> }` by a seek instead of a pass over the file. The set is
+   declared by the quad unit root (§4.2), so `--permutations` is the default
+   graph's alone. The tiles are order-major (§4.5), a graph-directory block holds
+   8,192 graphs, and a quad tile's leaf entry has no offset code, so the root of
+   the 2018 nanopub dump goes from 104 KB to 33 KB.
+
+4. **Class clustering** (optional, header flag bit4, §6.6). The default graph's
+   subject-leading permutations (SPO and, when stored, SOP) and the quad index's
+   SPOG may be laid out in `(class run, subject, predicate, object)` order
+   instead of subject order, so the subjects of one class are a few contiguous
+   tiles. Off by default (`--cluster-subjects-by-class`); a file without the
+   flag is byte-for-byte the file the same writer wrote before the option
+   existed. GSPO, POSG and OSPG are untouched.
+
+Other differences: the version byte, the footer (`07 00 00 00 "RETE"`), the
+hash domain (`"rete/0x07"`) and the `format_version` a card is stamped with
+(`7`).
+
+**Compatibility.** Writers write `0x07` only; the reader reads `0x05`, `0x06` and
+`0x07`. A reader that predates `0x07` refuses the file at the header, by name:
+`unsupported .rete format 0x07; this Rete build reads 0x05..=0x06`. It cannot
+read a `0x07` file as a `0x06` one with an unknown section, because the root's
+label unit no longer holds the root node. There is no backward-compatibility
+promise before 1.0.0: `rete convert` turns a `0x05` or a `0x06` file into a
+`0x07` one, copying the payload, moving the label root out of the root and keeping
+the card (no annex unless a card field is over the hot cap), and, for a file with
+named graphs, deriving SPOG, POSG and OSPG from the input's `G+SPO` tiles by one
+sort pass each (external past 100 M quads) and dropping the other graph-leading
+orders; the catalog is converted in step, and the `0x06` reader is removed once
+it is.
 
 ---
 
@@ -991,6 +1106,11 @@ the dictionary. A remote search reads the section's first `min(len, 64 KiB)` byt
 one at a time, until `limit` entries are found or the run ends. A card reader learns
 `entry_count` from the 32-byte preamble alone (`signals.label_index`).
 
+**`0x07`:** the root node is its own front section (kind 7, `label-root`, §4.10), not
+part of the root block, so a remote search reads the preamble from the root, the
+root node (one request, digest-checked), then the nodes and blocks as above.
+The 32-byte preamble stays in the root, where a card reader finds `entry_count`.
+
 **Compatibility:** `0x05` is stable format generation 1. Every stable reader from
 Rete **0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen
 in the 0.3 line and the release version is a separate number.
@@ -1009,6 +1129,10 @@ every named-graph quad is stored **once**, the graph as a fourth column, in
 cut into tiles that many graphs share, behind a **sorted graph directory**.
 A graph name is a dictionary term in the **subject** role (shared or
 subject-only section), and the graph column stores its subject id.
+
+This is the layout of `0x05` and `0x06`. `0x07` keeps GSPO and adds three
+graph-last orders (the last subsection below); everything said here about the
+segments, the graph directory and the views holds for GSPO.
 
 A file uses it exactly when header flag bit 3 (`0b1000`) is set. Then:
 the directory has a kind-`10` entry; it has **no** kind-`5` entry; and the
@@ -1079,8 +1203,270 @@ whose leading range is exact where the directory knows it (`first_a` when
 `first_g = g`, `last_a` when `last_g = g`) and conservative otherwise; a tile's
 synopsis bounds every graph it holds. One decompressed tile serves every graph
 in it. Graphs enumerate in graph-id order. Orders led by `S`, `P` or `O` with
-the graph trailing (`SPO+G`, …) are not stored: SPARQL evaluates `GRAPH ?g` one
-graph at a time, which the graph-leading orders already route.
+the graph trailing (`SPO+G`, …) are not stored in `0x05` and `0x06`: SPARQL evaluates `GRAPH ?g` one
+graph at a time, which the graph-leading orders already route. `0x07` stores three
+of them (below).
+
+#### Format `0x07`: GSPO, SPOG, POSG, OSPG
+
+A `0x07` quad index stores **four** orders, whatever `--permutations` says (that
+flag is the default graph's alone): the graph-leading **GSPO** of `0x06`, and
+the graph-**last** **SPOG**, **POSG** and **OSPG**. The root's quad unit
+declares them (§4.2: order numbers `0, 6, 7, 8`); the other graph-leading
+orders are not written, and a reader still reads them in a `0x06` file. The
+order mask is not the permutation mask: the three new orders have no
+graph-leading twin to tie them to.
+
+```
+row:      (a, b, c, g)   (a, b, c) the permuted (s, p, o); g the graph's subject id
+sorted:   ascending on (a, b, c, g), no duplicates
+```
+
+A lookup on `<s>` is a prefix of SPOG, on `<p>` or `<p> <o>` of POSG, on `<o>`
+or `<o> <s>` of OSPG, on `<s> <p>` of SPOG: the directory finds one tile (or a
+run of adjacent ones for a hot term), not a pass over the file.
+
+**Tile.** Rows are the §6.1 grouped-delta encoding with one more varint per row,
+the graph; then the codec (zstd, stored raw when it does not shrink):
+
+```
+varint num_a
+per a-group:  varint Δa          # from the previous a of the tile; the first absolute
+              varint num_b
+  per b-group: varint Δb         # from the previous b within this a; the first from 0
+               varint num_rows
+    per row:   varint Δc         # from the previous c within this b; the first from 0;
+                                 #   0 again when the triple is in several graphs
+               varint graph code
+```
+
+The **graph code** is `zigzag((g − s) − (g' − s'))`, `s` being the row's subject
+id (column `a` in SPOG, `c` in POSG, `b` in OSPG) and `g'`, `s'` the previous row
+of the same tile; the first row of a tile has `g' − s' = 0`. Both ids come from
+string-sorted role dictionaries, so `g − s` is nearly constant along a run: on
+the 2018 nanopub dump 85 to 93% of the codes are one byte, and the graph column
+costs 0.31 to 0.45 bytes a quad (plain `g` costs about 1.5 after zstd; coding `g`
+against the subject alone is 18 to 24% worse than against the previous row).
+
+**Tiling** is the same rule as the other orders: whole leading-id (`a`) groups
+are packed until the estimated encoded size would pass the tile budget (64 KiB by
+default); a group larger than the budget on its own is cut mid-group, so a
+leading id may run over several tiles. The estimate counts the bytes above; only
+its determinism matters, which is why the in-RAM build, the memory-bounded
+build and `convert` write the same bytes.
+
+**Directory.** One entry per tile in the leaves of §4.3: the first row's
+`(a, b)`, the last row's `(a, b)`, the stored length, the synopsis `(min c,
+max c, min g, max g)`. Leaves follow the small-leaf policy (§9); the root lists
+each leaf's first and last key, so a lookup on a leading id reads the leaf (or
+the few leaves) whose range holds it.
+
+**Layout is order-major**, in the order GSPO, SPOG, POSG, OSPG, each order's
+tiles contiguous in `quad`. Graph-major clustering existed so that the tiles of
+a graph, in every order, sat in one neighbourhood; the new orders' tiles are
+not graph-ordered at all, so it has nothing to cluster, and for the tiles of
+one hot term it would scatter what order-major reads as one range (on the
+interleaved nanopub file a block cache read 7.5 times the bytes a tile pass
+needs). Flag bit3 is never set. With the layout fixed, a leaf entry needs no
+offset code (§4.3). The **graph directory** stays, because graph ordinals
+(enumeration, names, counts per graph) are its job and `GRAPH <g>` still finds
+its tiles through GSPO's leaf lists; what changes is that its block index, which
+sits in the root and grew with the graph count (42,200 entries of 1,024 graphs
+on the nanopub dump, most of a 104 KB root), now has blocks of 8,192 graphs: a
+block read by a graph lookup is about 4 KB stored and the root drops to 33 KB.
+The graph-major use of the block index (placing a tile by the block of its first
+graph) is gone with the clustering.
+
+**Reading.** A graph-unbound pattern with a bound term scans the order that
+binds the longest prefix; a tile is skipped when its key range or its `(c, g)`
+synopsis cannot hold the pattern, and a scan reads the tiles of its range in
+batches (adjacent tiles coalesce into one request). Rows come in `(a, b, c, g)`
+order, not graph order. The routing:
+
+| pattern | order |
+|---|---|
+| `GRAPH ?g { <s> ?p ?o }`, `{ <s> <p> ?o }`, `{ <s> <p> <o> }` | SPOG |
+| `GRAPH ?g { ?s <p> ?o }`, `{ ?s <p> <o> }` | POSG |
+| `GRAPH ?g { ?s ?p <o> }`, `{ <s> ?p <o> }` | OSPG |
+| `GRAPH ?g { ?s ?p ?o }` | GSPO (graph order) |
+| `GRAPH <g> { … }` | GSPO's slice of `g`; see below |
+
+A `GRAPH ?g` of several patterns visits the graphs the best-bound pattern finds
+(sorted by graph id) and evaluates the whole group in each, as before.
+
+**One graph.** The view of one graph reads GSPO's tiles of that graph. The
+view's other orders (POS, OSP, and SOP, PSO, OPS when the file has six
+permutations) do not exist graph-leading any more: a graph of at most 2^20 quads
+(`RETE_QUAD_SYNTH_MAX`) has them built from its GSPO rows in RAM, one tile each,
+on first use; a bigger graph reads POS and OSP from the POSG and OSPG tiles
+whose `g` synopsis can hold it, keeping its rows, so `GRAPH <g> { ?s <p> ?o }` on
+a big graph costs that predicate's tiles, not the graph. The choice is the
+graph's size from the directory; it changes what a query reads, never what it
+returns.
+
+**Writing.** `0x07` writers produce GSPO as `0x06` did and derive the rest from
+it: stream the GSPO rows, permute, sort, cut with the tiler, encode, one order
+at a time. Up to 100 M rows (1.6 GB, `RETE_QUAD_RUN_ROWS`) are sorted in RAM;
+past that, sorted runs of that size are spilled (zstd, delta-coded) and merged
+straight into the tiler, so a 4 GB container converts the 378.7 M quads of the
+nanopub dump with a 1.8 GB peak and about 1.6 GB of spill at a time. The
+memory-bounded build writes GSPO only into its own spill and derives the other
+three at the end; `rete convert` does the same from a `0x05` or `0x06` input
+(`--tmp-dir`, default beside the output). `rete verify` decodes every tile of
+every order, checks keys and synopses against the directory, and that all four
+orders hold the same quads.
+
+| order | nanopubs 2018 (378.7 M quads) | OpenCitations sample (12.9 M quads) |
+|---|---|---|
+| GSPO | 359.2 MB | 12.1 MB |
+| SPOG | 407.4 MB | 11.6 MB |
+| POSG | 333.0 MB | 15.3 MB |
+| OSPG | 412.3 MB | 14.5 MB |
+| file | 2.515 GB (0x06: 3.882 GB) | 157.9 MB (0x06: 202.5 MB) |
+
+### 6.6 Class clustering of the subject-leading orders (`0x07`, optional)
+
+SPO sorts the default graph's rows by subject id, and ids are lexical, so the
+subjects of one class are spread over the whole id space: on OpenAIRE the 221,817
+Software records sit in 24,452 SPO tiles (463 MB) next to 692,000 other tiles'
+worth of other records, and a scan of "every Software record" reads all of them.
+Renumbering subjects by class would break the dictionary's string-to-id search, so
+the clustering lives in the **tile order** only.
+
+With header flag bit4 (`--cluster-subjects-by-class`, off by default), SPO, and
+SOP when the file stores it, are sorted by `(cluster(s), s, p, o)` instead, and
+so is the quad index's SPOG, by `(cluster(s), s, p, o, g)`. `cluster(s)` is the
+number of the subject's **primary class**:
+
+- The classes are the objects of `rdf:type` rows: of the default graph for SPO
+  and SOP, of any named graph for SPOG (a subject typed in several graphs counts
+  once). The *k* most frequent by subject count (at most 32 for SPO and SOP, at
+  most 10 for SPOG; at least 1,000 subjects each, so that a run fills a tile;
+  ties by object id) are numbered 1..*k*, most subjects first. Every other
+  subject, typed or not, is cluster 0.
+- A subject with several listed classes is in the **rarest** one (the highest
+  number). Its type rows in unlisted classes are ignored.
+
+Each clustered order declares its own classes: SPO and SOP share theirs, SPOG has
+its own. SPOG gets fewer runs because a lookup of one subject reads one leaf in
+every run, and a dump with named graphs has long runs (measured below: 10 keeps
+the point lookup at its unclustered cost and most of the class gain).
+
+The order's tiles are *k* + 1 **runs**, cluster 0 first. A run is cut like any
+order (§6.2, §6.5): tiles of whole leading-id groups to the budget, an oversize
+group cut mid-group. No tile spans two runs, and no directory leaf does either
+(the writer cuts leaves at the runs), so a reader knows a leaf's run from the
+cluster root alone. The cluster unit root (§4.2, tag 6) lists, per clustered
+order, the classes (object ids) and the tile count of each run; SPOG is order 6.
+Everything else (header, dictionary, the leaf format, the tile coding, the other
+orders) is as without the flag, and a file written without the flag is
+byte-identical to the one a writer without the option wrote. Within a run the
+tiles ascend by leading id; across runs they do not, so the tile ranges of
+different runs overlap.
+
+**Writer.** One implementation shared by every writer (the in-RAM build, the
+memory-bounded build, `convert`, like the quad orders of §6.5): the assembler
+reads the type rows (POS for SPO and SOP, POSG for SPOG) in two passes (counting
+the classes, then filling one byte per subject id: 951 MB for OpenAIRE's 951 M
+subjects), streams the order in sequence, partitions the rows by cluster (a
+stable partition, so every run is still sorted and nothing is sorted again), cuts
+and encodes each run with the ordinary tiler, and lays the new tiles out past the
+end of the input as extra address space, which it copies like any range. A
+clustered input is un-clustered by a *k*-way merge of its runs. `rete convert`
+with the flag clusters a `0x06` or `0x07` input; without it, a clustered input
+comes out in subject order, and the bytes are those of the file that was never
+clustered. A clustered input converted with the flag keeps its clusters. An
+order with no subject of a listed class is left as it is.
+
+**Reader.** A lookup that binds the subject does not know the run. For a
+clustered order the reader reads, in one batch, the directory leaf that covers the
+subject in each run (the root lists each leaf's subject range, so a run whose
+range does not hold the subject costs nothing), then, in one batch, the tiles those
+leaves list for it, and the run whose tile holds the subject answers (a tile whose
+range covers a subject need not hold it: ranges of different runs overlap). The
+run that held the last subject is tried alone first, so a probe join over the
+subjects of one class reads that class's run and no other. Subjects are
+remembered for the session. Unbound scans visit the runs in order, so rows of a
+`?s ?p ?o` scan are no longer in subject order; the planner does not offer a
+clustered permutation as a stream sorted on the subject (no merge join over it),
+`rete verify` checks every tile of every run against the subject's class, and
+`rete info` lists the runs. A `GRAPH <g>` view of a graph over the synthesis
+limit (§6.5) is built from its GSPO rows when SPOG is clustered, not filtered
+from SPOG, whose tiles are no longer one ascending list.
+
+**The class-scoped graph query.** `GRAPH ?g { ?s a <C> . ?s ?p ?o … }`, a star on
+one subject variable with a constant class, has two routes. The walk finds the
+graphs that hold a `C` (POSG) and evaluates the block in each over its GSPO
+tiles: its cost is the tiles of every such graph, a request or more per graph,
+and the name of every graph. The probe takes the `(subject, graph)` pairs of
+`?s a <C>` from POSG, probes SPOG for the subjects in windows of 256 growing
+fourfold to 65,536 (one batch of leaves and one of tiles each, the run of `C`
+first, the other runs only for subjects it does not hold), and matches the block
+against each subject's rows in each graph where it is a `C`. The dictionary terms
+the final projection decodes are fetched a window at a time. The planner takes the
+probe unless the directory says it would read half as much again as the walk
+(the estimate counts, per leaf of the root, the tiles the subjects or graphs can
+touch, with a sample of the subjects to learn their runs, and charges the walk
+512 bytes a graph), and keeps the walk under a small `LIMIT` (4,096 or less), where
+it stops after its first graphs. Same rows either way; an unclustered file takes
+the probe too, since the walk's per-graph requests cost more than its bytes save.
+`RETE_CLASS_ROUTE=probe|walk` forces one (measurements, tests).
+
+**Measured** on the 2018 nanopub dump (10.8 M nanopubs, 378.7 M quads in 43.2 M
+named graphs, all in named graphs, so SPO and SOP have nothing to cluster): the
+0x06 file converted to 0x07 unclustered and clustered in `--memory 4g`, then
+queried over a local range server with 120 ms a request and one 4 MB/s link, cold,
+same rows each time (md5 of the sorted output).
+
+| | unclustered | clustered (10 SPOG classes) |
+|---|---|---|
+| convert | 74.9 s, 1.79 GB peak | 80.0 s, 1.78 GB peak, 1.66 GB spill |
+| file | 2,514,968,632 B | 2,482,116,370 B (-1.3%) |
+| SPOG | 407.4 MB | 374.6 MB (-8.1%) |
+| BAO_0002095 (653,639 subjects), walk | 213.7 s, 1,008 requests, 325 MB | 213.9 s, 1,011 requests, 325 MB |
+| the same, probe | 102.8 s, 138 requests, 332 MB | **59.1 s, 86 requests, 206 MB** (SPOG 22 MB) |
+| SO_0000409 (1.0 M rows), walk | 326.1 s, 2,001 requests, 325 MB | 326.5 s, 2,002 requests |
+| the same, probe | 93.6 s, 150 requests, 331 MB | **58.1 s, 143 requests, 207 MB** |
+| ECO_0000218 (8.8 M subjects), `COUNT`, walk | 268.8 s, 1,015 requests, 327 MB | |
+| the same, probe | 61.4 s, 162 requests, 152 MB | **6.6 s, 24 requests, 7.1 MB** |
+| np:Nanopublication (10.8 M), `COUNT`, probe | 136.7 s, 369 requests, 328 MB | 70.4 s, 240 requests, 153 MB |
+| the same, walk | not done in 600 s | not done in 600 s |
+| np:Nanopublication, `LIMIT 100` | 3.0 s, 20 requests | 3.0 s (the walk; the probe would take 3.9 s) |
+| a bound subject `GRAPH ?g { <s> ?p ?o }` | 1.8 s, 15 requests, 2.16 MB | 1.8 s, 15 requests, 2.03 MB |
+
+The dictionary is a known remaining cost: of the 206 MB of the clustered BAO query,
+182 MB are the dictionary chunks that resolve the 653,639 result IRIs (88%); the
+other queries are 55% (unclustered) to 99% (K = 32) dictionary. The route changes
+what is read of the index, not that.
+
+How many SPOG classes (the nanopub dump, clustered):
+
+| classes | file | convert | point lookup | BAO | SO | ECO `COUNT` |
+|---|---|---|---|---|---|---|
+| 4 | 2,500,958,537 B | 86.1 s | 1.7 s, 15 requests | 73.6 s | 72.8 s | 6.6 s |
+| 10 | 2,482,116,370 B | 80.0 s | 1.8 s, 15 requests | 59.1 s | 58.1 s | 6.6 s |
+| 32 | 2,480,297,880 B | 77.7 s | 2.5 s, 26 requests | 50.2 s | 50.5 s | 6.9 s |
+
+The default is 10: a bound subject costs nothing more than in an unclustered file
+(each run adds at most one leaf, and a subject outside a run's range none), 32
+costs +0.7 s and 11 requests per lookup for another 15% on the class queries. The
+runs carry no subject range of their own: the leaf entries of the root already give
+one, and the point lookup shows nothing left to skip.
+
+The OpenCitations sample (12.9 M named quads in 1.49 M graphs, converted in 1.2 s
+and 1.9 s, 157.89 MB and 157.65 MB) has one class in its named graphs,
+`prov:Entity`, so clustering SPOG changes nothing there (one run, a 235 KB
+smaller file). The probe still wins `COUNT` of its subjects' rows, 37.0 s, 86
+requests, 22.1 MB by the walk to 10.0 s, 44 requests, 13.6 MB, on either file; a
+bound subject is 1.3 s, 12 requests on both.
+
+SPO and SOP measured in the first step (the synthetic OpenAIRE-shaped file, 30.0 M
+triples, nine classes, one of them, Software, 1,800 records): `?r a <Software> .
+?r <subject> ?t` 16.3 s, 59.0 MB unclustered, 1.13 s, 1.77 MB clustered; a bound
+subject 0.67 to 0.75 s, 5 to 7 requests unclustered, 0.90 to 0.98 s, 12 to 14
+requests clustered; the OpenCitations sample's default graph: Book (12,957
+records) 2.6 s, 5.3 MB to 1.67 s, 2.0 MB; foaf:Agent (375,709, a common class) 2.9 s
+to 4.5 s.
 
 ---
 

@@ -145,12 +145,20 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
     let a = convert_image(&v5, WriteOpts::default()).unwrap();
     let b = convert_image(&v5, WriteOpts::default()).unwrap();
     assert_eq!(a, b);
-    // Order-major and graph-major hold the same content.
-    let mut o = WriteOpts {
-        quad: write::QuadClustering::OrderMajor,
+    // `0x07` is order-major whatever the option says.
+    let mut seven = WriteOpts {
+        quad: write::QuadClustering::GraphMajor,
         ..WriteOpts::default()
     };
-    let om = convert_image(&v5, o).unwrap();
+    assert_eq!(convert_image(&v5, seven.clone()).unwrap(), a);
+    seven.quad = write::QuadClustering::OrderMajor;
+    assert_eq!(convert_image(&v5, seven).unwrap(), a);
+    // `0x06`: order-major and graph-major hold the same content.
+    let mut o = WriteOpts {
+        quad: write::QuadClustering::OrderMajor,
+        ..v06_opts()
+    };
+    let om = convert_image(&v5, o.clone()).unwrap();
     o.quad = write::QuadClustering::GraphMajor;
     let gm = convert_image(&v5, o).unwrap();
     let want = answers(&Rete::open(&om).unwrap());
@@ -590,4 +598,279 @@ fn leaf_sizes_do_not_change_answers() {
             assert_eq!(&out.into_inner(), to, "rewrite == convert");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 0x07: the label root's own section, the card annex, the generation byte
+// ---------------------------------------------------------------------------
+
+fn v06_opts() -> WriteOpts {
+    WriteOpts {
+        version: VERSION_06,
+        ..WriteOpts::default()
+    }
+}
+
+/// Records every range read (offset, length).
+struct Recording {
+    inner: BytesReader,
+    log: std::sync::Mutex<Vec<(u64, u64)>>,
+}
+
+impl crate::reader::RangeReader for Recording {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.log.lock().unwrap().push((offset, len));
+        self.inner.read_at(offset, len)
+    }
+}
+
+fn big_extra_card() -> Vec<u8> {
+    // 114 checksums, the OpenCitations Index card's shape: ~13 KB of `extra`.
+    let md5s: Vec<String> = (0..114)
+        .map(|i| format!("{:032x}", (i as u128) * 0x9e37_79b9_7f4a_7c15))
+        .collect();
+    let extra =
+        serde_json::json!({ "sources": md5s.join(", "), "n": 114, "note": "x".repeat(8000) });
+    serde_json::to_vec(&serde_json::json!({"title": "annexed", "extra": extra})).unwrap()
+}
+
+fn front_of(bytes: &[u8]) -> (Header06, Root06) {
+    open::read_front(&crate::reader::SliceReader::new(bytes)).unwrap()
+}
+
+#[test]
+fn writers_write_0x07_and_the_label_root_has_its_own_section() {
+    let v5 = image(1500, true, true, true, false);
+    let v7 = convert_image(&v5, WriteOpts::default()).unwrap();
+    assert_eq!(v7[4], 7);
+    assert_eq!(&v7[v7.len() - 8..], &footer(7));
+    let (h, root) = front_of(&v7);
+    assert_eq!(h.version, VERSION);
+    assert!(root.section(kind::LABEL_ROOT).is_some());
+    let unit = decode_label_root(root.unit(tag::LABELS).unwrap()).unwrap();
+    assert_eq!(unit.head.len(), 32, "the root keeps the preamble only");
+    assert!(crate::file::verify(&v7).unwrap());
+    // The same file as 0x06 carries the root node in the root.
+    let v6 = convert_image(&v5, v06_opts()).unwrap();
+    assert_eq!(v6[4], 6);
+    let (h6, root6) = front_of(&v6);
+    assert_eq!(h6.version, VERSION_06);
+    assert!(root6.section(kind::LABEL_ROOT).is_none());
+    assert!(crate::file::verify(&v6).unwrap());
+    let want = unit.head.len() as u64 + root.section(kind::LABEL_ROOT).unwrap().len;
+    let got6 = decode_label_root(root6.unit(tag::LABELS).unwrap())
+        .unwrap()
+        .head
+        .len() as u64;
+    assert_eq!(got6, want);
+    // The root node (a few bytes on this small file) is out of the root; the
+    // price is one 38-byte table entry. (A file without named graphs: the quad
+    // orders of 0x07 are a different set from 0x06's and change the root too.)
+    let plain = image(1500, false, true, true, false);
+    let (h7p, _) = front_of(&convert_image(&plain, WriteOpts::default()).unwrap());
+    let (h6p, _) = front_of(&convert_image(&plain, v06_opts()).unwrap());
+    assert!(h7p.root_len as usize <= h6p.root_len as usize + SEC_ENTRY_LEN);
+}
+
+#[test]
+fn convert_0x06_to_0x07_keeps_every_answer() {
+    for &(graphs, text, labels, pyramid) in &[
+        (true, true, true, true),
+        (false, false, false, false),
+        (true, false, true, false),
+        (false, true, true, false),
+    ] {
+        let v5 = image(1200, graphs, text, labels, pyramid);
+        let v6 = convert_image(&v5, v06_opts()).unwrap();
+        let src = crate::reader::SliceReader::new(&v6);
+        let mut out = std::io::Cursor::new(Vec::new());
+        write::rewrite(&src, &mut out, WriteOpts::default()).unwrap();
+        let v7 = out.into_inner();
+        assert_eq!(v7[4], 7);
+        assert!(crate::file::verify(&v7).unwrap());
+        // Identical to converting the 0x05 source straight to 0x07.
+        assert_eq!(v7, convert_image(&v5, WriteOpts::default()).unwrap());
+        let want = answers(&Rete::open(&v6).unwrap());
+        assert_eq!(answers(&Rete::open(&v7).unwrap()), want, "resident");
+        assert_eq!(answers(&lazy(&v7)), want, "lazy");
+        // The card and the build record are kept.
+        assert_eq!(
+            Rete::open(&v7).unwrap().metadata(),
+            Rete::open(&v6).unwrap().metadata()
+        );
+    }
+}
+
+#[test]
+fn a_label_search_reads_the_label_root_only_when_it_runs() {
+    let v5 = image(4000, false, false, true, false);
+    let v7 = convert_image(&v5, WriteOpts::default()).unwrap();
+    let (h, root) = front_of(&v7);
+    let lr = root.section(kind::LABEL_ROOT).unwrap().abs(&h).unwrap();
+    let rec = std::sync::Arc::new(Recording {
+        inner: BytesReader(std::sync::Arc::from(&v7[..])),
+        log: Default::default(),
+    });
+    let touches = |rec: &Recording| {
+        rec.log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|&(o, l)| o < lr.offset + lr.len && lr.offset < o + l)
+    };
+    let r = Rete::open_ranged_lazy_with(rec.clone(), 1024).unwrap();
+    let _ = crate::sparql::eval_query(&r, QUERIES[4]).unwrap();
+    assert!(!touches(&rec), "a query does not read the label root");
+    let hits = r.prefix_search("gamma", 10);
+    assert!(!hits.is_empty());
+    assert!(touches(&rec), "a label search does");
+    let want = Rete::open(&v5).unwrap().prefix_search("gamma", 10);
+    assert_eq!(hits, want);
+}
+
+#[test]
+fn verify_catches_a_corrupted_label_root() {
+    let v5 = image(1500, false, false, true, false);
+    let v7 = convert_image(&v5, WriteOpts::default()).unwrap();
+    let (h, root) = front_of(&v7);
+    let a = root.section(kind::LABEL_ROOT).unwrap().abs(&h).unwrap();
+    let mut bad = v7.clone();
+    bad[(a.offset + a.len / 2) as usize] ^= 0x40;
+    let rep =
+        crate::file::verify_ranged_v06(&crate::reader::SliceReader::new(&bad), &bad, None).unwrap();
+    assert_eq!(rep, vec!["label-root".to_string()]);
+    assert!(!crate::file::verify(&bad).unwrap());
+}
+
+#[test]
+fn a_card_over_the_hot_cap_goes_to_the_annex_and_comes_back() {
+    let v5 = image(400, false, false, true, false);
+    let v7 = convert_image(&v5, WriteOpts::default()).unwrap();
+    let card = big_extra_card();
+    assert!(card.len() > annex::HOT_FIELD_MAX);
+    let c1 = replace_card(&v7, Some(&card), Some(b"{\"r\":1}")).unwrap();
+    assert!(crate::file::verify(&c1).unwrap());
+    let r = crate::reader::SliceReader::new(&c1);
+    let (h, root) = open::read_front(&r).unwrap();
+    let a = root.section(kind::CARD_ANNEX).expect("an annex section");
+    // The annex is the last section, right before the footer.
+    assert_eq!(a.abs(&h).unwrap().offset + a.len + 8, h.file_len);
+    // The hot card is small and says so; the full card is the one written.
+    let hot = open::read_card_build(&r, &h).unwrap().0.unwrap();
+    assert!(hot.len() < annex::HOT_FIELD_MAX && annex::has_marker(&hot));
+    let (full, merged) = open::read_card_full(&r).unwrap();
+    assert!(merged);
+    let full: serde_json::Value = serde_json::from_slice(&full.unwrap()).unwrap();
+    let want: serde_json::Value = serde_json::from_slice(&card).unwrap();
+    assert_eq!(full, want);
+    assert!(crate::file::read_card_full_ranged(&r).unwrap().is_some());
+    // Convert (0x07 to 0x07) carries the annex and the card.
+    let mut out = std::io::Cursor::new(Vec::new());
+    write::rewrite(&r, &mut out, WriteOpts::default()).unwrap();
+    assert_eq!(out.into_inner(), c1, "the same file written again");
+    // Answers are untouched.
+    assert_eq!(
+        answers(&Rete::open(&c1).unwrap()),
+        answers(&Rete::open(&v7).unwrap())
+    );
+}
+
+#[test]
+fn verify_catches_a_corrupted_annex() {
+    let v7 = convert_image(
+        &image(300, false, false, false, false),
+        WriteOpts::default(),
+    )
+    .unwrap();
+    let c1 = replace_card(&v7, Some(&big_extra_card()), None).unwrap();
+    let (h, root) = front_of(&c1);
+    let a = root.section(kind::CARD_ANNEX).unwrap().abs(&h).unwrap();
+    let mut bad = c1.clone();
+    bad[(a.offset + a.len / 2) as usize] ^= 1;
+    let rep =
+        crate::file::verify_ranged_v06(&crate::reader::SliceReader::new(&bad), &bad, None).unwrap();
+    assert_eq!(rep, vec!["card-annex".to_string()]);
+    assert!(open::read_card_full(&crate::reader::SliceReader::new(&bad)).is_err());
+}
+
+#[test]
+fn recard_with_an_annex_streams_equal_and_in_place_only_when_it_is_unchanged() {
+    use super::write::{recard_in_place, rewrite_card_stream, NewCard};
+    let v7 = convert_image(
+        &image(300, false, false, false, false),
+        WriteOpts::default(),
+    )
+    .unwrap();
+    let card = big_extra_card();
+    let stream = |src: &[u8], c: NewCard<'_>| {
+        let mut out = Vec::new();
+        rewrite_card_stream(
+            &crate::reader::SliceReader::new(src),
+            &mut out,
+            c,
+            Some(b"{\"r\":9}"),
+            &mut |_| {},
+        )
+        .unwrap();
+        out
+    };
+    let c1 = stream(&v7, NewCard::Set(Some(&card)));
+    assert_eq!(
+        c1,
+        replace_card(&v7, Some(&card), Some(b"{\"r\":9}")).unwrap()
+    );
+    assert!(crate::file::verify(&c1).unwrap());
+    // Same card again: unchanged annex, so an in-place re-card fits.
+    let mut f = std::io::Cursor::new(c1.clone());
+    let nh = recard_in_place(&mut f, NewCard::Set(Some(&card)), Some(b"{\"r\":10}"))
+        .unwrap()
+        .expect("fits in the card region");
+    write::commit_header(&mut f, &nh).unwrap();
+    assert!(crate::file::verify(f.get_ref()).unwrap());
+    assert_eq!(
+        nh.content_hash,
+        Header06::from_bytes(&c1).unwrap().content_hash
+    );
+    // A different big field: the annex changes, so it is a copy.
+    let mut other = serde_json::from_slice::<serde_json::Value>(&card).unwrap();
+    other["extra"]["n"] = serde_json::json!(115);
+    let other = serde_json::to_vec(&other).unwrap();
+    let mut f = std::io::Cursor::new(c1.clone());
+    assert!(recard_in_place(&mut f, NewCard::Set(Some(&other)), None)
+        .unwrap()
+        .is_none());
+    let c2 = stream(&c1, NewCard::Set(Some(&other)));
+    assert!(crate::file::verify(&c2).unwrap());
+    // Dropping the big field drops the annex.
+    let c3 = stream(&c2, NewCard::Set(Some(br#"{"title":"small"}"#)));
+    assert!(crate::file::verify(&c3).unwrap());
+    assert!(front_of(&c3).1.section(kind::CARD_ANNEX).is_none());
+    assert!(c3.len() < c2.len());
+    // Keep leaves the annex alone.
+    let c4 = stream(&c2, NewCard::Keep);
+    assert!(front_of(&c4).1.section(kind::CARD_ANNEX).is_some());
+    assert!(crate::file::verify(&c4).unwrap());
+}
+
+#[test]
+fn a_0x06_file_has_no_annex() {
+    let v6 = convert_image(&image(300, false, false, false, false), v06_opts()).unwrap();
+    let e = replace_card(&v6, Some(&big_extra_card()), None).unwrap_err();
+    assert!(e.to_string().contains("rete convert"), "{e}");
+}
+
+#[test]
+fn a_reader_refuses_a_generation_it_does_not_know_by_name() {
+    let v7 = convert_image(
+        &image(100, false, false, false, false),
+        WriteOpts::default(),
+    )
+    .unwrap();
+    let mut future = v7.clone();
+    future[4] = 8;
+    let e = Rete::open(&future).err().expect("refused").to_string();
+    assert!(e.contains("0x08") && e.contains("0x05"), "{e}");
 }

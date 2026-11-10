@@ -113,6 +113,13 @@ pub struct Parts {
     pub text: Option<TextPart>,
     /// Input range of the community pyramid.
     pub pyramid: Option<ByteRange>,
+    /// Class clusters of the subject-leading permutations (`0x07`); empty when
+    /// none is clustered. Each order's tiles are in run order.
+    pub cluster: Vec<super::ClusterOrder>,
+    /// The card annex (raw JSON, `0x07`), when the card has one. The assembler
+    /// writes it as the last data section; a card handed over without it is
+    /// split by [`super::annex::split`].
+    pub annex: Option<Vec<u8>>,
 }
 
 fn read(r: &dyn RangeReader, range: ByteRange) -> Result<Vec<u8>, FileError> {
@@ -420,7 +427,7 @@ pub fn from_v05(r: &dyn RangeReader) -> Result<Parts, FileError> {
 /// write the same file again with different directory leaves (the writer's
 /// leaf policy) without touching the payload.
 pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
-    use super::open::{read_card_build, read_front, section_bound};
+    use super::open::{check_digest, read_card_build, read_front, read_section, section_bound};
     use super::*;
     use crate::file::decompress_bounded;
     let (h, root) = read_front(r)?;
@@ -461,6 +468,9 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
     let (card, build) = read_card_build(r, &h)?;
     p.card = card;
     p.build = build;
+    if root.section(kind::CARD_ANNEX).is_some() {
+        p.annex = super::open::read_annex(r, &h, &root)?;
+    }
     if range(kind::SCHEMA)?.is_some() {
         let stored = whole(kind::SCHEMA)?;
         p.schema = Some(decompress_bounded(
@@ -510,6 +520,9 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
             p.index.push(PermPart { si: pr.si, tiles });
         }
     }
+    if let Some(unit) = root.unit(tag::CLUSTER) {
+        p.cluster = super::decode_cluster_root(unit)?;
+    }
     // Quad index: the graph directory blocks come first in QUAD_LEAVES.
     if let Some(unit) = root.unit(tag::QUAD) {
         let q = decode_quad_root(unit)?;
@@ -520,8 +533,12 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
         for ord in &q.orders {
             let mut tiles = Vec::with_capacity(ord.n_tiles);
             for (l, _, _, toff) in &ord.leaves {
-                for mut e in decode_qtile_leaf(&leaf(&qleaves, kind::QUAD_LEAVES, l)?, l.n, *toff)?
-                {
+                for mut e in decode_qtile_leaf(
+                    &leaf(&qleaves, kind::QUAD_LEAVES, l)?,
+                    l.n,
+                    *toff,
+                    h.version == VERSION,
+                )? {
                     e.off += qbase;
                     tiles.push(e);
                 }
@@ -540,11 +557,32 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
             orders,
         });
     }
+    // The cluster runs cover the tiles of the order they name.
+    for c in &p.cluster {
+        let n = if c.si == super::QUAD_SPOG {
+            p.quad
+                .as_ref()
+                .and_then(|q| q.orders.iter().find(|(si, _)| *si == c.si))
+                .map(|(_, t)| t.len())
+        } else {
+            p.index.iter().find(|x| x.si == c.si).map(|x| x.tiles.len())
+        };
+        if n != Some(c.run_tiles.iter().sum::<usize>()) {
+            return Err(FileError::Container(
+                "0x07 cluster root does not cover the tiles",
+            ));
+        }
+    }
     // Labels.
     if let Some(unit) = root.unit(tag::LABELS) {
         let l = decode_label_root(unit)?;
+        let mut head = l.head;
+        if let Some(rn) = read_section(r, &h, &root, kind::LABEL_ROOT)? {
+            check_digest(&root, kind::LABEL_ROOT, &rn)?;
+            head.extend_from_slice(&rn);
+        }
         p.labels = Some(LabelPart {
-            head: l.head,
+            head,
             data_len: l.data_len,
             body: range(kind::LABEL_DATA)?.unwrap_or(ByteRange { offset: 0, len: 0 }),
             nodes: Some(range(kind::LABEL_LEAVES)?.unwrap_or(ByteRange { offset: 0, len: 0 })),

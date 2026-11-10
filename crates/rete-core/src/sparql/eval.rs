@@ -1448,9 +1448,27 @@ fn graph_var_scan<'q>(ctx: &'q Ctx<'q>, var: &'q str, inner: &'q Plan) -> Option
     if patterns.len() < 2 {
         return None;
     }
+    // A star on one class-typed subject: probe SPOG for the class's subjects
+    // when that reads less than walking the graphs (`bgp::class_probe`).
+    if let Some(rows) = crate::bgp::class_probe_rows(ctx, patterns, slot) {
+        return Some(rows);
+    }
     // Several patterns: the graphs holding a match of the most constrained one.
     let driver = crate::bgp::driver_pattern(ctx, patterns)?;
     let scan = ctx.rete.named_quad_scan(driver)?;
+    if !scan.graph_ordered() {
+        // A graph-last order (`0x07`: SPOG, POSG, OSPG) yields its rows in
+        // `(a, b, c, g)` order: the graphs are collected, sorted and
+        // deduplicated, so the walk visits them in graph order as it does for
+        // the graph-leading orders.
+        let mut gs: Vec<u32> = scan.map(|(g, _)| g).collect();
+        gs.sort_unstable();
+        gs.dedup();
+        let ordinals = gs
+            .into_iter()
+            .filter_map(|g| ctx.rete.named_graph_ordinal_of_id(g));
+        return Some(graph_var_walk(ctx, None, var, inner, ordinals, false));
+    }
     let mut last: Option<u32> = None;
     let ordinals = scan.filter_map(move |(g, _)| {
         if last == Some(g) {

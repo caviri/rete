@@ -290,14 +290,52 @@ refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see [compatibility.md](compatibility.md).
 
+`--cluster-subjects-by-class` (off by default, format `0x07`) lays the default
+graph's subject-leading permutations (SPO, and SOP when stored) out in
+`(class, subject, predicate, object)` order instead of subject order
+([SPEC.md §6.6](SPEC.md#66-class-clustering-of-the-subject-leading-orders-0x07-optional)).
+Ids are not renumbered: only the tile order changes. Up to 32 classes (the ones
+with the most subjects, at least 1,000 each) get a contiguous run of tiles, a
+subject of several classes goes to its rarest listed class, and every other or
+untyped subject to a run of its own. A scan of one class's subjects, or the join
+of them with a property (`?r a <Software> . ?r <subject> ?t`), then reads that
+class's few tiles instead of one tile in every few thousand; a lookup of one
+subject costs more, since it must look in every run (one batch of leaves and one
+of tiles, up to 33 tiles). The answers are the same either way; the order of an
+unsorted result may differ. The writer needs one byte of RAM per subject id
+(951 MB for OpenAIRE's 951 M subjects). `rete info` lists the runs and `rete
+verify` checks that every row is in the run of its subject's class;
+`rete convert` with the flag clusters a `0x06` or `0x07` file, without it undoes
+a clustering. It does nothing to the default graph when it has no subject of a
+listed class.
+
+The flag also clusters the quad index's SPOG, by its own classes: the
+`rdf:type` rows of any named graph, at most 10 of them (a lookup of one subject
+reads one leaf in every run, and a dump with named graphs is large, so the runs
+are fewer than the default graph's 32). `GRAPH ?g { ?s a <C> . ?s ?p ?o }` then
+probes SPOG for the subjects of `C`, which are one run of tiles, instead of
+walking every graph that holds a `C`. The planner takes the probe unless it
+estimates more reading than the walk would do, and keeps the walk under a small
+`LIMIT`; an unclustered file takes the probe too, which already saves requests
+(`RETE_CLASS_ROUTE=probe|walk` forces one). On the 2018 nanopub dump the flag
+takes 75 s to 80 s and shrinks the file by 1.3% (SPOG by 8%), and a class of
+653,639 subjects goes from 214 s to 59 s over a 120 ms, 4 MB/s link; see SPEC
+§6.6 for the rest.
+`rete info` lists the SPOG runs, `rete verify` checks them.
+
 `--named-graphs quad` (the default, and since format `0x06` the only layout)
 stores the named graphs of an N-Quads/TriG input in the **quad index**. The
 `0x05` alternative, `per-graph` (one permutation index per graph, the
 NAMED_GRAPHS section), is refused; `rete convert` re-encodes a per-graph file as
 a quad index. The quad index is ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)):
-every named-graph quad stored once, the graph as a fourth column of
-graph-leading permutations in tiles that many graphs share, behind a sorted
-graph directory, with graph names as dictionary terms. The rows a query returns
+every named-graph quad stored four times, as GSPO (the graph first, in tiles
+that many graphs share, behind a sorted graph directory) and as SPOG, POSG and
+OSPG (the graph last), with graph names as dictionary terms. The three graph-last
+orders make `GRAPH ?g { <s> ?p ?o }`, `GRAPH ?g { ?s <p> ?o }` and
+`GRAPH ?g { ?s ?p <o> }` a seek, not a pass over the file: on the 3.9 GB nanopub
+dump a bound subject across graphs went from 28,179 requests and 333 MB to 18
+requests and 0.29 MB, and the file got smaller (3.88 to 2.51 GB). `--permutations`
+is the default graph's: the quad index has these four orders whatever it says. The rows a query returns
 are the same either way. What changes is the cost of many small graphs — on the
 OpenCitations sample (1.5 M per-entity provenance graphs of ~9 quads) the
 named-graph section drops from 974 MB to 102 MB, the build from 33 min to 77 s,
@@ -586,8 +624,8 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete convert <in.rete> -o <out.rete> [--quad-clustering auto|graph|order] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
-Turn a format `0x05` file into format `0x06` ([SPEC §4](SPEC.md#4-file-layout))
+### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--quad-clustering auto|graph|order] [--cluster-subjects-by-class] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
+Turn a format `0x05` or `0x06` file into format `0x07` ([SPEC §4](SPEC.md#4-file-layout))
 without rebuilding it. The sections are read through ranges and their payload —
 dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
 — copied byte for byte; the directories are re-cut into leaves at the front,
@@ -619,19 +657,31 @@ a copy:
   writes, from the label predicates' triples read through the index.
   `--no-label-index` skips it.
 
-`--quad-clustering` overrides how the quad tiles are laid out: `graph` puts the
-tiles of every order for one block of graphs side by side (one neighbourhood per
-`GRAPH <g>`), `order` keeps each order contiguous, `auto` (the default) picks
-graph-major when the mean graph is under 64 KiB of tiles.
+**Named graphs get the `0x07` quad orders.** A file with a quad index comes out with
+GSPO, SPOG, POSG and OSPG (SPEC §6.5): GSPO's tiles are copied, and the other three
+are derived from them, one sort pass each, one order at a time. Up to 100 M named
+quads are sorted in RAM; past that the sort spills runs of 100 M (zstd, about 4 GB
+of spill per 1 G quads) into `--tmp-dir` (default: beside the output) and merges them
+straight into the tiles, so the 3.88 GB nanopub dump (378.7 M quads) converts in
+75 s with a 1.8 GB peak and 1.6 GB of spill, to 2.51 GB. The graph-leading
+`G+POS`, `G+OSP` (and `G+SOP`, `G+PSO`, `G+OPS`) orders of the input are not
+written; `RETE_QUAD_RUN_ROWS` changes the run size (RAM against disk), never the
+bytes.
 
-**A `0x06` input** is written again: the payload is copied verbatim and only the
-directory leaves, the root and the section table are cut anew, under the
+`--quad-clustering` applies to a `0x06` output only (`0x07` is order-major, always):
+`graph` puts the tiles of every order for one block of graphs side by side, `order`
+keeps each order contiguous.
+
+**A `0x06` input** is written again, as `0x07`: the payload is copied verbatim and only the
+directory leaves, the root and the section table are cut anew, the label index's root node
+moves out of the root into its own section, and the annex is created only if the card has
+a field over the 8 KiB hot cap (never, for a card written under today's rules), under the
 writer's current leaf policy ([SPEC §4.3](SPEC.md#4-file-layout)). That is how a
 file written before 0.5.6 gets small directory leaves without a rebuild: on the
 3.88 GB nanopub dump it takes 2.4 s and about 100 MB of memory. The card and the
 build record are kept as they are (the card's starter-query costs are not
 measured again, so a layout change is not reflected in them), and a
-`--quad-clustering` left at `auto` keeps the file's own clustering. The content
+The content
 hash changes (the leaf bytes are part of it), the data does not.
 
 ```sh
@@ -1051,7 +1101,7 @@ rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 ```
 
-### `rete card <file> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
+### `rete card <file> [--json] [--full] [--format jsonld|croissant] [--sha256 <hex>]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/creators/publisher/…) plus the derived profile (counts, top
 predicates and classes, vocabularies), the content-hash checksum, and (when the
@@ -1061,7 +1111,11 @@ reproduces it, its inputs (name, format, size, BLAKE3), the statement counts,
 the wall time per phase and the peak RAM, and the starter queries' measured
 costs. Costs two small range
 reads (header + one coalesced card/build-info range), never the dictionary or
-index — instant on any size. `--json` emits the card object plus
+index — instant on any size. A card with an **annex** (format `0x07`: `extra` or `description` over
+8 KiB, moved to a cold section) shows a `card annex` line; `--full` reads the
+annex too (one more range) and puts the fields back, in the text view and in
+`--json`. `rete card-url --full` is the same over HTTP. `rete card --json` without
+`--full` has an `annex` marker (`fields`, `bytes`) in place of the moved fields. `--json` emits the card object plus
 `schemaVersion: 1` and a `build` block (the whole record). `--format jsonld`
 projects the card to JSON-LD (VoID + schema.org + PROV-O — already RDF when
 lifted out; the build is a `prov:Activity` with `prov:startedAtTime`,
@@ -1927,7 +1981,7 @@ server sees one fewer, and retries are not counted.
 Measured through a latency-injecting proxy on the OpenCitations sample: see
 the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.
 
-### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
+### `rete card-url <url> [--json] [--full] [--format jsonld|croissant] [--sha256 <hex>]`
 Fetch only the embedded [Dataset Card](dataset-cards.md). On a format `0x06`
 file that is **one first read** of the first 128 KiB, which holds the header, the
 root, the card region (card and build record) and the statistics
@@ -2027,7 +2081,7 @@ download.
 #### `--write-costs`: make the measurement durable
 
 Records the run in the file's build-info section, so the next reader gets the
-figures from the CARD tier (one first read, see [`card-url`](#rete-card-url-url---json---format-jsonldcroissant---sha256-hex)) instead of re-measuring. Local
+figures from the CARD tier (one first read, see [`card-url`](#rete-card-url-url---json---full---format-jsonldcroissant---sha256-hex)) instead of re-measuring. Local
 files only.
 
 The record sits **outside** the blake3 content hash — that is why two builds of

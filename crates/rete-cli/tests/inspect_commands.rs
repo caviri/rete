@@ -171,14 +171,15 @@ fn custom_extra_fields_round_trip_across_formats() {
     assert!(cr.get("extra").is_none());
 }
 
-/// Overflowing the `extra` byte cap rejects the build loudly (one byte over),
+/// Overflowing the `extra` cap rejects the build loudly (one byte over the
+/// 1 MiB the annex can take; past 8 KiB the field goes to the annex instead),
 /// and a publisher key at the card file's top level is rejected with a
 /// pointer to the bag — never silently dropped.
 #[test]
 fn oversized_or_top_level_custom_fields_fail_the_build_loudly() {
     let fixture = common::fixture();
-    // `{"pad":"…"}` serializes to 10 + n bytes; 8,183 x's = 8,193 B — one over.
-    let over = format!(r#"{{"extra":{{"pad":"{}"}}}}"#, "x".repeat(8183));
+    // `{"pad":"…"}` serializes to 10 + n bytes; 1,048,567 x's = 1 MiB + 1 B.
+    let over = format!(r#"{{"extra":{{"pad":"{}"}}}}"#, "x".repeat(1_048_567));
     let card_json = fixture.write("over.json", over);
     common::rete()
         .arg("build")
@@ -188,7 +189,7 @@ fn oversized_or_top_level_custom_fields_fail_the_build_loudly() {
         .args(["--card-file", card_json.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("8193 bytes"));
+        .stderr(predicate::str::contains("1048577 bytes"));
 
     let stray = fixture.write("stray.json", r#"{"title":"T","my_field":1}"#);
     common::rete()

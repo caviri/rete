@@ -2608,6 +2608,18 @@ pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>
     Ok(Some(bytes))
 }
 
+/// The card **with its annex** (format `0x07`) merged back in: the fields the
+/// hot card could not hold (`extra`, `description` over 8 KiB) are fetched from
+/// the cold annex, a second range request. For a file with no annex (and for
+/// every older format) this is [`read_metadata_ranged`].
+pub fn read_card_full_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    if crate::v06::open::is_v06(&head) {
+        return Ok(crate::v06::open::read_card_full(reader)?.0);
+    }
+    read_metadata_ranged(reader)
+}
+
 /// Fetch the metadata (Dataset Card) **and** build-info sections via a
 /// [`RangeReader`] in the fewest requests: the 1 KiB header, then — because the
 /// writer lays the build-info section immediately after the metadata — **one**
@@ -2640,7 +2652,7 @@ pub fn read_card_and_build_info_with_header<R: RangeReader>(
 ) -> Result<(Header, Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
-    if header.version == crate::v06::VERSION {
+    if crate::v06::reads(header.version) {
         let h = crate::v06::Header06::from_bytes(&head)?;
         let (card, build) = crate::v06::open::read_card_build(reader, &h)?;
         return Ok((header, card, build));
@@ -2800,12 +2812,9 @@ pub fn plan_build_info(
 pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError> {
     if crate::v06::open::is_v06(image) {
         // 0x06: the record lives in the card region; the card stays.
-        let h = crate::v06::Header06::from_bytes(image)?;
-        let (card, _) =
-            crate::v06::open::read_card_build(&crate::reader::SliceReader::new(image), &h)?;
-        return crate::v06::write::replace_card(
+        return crate::v06::write::replace_card_with(
             image,
-            card.as_deref(),
+            crate::v06::write::NewCard::Keep,
             (!info.is_empty()).then_some(info),
         );
     }
@@ -3008,7 +3017,7 @@ pub fn verify_ranged_v06(
     }
     if only.is_none() {
         let n = crate::v06::FOOTER.len() as u64;
-        if reader.read_at(h.file_len - n, n)? != crate::v06::FOOTER {
+        if reader.read_at(h.file_len - n, n)? != crate::v06::footer(h.version) {
             bad.push("footer".to_string());
         }
     }
@@ -3368,7 +3377,7 @@ fn read_schema_with_header<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<crate::schema_section::SchemaMeta> {
-    if header.version == crate::v06::VERSION {
+    if crate::v06::reads(header.version) {
         let b = crate::v06::open::read_schema_bytes(reader).ok()??;
         return crate::schema_section::SchemaMeta::decode(&b).ok();
     }
@@ -3469,7 +3478,7 @@ pub fn read_text_index_token_table_len_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<u64> {
-    if header.version == crate::v06::VERSION {
+    if crate::v06::reads(header.version) {
         return crate::v06::open::read_token_table_bytes(reader);
     }
     let (ti_off, ti_len) = header.text_index_payload();
@@ -5028,15 +5037,6 @@ impl Rete {
         cursor: u32,
         max_quads: usize,
     ) -> (Vec<TermTriple>, u32, bool) {
-        /// The first subject id at or after `sid` that any SPO tile can hold, or
-        /// `None` when `sid` is past the last tile. Tiles ascend by leading
-        /// range, so this is a binary search; it returns `sid` itself when a tile
-        /// already covers it (an ordinary "this subject has no triples" step).
-        fn next_tile_start(tiles: &crate::index::TileList, sid: u32) -> Option<u32> {
-            let i = tiles.first_max_ge(sid);
-            (i < tiles.len()).then(|| tiles[i].leading_range().0.max(sid))
-        }
-
         let index = match graph {
             None => self.default_index(),
             // An unknown graph IRI is an empty dump, not an error — same as
@@ -5049,11 +5049,8 @@ impl Rete {
         // Tile leading ranges live in the section directory, so both the span and
         // the gap jumps below are free on a lazy/remote open — no tile is fetched
         // to decide where to look.
-        let tiles = index.tile_sections()[IndexPermutation::Spo.section_index()];
-        let (Some(first), Some(last)) = (
-            tiles.first().map(|t| t.leading_range().0),
-            tiles.last().map(|t| t.leading_range().1),
-        ) else {
+        let spo = IndexPermutation::Spo.section_index();
+        let Some((first, last)) = index.leading_bounds(spo) else {
             return (Vec::new(), cursor, true); // empty graph
         };
 
@@ -5085,7 +5082,7 @@ impl Rete {
                     }
                     _ => {}
                 }
-                match next_tile_start(tiles, sid) {
+                match index.next_tile_start(spo, sid) {
                     None => {
                         exhausted = true;
                         break;
@@ -5265,6 +5262,14 @@ impl Rete {
     ) -> Option<crate::quad::QuadScan> {
         match &self.named_graphs {
             NamedGraphsSlot::Quad(q) => q.scan(pat),
+            _ => None,
+        }
+    }
+
+    /// The quad index, when the file has one.
+    pub(crate) fn quad_named(&self) -> Option<&crate::quad::QuadNamed> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => Some(q),
             _ => None,
         }
     }
@@ -5902,11 +5907,8 @@ impl Rete {
                 // leading-id range covers the match's permuted leading id.
                 let a = index_permutation.forward((s, p, o)).0;
                 let (tile, tile_range) = if let Some(tl) = v06_tiles {
-                    let ti = tl.first_max_ge(a);
-                    match (ti < tl.len() && tl[ti].leading_range().0 <= a)
-                        .then(|| tl.range(ti))
-                        .flatten()
-                    {
+                    let (ti, tj) = self.index.tile_span(si, Some(a));
+                    match (ti < tj && ti < tl.len()).then(|| tl.range(ti)).flatten() {
                         Some((offset, len)) => (
                             Some(format!("{}/{ti}", index_permutation.name())),
                             Some(ByteRange { offset, len }),
@@ -6146,38 +6148,21 @@ fn v06_query_ranged<R: RangeReader>(
     let perm = GraphIndex::best_permutation_in(h.perms(), pattern);
     let si = perm.section_index();
     let index = rete.default_index();
-    let list = index.tile_sections()[si];
-    let n = list.len();
     let [pa, _, _] = perm.order_pattern(pattern);
-    let (start, stop) = match pa {
-        Some(a) => {
-            let start = list.first_max_ge(a);
-            let mut stop = start;
-            while stop < n {
-                list.ensure_span(stop, stop + 1);
-                if list[stop].leading_range().0 > a {
-                    break;
-                }
-                stop += 1;
-            }
-            (start, stop)
-        }
-        None => {
-            list.ensure_span(0, n);
-            (0, n)
-        }
-    };
-    let ranges: Vec<(u64, u64)> = (start..stop)
-        .filter_map(|i| index.tile_range(si, i))
-        .collect();
+    // One span of tiles, contiguous in the file: one request. A clustered
+    // section has a span per class run that can hold a bound subject.
     let mut out = Vec::new();
-    if let (Some(&(lo, _)), Some(&(last, last_len))) = (ranges.first(), ranges.last()) {
-        // The routed tiles are one contiguous run of the section: one request.
-        let body = reader.read_at(lo, last + last_len - lo)?;
-        for &(off, l) in &ranges {
-            let at = (off - lo) as usize;
-            let tile = decompress(h.block_codec, &body[at..at + l as usize])?;
-            out.extend(GraphIndex::match_serialized_block(&tile, perm, pattern));
+    for (start, stop) in index.routed_spans(si, pa) {
+        let ranges: Vec<(u64, u64)> = (start..stop)
+            .filter_map(|i| index.tile_range(si, i))
+            .collect();
+        if let (Some(&(lo, _)), Some(&(last, last_len))) = (ranges.first(), ranges.last()) {
+            let body = reader.read_at(lo, last + last_len - lo)?;
+            for &(off, l) in &ranges {
+                let at = (off - lo) as usize;
+                let tile = decompress(h.block_codec, &body[at..at + l as usize])?;
+                out.extend(GraphIndex::match_serialized_block(&tile, perm, pattern));
+            }
         }
     }
     out.sort_unstable();
@@ -6922,7 +6907,7 @@ impl SummaryView {
         if header.pyramid_meta_len == 0 {
             return Ok(None);
         }
-        if header.version == crate::v06::VERSION {
+        if crate::v06::reads(header.version) {
             return Self::open_ranged_v06(reader, &header, head).map(Some);
         }
 
@@ -7263,7 +7248,7 @@ pub fn read_schema_coherence_ranged<R: RangeReader>(
         )));
     }
     // Fallback (pre-v0.2.1 files with no header field): decode the whole pyramid-meta.
-    let mb = if header.version == crate::v06::VERSION {
+    let mb = if crate::v06::reads(header.version) {
         crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
     } else {
         reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?
@@ -7316,7 +7301,7 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
             return Ok(Some(summary));
         }
         // Fallback (pre-v0.2.1 files): decode the whole pyramid-meta, pull finest levels.
-        let mb = if header.version == crate::v06::VERSION {
+        let mb = if crate::v06::reads(header.version) {
             crate::v06::open::read_pyramid(reader)?.unwrap_or_default()
         } else {
             reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?

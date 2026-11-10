@@ -196,9 +196,18 @@ fn cold_directory_bytes(image: &'static [u8]) -> (u64, u64) {
     assert_eq!(got.len(), 3, "{got:?}");
     assert!(!rete.index_incomplete());
     let reads = rec.take();
+    // The quad leaves section opens with the graph directory's blocks: a block is
+    // what the lookup reads to name the graph, not a tile directory, so only the
+    // bytes after it count here (a block of 8,192 graphs is a few KB compressed,
+    // and 16 to 30 KB without a codec, which would drown the leaves compared).
+    let (qstart, qend) = region(image, kind::QUAD_LEAVES);
+    let (_, root) = read_front(&SliceReader::new(image)).unwrap();
+    let gdir = decode_quad_root(root.unit(tag::QUAD).unwrap())
+        .unwrap()
+        .gdir_len;
     (
         inside(&reads, region(image, kind::DICT_LEAVES)),
-        inside(&reads, region(image, kind::QUAD_LEAVES)),
+        inside(&reads, (qstart + gdir, qend)),
     )
 }
 
@@ -315,10 +324,16 @@ impl RangeReader for Rounds {
     }
 }
 
-/// Dependent round trips of one cold query over `image`, and its rows.
+/// Dependent round trips of one cold query over `image`, and its rows. The first
+/// read is the header and the root, exactly: a leaf that happens to sit inside a
+/// bigger first read costs no round trip, and which one does depends on how big
+/// the root is (a smaller block index moves the front sections nearer), not on
+/// the layout being compared.
 fn cold_rounds(image: &'static [u8], q: &str) -> (u64, Vec<String>) {
     let rec = Rounds::new(image);
-    let rete = Rete::open_ranged_lazy_with(rec.clone(), 4096).unwrap();
+    let (h, _) = read_front(&SliceReader::new(image)).unwrap();
+    let first = rete_core::HEADER_LEN as u64 + h.root_len as u64;
+    let rete = Rete::open_ranged_lazy_with(rec.clone(), first).unwrap();
     rec.take();
     let got = rows(&rete, q);
     assert!(!rete.index_incomplete());

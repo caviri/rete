@@ -1,4 +1,4 @@
-//! Format generation `0x06` (SPEC.md §4): everything a reader needs to plan a
+//! Format generations `0x06` and `0x07` (SPEC.md §4): everything a reader needs to plan a
 //! query sits at the **front** of the file — a 128-byte header, the root block,
 //! the Dataset Card, the planner statistics and every leaf directory — and the
 //! payload follows, clustered by section.
@@ -13,31 +13,63 @@
 //! file_len-8 footer "RETE" 06 00 00 00
 //! ```
 //!
+//! `0x07` is `0x06` plus two things: the label index's root node lives in a
+//! cold section of its own ([`kind::LABEL_ROOT`]) instead of in the root, and an
+//! optional card annex ([`kind::CARD_ANNEX`]) holds card fields too big for the
+//! hot card. The two generations share this module: [`Header06::version`] says
+//! which one a file is, readers read both, writers write [`VERSION`].
+//!
 //! Payload blocks (dictionary chunks, index tiles, quad tiles, label blocks,
 //! postings) are byte-identical to `0x05`; only their framing and their
 //! directories move. [`parts`] lifts a `0x05` file into [`parts::Parts`],
 //! [`write`](mod@write) assembles a `0x06` file from them, [`open`] reads one.
 
+pub mod annex;
+pub mod cluster;
+pub(crate) mod neworders;
 pub mod open;
 pub mod parts;
+pub use cluster::check_clusters;
+pub use neworders::check_orders;
 pub mod write;
 
+#[cfg(test)]
+mod cluster_tests;
 #[cfg(test)]
 mod roundtrip;
 
 use crate::file::FileError;
 use crate::varint::{read_uvarint, write_uvarint};
 
-/// The format byte of this generation.
-pub const VERSION: u8 = 0x06;
+/// The format byte writers stamp (the current generation).
+pub const VERSION: u8 = 0x07;
+/// The previous generation this reader still reads (no annex, label root in
+/// the root block).
+pub const VERSION_06: u8 = 0x06;
+
+/// Does this module read format byte `v`?
+pub fn reads(v: u8) -> bool {
+    v == VERSION_06 || v == VERSION
+}
 /// Fixed header length.
 pub const HEADER_LEN: usize = 128;
 /// What a reader fetches first: header, root, card, statistics and, on a small
 /// file, every leaf directory (SPEC.md §9).
 pub const FIRST_READ: u64 = 128 * 1024;
-/// The 8-byte footer: the generation, then `RETE` — so every reader that
-/// confirms a length by the file's last four bytes finds the magic there.
-pub const FOOTER: [u8; 8] = *b"\x06\x00\x00\x00RETE";
+/// The 8-byte footer of the current generation: the generation, then `RETE`
+/// — so every reader that confirms a length by the file's last four bytes
+/// finds the magic there.
+pub const FOOTER: [u8; 8] = *b"\x07\x00\x00\x00RETE";
+
+/// The footer of generation `version`.
+pub fn footer(version: u8) -> [u8; 8] {
+    let mut f = FOOTER;
+    f[0] = version;
+    f
+}
+
+/// Largest card annex a reader decompresses.
+pub const ANNEX_MAX: u64 = 64 << 20;
 /// The writer's root budget: leaves may grow (to [`LEAF_MAX`]) to bring the
 /// stored root under it, when growing them can.
 pub const ROOT_BUDGET: usize = 40 * 1024;
@@ -60,6 +92,14 @@ pub const F_TEXT_NAMED: u8 = 0b0100;
 /// Header flag: quad tiles are clustered graph-major (all orders of a block of
 /// graphs adjacent) rather than order-major.
 pub const F_QUAD_GRAPH_MAJOR: u8 = 0b1000;
+/// Header flag (`0x07`): the subject-leading permutations (SPO, SOP) are
+/// clustered by class: their tiles are in `(cluster, s, p, o)` order, listed
+/// by the cluster root ([`tag::CLUSTER`]).
+pub const F_CLUSTERED: u8 = 0b1_0000;
+/// `ClusterOrder::si` of the quad index's SPOG (its quad slot).
+pub const QUAD_SPOG: usize = crate::quad7::FIRST_LAST_SLOT;
+/// The most classes a clustered permutation has a run for (the rest are run 0).
+pub const MAX_CLUSTERS: usize = 32;
 
 /// Presence bit: a text index.
 pub const P_TEXT: u16 = 1;
@@ -89,22 +129,33 @@ pub mod kind {
     pub const LABEL_DATA: u8 = 19;
     pub const TEXT_DATA: u8 = 20;
     pub const PYRAMID: u8 = 21;
+    /// `0x07`: the label index's root node (front, after the other leaves).
+    pub const LABEL_ROOT: u8 = 7;
+    /// `0x07`: card fields too big for the hot card (the last data section).
+    pub const CARD_ANNEX: u8 = 22;
 
     /// Every kind, in file order (front kinds, then data kinds).
-    pub const ORDER: [u8; 12] = [
+    pub const ORDER: [u8; 14] = [
         SCHEMA,
         DICT_LEAVES,
         INDEX_LEAVES,
         QUAD_LEAVES,
         LABEL_LEAVES,
         TEXT_LEAVES,
+        LABEL_ROOT,
         DICT_DATA,
         INDEX_DATA,
         QUAD_DATA,
         LABEL_DATA,
         TEXT_DATA,
         PYRAMID,
+        CARD_ANNEX,
     ];
+
+    /// Kinds only a `0x07` file has.
+    pub fn is_v07_only(k: u8) -> bool {
+        k == LABEL_ROOT || k == CARD_ANNEX
+    }
 
     /// A short name, for `verify --section` and `info`.
     pub fn name(k: u8) -> &'static str {
@@ -121,6 +172,8 @@ pub mod kind {
             LABEL_DATA => "labels",
             TEXT_DATA => "text",
             PYRAMID => "pyramid",
+            LABEL_ROOT => "label-root",
+            CARD_ANNEX => "card-annex",
             _ => "unknown",
         }
     }
@@ -139,12 +192,16 @@ pub mod tag {
     pub const QUAD: u8 = 3;
     pub const LABELS: u8 = 4;
     pub const TEXT: u8 = 5;
+    /// `0x07`: the class clusters of the subject-leading permutations.
+    pub const CLUSTER: u8 = 6;
 }
 
 /// The parsed 128-byte header.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub struct Header06 {
+    /// The format byte: [`VERSION_06`] or [`VERSION`].
+    pub version: u8,
     pub flags: u8,
     pub content_hash: [u8; 16],
     pub file_len: u64,
@@ -176,7 +233,7 @@ impl Header06 {
     pub fn to_bytes(&self) -> [u8; HEADER_LEN] {
         let mut b = [0u8; HEADER_LEN];
         b[0..4].copy_from_slice(&crate::header::MAGIC);
-        b[4] = VERSION;
+        b[4] = self.version;
         b[5] = self.flags;
         b[6..8].copy_from_slice(&(HEADER_LEN as u16).to_le_bytes());
         b[8..24].copy_from_slice(&self.content_hash);
@@ -208,8 +265,8 @@ impl Header06 {
         if b.len() < HEADER_LEN {
             return Err(FileError::Container("0x06 header truncated"));
         }
-        if b[0..4] != crate::header::MAGIC || b[4] != VERSION {
-            return Err(FileError::Container("not a 0x06 file"));
+        if b[0..4] != crate::header::MAGIC || !reads(b[4]) {
+            return Err(FileError::Container("not a 0x06 or 0x07 file"));
         }
         if u16::from_le_bytes([b[6], b[7]]) as usize != HEADER_LEN {
             return Err(FileError::Container("0x06 header length is not 128"));
@@ -222,6 +279,7 @@ impl Header06 {
             x
         };
         let h = Header06 {
+            version: b[4],
             flags: b[5],
             content_hash: h16(8),
             file_len: u64_at(24),
@@ -360,7 +418,11 @@ pub fn id_position_names() -> [&'static str; 4] {
 pub fn content_hash(h: &Header06) -> [u8; 16] {
     let b = h.to_bytes();
     let mut x = blake3::Hasher::new();
-    x.update(b"rete/0x06");
+    x.update(if h.version == VERSION_06 {
+        b"rete/0x06"
+    } else {
+        b"rete/0x07"
+    });
     x.update(&b[4..8]);
     x.update(&b[48..80]);
     x.update(&h.card_len.to_le_bytes());
@@ -772,6 +834,73 @@ pub fn decode_index_root(p: &[u8]) -> Result<Vec<PermRoot>, FileError> {
     Ok(out)
 }
 
+/// The class clusters of one subject-leading order (`0x07`, flag
+/// [`F_CLUSTERED`]): a permutation of the default graph (`si` 0 to 5, SPO or
+/// SOP) or the quad index's SPOG (`si` [`QUAD_SPOG`]). Its tiles are `k + 1` consecutive runs: run 0 holds the
+/// subjects of no listed class, run `i` (1-based) those whose primary class is
+/// `classes[i - 1]`. Within a run the tiles are in `(s, p, o)` order like an
+/// unclustered permutation; no tile and no directory leaf spans two runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClusterOrder {
+    /// Section index of the permutation (`IndexPermutation::section_index`), or
+    /// [`QUAD_SPOG`] for the quad index's SPOG (its quad slot).
+    pub si: usize,
+    /// The class of runs `1..=k`, as object ids, rarest last.
+    pub classes: Vec<u32>,
+    /// Tiles of each run, run 0 first (`classes.len() + 1` entries).
+    pub run_tiles: Vec<usize>,
+}
+
+/// Encode the cluster unit root.
+pub fn encode_cluster_root(orders: &[ClusterOrder]) -> Vec<u8> {
+    let mut o = Vec::new();
+    write_uvarint(&mut o, orders.len() as u64);
+    for c in orders {
+        write_uvarint(&mut o, c.si as u64);
+        write_uvarint(&mut o, c.classes.len() as u64);
+        for &k in &c.classes {
+            write_uvarint(&mut o, k as u64);
+        }
+        for &t in &c.run_tiles {
+            write_uvarint(&mut o, t as u64);
+        }
+    }
+    o
+}
+
+/// Decode the cluster unit root. Every count is untrusted.
+pub fn decode_cluster_root(p: &[u8]) -> Result<Vec<ClusterOrder>, FileError> {
+    let bad = FileError::Container;
+    let mut c = Cur::new(p);
+    let n = c.count(7)?;
+    let mut out: Vec<ClusterOrder> = Vec::with_capacity(n);
+    for _ in 0..n {
+        let si = c.count(QUAD_SPOG as u64)?;
+        let k = c.count(MAX_CLUSTERS as u64)?;
+        let mut classes = Vec::with_capacity(k);
+        for _ in 0..k {
+            let id = c.u32v()?;
+            if id == 0 || classes.contains(&id) {
+                return Err(bad("0x07 cluster root: bad class"));
+            }
+            classes.push(id);
+        }
+        let mut run_tiles = Vec::with_capacity(k + 1);
+        for _ in 0..=k {
+            run_tiles.push(c.count(u32::MAX as u64)?);
+        }
+        if out.iter().any(|o| o.si == si) {
+            return Err(bad("0x07 cluster root: a permutation twice"));
+        }
+        out.push(ClusterOrder {
+            si,
+            classes,
+            run_tiles,
+        });
+    }
+    Ok(out)
+}
+
 /// The root of the text index.
 #[derive(Debug, Clone, Default)]
 pub struct TextRoot {
@@ -858,6 +987,11 @@ pub fn decode_label_root(p: &[u8]) -> Result<LabelRoot, FileError> {
     Ok(LabelRoot { data_len, head })
 }
 
+/// `G+SPO`, `SPO+G`, ...: the name of a quad order by its slot (SPEC.md §6.5).
+pub fn quad_order_name(si: usize) -> String {
+    crate::quad7::slot_name(si)
+}
+
 /// The root of the quad index.
 #[derive(Debug, Clone, Default)]
 pub struct QuadRoot {
@@ -927,10 +1061,10 @@ pub fn decode_quad_root(p: &[u8]) -> Result<QuadRoot, FileError> {
     let block_graphs = c.uv()?;
     let p0 = c.lp()?.to_vec();
     let gdir_len = c.uv()?;
-    let no = c.count(6)?;
+    let no = c.count(crate::quad7::NUM_SLOTS as u64)?;
     let mut orders = Vec::with_capacity(no);
     for _ in 0..no {
-        let si = c.count(5)?;
+        let si = c.count(crate::quad7::NUM_SLOTS as u64 - 1)?;
         let n_tiles = c.count(u32::MAX as u64)?;
         let nl = c.count(p.len() as u64)?;
         let mut leaves = Vec::with_capacity(nl.min(p.len() / 5));
@@ -1151,7 +1285,8 @@ pub fn decode_token_leaf(b: &[u8], n: usize) -> Result<Vec<TokenEnt>, FileError>
 /// One quad tile as a leaf lists it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QTileEnt {
-    /// Leading key of the first row.
+    /// Leading key of the first row: `(g, a)` of a graph-leading order, `(a, b)`
+    /// of a graph-last one.
     pub first: (u32, u32),
     /// Leading key of the last row.
     pub last: (u32, u32),
@@ -1159,7 +1294,8 @@ pub struct QTileEnt {
     pub clen: u64,
     /// Stored raw (not compressed).
     pub raw: bool,
-    /// `(min_b, max_b, min_c, max_c)`.
+    /// `(min_b, max_b, min_c, max_c)` of a graph-leading order; `(min_c, max_c,
+    /// min_g, max_g)` of a graph-last one.
     pub syn: (u32, u32, u32, u32),
     /// Absolute offset of the tile within QUAD_DATA.
     pub off: u64,
@@ -1167,8 +1303,10 @@ pub struct QTileEnt {
 
 /// Encode quad tile entries. A tile's offset is written as `0` when it follows
 /// the previous tile of the leaf (or, for the first, sits at the leaf's root
-/// offset), else as `offset + 1` (PMTiles' clustered encoding).
-pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64) -> Vec<u8> {
+/// offset), else as `offset + 1` (PMTiles' clustered encoding). A `0x07` file
+/// is order-major, so its tiles always follow each other and the field is
+/// not written (`contiguous`).
+pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64, contiguous: bool) -> Vec<u8> {
     let mut o = Vec::new();
     let mut prev_g = 0u32;
     let mut next = leaf_off;
@@ -1189,7 +1327,9 @@ pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64) -> Vec<u8> {
         write_uvarint(&mut o, e.syn.1.wrapping_sub(e.syn.0) as u64);
         write_uvarint(&mut o, e.syn.2 as u64);
         write_uvarint(&mut o, e.syn.3.wrapping_sub(e.syn.2) as u64);
-        write_uvarint(&mut o, if e.off == next { 0 } else { e.off + 1 });
+        if !contiguous {
+            write_uvarint(&mut o, if e.off == next { 0 } else { e.off + 1 });
+        }
         next = e.off + e.clen;
         prev_g = e.first.0;
     }
@@ -1197,7 +1337,12 @@ pub fn encode_qtile_leaf(ents: &[QTileEnt], leaf_off: u64) -> Vec<u8> {
 }
 
 /// Decode `n` quad tile entries of a leaf whose first tile sits at `leaf_off`.
-pub fn decode_qtile_leaf(b: &[u8], n: usize, leaf_off: u64) -> Result<Vec<QTileEnt>, FileError> {
+pub fn decode_qtile_leaf(
+    b: &[u8],
+    n: usize,
+    leaf_off: u64,
+    contiguous: bool,
+) -> Result<Vec<QTileEnt>, FileError> {
     let mut c = Cur::new(b);
     let mut out = Vec::with_capacity(n.min(b.len()));
     let mut prev_g = 0u32;
@@ -1219,8 +1364,14 @@ pub fn decode_qtile_leaf(b: &[u8], n: usize, leaf_off: u64) -> Result<Vec<QTileE
         let db = c.u32v()?;
         let mc = c.u32v()?;
         let dc = c.u32v()?;
-        let oc = c.uv()?;
-        let off = if oc == 0 { next } else { oc - 1 };
+        let off = if contiguous {
+            next
+        } else {
+            match c.uv()? {
+                0 => next,
+                oc => oc - 1,
+            }
+        };
         let clen = packed >> 1;
         out.push(QTileEnt {
             first: (g, fa),
@@ -1310,7 +1461,7 @@ pub fn logical_header(h: &Header06) -> crate::header::Header {
         });
     }
     crate::header::Header {
-        version: VERSION,
+        version: h.version,
         flags,
         metadata_offset: end,
         metadata_len: h.card_len as u64,
@@ -1347,6 +1498,7 @@ mod tests {
     #[test]
     fn header_round_trips() {
         let h = Header06 {
+            version: VERSION,
             flags: F_NAMED | F_QUAD_GRAPH_MAJOR,
             content_hash: [7; 16],
             file_len: 10_000,
@@ -1444,7 +1596,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            decode_qtile_leaf(&encode_qtile_leaf(&q, 100), 2, 100).unwrap(),
+            decode_qtile_leaf(&encode_qtile_leaf(&q, 100, false), 2, 100, false).unwrap(),
             q
         );
     }
@@ -1463,6 +1615,7 @@ mod id_width_tests {
 
     fn sample() -> Header06 {
         Header06 {
+            version: VERSION,
             file_len: 10_000,
             root_len: 300,
             card_region_len: 100,
@@ -1538,6 +1691,7 @@ mod hostile_root_tests {
     #[test]
     fn section_range_overflow_is_an_error() {
         let h = Header06 {
+            version: VERSION,
             data_offset: 100,
             ..Header06::default()
         };

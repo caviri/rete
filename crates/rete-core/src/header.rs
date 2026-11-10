@@ -30,7 +30,7 @@ pub const MAGIC: [u8; 4] = *b"RETE";
 /// does it pin reader capability: writer semantics changed inside `0x05` nine
 /// days after the freeze (#68 split oversized index groups across tiles), so a
 /// `0x05` file can need a reader newer than the one that froze `0x05`.
-pub const CURRENT_FORMAT_VERSION: u8 = 0x06;
+pub const CURRENT_FORMAT_VERSION: u8 = 0x07;
 
 /// Format generation `0x05` (stable generation 1, the 1 KiB section-directory
 /// layout this module parses). Every reader still reads it while the catalog is
@@ -390,7 +390,7 @@ impl Header {
         if b[0..4] != MAGIC {
             return Err(HeaderError::BadMagic);
         }
-        if b[4] == crate::v06::VERSION {
+        if crate::v06::reads(b[4]) {
             // A 0x06 file: its 128-byte header, seen as a logical header (no
             // physical offsets — see `v06::logical_header`).
             return crate::v06::Header06::from_bytes(b)
@@ -538,7 +538,7 @@ impl Header {
     /// header must yield "unknown", never a panic or a wrapped length — the
     /// weekly fuzz caught `verify()` on exactly this class of input).
     pub fn expected_file_len(&self) -> Option<u64> {
-        if self.version == crate::v06::VERSION {
+        if crate::v06::reads(self.version) {
             // A 0x06 header states its length; its logical view parks every
             // offset at that length (see `v06::logical_header`).
             return Some(self.metadata_offset);
@@ -862,7 +862,7 @@ mod tests {
                 HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x06
+                    max: 0x07
                 } if *found == old
             ));
             assert!(error
@@ -870,7 +870,7 @@ mod tests {
                 .contains("Pre-1.0 files must be rebuilt from RDF source with `rete build`"));
         }
 
-        for unsupported in [0x00, 0x07, 0xff] {
+        for unsupported in [0x00, 0x08, 0xff] {
             let mut bytes = current;
             bytes[4] = unsupported;
             assert!(matches!(
@@ -878,7 +878,7 @@ mod tests {
                 Err(HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x06
+                    max: 0x07
                 }) if found == unsupported
             ));
         }

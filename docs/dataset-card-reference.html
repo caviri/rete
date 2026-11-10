@@ -1179,6 +1179,16 @@ bounded, and the bounds are checked at build time:</p>
 <tr><td>key length</td><td><strong>128 bytes</strong></td><td>Keys are identifiers, not values.</td></tr>
 <tr><td>nesting depth</td><td><strong>3</strong></td><td>A list of objects whose fields may be lists of scalars — <code>[{"query": "…", "words": ["a", "b"]}]</code> — no deeper. An array or an object is one level.</td></tr>
 </tbody></table>
+<p><strong>The card annex (format <code>0x07</code>).</strong> The 8,192 B is the <em>hot</em> limit: what every reader
+fetches on every open. The CLI accepts up to 1 MiB for <code>extra</code> and for <code>description</code>,
+and the writer moves a field that is over 8,192 B, whole, into a cold <strong>card annex</strong>
+(the file's last section, inside the content hash). The hot card then has no such
+field and an <code>annex</code> marker (<code>fields</code>, <code>bytes</code>) instead; <code>rete card --full</code>,
+<code>rete card-url --full</code> and the library's <code>read_card_full_ranged</code> read the annex and put
+the fields back. Nothing to switch on: a card under the hot limit has no annex. The
+library's <code>CardInput::normalize</code> still rejects over 8,192 B; <code>normalize_with_annex</code> is
+the 1 MiB one. A <code>0x06</code> file has no annex (convert it first). The keys, key length and
+depth limits above apply either way.</p>
 <p><strong>Why three, and why not more.</strong> The cap was 2 until 0.4.0, and that refused
 the first natural shape a real card needed: the OpenCitations full-text
 examples — a list of objects, each holding a word list — had to be flattened
@@ -1659,7 +1669,7 @@ gets the whole self-description (counts, vocabulary, class graph, signals,
 starter queries, build record) without downloading the file. Measured on the
 published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
 1,161,874,550 bytes for Hugging Face, two range requests each (measured before
-the first read took the whole front: see <a href="cli.html#rete-card-url-url---json---format-jsonldcroissant---sha256-hex"><code>card-url</code></a>).</p>
+the first read took the whole front: see <a href="cli.html#rete-card-url-url---json---full---format-jsonldcroissant---sha256-hex"><code>card-url</code></a>).</p>
 <h2 id="the-starter-query-library">The starter-query library</h2>
 <p><code>queries</code> is a vetted set of starter SPARQL queries, <strong>auto-instantiated at
 build</strong> with the dataset's own vocabulary (<code>{{TOP_CLASS}}</code> → the most populous

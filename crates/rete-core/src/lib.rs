@@ -68,6 +68,7 @@ pub mod parallel;
 #[doc(hidden)]
 pub mod pyramid;
 mod quad;
+mod quad7;
 #[doc(hidden)]
 pub mod reach;
 #[doc(hidden)]
@@ -154,18 +155,18 @@ pub mod format {
 pub mod card {
     pub use crate::card_derive::{
         curated_counts_card, derive_card, derive_card_encoded, derive_card_from,
-        derive_card_streaming, load_card, CardInput, CardTripleSource, ClassLink, Coherence,
-        Creator, DatasetCard, ExampleQuery, LabelIndexSignal, PermutationsSignal, Publisher,
-        QuotedTriplesSignal, Signals, StreamReport, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT,
-        GEO_HASGEOMETRY, NS_TALLY_CAP, NS_TALLY_ENTRY_BYTES, O_LITERAL,
+        derive_card_streaming, load_card, CardAnnexMarker, CardInput, CardTripleSource, ClassLink,
+        Coherence, Creator, DatasetCard, ExampleQuery, LabelIndexSignal, PermutationsSignal,
+        Publisher, QuotedTriplesSignal, Signals, StreamReport, TextIndexSignal, Tier, CARD_TOP_N,
+        GEO_ASWKT, GEO_HASGEOMETRY, NS_TALLY_CAP, NS_TALLY_ENTRY_BYTES, O_LITERAL,
         QUOTED_TRIPLE_SURFACE_RDF12, QUOTED_TRIPLE_SURFACE_RDF_STAR,
     };
     pub use crate::card_input::{
-        canonicalize_json, check_description_len, compose_curated_card, json_depth,
-        normalize_description, normalize_extra, normalize_string_list, normalize_themes,
-        validate_curated_card, CARD_DESCRIPTION_MAX_BYTES, CARD_EXTRA_MAX_BYTES,
-        CARD_EXTRA_MAX_DEPTH, CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES, CURATED_CARD_FIELDS,
-        UNKNOWN_FIELD_HINT,
+        canonicalize_json, check_description_len, check_description_len_max, compose_curated_card,
+        description_text, json_depth, normalize_description, normalize_extra, normalize_extra_max,
+        normalize_string_list, normalize_themes, validate_curated_card, CARD_ANNEX_FIELD_MAX_BYTES,
+        CARD_DESCRIPTION_MAX_BYTES, CARD_EXTRA_MAX_BYTES, CARD_EXTRA_MAX_DEPTH,
+        CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES, CURATED_CARD_FIELDS, UNKNOWN_FIELD_HINT,
     };
     pub use crate::card_queries::{
         audit, audit_examples, claim_of, claim_of_query, example_query_id, generate, Claim,
@@ -196,9 +197,9 @@ pub mod range {
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
         read_card_and_build_info_ranged, read_card_and_build_info_with_header,
-        read_metadata_ranged, read_schema_coherence_ranged, read_schema_ranged,
-        read_schema_summary_ranged, read_text_index_token_table_len_ranged, ByteRange,
-        LayoutSegment, SearchView, SummaryView,
+        read_card_full_ranged, read_metadata_ranged, read_schema_coherence_ranged,
+        read_schema_ranged, read_schema_summary_ranged, read_text_index_token_table_len_ranged,
+        ByteRange, LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{
         detect_polyglot_base, BytesReader, CountingReader, OffsetReader, PrefixReader, RangeReader,
@@ -237,7 +238,7 @@ pub use file::{
     append_sections, attach_build_info, build_pyramid_meta, build_pyramid_meta_algo,
     build_pyramid_meta_layout, build_pyramid_meta_with, compute_text_index, plan_build_info,
     read_build_info, read_card_and_build_info_ranged, read_card_and_build_info_with_header,
-    read_metadata_ranged, read_schema_coherence_ranged, read_schema_ranged,
+    read_card_full_ranged, read_metadata_ranged, read_schema_coherence_ranged, read_schema_ranged,
     read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
     schema_classes, schema_coherence, schema_summary, spill_threshold_for, split_memory_budget,
     verify, verify_ranged, write_dataset, write_dataset_v05, write_dataset_with_metadata,

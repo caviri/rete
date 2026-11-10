@@ -483,6 +483,15 @@ pub(crate) struct RunSpiller<R: IdRecord> {
 }
 
 impl<R: IdRecord> RunSpiller<R> {
+    /// [`new`](Self::new) with the whole run buffer reserved up front: for a
+    /// sort whose runs are known to fill, so the buffer does not double its way
+    /// there (and briefly hold 1.5 times its size).
+    pub(crate) fn new_exact(dir: &Path, name: &str, run_len: usize) -> Self {
+        let mut s = Self::new(dir, name, run_len);
+        s.buf.reserve_exact(run_len);
+        s
+    }
+
     /// Runs live in `dir` as `<name>.run<i>.<segment>`.
     pub(crate) fn new(dir: &Path, name: &str, run_len: usize) -> Self {
         let run_len = run_len.max(1);

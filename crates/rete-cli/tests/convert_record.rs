@@ -71,7 +71,7 @@ fn a_converted_file_keeps_the_original_record_and_adds_the_conversion() {
     let b = dir.path().join("b.rete");
     convert(&old, &a);
     convert(&old, &b);
-    assert_eq!(std::fs::read(&a).unwrap()[4], 6);
+    assert_eq!(std::fs::read(&a).unwrap()[4], 7);
 
     let before = card_json(&old)["build"].clone();
     let after = card_json(&a)["build"].clone();
@@ -304,7 +304,7 @@ fn a_conversion_measures_the_starter_queries_on_the_new_layout() {
         assert_eq!(n["rows"], s["rows"], "{}", n["id"]);
         assert_eq!(n["debug_ms"], 0, "reproducible");
     }
-    assert_eq!(entry["context"]["layout"], "0x06 (converted)");
+    assert_eq!(entry["context"]["layout"], "0x07 (converted)");
     // The shown costs are the new ones; the source's are kept beside them.
     assert_eq!(after["query_costs"], *entry);
     assert_eq!(after["source_query_costs"], before["query_costs"]);
@@ -322,7 +322,7 @@ fn a_conversion_measures_the_starter_queries_on_the_new_layout() {
     let text = rete().arg("card").arg(&a).output().unwrap();
     let text = String::from_utf8_lossy(&text.stdout);
     assert!(
-        text.contains("measured on") && text.contains("0x06 (converted)"),
+        text.contains("measured on") && text.contains("0x07 (converted)"),
         "{text}"
     );
 
