@@ -655,7 +655,11 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     // Rows that nothing blocks on (no aggregate, ORDER BY or HAVING) reach the
     // projection as the plan yields them: the dictionary batches that
     // canonicalize a variable predicate can fetch their terms too.
-    if sel.order.is_empty() && sel.group.is_none() && sel.having.is_empty() {
+    if sel.order.is_empty()
+        && sel.group.is_none()
+        && sel.having.is_empty()
+        && is_bare_scan(&sel.plan)
+    {
         let mut slots = vec![false; ctx.slots.len()];
         if sel.project.is_empty() {
             slots.iter_mut().for_each(|s| *s = true);
@@ -3013,5 +3017,17 @@ impl Iterator for JoinIter<'_> {
             self.matched = false;
             self.cur_left = Some(l);
         }
+    }
+}
+
+/// Is `plan` one triple pattern (inside at most `GRAPH <iri>`), so that every
+/// row the scan yields reaches the projection? Under a FILTER, a join or any
+/// other operator most scanned rows may be dropped, and decoding their terms
+/// ahead ([`Ctx::decode_ahead`]) would fetch terms nothing ever reads.
+fn is_bare_scan(plan: &Plan) -> bool {
+    match plan {
+        Plan::Bgp(pats) => pats.len() == 1,
+        Plan::Graph(GraphTarget::Named(_), inner) => is_bare_scan(inner),
+        _ => false,
     }
 }
