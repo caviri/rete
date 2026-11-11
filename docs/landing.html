@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <title>rete · RDF graphs in one file</title>
+  <meta name="description" content="rete stores an RDF graph and its indexes in one .rete file. Host it anywhere and query it with SPARQL from a browser, a notebook or the command line." />
+  <script>
+  (function () {
+    try {
+      var t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+    document.documentElement.className += " js";
+  })();
+  </script>
+  <link rel="stylesheet" href="landing/landing.css" />
+  <link rel="modulepreload" href="landing/app.js" />
+</head>
+<body>
+
+<a class="skip" href="#try">Skip to the live demo</a>
+
+<!-- Running banner. The first group is the real content; the second is a
+     visual copy (hidden from assistive tech, out of the tab order) that makes
+     the loop seamless. -->
+<div class="marquee" role="region" aria-label="About this project">
+  <div class="marquee-track">
+    <div class="marquee-group">
+      <span class="mq-item">This is a project by <a href="https://h4ck1ng.science">h4ck1ng.science</a></span><span class="mq-sep" aria-hidden="true">✦</span>
+      <span class="mq-item"><a href="#support">Support it →</a></span><span class="mq-sep" aria-hidden="true">✦</span>
+      <span class="mq-item">This is a project by <a href="https://h4ck1ng.science">h4ck1ng.science</a></span><span class="mq-sep" aria-hidden="true">✦</span>
+      <span class="mq-item"><a href="#support">Support it →</a></span><span class="mq-sep" aria-hidden="true">✦</span>
+      <span class="mq-item">This is a project by <a href="https://h4ck1ng.science">h4ck1ng.science</a></span><span class="mq-sep" aria-hidden="true">✦</span>
+      <span class="mq-item"><a href="#support">Support it →</a></span><span class="mq-sep" aria-hidden="true">✦</span>
+    </div>
+    <div class="marquee-group" aria-hidden="true">
+      <span class="mq-item">This is a project by <a href="https://h4ck1ng.science" tabindex="-1">h4ck1ng.science</a></span><span class="mq-sep">✦</span>
+      <span class="mq-item"><a href="#support" tabindex="-1">Support it →</a></span><span class="mq-sep">✦</span>
+      <span class="mq-item">This is a project by <a href="https://h4ck1ng.science" tabindex="-1">h4ck1ng.science</a></span><span class="mq-sep">✦</span>
+      <span class="mq-item"><a href="#support" tabindex="-1">Support it →</a></span><span class="mq-sep">✦</span>
+      <span class="mq-item">This is a project by <a href="https://h4ck1ng.science" tabindex="-1">h4ck1ng.science</a></span><span class="mq-sep">✦</span>
+      <span class="mq-item"><a href="#support" tabindex="-1">Support it →</a></span><span class="mq-sep">✦</span>
+    </div>
+  </div>
+</div>
+
+<header class="top" id="top">
+  <a class="brand" href="#top" aria-label="rete, back to top">
+    <svg class="mark" viewBox="0 0 120 120" aria-hidden="true">
+      <rect width="120" height="120" rx="28" fill="#2a6df4"/>
+      <g stroke="#dce8ff" stroke-width="4" fill="none"><path d="M60 36 32 76M60 36l28 40M32 76h56M32 76l28 26M88 76l-28 26"/></g>
+      <g fill="#fff"><circle cx="60" cy="34" r="11"/><circle cx="30" cy="77" r="9"/><circle cx="90" cy="77" r="9"/><circle cx="60" cy="102" r="8"/></g>
+    </svg>
+    <span>rete</span>
+  </a>
+  <nav class="nav" aria-label="Sections">
+    <a href="#try">Try it</a>
+    <a href="#how">How it works</a>
+    <a href="#use">Use it</a>
+    <a href="#apps">Apps</a>
+    <a href="#support">Support</a>
+  </nav>
+  <div class="top-actions">
+    <a class="btn btn-ghost btn-sm" href="index.html">Docs</a>
+    <a class="icon-btn" href="https://github.com/caviri/rete" aria-label="Source on GitHub">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    </a>
+    <button class="icon-btn" id="themeBtn" type="button" aria-label="Switch light or dark theme">
+      <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1Z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+
+<!-- ───────────────────────── Hero ───────────────────────── -->
+<section class="hero" aria-labelledby="hero-title">
+  <canvas class="net" id="net" aria-hidden="true"></canvas>
+  <div class="hero-glow" aria-hidden="true" data-parallax="0.25"></div>
+  <div class="hero-inner">
+    <p class="eyebrow reveal">Open source · RDF · SPARQL</p>
+    <h1 id="hero-title" class="reveal">Your RDF graph in one file. <em>Host it anywhere. Query it everywhere.</em></h1>
+    <p class="rotator reveal">Query it from
+      <span class="rot" id="rot" aria-hidden="true"><span class="rot-word">a browser</span></span>
+      <span class="sr-only">a browser, Python, JavaScript, R, Java, the command line or Claude</span>
+    </p>
+    <p class="lede reveal">rete packs your triples and the indexes that find them into a single
+      <code>.rete</code> file. Put it on object storage, GitHub Pages, Zenodo or any web server.
+      Each SPARQL query reads only the parts of the file it needs, so there is no database to run.</p>
+    <div class="ctas reveal">
+      <a class="btn btn-primary" href="#try">Run a query <span aria-hidden="true">↓</span></a>
+      <a class="btn btn-glass" href="getting-started.html">Build your first graph</a>
+    </div>
+    <ul class="hero-facts reveal" aria-label="Examples you can try below">
+      <li><b>177 KB</b> jazz network</li>
+      <li><b>76 MB</b> of old maps</li>
+      <li><b>1.2 GB</b> Hugging Face Hub</li>
+      <li>all queried from this page</li>
+    </ul>
+  </div>
+  <a class="scroll-cue" href="#try" aria-label="Scroll to the demo"><span></span></a>
+</section>
+
+<!-- ───────────────────────── Live demo ───────────────────────── -->
+<section class="demo" id="try" aria-labelledby="try-title">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="kicker">Try it</p>
+      <h2 id="try-title">Ask a graph a question</h2>
+      <p>Pick a graph and a question. The query runs in this page with the same engine the
+        command line uses. There is no database server behind it.</p>
+    </div>
+
+    <div class="console reveal" id="console">
+      <div class="console-row">
+        <span class="row-label" id="graphs-label">Graph</span>
+        <div class="chips" id="graphs" role="radiogroup" aria-labelledby="graphs-label"></div>
+      </div>
+
+      <div class="about" id="about" aria-live="polite"></div>
+
+      <!-- Bring your own graph -->
+      <div class="byo" id="byo" hidden>
+        <div class="seg" role="tablist" aria-label="How to bring a graph">
+          <button role="tab" type="button" data-byo="url" aria-selected="true">Link</button>
+          <button role="tab" type="button" data-byo="file" aria-selected="false">File</button>
+          <button role="tab" type="button" data-byo="paste" aria-selected="false">Paste RDF</button>
+        </div>
+        <form class="byo-pane" data-pane="url" id="byoUrl">
+          <label for="byoUrlInput">URL of a <code>.rete</code> file</label>
+          <div class="field-row">
+            <input id="byoUrlInput" type="url" inputmode="url" placeholder="https://example.org/data.rete" required />
+            <button class="btn btn-primary" type="submit">Open</button>
+          </div>
+          <p class="hint">The host must answer HTTP range requests and allow CORS. Most object stores and static hosts do.</p>
+        </form>
+        <div class="byo-pane" data-pane="file" hidden>
+          <label class="drop" id="drop">
+            <input id="byoFile" type="file" accept=".rete" />
+            <span class="drop-title">Choose a <code>.rete</code> file or drop it here</span>
+            <span class="hint">It stays on your device. The engine reads only the ranges a query needs.</span>
+          </label>
+        </div>
+        <form class="byo-pane" data-pane="paste" id="byoPaste" hidden>
+          <div class="field-row field-row-top">
+            <label for="byoText">Turtle or N-Triples</label>
+            <select id="byoFormat" aria-label="Input format">
+              <option value="ttl">Turtle</option>
+              <option value="nt">N-Triples</option>
+              <option value="nq">N-Quads</option>
+            </select>
+          </div>
+          <textarea id="byoText" spellcheck="false" rows="9"></textarea>
+          <div class="field-row">
+            <button class="btn btn-primary" type="submit">Build it here</button>
+            <a class="btn btn-ghost" id="byoDownload" hidden download="my-graph.rete">Download .rete</a>
+          </div>
+          <p class="hint">The file is built in your browser and never leaves it.</p>
+        </form>
+      </div>
+
+      <div class="console-row">
+        <span class="row-label" id="qs-label">Question</span>
+        <div class="chips chips-q" id="questions" role="radiogroup" aria-labelledby="qs-label"></div>
+      </div>
+
+      <!-- Bytes read -->
+      <div class="meter" id="meter">
+        <div class="strip-wrap">
+          <canvas class="strip" id="strip" aria-hidden="true"></canvas>
+          <span class="strip-cap strip-cap-l">byte 0</span>
+          <span class="strip-cap strip-cap-r" id="stripEnd"></span>
+        </div>
+        <p class="meter-text" id="meterText" aria-live="polite">Each mark on the bar is a part of the file this page fetched.</p>
+      </div>
+
+      <div class="viewbar">
+        <div class="seg seg-views" role="tablist" aria-label="Result view">
+          <button role="tab" type="button" data-view="cards" aria-selected="true">Cards</button>
+          <button role="tab" type="button" data-view="table" aria-selected="false">Table</button>
+          <button role="tab" type="button" data-view="graph" aria-selected="false">Graph</button>
+          <button role="tab" type="button" data-view="sparql" aria-selected="false">SPARQL</button>
+        </div>
+        <div class="viewbar-end">
+          <span class="status" id="status" aria-live="polite"></span>
+          <button class="btn btn-primary btn-run" id="runBtn" type="button">
+            <span class="run-ico" aria-hidden="true"></span><span class="run-txt">Run</span>
+          </button>
+        </div>
+      </div>
+
+      <nav class="crumbs" id="crumbs" aria-label="Exploration trail" hidden></nav>
+
+      <div class="views" id="views">
+        <div class="view" data-view="cards" id="vCards" role="tabpanel"></div>
+        <div class="view" data-view="table" id="vTable" role="tabpanel" hidden></div>
+        <div class="view" data-view="graph" id="vGraph" role="tabpanel" hidden>
+          <div class="graph-stage">
+            <canvas id="graphCanvas"></canvas>
+            <p class="graph-hint">Drag nodes · tap one to explore it · pinch or scroll to zoom</p>
+          </div>
+        </div>
+        <div class="view" data-view="sparql" id="vSparql" role="tabpanel" hidden>
+          <div class="editor">
+            <pre class="editor-hl" aria-hidden="true"><code id="hl"></code></pre>
+            <textarea id="q" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="SPARQL query"></textarea>
+          </div>
+          <div class="editor-bar">
+            <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> runs the query</span>
+            <span class="editor-actions">
+              <button class="btn btn-ghost btn-sm" id="resetBtn" type="button">Reset</button>
+              <button class="btn btn-ghost btn-sm" id="copyBtn" type="button">Copy</button>
+              <a class="btn btn-ghost btn-sm" id="pgLink" href="playground.html" target="_blank" rel="noopener">Open in Playground ↗</a>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── How it works ───────────────────────── -->
+<section class="how" id="how" aria-labelledby="how-title">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="kicker">How it works</p>
+      <h2 id="how-title">Build once, host it, query from anywhere</h2>
+    </div>
+
+    <ol class="steps">
+      <li class="step reveal">
+        <div class="step-text">
+          <span class="step-n">1</span>
+          <h3>Build</h3>
+          <p>Turn Turtle, N-Triples, N-Quads or Jelly into one <code>.rete</code> file. It holds the
+            triples, the indexes that find them and a Dataset Card that says what is inside.</p>
+          <pre class="cmd"><code>rete build data.ttl -o data.rete --card</code></pre>
+        </div>
+        <div class="step-art" data-parallax="-0.08">
+          <svg viewBox="0 0 360 240" class="art art-build" role="img" aria-label="Triples flow into one file">
+            <g class="triples">
+              <g class="t t1"><rect x="14" y="40" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="40" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="40" width="40" height="18" rx="9" class="pill o"/></g>
+              <g class="t t2"><rect x="14" y="80" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="80" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="80" width="40" height="18" rx="9" class="pill o"/></g>
+              <g class="t t3"><rect x="14" y="120" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="120" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="120" width="40" height="18" rx="9" class="pill o"/></g>
+              <g class="t t4"><rect x="14" y="160" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="160" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="160" width="40" height="18" rx="9" class="pill o"/></g>
+            </g>
+            <path class="flow" d="M150 110 C 180 110, 190 120, 222 120"/>
+            <g class="file">
+              <path d="M232 34h70l30 30v142a10 10 0 0 1-10 10h-90a10 10 0 0 1-10-10V44a10 10 0 0 1 10-10Z" class="file-body"/>
+              <path d="M302 34v30h30" class="file-fold"/>
+              <rect x="238" y="74" width="84" height="10" rx="3" class="blk hdr"/>
+              <g class="grid">
+                <rect x="238" y="92" width="26" height="22" rx="3" class="blk"/><rect x="267" y="92" width="26" height="22" rx="3" class="blk"/><rect x="296" y="92" width="26" height="22" rx="3" class="blk"/>
+                <rect x="238" y="118" width="26" height="22" rx="3" class="blk"/><rect x="267" y="118" width="26" height="22" rx="3" class="blk"/><rect x="296" y="118" width="26" height="22" rx="3" class="blk"/>
+                <rect x="238" y="144" width="26" height="22" rx="3" class="blk"/><rect x="267" y="144" width="26" height="22" rx="3" class="blk"/><rect x="296" y="144" width="26" height="22" rx="3" class="blk"/>
+              </g>
+              <rect x="238" y="174" width="84" height="16" rx="3" class="blk card"/>
+              <text x="280" y="206" class="file-label">data.rete</text>
+            </g>
+          </svg>
+        </div>
+      </li>
+
+      <li class="step reveal">
+        <div class="step-text">
+          <span class="step-n">2</span>
+          <h3>Host</h3>
+          <p>Upload the file anywhere that serves byte ranges: object storage, GitHub Pages,
+            Zenodo, your own web server. There is no database to run or keep up.</p>
+          <pre class="cmd"><code>curl -r 0-1023 https://…/data.rete   # 206 Partial Content</code></pre>
+        </div>
+        <div class="step-art" data-parallax="-0.08">
+          <svg viewBox="0 0 360 240" class="art art-host" role="img" aria-label="The file sits on a web host">
+            <path class="cloud" d="M96 150a42 42 0 0 1 8-83 56 56 0 0 1 106-10 44 44 0 0 1 60 46 34 34 0 0 1-4 67H104a26 26 0 0 1-8-20Z"/>
+            <g class="mini-file">
+              <path d="M160 92h34l14 14v50a6 6 0 0 1-6 6h-42a6 6 0 0 1-6-6v-58a6 6 0 0 1 6-6Z" class="file-body"/>
+              <rect x="162" y="112" width="40" height="6" rx="2" class="blk"/><rect x="162" y="122" width="40" height="6" rx="2" class="blk"/><rect x="162" y="132" width="40" height="6" rx="2" class="blk"/><rect x="162" y="142" width="26" height="6" rx="2" class="blk"/>
+            </g>
+            <g class="hosts">
+              <text x="40" y="214" class="host-l">S3 / R2</text>
+              <text x="132" y="214" class="host-l">GitHub Pages</text>
+              <text x="252" y="214" class="host-l">Zenodo</text>
+            </g>
+            <g class="pings"><circle cx="184" cy="126" r="10"/><circle cx="184" cy="126" r="10"/></g>
+          </svg>
+        </div>
+      </li>
+
+      <li class="step reveal">
+        <div class="step-text">
+          <span class="step-n">3</span>
+          <h3>Query</h3>
+          <p>A client opens the file over HTTP, reads the header, then fetches only the dictionary
+            chunks and index tiles the query touches. Selective queries stay small; a scan over
+            everything still has to read everything.</p>
+          <pre class="cmd"><code>rete sparql-url https://…/data.rete "SELECT …"</code></pre>
+        </div>
+        <div class="step-art" data-parallax="-0.08">
+          <svg viewBox="0 0 360 240" class="art art-query" role="img" aria-label="A query reads a few blocks of the file">
+            <g class="bigfile">
+              <rect x="14" y="30" width="170" height="180" rx="12" class="file-body"/>
+              <g class="cells"></g>
+            </g>
+            <g class="beams"><path d="M184 76 L 236 96"/><path d="M184 132 L 236 116"/><path d="M184 180 L 236 136"/></g>
+            <g class="browser">
+              <rect x="236" y="70" width="112" height="100" rx="10" class="file-body"/>
+              <circle cx="248" cy="82" r="3" class="dot"/><circle cx="258" cy="82" r="3" class="dot"/><circle cx="268" cy="82" r="3" class="dot"/>
+              <rect x="246" y="96" width="92" height="12" rx="3" class="row r1"/>
+              <rect x="246" y="114" width="92" height="12" rx="3" class="row r2"/>
+              <rect x="246" y="132" width="92" height="12" rx="3" class="row r3"/>
+              <rect x="246" y="150" width="60" height="10" rx="3" class="row r4"/>
+            </g>
+          </svg>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ───────────────────────── Use it ───────────────────────── -->
+<section class="use" id="use" aria-labelledby="use-title">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="kicker">Use it</p>
+      <h2 id="use-title">The same file, from wherever you work</h2>
+      <p>Every client below asks the jazz graph from the demo the same question.</p>
+    </div>
+    <div class="codebox reveal">
+      <div class="seg seg-code" role="tablist" aria-label="Client">
+        <button role="tab" type="button" data-code="cli" aria-selected="true">CLI</button>
+        <button role="tab" type="button" data-code="py" aria-selected="false">Python</button>
+        <button role="tab" type="button" data-code="js" aria-selected="false">JavaScript</button>
+        <button role="tab" type="button" data-code="r" aria-selected="false">R</button>
+        <button role="tab" type="button" data-code="ai" aria-selected="false">Claude</button>
+      </div>
+      <div class="code-panes">
+<pre class="code" data-code="cli"><code><span class="c"># the CLI ships as a Docker image; see Install for the alias</span>
+rete sparql-url https://data.graphplaza.com/linked-jazz/linked-jazz.rete \
+  "PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+   SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5"</code></pre>
+<pre class="code" data-code="py" hidden><code><span class="c"># pip install rete-graph</span>
+import rete_graph as rete
+
+g = rete.open("https://data.graphplaza.com/linked-jazz/linked-jazz.rete")
+rows = g.query("""PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+    SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5""")
+for row in rows:
+    print(row["name"].value)</code></pre>
+<pre class="code" data-code="js" hidden><code><span class="c">// npm install rete-graph   (Node, or a worker in the browser)</span>
+import { open } from "rete-graph";
+
+const g = await open("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+const rows = g.query(`PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+  SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5`);
+for (const row of rows) console.log(row.name.value);</code></pre>
+<pre class="code" data-code="r" hidden><code><span class="c"># remotes::install_github("caviri/rete", subdir = "clients/r")</span>
+library(rete)
+
+g &lt;- rete_open("https://data.graphplaza.com/linked-jazz/linked-jazz.rete")
+rete_query(g, "PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+  SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5")</code></pre>
+<pre class="code" data-code="ai" hidden><code><span class="c"># install rete.mcpb in Claude Desktop, then ask in plain words:</span>
+Open https://data.graphplaza.com/linked-jazz/linked-jazz.rete
+and tell me who Mary Lou Williams played with.</code></pre>
+      </div>
+      <div class="code-foot">
+        <button class="btn btn-ghost btn-sm" id="copyCode" type="button">Copy</button>
+        <a class="link" href="install.html">Install options →</a>
+        <a class="link" href="clients.html">All clients →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Apps ───────────────────────── -->
+<section class="apps" id="apps" aria-labelledby="apps-title">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="kicker">Built on it</p>
+      <h2 id="apps-title">Apps that read .rete files straight from a bucket</h2>
+    </div>
+  </div>
+  <div class="gallery" id="gallery">
+    <a class="shot reveal" href="playground.html" style="--d:0">
+      <img src="img/playground-explore.png" alt="The Playground exploring a graph" loading="lazy" decoding="async" />
+      <span><b>Playground</b> Query, map and chart any catalog graph</span>
+    </a>
+    <a class="shot reveal" href="atlas.html" style="--d:1">
+      <img src="img/atlas-1914.png" alt="The Atlas showing world borders in 1914" loading="lazy" decoding="async" />
+      <span><b>Atlas</b> Historical borders on a globe</span>
+    </a>
+    <a class="shot reveal" href="graph-map.html" style="--d:2">
+      <img src="img/graphmap-3d.png" alt="A graph laid out as a 3D map" loading="lazy" decoding="async" />
+      <span><b>Graph map</b> A whole graph as terrain</span>
+    </a>
+    <a class="shot reveal" href="plaza-guide.html" style="--d:3">
+      <img src="img/plaza-guide.png" alt="Graph Plaza catalogue" loading="lazy" decoding="async" />
+      <span><b>Plaza</b> A catalogue of hosted graphs</span>
+    </a>
+    <a class="shot reveal" href="lombardi-guide.html" style="--d:4">
+      <img src="img/lombardi-guide.png" alt="Lombardi-style network drawing" loading="lazy" decoding="async" />
+      <span><b>Lombardi</b> Networks drawn by hand, by code</span>
+    </a>
+  </div>
+  <div class="wrap"><p class="more reveal"><a class="link" href="apps.html">All apps and experiments →</a></p></div>
+</section>
+
+<!-- ───────────────────────── Support ───────────────────────── -->
+<section class="support" id="support" aria-labelledby="support-title">
+  <div class="support-bg" aria-hidden="true" data-parallax="0.12"></div>
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="kicker">Support</p>
+      <h2 id="support-title">Help keep rete free and open</h2>
+      <p>rete is a project by <a href="https://h4ck1ng.science">h4ck1ng.science</a>. The engine, the
+        file format and every client are open source under the Apache 2.0 license, and the public
+        graphs on this page are free for anyone to query. Support keeps it that way.</p>
+    </div>
+
+    <h3 class="sub reveal">Where support goes</h3>
+    <div class="goes">
+      <div class="go reveal" style="--d:0">
+        <span class="go-ico" aria-hidden="true">🗄️</span>
+        <b>Hosting the graphs</b>
+        <span>The catalog at data.graphplaza.com serves dozens of graphs, some over 100 GB, to anyone who asks for a byte range.</span>
+      </div>
+      <div class="go reveal" style="--d:1">
+        <span class="go-ico" aria-hidden="true">⚙️</span>
+        <b>Building new graphs</b>
+        <span>Turning a large open dataset into a <code>.rete</code> file can take days of compute and a lot of memory.</span>
+      </div>
+      <div class="go reveal" style="--d:2">
+        <span class="go-ico" aria-hidden="true">⏳</span>
+        <b>Time</b>
+        <span>Work on the engine, the file format, the clients and these docs.</span>
+      </div>
+    </div>
+
+    <h3 class="sub reveal">Ways to help</h3>
+    <div class="ways">
+      <div class="way way-main reveal">
+        <b>Chip in on Ko-fi</b>
+        <span>A one-off or a monthly contribution, in a couple of clicks.</span>
+        <a class="btn btn-warm" href="https://ko-fi.com/caviri" target="_blank" rel="noopener">☕ Support on Ko-fi ↗</a>
+      </div>
+      <div class="way reveal">
+        <b>Sponsor as an organization</b>
+        <span>If rete is useful to your lab, library or company and you would like to sponsor it, get in touch through h4ck1ng.science.</span>
+        <a class="btn btn-ghost" href="https://h4ck1ng.science" target="_blank" rel="noopener">h4ck1ng.science ↗</a>
+      </div>
+      <div class="way reveal">
+        <b>Help without money</b>
+        <span>Star the repository, cite rete in your papers, report a bug, or publish a graph of your own as a <code>.rete</code> file.</span>
+        <span class="way-links">
+          <a class="link" href="https://github.com/caviri/rete">Star on GitHub →</a>
+          <a class="link" href="https://doi.org/10.5281/zenodo.21546287">Cite (Zenodo DOI) →</a>
+          <a class="link" href="https://github.com/caviri/rete/issues">Report an issue →</a>
+        </span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Next ───────────────────────── -->
+<section class="next" aria-labelledby="next-title">
+  <div class="wrap">
+    <h2 id="next-title" class="reveal">Where to go next</h2>
+    <div class="next-grid">
+      <a class="next-card reveal" href="getting-started.html"><b>Quickstart</b><span>Build a graph and run a first query in a few minutes.</span></a>
+      <a class="next-card reveal" href="install.html"><b>Install</b><span>CLI, Python, JavaScript, R, Java or the Claude extension.</span></a>
+      <a class="next-card reveal" href="playground.html"><b>Playground</b><span>Every catalog graph, with maps, charts and more views.</span></a>
+      <a class="next-card reveal" href="index.html"><b>Documentation</b><span>Guides, reference, format spec and limits.</span></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <span>rete is a project by <a href="https://h4ck1ng.science">h4ck1ng.science</a>, open source under the Apache 2.0 license.</span>
+    <span class="foot-links">
+      <a href="#support">Support</a>
+      <a href="https://github.com/caviri/rete">GitHub</a>
+      <a href="compatibility.html">Limits</a>
+      <a href="https://github.com/caviri/rete/blob/main/CITATION.cff">Cite</a>
+    </span>
+  </div>
+</footer>
+
+<script type="module" src="landing/app.js"></script>
+</body>
+</html>

@@ -562,3 +562,198 @@ fn the_build_record_says_what_was_found() {
     assert!(rete_core::build_record::derive_report_text(&bytes).is_none());
     assert!(families(&o).is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Threaded and sliced evaluation (grouped folds, shard scans, GRAPH ?g) over
+// derived names and the SPARQL-order dictionary.
+// ---------------------------------------------------------------------------
+
+/// The citations of [`dataset`] in the default graph (where the builder looks
+/// for derived names), and a copy of each subject's triples in one of 64 named
+/// graphs, so that `GRAPH ?g` has graphs to walk and meets the same names.
+fn graphed(n: u64) -> Vec<RawQuad> {
+    let base = dataset(n);
+    let named: Vec<RawQuad> = base
+        .iter()
+        .map(|(s, p, o, _)| {
+            let g = mix(s.bytes().fold(7u64, |h, b| mix(h ^ u64::from(b)))) % 64;
+            (
+                s.clone(),
+                p.clone(),
+                o.clone(),
+                Some(format!("<http://ex/g/{g:02}>")),
+            )
+        })
+        .collect();
+    base.into_iter().chain(named).collect()
+}
+
+fn v5g() -> &'static [u8] {
+    static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BYTES.get_or_init(|| image(graphed(30_000)))
+}
+
+fn plain_g() -> &'static [u8] {
+    static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BYTES.get_or_init(|| convert_image(v5g(), off()).unwrap())
+}
+
+fn derived_g() -> &'static [u8] {
+    static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BYTES.get_or_init(|| convert_image(v5g(), loose()).unwrap())
+}
+
+/// The rows as the engine returns them, in its order.
+fn raw_rows(rete: &Rete, q: &str) -> Vec<String> {
+    match eval_query(rete, q).unwrap_or_else(|e| panic!("{q}: {e}")) {
+        QueryOutput::Select(vars, rows) => std::iter::once(format!("{vars:?}"))
+            .chain(rows.into_iter().map(|b| format!("{b:?}")))
+            .collect(),
+        QueryOutput::Construct(mut t) => {
+            t.sort();
+            t.into_iter().map(|t| format!("{t:?}")).collect()
+        }
+        QueryOutput::Ask(a) => vec![a.to_string()],
+        other => panic!("unexpected output {other:?}"),
+    }
+}
+
+/// `(query, ordered)`: an ordered result is compared in the engine's order
+/// everywhere; an unordered one is compared in the engine's order between 1
+/// and several threads, and sorted against the file with no derived family.
+fn threaded_battery() -> Vec<(String, bool)> {
+    let c = "PREFIX cito: <http://purl.org/spar/cito/> ";
+    let g = |s: &str| (format!("{c}{s}"), false);
+    let o = |s: &str| (format!("{c}{s}"), true);
+    vec![
+        // GROUP BY on a derived name: every aggregate that merges, and the
+        // ones that send their rows to one fold.
+        o("SELECT ?ci (COUNT(*) AS ?n) (SAMPLE(?x) AS ?any) WHERE { GRAPH ?g { ?ci ?p ?x } } \
+           GROUP BY ?ci ORDER BY ?ci"),
+        o("SELECT ?ci (COUNT(DISTINCT ?p) AS ?n) (COUNT(DISTINCT ?x) AS ?m) \
+           (GROUP_CONCAT(DISTINCT STR(?p); SEPARATOR=\"|\") AS ?ps) WHERE { GRAPH ?g { ?ci ?p ?x } } \
+           GROUP BY ?ci ORDER BY DESC(?ci)"),
+        o("SELECT ?w (COUNT(?ci) AS ?n) (COUNT(DISTINCT ?ci) AS ?d) (SAMPLE(?ci) AS ?one) \
+           (GROUP_CONCAT(STR(?ci); SEPARATOR=\" \") AS ?all) \
+           WHERE { GRAPH ?g { ?ci cito:hasCitedEntity ?w } } GROUP BY ?w ORDER BY ?w"),
+        o("SELECT (COUNT(DISTINCT ?ci) AS ?n) (COUNT(*) AS ?rows) (MIN(STR(?ci)) AS ?lo) \
+           (MAX(STR(?ci)) AS ?hi) WHERE { GRAPH ?g { ?ci a cito:Citation } }"),
+        o("SELECT ?l (COUNT(*) AS ?n) (SAMPLE(?ci) AS ?any) WHERE { GRAPH ?g { ?ci a cito:Citation } \
+           BIND(STRLEN(STR(?ci)) AS ?l) } GROUP BY ?l ORDER BY ?l"),
+        // A GRAPH block with no constant to find graphs by, and one that is
+        // not a plain pattern.
+        o("SELECT ?g (COUNT(DISTINCT ?ci) AS ?n) (MIN(STR(?ci)) AS ?lo) WHERE { GRAPH ?g { ?ci ?p ?x } } \
+           GROUP BY ?g ORDER BY ?g"),
+        o("SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?ci cito:hasCitingEntity ?a \
+           OPTIONAL { ?ci cito:hasCitationCreationDate ?d } FILTER(STRENDS(STR(?ci), \"9\")) } } \
+           GROUP BY ?g ORDER BY ?g"),
+        // Joins on a derived name (two scans of one subject) and on the
+        // entity both sides name (a hash join).
+        o("SELECT ?b (COUNT(*) AS ?n) (SAMPLE(?ci) AS ?one) WHERE { \
+           GRAPH ?g { ?ci cito:hasCitingEntity ?a } GRAPH ?h { ?ci cito:hasCitedEntity ?b } } \
+           GROUP BY ?b ORDER BY ?b"),
+        o("SELECT ?w (COUNT(*) AS ?n) (MIN(STR(?out)) AS ?lo) (MAX(STR(?inn)) AS ?hi) WHERE { \
+           GRAPH ?g { ?out cito:hasCitingEntity ?w } GRAPH ?h { ?inn cito:hasCitedEntity ?w } } \
+           GROUP BY ?w ORDER BY ?w"),
+        o("SELECT ?ci (COUNT(?d) AS ?n) WHERE { GRAPH ?g { ?ci a cito:Citation \
+           OPTIONAL { ?ci cito:hasCitationCreationDate ?d } } } GROUP BY ?ci ORDER BY ?ci LIMIT 500"),
+        // Not grouped: ORDER BY on ids, LIMIT and OFFSET.
+        o("SELECT ?ci ?w WHERE { GRAPH ?g { ?ci cito:hasCitedEntity ?w } } ORDER BY ?ci LIMIT 40"),
+        o("SELECT ?ci ?w WHERE { GRAPH ?g { ?ci cito:hasCitedEntity ?w } } \
+           ORDER BY DESC(?ci) LIMIT 25 OFFSET 100"),
+        o("SELECT ?ci ?g WHERE { GRAPH ?g { ?ci cito:hasCitingEntity ?a } } \
+           ORDER BY ?g DESC(?ci) LIMIT 60"),
+        o("SELECT ?ci ?a ?b WHERE { ?ci cito:hasCitingEntity ?a ; cito:hasCitedEntity ?b } \
+           ORDER BY ?b ?ci LIMIT 50"),
+        o("SELECT DISTINCT ?ci WHERE { GRAPH ?g { ?ci ?p ?x } } ORDER BY ?ci LIMIT 30 OFFSET 3000"),
+        // No ORDER BY: only the set of rows is the file's.
+        g("SELECT ?ci ?w WHERE { GRAPH ?g { ?ci cito:hasCitedEntity ?w } }"),
+        g("SELECT ?a (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?ci cito:hasCitingEntity ?a } } GROUP BY ?a"),
+        // CONSTRUCT, which decodes derived terms into triples.
+        g(&format!(
+            "CONSTRUCT {{ ?ci cito:cites ?w }} WHERE {{ GRAPH ?g {{ ?ci cito:hasCitedEntity ?w }} \
+             FILTER(?w = <{BR}{}>) }}",
+            omid(55)
+        )),
+        g("CONSTRUCT { ?ci cito:made ?d } WHERE { GRAPH ?g { ?ci cito:hasCitationCreationDate ?d } \
+           FILTER(?d = \"2011-02-11\") }"),
+    ]
+}
+
+/// Every answer over a file with a derived family and the SPARQL-order
+/// dictionary is the same on one thread and on several, resident and read
+/// through a range reader (which cuts the work into fewer, larger slices), and
+/// the same as the answer over the file built with `--no-derive-iris`.
+#[test]
+fn threads_and_slices_decode_derived_names_and_sort_on_ids() {
+    let (h, _) = read_front(&SliceReader::new(derived_g())).unwrap();
+    assert_ne!(h.flags & F_DERIVED, 0, "the fixture has no derived family");
+    assert_eq!(families(derived_g()).len(), 1);
+    assert!(rete_core::format::verify(derived_g()).unwrap());
+    let (plain_r, derived_r, derived_l, plain_l) = (
+        resident(plain_g()),
+        resident(derived_g()),
+        lazy(derived_g()),
+        lazy(plain_g()),
+    );
+    let before = rete_core::query::sharded_queries();
+    let mut nonempty = 0;
+    for (q, ordered) in threaded_battery() {
+        rete_core::query::set_query_threads(1);
+        let want = raw_rows(&plain_r, &q);
+        let one = raw_rows(&derived_r, &q);
+        let one_lazy = raw_rows(&derived_l, &q);
+        rete_core::query::set_query_threads(4);
+        let four = raw_rows(&derived_r, &q);
+        let four_lazy = raw_rows(&derived_l, &q);
+        let four_plain_lazy = raw_rows(&plain_l, &q);
+        let same = |a: &[String], b: &[String], what: &str| {
+            let (mut a, mut b) = (a.to_vec(), b.to_vec());
+            if !ordered {
+                a.sort();
+                b.sort();
+            }
+            assert!(
+                a == b,
+                "{what}: {q}\n got {:?}\nwant {:?}",
+                &a[..a.len().min(3)],
+                &b[..b.len().min(3)]
+            );
+        };
+        // One thread against several: the same rows in the same order.
+        assert_eq!(one, four, "1 vs 4 threads: {q}");
+        assert_eq!(one_lazy, four_lazy, "1 vs 4 threads, range reader: {q}");
+        assert_eq!(
+            four_lazy, four_plain_lazy,
+            "derived vs plain, range reader: {q}"
+        );
+        // Against the file with the names stored.
+        same(&one, &want, "derived resident vs plain");
+        same(&four, &want, "derived resident (4 threads) vs plain");
+        same(&four_lazy, &want, "derived range reader vs plain");
+        nonempty += usize::from(want.len() > 1);
+    }
+    assert!(nonempty >= 15, "the battery should find rows ({nonempty})");
+    if cfg!(feature = "parallel") {
+        assert!(
+            rete_core::query::sharded_queries() > before,
+            "no query was cut into slices"
+        );
+    }
+    rete_core::query::set_query_threads(0);
+}
+
+/// A result handle (`SelectRows`) over the same files: a page is the slice of
+/// the full result, under several threads too.
+#[test]
+fn a_result_handle_pages_derived_names_under_threads() {
+    let q = "PREFIX cito: <http://purl.org/spar/cito/> SELECT ?ci ?w WHERE { GRAPH ?g { \
+             ?ci cito:hasCitedEntity ?w } } ORDER BY DESC(?ci) LIMIT 2000";
+    rete_core::query::set_query_threads(4);
+    let want = raw_rows(&resident(plain_g()), q);
+    for r in [resident(derived_g()), lazy(derived_g())] {
+        let got: Vec<String> = pages_of(&r, q, 300);
+        assert_eq!(&want[1..], &got[..], "paged");
+    }
+    rete_core::query::set_query_threads(0);
+}

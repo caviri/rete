@@ -86,7 +86,14 @@ pub struct CacheEntry {
     runs: OnceLock<Arc<[usize]>>,
     /// An index tile's a-group directory (see [`group_dir`](CacheEntry::group_dir)).
     dir: OnceLock<crate::triples::GroupDirectory>,
+    /// A quad tile's segment index (see [`segments`](CacheEntry::segments));
+    /// `None` inside when the tile is malformed.
+    segs: OnceLock<Option<Arc<[TileSeg]>>>,
 }
+
+/// One segment of a graph-leading quad tile: `(graph id, first a, offset of
+/// its body in the tile, length of its body)`.
+pub type TileSeg = (u32, u32, u32, u32);
 
 impl CacheEntry {
     /// The decompressed body.
@@ -131,6 +138,22 @@ impl CacheEntry {
         (d, built)
     }
 
+    /// This quad tile's segments, in graph order, indexing them with `compute`
+    /// on first call (`None` from it: a malformed tile, remembered as such).
+    /// The `bool` is true when this call built the index — the caller then
+    /// charges its size to the cache ([`ChunkCache::charge_extra`]).
+    pub fn segments(
+        &self,
+        compute: impl FnOnce(&[u8]) -> Option<Vec<TileSeg>>,
+    ) -> (Option<&[TileSeg]>, bool) {
+        let mut built = false;
+        let s = self.segs.get_or_init(|| {
+            built = true;
+            compute(&self.body).map(Arc::from)
+        });
+        (s.as_deref(), built)
+    }
+
     /// Bytes this entry charges against the cap: what the allocator really
     /// hands out for the body ([`alloc_footprint`]) plus a fixed overhead. Runs
     /// are derived lazily after insertion, so they are not counted (about 1% of
@@ -173,6 +196,9 @@ struct CacheInner {
 /// A `Mutex<LRU>` of decompressed chunk/tile bodies, byte-capped on the
 /// decompressed bytes actually held. See the module docs.
 pub struct ChunkCache {
+    /// This cache's number, unique in the process: what a thread's
+    /// [`RECENT`] entries are keyed by (an address could be reused).
+    id: u64,
     inner: Mutex<CacheInner>,
     cap: AtomicU64,
     hits: AtomicU64,
@@ -181,6 +207,37 @@ pub struct ChunkCache {
     decoded_bytes: AtomicU64,
     evictions: AtomicU64,
 }
+
+/// How many entries a thread remembers ([`RECENT`]).
+const RECENT_SLOTS: usize = 4;
+
+/// The entries a thread took from any cache last.
+struct Recent {
+    slots: [Option<(u64, CacheKey, Arc<CacheEntry>)>; RECENT_SLOTS],
+    next: usize,
+}
+
+thread_local! {
+    /// The last few entries this thread got, of any cache: a `get` of one of
+    /// them is answered here, without the cache's lock.
+    ///
+    /// A lookup per row lands in the tile the row before it did, and the lock
+    /// is one per cache. A query on sixteen threads spent a quarter of its
+    /// time queueing for it. An entry answered from here keeps its body alive
+    /// if the cache evicts it meanwhile (a few bodies per thread, not charged
+    /// to the cap) and does not count as a use for the eviction order: it is
+    /// counted when the thread first takes it and again when it comes back to
+    /// it. The bytes under a key never change, so a remembered entry is never
+    /// stale.
+    static RECENT: std::cell::RefCell<Recent> = const {
+        std::cell::RefCell::new(Recent {
+            slots: [None, None, None, None],
+            next: 0,
+        })
+    };
+}
+
+static NEXT_CACHE_ID: AtomicU64 = AtomicU64::new(1);
 
 impl std::fmt::Debug for ChunkCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -197,6 +254,7 @@ impl ChunkCache {
     /// A cache with an explicit byte cap.
     pub fn new(cap: u64) -> Self {
         ChunkCache {
+            id: NEXT_CACHE_ID.fetch_add(1, Ordering::Relaxed),
             inner: Mutex::new(CacheInner::default()),
             cap: AtomicU64::new(cap),
             hits: AtomicU64::new(0),
@@ -234,6 +292,32 @@ impl ChunkCache {
 
     /// A cached entry, if present, bumping its recency. Records a hit or miss.
     pub fn get(&self, key: CacheKey) -> Option<Arc<CacheEntry>> {
+        let recent = RECENT.with(|r| {
+            let r = r.try_borrow().ok()?;
+            r.slots
+                .iter()
+                .flatten()
+                .find(|(id, k, _)| *id == self.id && *k == key)
+                .map(|(_, _, e)| Arc::clone(e))
+        });
+        if recent.is_some() {
+            return recent;
+        }
+        let found = self.get_shared(key);
+        if let Some(e) = &found {
+            RECENT.with(|r| {
+                if let Ok(mut r) = r.try_borrow_mut() {
+                    let at = r.next;
+                    r.slots[at] = Some((self.id, key, Arc::clone(e)));
+                    r.next = (at + 1) % RECENT_SLOTS;
+                }
+            });
+        }
+        found
+    }
+
+    /// [`get`](Self::get) from the shared map, under its lock.
+    fn get_shared(&self, key: CacheKey) -> Option<Arc<CacheEntry>> {
         let mut inner = self.inner.lock().unwrap();
         let seq = inner.next_seq;
         if let Some(slot) = inner.map.get_mut(&key) {
@@ -284,6 +368,7 @@ impl ChunkCache {
             body,
             runs: OnceLock::new(),
             dir: OnceLock::new(),
+            segs: OnceLock::new(),
         });
         let charge = entry.charge();
         inner.next_seq += 1;
@@ -400,6 +485,34 @@ mod tests {
         cache.charge_extra((0, 1), &a, 1 << 20);
         cache.charge_extra((0, 2), &a, 1 << 20);
         assert_eq!(cache.stats().resident_bytes, one + 100);
+    }
+
+    /// An entry this thread took stays in its hands: asked for again it is
+    /// answered without the map, also after the map dropped it, and never for
+    /// another cache that uses the same key.
+    #[test]
+    fn a_thread_keeps_the_entries_it_took_last() {
+        let cache = ChunkCache::new(charge_of(100));
+        let other = ChunkCache::unlimited();
+        cache.insert((0, 1), body(100, 1));
+        let first = cache.get((0, 1)).expect("resident");
+        // The second insert evicts the first from the map.
+        cache.insert((0, 2), body(100, 2));
+        assert!(!cache.contains((0, 1)));
+        let again = cache.get((0, 1)).expect("remembered by this thread");
+        assert!(Arc::ptr_eq(&first, &again));
+        assert!(other.get((0, 1)).is_none(), "another cache, the same key");
+        // Another thread has not taken it, and the map no longer has it.
+        std::thread::scope(|s| {
+            s.spawn(|| assert!(cache.get((0, 1)).is_none()));
+        });
+        // More entries than the thread remembers push the oldest out.
+        let wide = ChunkCache::unlimited();
+        for i in 0..(RECENT_SLOTS as u32 + 1) {
+            wide.insert((1, i), body(8, i as u8));
+            assert!(wide.get((1, i)).is_some());
+        }
+        assert!(cache.get((0, 1)).is_none(), "pushed out by later entries");
     }
 
     #[test]

@@ -1309,6 +1309,10 @@ pub(crate) fn civil_from_epoch(secs: i64) -> (i64, i64, i64, i64, i64, i64) {
 struct ImageReader(std::sync::Arc<Vec<u8>>);
 
 impl RangeReader for ImageReader {
+    fn is_local(&self) -> bool {
+        true
+    }
+
     fn len(&self) -> u64 {
         self.0.len() as u64
     }
@@ -1412,6 +1416,10 @@ impl<R: RangeReader> BudgetReader<R> {
 }
 
 impl<R: RangeReader> RangeReader for BudgetReader<R> {
+    fn is_local(&self) -> bool {
+        self.inner.is_local()
+    }
+
     fn len(&self) -> u64 {
         self.inner.len()
     }
