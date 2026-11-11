@@ -2685,6 +2685,7 @@ impl QuadNamed {
             cols: subject_columns(perm),
             next_tile,
             end_tile,
+            ahead: 0,
             buf: Vec::new().into_iter(),
         })
     }
@@ -2821,6 +2822,9 @@ pub(crate) struct QuadScan {
     /// Next tile to look at, and the end of the range (both absolute).
     next_tile: usize,
     end_tile: usize,
+    /// How many tiles a restricted scan faults at once, itself (0: the
+    /// order's shared read-ahead, which follows one sequential reader).
+    ahead: usize,
     buf: std::vec::IntoIter<(u32, Triple)>,
 }
 
@@ -2843,6 +2847,10 @@ impl QuadScan {
         let lo = lo.clamp(self.next_tile, self.end_tile);
         self.end_tile = hi.clamp(lo, self.end_tile);
         self.next_tile = lo;
+        // Several restricted scans run at once, each over its own range: the
+        // order's one read-ahead window would follow none of them, and every
+        // tile would be its own read. Each batches its own tiles instead.
+        self.ahead = READ_AHEAD_MAX;
     }
 
     fn tile_may_match(&self, t: &QTile) -> bool {
@@ -2875,6 +2883,14 @@ impl QuadScan {
             let t = self.dir[ti - self.base];
             if !self.tile_may_match(&t) {
                 continue;
+            }
+            if self.ahead > 0 && !self.core.tiles.contains((self.si as u8, ti as u32)) {
+                let end = (ti + self.ahead).min(self.end_tile);
+                let want: Vec<usize> = (ti..end)
+                    .filter(|&k| self.tile_may_match(&self.dir[k - self.base]))
+                    .collect();
+                // A failed batch leaves the tiles to the read below.
+                let _ = self.core.fault(self.si, &self.dir, self.base, &want);
             }
             let Some(entry) =
                 self.core

@@ -4,7 +4,7 @@
 //! predicates / graphs), sorted and assigned dense 1-based IDs. Terms are stored
 //! in runs of `R`; each run starts with a full term and front-codes the rest.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::chunk_cache::{CacheEntry, ChunkCache};
@@ -727,12 +727,21 @@ pub struct ChunkedSection {
     /// This section's discriminant in the shared cache's key space (0 shared,
     /// 1 subject-only, 2 object-only, 3 predicates).
     section_index: u8,
-    /// Read-ahead on sequential faults: the chunk whose miss would continue
-    /// the current run of misses, plus one (0 = none) ...
-    ra_next: AtomicU64,
-    /// ... and the window the next sequential miss fetches (doubling up to
-    /// [`READAHEAD_MAX_CHUNKS`]; back to 1 on a non-sequential miss).
-    ra_window: AtomicU32,
+}
+
+/// How many sections a thread keeps read-ahead state for.
+const RA_SLOTS: usize = 8;
+
+thread_local! {
+    /// Read-ahead on sequential chunk faults, per thread and section: the
+    /// section (its cache and index), the chunk whose miss would continue the
+    /// thread's run of misses plus one (0 = none), and the window the next
+    /// sequential miss fetches (doubling up to [`READAHEAD_MAX_CHUNKS`]; back
+    /// to 1 on a non-sequential miss). Per thread, because a run is one
+    /// reader's: several threads walking different parts of a section each
+    /// fault in order, and one shared state saw no order in them.
+    static READ_AHEAD: std::cell::RefCell<[(usize, u64, u32); RA_SLOTS]> =
+        const { std::cell::RefCell::new([(0, 0, 1); RA_SLOTS]) };
 }
 
 /// The chunk a caller's last [`ChunkedSection::term_held`] decoded from.
@@ -772,8 +781,6 @@ impl ChunkedSection {
             loader: None,
             bulk: None,
             failed: AtomicBool::new(false),
-            ra_next: AtomicU64::new(0),
-            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -796,8 +803,6 @@ impl ChunkedSection {
             loader,
             bulk: None,
             failed: AtomicBool::new(false),
-            ra_next: AtomicU64::new(0),
-            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -826,8 +831,6 @@ impl ChunkedSection {
             loader: None,
             bulk: None,
             failed: AtomicBool::new(false),
-            ra_next: AtomicU64::new(0),
-            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -848,8 +851,6 @@ impl ChunkedSection {
             loader: Some(loader),
             bulk: None,
             failed: AtomicBool::new(false),
-            ra_next: AtomicU64::new(0),
-            ra_window: AtomicU32::new(1),
             cache,
             section_index,
         }
@@ -991,15 +992,33 @@ impl ChunkedSection {
                 // batch, then 4, 8, … up to READAHEAD_MAX_CHUNKS; any other
                 // miss resets the window. Scattered lookups pay nothing extra.
                 if self.bulk.is_some() {
-                    let seq = self.ra_next.load(Ordering::Relaxed) == ci as u64 + 1;
-                    let w = if seq {
-                        (self.ra_window.load(Ordering::Relaxed) * 2).min(READAHEAD_MAX_CHUNKS)
-                    } else {
-                        1
-                    };
-                    self.ra_window.store(w, Ordering::Relaxed);
-                    let end = (ci + w as usize).min(self.chunks.len());
-                    self.ra_next.store(end as u64 + 1, Ordering::Relaxed);
+                    // This section, for the thread's read-ahead state.
+                    let me =
+                        (Arc::as_ptr(&self.cache) as usize) ^ (self.section_index as usize + 1);
+                    let total = self.chunks.len();
+                    let end = READ_AHEAD.with(|ra| {
+                        let mut ra = ra.borrow_mut();
+                        let at = match ra.iter().position(|s| s.0 == me) {
+                            Some(at) => at,
+                            None => {
+                                // Take over the slot of the section used
+                                // longest ago: the last one, as slots move
+                                // to the front on use.
+                                ra[RA_SLOTS - 1] = (me, 0, 1);
+                                RA_SLOTS - 1
+                            }
+                        };
+                        let (_, next, window) = ra[at];
+                        let w = if next == ci as u64 + 1 {
+                            (window * 2).min(READAHEAD_MAX_CHUNKS)
+                        } else {
+                            1
+                        };
+                        let end = (ci + w as usize).min(total);
+                        ra[..=at].rotate_right(1);
+                        ra[0] = (me, end as u64 + 1, w);
+                        end
+                    });
                     if end > ci + 1 {
                         self.prefetch_chunks(&(ci..end).collect::<Vec<_>>());
                         if let Some(e) = self.cache.get(key) {

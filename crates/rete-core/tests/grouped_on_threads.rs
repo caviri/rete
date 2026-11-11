@@ -103,22 +103,42 @@ fn fixture() -> Vec<RawQuad> {
     q
 }
 
-fn file() -> Rete {
+fn image(layout: GraphLayout) -> Vec<u8> {
     let mut o = write_options();
     o.tile_budget = 1024;
     set_write_options(o);
-    let image = assemble_dataset_with_layout(
+    assemble_dataset_with_layout(
         fixture(),
         false,
         false,
         None,
         PyramidAlgo::Louvain,
         PermSet::CORE,
-        GraphLayout::Quad,
+        layout,
         |_, _| Vec::<u8>::new(),
     )
-    .0;
-    Rete::open(&image).unwrap()
+    .0
+}
+
+fn file() -> Rete {
+    Rete::open(&image(GraphLayout::Quad)).unwrap()
+}
+
+/// A reader whose reads count as round trips (it does not say it is local).
+struct Far(Vec<u8>);
+
+impl rete_core::RangeReader for Far {
+    fn len(&self) -> u64 {
+        self.0.len() as u64
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let (a, b) = (offset as usize, (offset + len) as usize);
+        self.0
+            .get(a..b)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| std::io::Error::other("read past the end"))
+    }
 }
 
 fn rows(rete: &Rete, q: &str) -> Vec<String> {
@@ -259,6 +279,27 @@ fn queries() -> Vec<(&'static str, bool)> {
             "SELECT ?v (COUNT(*) AS ?n) (SAMPLE(?o) AS ?any) WHERE {              GRAPH ?a { ?s ex:score ?v ; ex:rel0 ?o } } GROUP BY ?v ORDER BY ?v",
             true,
         ),
+        // A block under GRAPH ?g that is not a plain BGP: the graphs its
+        // required pattern is found in are listed once and sliced.
+        (
+            "SELECT ?v (COUNT(*) AS ?n) (COUNT(?o) AS ?os) WHERE { \
+             GRAPH ?a { ?s ex:score ?v OPTIONAL { ?s ex:rel0 ?o } FILTER(?v < 30) } } \
+             GROUP BY ?v ORDER BY ?v",
+            true,
+        ),
+        // No pattern with a constant under GRAPH ?g: every graph, sliced.
+        (
+            "SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o FILTER(isIRI(?o)) } } \
+             GROUP BY ?p ORDER BY ?p",
+            true,
+        ),
+        // A graph named by a BIND: possibly bound, so a lookup per row.
+        (
+            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?h { ?np ex:hasAssertion ?a } \
+             BIND(IRI(REPLACE(STR(?a), \"#assertion$\", \"#provenance\")) AS ?pv) \
+             OPTIONAL { GRAPH ?pv { ?a ex:evidence ?e } } } GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
         // UNION with a branch that cannot be split (a sub-select): slice 0 runs it.
         (
             "SELECT (COUNT(*) AS ?n) (COUNT(?k) AS ?ks) WHERE { { GRAPH ?g { ?s ex:score ?v } } UNION              { SELECT ?k WHERE { ?np ex:featured ?k } } }",
@@ -362,6 +403,59 @@ fn four_threads_answer_as_one_does() {
         if parallel {
             assert_eq!(took > 0, split, "split or not: {q}");
         }
+    }
+
+    // The same file read through a reader whose reads are round trips: a scan
+    // is still sliced (fewer, larger slices), a lookup per row is not, and the
+    // rows are the local file's.
+    let far = Rete::open_ranged_lazy(Far(image(GraphLayout::Quad))).unwrap();
+    for (q, split) in [
+        (
+            "SELECT ?p (COUNT(*) AS ?n) (MIN(?o) AS ?lo) WHERE { GRAPH ?g { ?s ?p ?o } } \
+             GROUP BY ?p ORDER BY ?p",
+            true,
+        ),
+        (
+            "SELECT ?e ?label (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
+             OPTIONAL { GRAPH ?pv { ?e rdfs:label ?label } } } \
+             GROUP BY ?e ?label ORDER BY ?e ?label",
+            false,
+        ),
+    ] {
+        let q = format!("{P}{q}");
+        set_query_threads(1);
+        let local = rows(&quads, &q);
+        set_query_threads(4);
+        let before = sharded_queries();
+        let remote = rows(&far, &q);
+        let took = sharded_queries() - before;
+        assert_eq!(local, remote, "{q}");
+        if parallel {
+            assert_eq!(took > 0, split, "split or not over a far reader: {q}");
+        }
+    }
+
+    // A block under GRAPH ?g finds its graphs from its required pattern: the
+    // same rows as a file with an index per graph, which walks them all.
+    set_query_threads(1);
+    let per_graph = Rete::open(&image(GraphLayout::PerGraph)).unwrap();
+    for q in [
+        "SELECT ?a ?s ?v ?o WHERE { GRAPH ?a { ?s ex:score ?v OPTIONAL { ?s ex:rel0 ?o } \
+         FILTER(?v < 3) } }",
+        "SELECT ?a ?s ?v WHERE { GRAPH ?a { ?s ex:score ?v MINUS { ?s ex:rel1 ?o } \
+         FILTER(?v > 38) } }",
+        "SELECT ?g ?s ?l ?x WHERE { GRAPH ?g { { ?s rdfs:label ?l } { ?x ex:evidence ?s } \
+         BIND(STRLEN(?l) AS ?len) } FILTER(STRENDS(STR(?g), \"7#provenance\")) }",
+    ] {
+        let q = format!("{P}{q}");
+        let sorted = |rete: &Rete| {
+            let mut r = rows(rete, &q);
+            r.sort();
+            r
+        };
+        let got = sorted(&quads);
+        assert!(got.len() > 1, "{q}");
+        assert_eq!(got, sorted(&per_graph), "{q}");
     }
     set_query_threads(0);
 }

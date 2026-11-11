@@ -1490,7 +1490,13 @@ pub(crate) fn eval_plan_iter<'q>(
             }
             // A shard of a grouped query run on several threads walks its
             // slice of the graphs: each graph's rows depend on no other graph.
-            if let Some(part) = ctx.shard.part_for(node) {
+            // Not over a network: the whole walk fetches the section in bulk
+            // (it visits every graph), which slices would read piecemeal.
+            if let Some(part) = ctx
+                .shard
+                .part_for(node)
+                .filter(|_| !ctx.rete.reads_are_remote())
+            {
                 let (lo, hi) = ctx.shard.applied_rows(part, ctx.rete.named_graph_count());
                 return graph_var_walk(ctx, named_filter, var, inner, lo..hi, false);
             }

@@ -2,44 +2,70 @@
 //!
 //! `SELECT … (COUNT(*) AS ?n) WHERE { … } GROUP BY …` over ten million rows
 //! spends its time per row: decoding a term, a string function, a lookup in
-//! the row's graph. None of it depends on any other row, and the evaluator ran
-//! all of it on one thread.
+//! the row's graph, a probe of a join. None of it depends on any other row,
+//! and the evaluator ran all of it on one thread.
 //!
-//! Here the scan that drives the pattern is cut into [`SHARDS`] slices of its
-//! tiles. Each worker thread takes slices in order, evaluates the *same* plan
-//! over one slice at a time in its own context (its own term memo; the
-//! contexts hold `Arc`s and never cross threads), and folds the rows into
-//! partial aggregates. The slices' groups are merged in slice order, which is
-//! scan order, so the answer is the one fold's answer: see the partial
-//! aggregation notes in `aggregate`.
+//! Here the scan that drives the pattern is cut into slices. Each worker
+//! thread takes slices in order and evaluates the *same* plan over one slice
+//! at a time, in its own context (its own term memos). What the slices have
+//! in common is made once, by the calling thread, and read by all of them:
+//! rows are `Send + Sync`, so a hash join's table, a basic graph pattern's
+//! prefix, or the list of graphs a block visits is one copy behind an `Arc`
+//! ([`crate::row::Shard::shared`]).
+//!
+//! **Two ways to aggregate.**
+//!
+//! - *Merged groups.* Each worker folds its slices into partial aggregates
+//!   and the calling thread merges them in slice order, which is scan order,
+//!   so every aggregate sees its rows in the order the single fold does (see
+//!   the partial aggregation notes in `aggregate`). The slices are fixed by
+//!   the file ([`SHARDS`]), not by the machine.
+//! - *One fold.* When an aggregate keeps a set of the values it saw
+//!   (`COUNT(DISTINCT …)`, `GROUP_CONCAT(DISTINCT …)`), or a slice holds more
+//!   groups than may wait for a merge ([`MAX_SHARD_GROUPS`]), the workers do
+//!   the per-row work and send their rows, cut down to the slots the fold
+//!   reads, to the calling thread, which folds them slice after slice exactly
+//!   as it folds the one scan. Memory is the single fold's, plus the rows in
+//!   flight ([`ROWS_AHEAD`]).
 //!
 //! **Which queries.** The driving scan has to sit where the algebra
-//! distributes over a union of its rows, and nothing the plan evaluates beside
-//! it may be repeated per slice at a cost. So the path from the top of the
-//! pattern to the scan goes through FILTER and BIND (without EXISTS), UNION
-//! (each branch split, or run in slice 0 alone when it cannot be), and the
-//! left side of a join or OPTIONAL whose right side is `GRAPH ?g { … }` with
-//! `?g` bound on the left (one lookup per row, nothing built). The scan
-//! itself is one triple pattern: in a graph, or under `GRAPH ?g` on a
-//! quad-index file. A hash join is not on the list: every slice would build
-//! its right side again.
+//! distributes over a union of its rows. The path from the top of the pattern
+//! to it goes through FILTER and BIND (without EXISTS), UNION (each branch
+//! split, or run in slice 0 alone when it cannot be), and the left side of a
+//! join or OPTIONAL. The right side of that join is either what the single
+//! thread looks up once per left row (`GRAPH ?g { … }` with `?g` bound on the
+//! left, a path from a bound endpoint, a BGP whose cheapest pattern is a fat
+//! scan), or it is built once into the hash table every slice probes. The
+//! scan itself is:
+//!
+//! - a basic graph pattern: its one pattern's tiles; or, with several
+//!   patterns, the tiles of the pattern `BgpSolutions` streams, or the prefix
+//!   rows that look the last pattern up (`bgp::shard_bgp_rows`);
+//! - a block under `GRAPH ?g`: a one-pattern scan over the quad orders, the
+//!   subjects of a class probe, the graphs its required pattern is found in,
+//!   or every graph.
 //!
 //! **Checked, not assumed.** The plan nodes are named by address and every one
 //! of them must be reached exactly once per slice ([`crate::row::Shard`]). A
 //! pushdown that evaluates a node some other way would hand its rows to every
 //! slice; this is checked on a dry run before any thread starts and again on
-//! every slice, and a miss means the query runs on one thread as before.
+//! every slice, and a miss means the query runs on one thread as before. The
+//! dry run measures first and builds second: a query whose scan is too short
+//! to split never pays for a table the single thread would not build.
 //!
-//! **Memory.** A slice holding more than [`MAX_SHARD_GROUPS`] groups stops the
-//! attempt (the one fold then runs): a slice's groups wait for the slices
-//! before it, and a query with millions of groups would hold them several
-//! times over. Workers run at most `2 × workers` slices ahead of the merge.
-//! Each worker's term memos are capped at its share of one context's.
+//! **Over a network.** A slice reads its tiles ahead in one batch (a cut scan
+//! starts at the largest window; a restricted quad scan faults its own
+//! tiles), so a remote file is cut into fewer, larger slices
+//! ([`REMOTE_SHARDS`], each at least [`REMOTE_MIN_TILES`] tiles) and a short
+//! scan stays one scan. A join that looks something up per row is not split
+//! there: lookups from several threads read half as many bytes again as one
+//! thread's in order. Nor is a walk of every graph, which fetches its section
+//! in bulk.
 //!
-//! **Local reads only.** A scan over a remote file reads ahead in a few
-//! growing batches; sixty-four slices would each start small, and the same
-//! bytes would come in many more requests. So a file whose reads are round
-//! trips ([`crate::Rete::reads_are_remote`]) keeps its one scan.
+//! **Memory.** Workers run at most `2 × workers` slices ahead of the calling
+//! thread. Each worker's term memos are capped at its share of one
+//! context's. A table built for all slices is the table the single thread's
+//! hash join builds.
 //!
 //! Native builds with the `parallel` feature only. `RETE_QUERY_THREADS=1` (or
 //! [`set_query_threads`]) turns it off.
@@ -135,6 +161,14 @@ mod threaded {
     /// tiles). Fixed, so the slices, and with them the order in which a
     /// floating-point SUM adds up, do not depend on the machine's core count.
     const SHARDS: usize = 64;
+
+    /// The slices of a file read over a network: as many as the most workers,
+    /// each at least [`REMOTE_MIN_TILES`] tiles of the driving scan.
+    const REMOTE_SHARDS: usize = 16;
+
+    /// The fewest tiles a slice of a remote file's scan holds (about half a
+    /// megabyte): below it the requests would outnumber the single scan's.
+    const REMOTE_MIN_TILES: usize = 8;
 
     /// The most groups one slice may hold when the slices' groups are merged:
     /// see the module notes on memory.
@@ -248,7 +282,10 @@ mod threaded {
         out: &mut Split,
     ) -> bool {
         if looked_up_per_row(ctx, index, l, r) {
-            return split(ctx, l, index, from_named, out);
+            // Over a network every lookup is a request, and lookups from
+            // several threads at once read more than one thread's do in
+            // order (measured: half as many bytes again): not split.
+            return !ctx.rete.reads_are_remote() && split(ctx, l, index, from_named, out);
         }
         if !buildable(r) {
             return false;
@@ -357,6 +394,8 @@ mod threaded {
         n: usize,
         /// The length of the longest driving scan, in tiles (or rows).
         tiles: usize,
+        /// The file is read over a network.
+        remote: bool,
         workers: usize,
     }
 
@@ -387,11 +426,6 @@ mod threaded {
     ) -> Option<Vec<Row>> {
         let threads = query_threads();
         if threads < 2 || IN_WORKER.with(Cell::get) || crate::guard::armed_here() {
-            return None;
-        }
-        // Over a network one scan batches its reads into a few requests; cut
-        // into slices it would make many small ones. Local reads only.
-        if ctx.rete.reads_are_remote() {
             return None;
         }
         if g.pre.iter().any(|(_, e)| expr_has_exists(e)) {
@@ -425,7 +459,15 @@ mod threaded {
         }
         let shared = ctx.shard.shared_state();
         ctx.shard.clear();
-        let n = SHARDS.min(tiles);
+        // Over a network a slice is a request or two (it reads its tiles ahead
+        // in one batch), so there are fewer of them and none is small: a short
+        // scan stays one scan, with its few coalesced requests.
+        let remote = ctx.rete.reads_are_remote();
+        let n = if remote {
+            REMOTE_SHARDS.min(tiles / REMOTE_MIN_TILES)
+        } else {
+            SHARDS.min(tiles)
+        };
         if !exact || n < 2 {
             return None;
         }
@@ -439,6 +481,7 @@ mod threaded {
             shared: &shared,
             n,
             tiles,
+            remote,
             workers: threads.min(n),
         };
         // The slices' groups are merged when every aggregate can be; when one
@@ -601,7 +644,13 @@ mod threaded {
     /// groups) is kept once, by the one fold. The workers do the per-row work
     /// of the pattern and of the aggregated expressions.
     fn fold_rows(ctx: &Ctx, job: &Job) -> Outcome {
-        let (n, workers) = (ROW_SHARDS.min(job.tiles), job.workers);
+        // (A remote file keeps its few large slices: see `aggregate_shards`.)
+        let n = if job.remote {
+            job.n
+        } else {
+            ROW_SHARDS.min(job.tiles)
+        };
+        let workers = job.workers;
         // The slots the fold reads: a row is cut down to them before it is
         // sent, so what waits for the fold is a few values a row.
         let keep = fold_slots(ctx, job.g);

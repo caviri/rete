@@ -150,29 +150,48 @@ still wins.
 ### Grouped queries on several threads {#threads}
 
 A `GROUP BY` (or a bare aggregate) over millions of rows spends its time per
-row: decoding a term, a string function, a lookup in the row's graph. A native
-build runs that on several threads when the scan that drives the pattern can be
-cut into slices of its index tiles: each thread evaluates the same plan over
-one slice at a time and folds its rows into partial aggregates, and the slices
-are merged in scan order. The rows are the ones a single thread returns, in the
-same order.
+row: decoding a term, a string function, a lookup in the row's graph, a probe
+of a join. A native build runs that on several threads when the scan that
+drives the pattern can be cut into slices: each thread evaluates the same plan
+over one slice at a time, and the rows are the ones a single thread returns,
+in the same order.
 
-It applies when the path from the pattern to its driving scan goes through
-`FILTER` and `BIND` (without `EXISTS`), `UNION`, and the left side of a join or
-`OPTIONAL` whose right side is `GRAPH ?g { … }` with `?g` already bound (one
-lookup per row). The scan itself is one triple pattern, in a graph or under
-`GRAPH ?g` on a quad-index file. Everything else runs on one thread as before:
-a join that builds a hash table (each slice would build it again),
-`COUNT(DISTINCT …)` and `GROUP_CONCAT(DISTINCT …)`, a slice with more than
-100,000 groups, a query under a memory guard, and any query on a file read
-over the network: there one scan batches its reads into a few requests, and
-slices would turn them into many small ones (a reader says which it is with
-`RangeReader::is_local`).
+What can be the driving scan:
+
+- a basic graph pattern. With one triple pattern its index tiles are sliced.
+  With several, the pattern the join streams is sliced, and what the others
+  join against (the prefix, a small pattern's hash table) is built once and
+  read by every thread;
+- a block under `GRAPH ?g`: a one-pattern scan, the subjects of a class
+  probe, the graphs the block's required pattern is found in, or every graph.
+
+Above it the pattern may have `FILTER` and `BIND` (without `EXISTS`), `UNION`
+(a branch that cannot be sliced runs once), and joins and `OPTIONAL`s. The
+right side of a join is looked up per row where the single thread does that,
+and otherwise built once into the hash table every slice probes; rows are
+shared between threads, so there is one copy of it.
+
+Aggregates are merged from per-slice partial results when they can be
+(`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`). When they keep
+a set of values (`COUNT(DISTINCT …)`, `GROUP_CONCAT(DISTINCT …)`) or a slice
+has more than 100,000 groups, the threads do the per-row work and send their
+rows to one fold, which uses the memory the single thread uses.
+
+Not sliced: a pattern whose path to the scan goes through `EXISTS`, `MINUS`, a
+sub-select or `VALUES`; two large patterns merge-joined on their subject; a
+query under a memory guard.
 
 `SUM` and `AVG` add the slices' sums. The slices are fixed by the file (at most
 64), not by the machine, so the result is the same on any number of threads;
 it is the single thread's result whenever the additions are exact, as they are
 for integers.
+
+Over HTTP a slice reads its tiles in one batch, so a remote file is cut into
+at most 16 slices of at least 8 tiles each, and a short scan stays one scan
+with its few requests. A join that looks something up per row is not sliced
+there (several threads' lookups read half as many bytes again as one thread's
+in order), nor is a walk of every graph. A reader says whether its reads are
+local with `RangeReader::is_local`.
 
 The thread count is the machine's cores, at most 16. `RETE_QUERY_THREADS=N`
 sets it, `1` turns it off, and a library caller uses
@@ -183,13 +202,29 @@ On the 2018 nanopublication dump (378.7 M quads, 43.2 M graphs, a local file,
 
 | query | 0.6.1 | one thread | 16 threads |
 |---|---|---|---|
-| nanopublications per IRI namespace (`REPLACE` on 10.8 M IRIs) | 229 s | 16.3 s | 2.1 s |
-| DisGeNET sources (`STRSTARTS`, two `BIND`s, 15.6 M rows) | 372 s | 16.0 s | 1.8 s |
-| neXtProt annotation kinds (`REPLACE` with a capture, 4 M rows) | 243 s | 16.7 s | 1.6 s |
-| most cited PubMed articles (four-branch `UNION`) | 144 s | 11.6 s | 1.9 s |
-| nanopublications per host and month | 119 s | 29.0 s | 3.4 s |
-| evidence grades with their label (`OPTIONAL` per row, 10.1 M) | 53 s | 30.6 s | 4.3 s |
-| licence by host (two-branch `UNION`) | 66 s | 15.5 s | 1.5 s |
+| nanopublications per IRI namespace (`REPLACE` on 10.8 M IRIs) | 229 s | 14.8 s | 1.4 s |
+| DisGeNET sources (`STRSTARTS`, two `BIND`s, 15.6 M rows) | 372 s | 16.7 s | 1.9 s |
+| neXtProt annotation kinds (`REPLACE` with a capture, 4 M rows) | 243 s | 16.4 s | 1.7 s |
+| most cited PubMed articles (four-branch `UNION`) | 144 s | 12.5 s | 1.9 s |
+| nanopublications per host and month | 119 s | 27.4 s | 2.5 s |
+| evidence grades with their label (`OPTIONAL` per row, 10.1 M) | 53 s | 31.0 s | 4.4 s |
+| licence by host (two-branch `UNION`) | 66 s | 16.8 s | 1.9 s |
+| the same namespaces with `COUNT(DISTINCT ?np)` | | 15.8 s | 1.2 s |
+| records by decade, `GRAPH ?a { ?i a :C ; :at ?t OPTIONAL { … } }` | 349 s | 0.8 s | 0.24 s |
+
+And on DBLP (2017, 88 M triples in the default graph, 16 threads):
+
+| query | one thread | 16 threads |
+|---|---|---|
+| articles per year (`?a a :Article ; dcterms:issued ?y`) | 1.8 s | 0.7 s |
+| a star of three patterns with string functions and `AVG` | 11.9 s | 2.1 s |
+| authors per year, `COUNT(DISTINCT ?c)` over three patterns | 7.3 s | 1.6 s |
+| a class, an `OPTIONAL` looked up per row and one hash-joined | 2.5 s | 0.9 s |
+| papers per author initial (5.1 M labels, 9.5 M `dc:creator` lookups) | 179 s | 19 s |
+
+Over a simulated link the pubmed query (32 MB) took 20 s on one thread and
+4.1 s sliced at 60 ms and 40 MB/s, and 34 s and 11.5 s at 120 ms and 4 MB/s,
+with 116 and about 148 requests.
 
 The one-thread column is what changed for every build, the browser's included
 (except the regex engine, see below): a `BIND` result was looked up in the
@@ -197,10 +232,13 @@ dictionary on every row and is now looked up once per distinct value;
 `REPLACE` compiled its pattern on every row; a `FILTER` written before the
 `BIND`s of its group ran after them; the graph directory of a file with more
 than two million graphs kept one read-ahead window, so a lookup of each row's
-graph read and decoded a block again; and finding one graph in a tile walked
-the tile's segment headers. Native builds also turn on the `regex` crate's
-DFA and literal optimizations (`regex-perf`, on by default); a wasm build that
-takes `unicode-regex` alone keeps the smaller engine.
+graph read and decoded a block again; finding one graph in a tile walked the
+tile's segment headers; and a block under `GRAPH ?g` that was not a plain
+basic graph pattern (one with an `OPTIONAL` or a `FILTER` inside) was
+evaluated in every graph of the file instead of the graphs its required
+pattern is found in. Native builds also turn on the `regex` crate's DFA and
+literal optimizations (`regex-perf`, on by default); a wasm build that takes
+`unicode-regex` alone keeps the smaller engine.
 
 ### Memory budget {#memory-budget}
 
