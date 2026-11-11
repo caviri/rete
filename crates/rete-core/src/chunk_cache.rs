@@ -202,7 +202,7 @@ struct Part {
 /// decompressed bytes actually held. See the module docs.
 ///
 /// A lookup writes nothing every thread shares: it read-locks one of
-/// [`PARTS`] parts of the map, stamps the entry with the clock (which it only
+/// 64 parts of the map (`PARTS`), stamps the entry with the clock (which it only
 /// reads; inserts advance it) and counts the hit on that part. Under one
 /// lock, or one sequence counter bumped per lookup, sixteen threads decoding
 /// scattered terms spent more time passing that cache line around than
