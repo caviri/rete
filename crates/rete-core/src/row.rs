@@ -115,6 +115,16 @@ pub(crate) struct Resolver<'a> {
     /// compiling per row dominates the match, and a metacharacter-free pattern
     /// doesn't need the regex engine at all.
     regexes: RefCell<HashMap<(String, String), Matcher>>,
+    /// `(flags, pattern)` → compiled REPLACE regex (`None`: invalid pattern).
+    /// REPLACE in a BIND runs per row, exactly like REGEX in a FILTER.
+    replacers: RefCell<Vec<(String, String, Option<Regex>)>>,
+    /// Computed term string → its canonical value ([`Self::canon_term`]).
+    /// A BIND or an aggregate yields the same few strings over and over (a
+    /// namespace, a month, a source name), and canonicalizing one is several
+    /// dictionary lookups: on a ranged file, chunk reads. Bounded like `terms`.
+    canon: RefCell<HashMap<Rc<str>, Val>>,
+    /// Approximate heap held by `canon`.
+    canon_bytes: std::cell::Cell<usize>,
 }
 
 /// A compiled REGEX matcher: plain (case-folded) substring search for literal
@@ -198,6 +208,9 @@ impl<'a> Resolver<'a> {
             nums_bytes: std::cell::Cell::new(0),
             memo_cap: MEMO_CAP_BYTES,
             regexes: RefCell::new(HashMap::new()),
+            replacers: RefCell::new(Vec::new()),
+            canon: RefCell::new(HashMap::new()),
+            canon_bytes: std::cell::Cell::new(0),
         }
     }
 
@@ -248,8 +261,8 @@ impl<'a> Resolver<'a> {
     /// SPARQL `REPLACE(text, pattern, replacement [, flags])`: every match of
     /// `pattern` (with the i/m/s/x flag subset) is replaced, `$N` referring to
     /// capture groups. Returns `None` for an invalid pattern (a type error).
-    /// Not memoized — REPLACE always needs the full engine (no substring fast
-    /// path) and is rare relative to FILTER REGEX.
+    /// The regex is compiled once per query (memoized), like REGEX: a BIND
+    /// runs it on every row, and compiling cost more than the replace itself.
     pub(crate) fn regex_replace(
         &self,
         pattern: &str,
@@ -257,16 +270,30 @@ impl<'a> Resolver<'a> {
         text: &str,
         replacement: &str,
     ) -> Option<String> {
-        let on: String = ['i', 'm', 's', 'x']
+        let mut memo = self.replacers.borrow_mut();
+        // A query has a handful of REPLACE patterns: a scan by reference beats
+        // hashing (and allocating) an owned `(flags, pattern)` key per row.
+        let at = match memo
             .iter()
-            .filter(|c| flags.contains(**c))
-            .collect();
-        let inline = if on.is_empty() {
-            String::new()
-        } else {
-            format!("(?{on})")
+            .position(|(f, p, _)| f == flags && p == pattern)
+        {
+            Some(i) => i,
+            None => {
+                let on: String = ['i', 'm', 's', 'x']
+                    .iter()
+                    .filter(|c| flags.contains(**c))
+                    .collect();
+                let inline = if on.is_empty() {
+                    String::new()
+                } else {
+                    format!("(?{on})")
+                };
+                let re = Regex::new(&format!("{inline}{pattern}")).ok();
+                memo.push((flags.to_string(), pattern.to_string(), re));
+                memo.len() - 1
+            }
         };
-        let re = Regex::new(&format!("{inline}{pattern}")).ok()?;
+        let re = memo[at].2.as_ref()?;
         Some(re.replace_all(text, replacement).into_owned())
     }
 
@@ -405,13 +432,26 @@ impl<'a> Resolver<'a> {
     /// term is a node, a predicate tag when it is only a predicate, else the
     /// string itself. Guarantees `Val::Str` is never term-equal to any `Val::Id`.
     pub(crate) fn canon_term(&self, term: &str) -> Val {
-        if let Some(n) = self.dict.node_of_term(term) {
+        if let Some(v) = self.canon.borrow().get(term) {
+            return v.clone();
+        }
+        let key: Rc<str> = Rc::from(term);
+        let v = if let Some(n) = self.dict.node_of_term(term) {
             Val::Id(n as i64)
         } else if let Some(p) = self.dict.predicate_id(term) {
             Val::Id(-(p as i64) - 1)
         } else {
-            Val::Str(Rc::from(term))
+            Val::Str(key.clone())
+        };
+        let add = MEMO_ENTRY_OVERHEAD + term.len();
+        let mut map = self.canon.borrow_mut();
+        if self.canon_bytes.get() + add > self.memo_cap {
+            map.clear();
+            self.canon_bytes.set(0);
         }
+        map.insert(key, v.clone());
+        self.canon_bytes.set(self.canon_bytes.get() + add);
+        v
     }
 
     /// The numeric value of `v` (literal lexical form or bare number), memoized.

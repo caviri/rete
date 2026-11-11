@@ -954,10 +954,14 @@ impl Dictionary {
     /// A string literal also matches its other spelling (`"x"` ↔
     /// `"x"^^xsd:string`, one RDF 1.1 term; see [`Self::subject_id`]).
     pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
+        // Shared, subject-only, object-only: each section once (the subject and
+        // the object role both begin with the shared section).
         let exact = |t: &str| {
-            self.subject_id_exact(t)
-                .map(|sid| self.subject_node(sid))
-                .or_else(|| self.object_id_exact(t).map(|oid| self.object_node(oid)))
+            if let Some(sid) = self.subject_id_exact(t) {
+                return Some(self.subject_node(sid));
+            }
+            let oid = self.shared_len.checked_add(self.sections[2].id(t)?)?;
+            Some(self.object_node(oid))
         };
         exact(term).or_else(|| exact(&crate::terms::string_literal_alias(term)?))
     }
