@@ -513,3 +513,56 @@ fn regex_fast_paths_over_derived_iris_match_the_stored_file() {
     }
     set_query_threads(0);
 }
+
+/// Merge joins cut into slices, MINUS, EXISTS and projecting sub-selects over
+/// derived names (and `ORDER BY` on ids over a sliced merge join): the same
+/// rows on 1 and 4 threads, on the derived and the stored file, in both
+/// default-graph modes, and the union equal to the flattened oracle.
+#[test]
+fn joins_exists_minus_and_subselects_decode_derived_names_under_threads() {
+    let _s = serial();
+    let c = pre();
+    let qs = [
+        // Merge join on the subject, ordered on ids.
+        format!("{c}SELECT ?s ?a ?b WHERE {{ ?s cito:hasCitingEntity ?a ; cito:hasCitedEntity ?b }} ORDER BY ?s LIMIT 500"),
+        format!("{c}SELECT ?s ?a ?b WHERE {{ ?s cito:hasCitingEntity ?a ; cito:hasCitedEntity ?b }} ORDER BY DESC(?s) ?a ?b LIMIT 500 OFFSET 40"),
+        format!("{c}SELECT (COUNT(*) AS ?n) (MIN(STR(?s)) AS ?lo) WHERE {{ ?s cito:hasCitingEntity ?a ; cito:hasCitedEntity ?b ; cito:hasCitationCreationDate ?d }}"),
+        // MINUS and EXISTS on a derived subject, against a named-only fact.
+        format!("{c}SELECT ?s WHERE {{ ?s a cito:Citation MINUS {{ ?s cito:note ?v }} }} ORDER BY ?s LIMIT 400"),
+        format!("{c}SELECT (COUNT(*) AS ?n) WHERE {{ ?s a cito:Citation FILTER EXISTS {{ ?s cito:note ?v }} }}"),
+        format!("{c}SELECT ?s ?b WHERE {{ ?s cito:hasCitedEntity ?b FILTER NOT EXISTS {{ ?s cito:note ?v }} }} ORDER BY ?s ?b LIMIT 300"),
+        format!("{c}SELECT ?s WHERE {{ ?s cito:hasCitedEntity ?b FILTER EXISTS {{ ?s cito:note ?v . ?s cito:hasCitingEntity ?a }} }} ORDER BY ?s"),
+        // Projecting sub-selects, grouped and not.
+        format!("{c}SELECT ?s ?n WHERE {{ {{ SELECT ?s (COUNT(*) AS ?n) WHERE {{ ?s ?p ?o }} GROUP BY ?s }} ?s a cito:Citation }} ORDER BY ?s LIMIT 300"),
+        format!("{c}SELECT ?s ?b WHERE {{ {{ SELECT ?s WHERE {{ ?s cito:note ?v }} }} ?s cito:hasCitedEntity ?b }} ORDER BY ?s ?b"),
+        format!("{c}SELECT ?b (COUNT(?s) AS ?n) WHERE {{ {{ SELECT ?s ?b WHERE {{ ?s cito:hasCitedEntity ?b }} }} }} GROUP BY ?b ORDER BY ?b LIMIT 200"),
+    ];
+    let (d, d_lazy, st, fl) = (
+        resident(derived()),
+        lazy(derived()),
+        resident(stored()),
+        resident(flattened()),
+    );
+    for q in &qs {
+        for (opts, name) in [(PLAIN, "plain"), (UNION, "union")] {
+            set_query_threads(1);
+            let one = run(&d, q, opts);
+            let want = run(&st, q, opts);
+            set_query_threads(4);
+            let four = run(&d, q, opts);
+            let four_lazy = run(&d_lazy, q, opts);
+            let four_stored = run(&st, q, opts);
+            assert_eq!(one, want, "{name}, derived vs stored, 1 thread: {q}");
+            assert_eq!(four, one, "{name}, 1 vs 4 threads: {q}");
+            assert_eq!(four_lazy, one, "{name}, range reader, 4 threads: {q}");
+            assert_eq!(four_stored, one, "{name}, stored, 4 threads: {q}");
+            if opts.union_default_graph {
+                set_query_threads(1);
+                assert_eq!(one, run(&fl, q, PLAIN), "union vs flattened: {q}");
+            }
+        }
+        set_query_threads(1);
+        assert!(run(&d, q, UNION).len() > 1, "no rows: {q}");
+    }
+    set_query_threads(0);
+}
