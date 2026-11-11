@@ -167,7 +167,118 @@ fn text_cmp(a: &[u8], b: &[u8]) -> Ordering {
         .then_with(|| a.cmp(b))
 }
 
+/// A term being looked up in a section, read once: its group and, for a text
+/// literal, the parts its order is made of.
+///
+/// [`TermOrder::cmp`] reads both of its terms on every call: for two text
+/// literals that is the group of each (a UTF-8 check and a scan for the
+/// closing quote) and then their parts again. A lookup compares one term
+/// against a few dozen stored ones in every section it searches, so it read
+/// the term it was looking for a few hundred times: a `BIND` that made
+/// 195,000 new strings spent five times as long finding out they were new as
+/// it did on a byte-ordered file. [`Probe::cmp_stored`] is the same order
+/// with the looked-up side read once and the stored side read at most once.
+pub struct Probe<'t> {
+    order: TermOrder,
+    token: &'t [u8],
+    group: u8,
+    /// A text literal's lexical form, datatype rank and language tag.
+    text: Option<(std::borrow::Cow<'t, str>, u8, &'t str)>,
+}
+
+impl Probe<'_> {
+    /// `order.cmp(stored, term)`: where a stored token sorts against the term
+    /// this probe was made for.
+    pub fn cmp_stored(&self, a: &[u8]) -> Ordering {
+        let b = self.token;
+        if self.order == TermOrder::Bytewise {
+            return a.cmp(b);
+        }
+        if a.is_empty() || b.is_empty() {
+            return a.len().cmp(&b.len());
+        }
+        // The stored token's group. Only a literal against a literal has to
+        // be read to its closing quote: text and typed literals are
+        // neighbours, and every other group shows in the first bytes.
+        let mut parts: Option<(&str, &str)> = None;
+        let ga = match a[0] {
+            b'<' => {
+                if a.starts_with(b"<<") && a.ends_with(b">>") {
+                    G_TRIPLE
+                } else {
+                    G_IRI
+                }
+            }
+            b'_' if a.get(1) == Some(&b':') => G_BLANK,
+            b'"' => {
+                if self.group < G_TEXT {
+                    return Ordering::Greater;
+                }
+                if self.group > G_TYPED {
+                    return Ordering::Less;
+                }
+                match std::str::from_utf8(a).ok().map(crate::terms::literal_parts) {
+                    Some(Some((body, suffix)))
+                        if suffix.is_empty()
+                            || suffix.starts_with('@')
+                            || suffix == XSD_STRING_SUFFIX =>
+                    {
+                        parts = Some((body, suffix));
+                        G_TEXT
+                    }
+                    _ => G_TYPED,
+                }
+            }
+            _ => G_TYPED,
+        };
+        if ga != self.group {
+            return ga.cmp(&self.group);
+        }
+        match (ga, parts, &self.text) {
+            (G_IRI, _, _) => iri_text(a).cmp(iri_text(b)).then_with(|| a.cmp(b)),
+            (G_TEXT, Some((ba, xa)), Some((lex, rank, tag))) => lexical(ba)
+                .as_ref()
+                .cmp(lex.as_ref())
+                .then_with(|| datatype_rank(xa).cmp(rank))
+                .then_with(|| {
+                    let ta = xa.strip_prefix('@').unwrap_or("").bytes();
+                    ta.map(|c| c.to_ascii_lowercase())
+                        .cmp(tag.bytes().map(|c| c.to_ascii_lowercase()))
+                })
+                .then_with(|| a.cmp(b)),
+            _ => a.cmp(b),
+        }
+    }
+}
+
 impl TermOrder {
+    /// Read `term` once, to compare stored tokens against it
+    /// ([`Probe::cmp_stored`]).
+    pub fn probe(self, term: &[u8]) -> Probe<'_> {
+        let group = if self == TermOrder::Sparql && !term.is_empty() {
+            group(term)
+        } else {
+            G_TYPED
+        };
+        let text = (self == TermOrder::Sparql && group == G_TEXT)
+            .then(|| {
+                let s = std::str::from_utf8(term).ok()?;
+                let (body, suffix) = crate::terms::literal_parts(s)?;
+                Some((
+                    lexical(body),
+                    datatype_rank(suffix),
+                    suffix.strip_prefix('@').unwrap_or(""),
+                ))
+            })
+            .flatten();
+        Probe {
+            order: self,
+            token: term,
+            group,
+            text,
+        }
+    }
+
     /// Compare two term tokens in this order. A total order: two tokens
     /// compare equal only when they are the same bytes. The empty slice sorts
     /// before everything (a chunk directory's first key is empty).
@@ -399,6 +510,73 @@ mod tests {
         assert_eq!(group(b"<<a b c>>"), G_TRIPLE);
         assert_eq!(group(b"<x>"), G_IRI);
         assert_eq!(group(b""), G_TYPED);
+    }
+
+    /// A probe is the order: `probe(b).cmp_stored(a)` is `cmp(a, b)` for every
+    /// pair, in both orders, over well-formed and malformed tokens alike (a
+    /// file is searched with one and was sorted with the other).
+    #[test]
+    fn a_probe_compares_as_the_order_does() {
+        let mut tokens: Vec<Vec<u8>> = [
+            "",
+            "_:b0",
+            "_:b1",
+            "_",
+            "<http://x/a>",
+            "<http://x/a/b>",
+            "<http://x/Ng8>",
+            "<http://x/Ng8130_provenance>",
+            "<<<s> <p> <o>>>",
+            "<<",
+            "<",
+            "<unclosed",
+            "\"\"",
+            "\"a\"",
+            "\"a\"@en",
+            "\"a\"@EN",
+            "\"a\"@en-GB",
+            "\"a\"@en--ltr",
+            "\"a\"^^<http://www.w3.org/2001/XMLSchema#string>",
+            "\"a\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            "\"ab\"",
+            "\"a\\\"b\"",
+            "\"a\\nb\"",
+            "\"a\\\\\"",
+            "\"A\"",
+            "\"\u{e9}t\u{e9}\"",
+            "\"\u{e9}t\u{e9}\"@fr",
+            "\"10\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            "\"9\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            "\"2018-04-05\"^^<http://www.w3.org/2001/XMLSchema#date>",
+            "\"unclosed",
+            "\"a\"junk",
+            "\"a\"^^",
+            "\"",
+            "plain",
+            "42",
+        ]
+        .iter()
+        .map(|t| t.as_bytes().to_vec())
+        .collect();
+        // Not UTF-8, in each kind of token.
+        tokens.push(b"\"\xff\"".to_vec());
+        tokens.push(b"\"a\"@\xff".to_vec());
+        tokens.push(b"<http://x/\xff>".to_vec());
+        tokens.push(vec![0xff, 0xfe]);
+        for order in [TermOrder::Bytewise, TermOrder::Sparql] {
+            for b in &tokens {
+                let probe = order.probe(b);
+                for a in &tokens {
+                    assert_eq!(
+                        probe.cmp_stored(a),
+                        order.cmp(a, b),
+                        "{order:?}: {:?} against {:?}",
+                        String::from_utf8_lossy(a),
+                        String::from_utf8_lossy(b)
+                    );
+                }
+            }
+        }
     }
 
     #[test]
