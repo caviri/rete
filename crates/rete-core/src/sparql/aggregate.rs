@@ -12,7 +12,7 @@
 //! to their distinct/concatenated values.
 
 use std::collections::{BTreeMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::row::{Ctx, Row, Val};
 
@@ -73,7 +73,7 @@ enum Accum {
     Sample {
         slot: Option<usize>,
         done: bool,
-        val: Option<Rc<str>>,
+        val: Option<Arc<str>>,
     },
     GroupConcat {
         slot: Option<usize>,
@@ -138,6 +138,20 @@ impl Accum {
                 best: None,
                 err: false,
             },
+        }
+    }
+
+    /// The slot this aggregate reads, when it reads one.
+    #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+    fn slot_mut(&mut self) -> Option<&mut Option<usize>> {
+        match self {
+            Accum::CountStar(_) => None,
+            Accum::Count { slot, .. }
+            | Accum::Sum { slot, .. }
+            | Accum::Avg { slot, .. }
+            | Accum::Sample { slot, .. }
+            | Accum::GroupConcat { slot, .. }
+            | Accum::MinMax { slot, .. } => Some(slot),
         }
     }
 
@@ -345,7 +359,65 @@ pub(super) fn aggregate<I>(ctx: &Ctx, rows: I, g: &GroupSpec) -> Vec<Row>
 where
     I: IntoIterator<Item = Row>,
 {
-    let groups = fold_groups(ctx, rows, g, usize::MAX).expect("no group cap");
+    let groups = fold_groups(ctx, rows, g, usize::MAX, None).expect("no group cap");
+    let groups = groups
+        .into_iter()
+        .map(|(key, accs)| (key, accs.into_iter().map(Accum::finalize).collect()));
+    emit_groups(ctx, g, groups)
+}
+
+/// Materialize the synthetic columns of aggregates over expressions on `row`
+/// (`SUM(?a * 2)` reads a hidden column holding `?a * 2`). An expression that
+/// errors leaves its column unbound (SPARQL error semantics).
+pub(super) fn apply_pre(ctx: &Ctx, row: &mut Row, g: &GroupSpec) {
+    for (var, expr) in &g.pre {
+        if let Some(slot) = ctx.slots.slot(var) {
+            row[slot] = expr.value(ctx, row).map(Val::Str);
+        }
+    }
+}
+
+/// The slots a fold reads: the group-by variables and the arguments of the
+/// aggregates, each once. A row cut down to these, in this order, is all the
+/// fold needs ([`aggregate_folded`]).
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+pub(super) fn fold_slots(ctx: &Ctx, g: &GroupSpec) -> Vec<usize> {
+    let mut keep: Vec<usize> = Vec::new();
+    let mut add = |v: &str| {
+        if let Some(s) = ctx.slots.slot(v) {
+            if !keep.contains(&s) {
+                keep.push(s);
+            }
+        }
+    };
+    for v in &g.by {
+        add(v);
+    }
+    for (_, agg) in &g.aggs {
+        match agg {
+            Agg::CountStar { .. } => {}
+            Agg::Count(v, _)
+            | Agg::Sum(v)
+            | Agg::Avg(v)
+            | Agg::Min(v)
+            | Agg::Max(v)
+            | Agg::Sample(v)
+            | Agg::GroupConcat(v, _, _) => add(v),
+        }
+    }
+    keep
+}
+
+/// [`aggregate`] over rows cut down to the slots `keep` ([`fold_slots`]), in
+/// that order, their synthetic columns already in place ([`apply_pre`]): the
+/// worker threads of a query run as shards evaluated them, and this is the one
+/// fold of their rows.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+pub(super) fn aggregate_folded<I>(ctx: &Ctx, rows: I, g: &GroupSpec, keep: &[usize]) -> Vec<Row>
+where
+    I: IntoIterator<Item = Row>,
+{
+    let groups = fold_groups(ctx, rows, g, usize::MAX, Some(keep)).expect("no group cap");
     let groups = groups
         .into_iter()
         .map(|(key, accs)| (key, accs.into_iter().map(Accum::finalize).collect()));
@@ -359,23 +431,43 @@ fn fold_groups<I>(
     rows: I,
     g: &GroupSpec,
     max_groups: usize,
+    cut: Option<&[usize]>,
 ) -> Option<BTreeMap<Vec<Option<Val>>, Vec<Accum>>>
 where
     I: IntoIterator<Item = Row>,
 {
-    let by_slots: Vec<Option<usize>> = g.by.iter().map(|v| ctx.slots.slot(v)).collect();
-    let new_accs = || -> Vec<Accum> { g.aggs.iter().map(|(_, a)| Accum::new(a, ctx)).collect() };
+    // `cut`: the rows hold only these slots, in this order, and their
+    // synthetic columns are in place.
+    let at = |slot: usize| match cut {
+        Some(keep) => keep.iter().position(|&k| k == slot),
+        None => Some(slot),
+    };
+    let by_slots: Vec<Option<usize>> =
+        g.by.iter()
+            .map(|v| ctx.slots.slot(v).and_then(at))
+            .collect();
+    let new_accs = || -> Vec<Accum> {
+        g.aggs
+            .iter()
+            .map(|(_, a)| {
+                let mut acc = Accum::new(a, ctx);
+                if cut.is_some() {
+                    if let Some(slot) = acc.slot_mut() {
+                        *slot = slot.and_then(at);
+                    }
+                }
+                acc
+            })
+            .collect()
+    };
 
     // BTreeMap keeps group order deterministic (by integer id / value order).
     let mut groups: BTreeMap<Vec<Option<Val>>, Vec<Accum>> = BTreeMap::new();
     for mut r in rows {
         // Aggregate-over-expression: materialize each synthetic column on THIS row
-        // before grouping, so an aggregate reads it exactly like a plain slot. An
-        // expression that errors leaves the column unbound (SPARQL error semantics).
-        for (var, expr) in &g.pre {
-            if let Some(slot) = ctx.slots.slot(var) {
-                r[slot] = expr.value(ctx, &r).map(Val::Str);
-            }
+        // before grouping, so an aggregate reads it exactly like a plain slot.
+        if cut.is_none() {
+            apply_pre(ctx, &mut r, g);
         }
         let key: Vec<Option<Val>> = by_slots
             .iter()
@@ -438,7 +530,7 @@ fn emit_groups(
 // the single fold whenever the additions are exact (integers below 2^53).
 
 /// A group-key or aggregate value that can cross threads ([`Val`] holds an
-/// `Rc`).
+/// `Arc`).
 #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(super) enum SVal {
     Id(i64),
@@ -579,7 +671,7 @@ impl Partial {
                 let take = match best.as_deref() {
                     None => true,
                     Some(cur) => {
-                        let o = OrderKey::new(Rc::from(&*b)).cmp(&OrderKey::new(Rc::from(cur)));
+                        let o = OrderKey::new(Arc::from(&*b)).cmp(&OrderKey::new(Arc::from(cur)));
                         if *want_min {
                             o == std::cmp::Ordering::Less
                         } else {
@@ -631,7 +723,7 @@ pub(super) fn aggregate_partial<I>(
 where
     I: IntoIterator<Item = Row>,
 {
-    let groups = fold_groups(ctx, rows, g, max_groups)?;
+    let groups = fold_groups(ctx, rows, g, max_groups, None)?;
     Some(
         groups
             .into_iter()
@@ -668,7 +760,7 @@ impl Merger {
                 .map(|v| {
                     v.map(|v| match v {
                         SVal::Id(i) => Val::Id(i),
-                        SVal::Str(s) => Val::Str(Rc::from(&*s)),
+                        SVal::Str(s) => Val::Str(Arc::from(&*s)),
                     })
                 })
                 .collect();
@@ -741,7 +833,7 @@ mod tests {
     }
 
     fn val(s: &str) -> Option<Val> {
-        Some(Val::Str(Rc::from(s)))
+        Some(Val::Str(Arc::from(s)))
     }
 
     fn context(rete: &Rete) -> Ctx<'_> {

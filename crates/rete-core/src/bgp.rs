@@ -1090,33 +1090,224 @@ fn scan_rows<'q>(
     )
 }
 
-/// A one-pattern BGP as shard `part` of a grouped query run on several
-/// threads ([`crate::row::Shard`]): the rows of [`BgpSolutions::new`] whose
-/// triple lies in that slice of the scan's tiles. `None` when this is not a
-/// single satisfiable pattern (the caller then evaluates the BGP whole, and
-/// the shard is not counted as applied).
-pub(crate) fn shard_scan_rows<'q>(
+/// What a multi-pattern BGP joins its streamed pattern against: every pattern
+/// but the last, joined, and bucketed on the slots the last one shares.
+/// Built once for all shards of a grouped query run on several threads.
+struct SharedPrefix {
+    rows: Vec<Row>,
+    /// Prefix row indices keyed by the shared-slot values.
+    buckets: HashMap<Vec<Val>, Vec<usize>>,
+    shared: Vec<usize>,
+}
+
+/// A small pattern of a streaming BGP, as a table keyed on the slots it
+/// shares with the rows streamed so far. `None`: the pattern is unsatisfiable.
+type SharedTable = Option<HashMap<Vec<Val>, Vec<Row>>>;
+
+/// A BGP as shard `part` of a grouped query run on several threads
+/// ([`crate::row::Shard`]): the rows [`BgpSolutions::new`] yields, in its
+/// order, for one slice of the work.
+///
+/// It takes the decisions `BgpSolutions::new` takes, from the same estimates,
+/// and slices whatever that would stream:
+///
+/// - one pattern: the scan's tiles;
+/// - a large most-selective pattern (the streaming join): that pattern's
+///   tiles, every later pattern joined per row as there, its hash table (when
+///   it is a small pattern) built once for all shards;
+/// - otherwise the prefix (every pattern but the last, joined) is built once
+///   for all shards, and the slice is of the last pattern's tiles, or of the
+///   prefix rows when they look the last pattern up instead of scanning it.
+///
+/// `None` when the BGP cannot be sliced (two large patterns merge-joined on
+/// their subject, an unsatisfiable constant, an empty prefix): the caller
+/// evaluates it whole, the shard is not counted as applied, and the query
+/// runs on one thread.
+pub(crate) fn shard_bgp_rows<'q>(
     ctx: &'q Ctx<'q>,
     index: &'q GraphIndex,
     patterns: &[TriplePattern],
     part: crate::row::ShardPart,
 ) -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
-    let [_] = patterns else {
+    if patterns.is_empty() {
         return None;
-    };
+    }
     let lowered = lower(patterns, ctx)?;
-    let t = lowered[0];
+    let node = part.0;
     let dict = ctx.rete.dictionary();
-    let (sid, pid, oid) = (
-        const_subject(&t.0, dict)?,
-        const_predicate(&t.1)?,
-        const_object(&t.2, dict)?,
+    // The pattern's scan, cut to this shard's slice of its tiles.
+    let cut_scan =
+        |t: (SlotTerm, SlotTerm, SlotTerm)| -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
+            let (sid, pid, oid) = (
+                const_subject(&t.0, dict)?,
+                const_predicate(&t.1)?,
+                const_object(&t.2, dict)?,
+            );
+            let cut = |start: usize, end: usize| ctx.shard.applied(part, start, end);
+            let triples = index.scan_iter_cut((sid, pid, oid), &cut);
+            Some(Box::new(
+                canon_ahead(ctx, &t, triples).filter_map(move |triple| triple_row(ctx, &t, triple)),
+            ))
+        };
+    if lowered.len() == 1 {
+        return cut_scan(lowered[0]);
+    }
+    let (order, est) = plan_order(ctx, index, &lowered);
+
+    // The streaming join: the seed pattern's scan is sliced.
+    if est[order[0]] > limits().stream_seed {
+        if est[order[1]] > limits().stream_seed
+            && merge_stream(ctx, index, lowered[order[0]], lowered[order[1]]).is_some()
+        {
+            return None;
+        }
+        let seed = lowered[order[0]];
+        let mut stream = cut_scan(seed)?;
+        let mut bound = pattern_slots(&seed);
+        for &i in &order[1..] {
+            let t = lowered[i];
+            let slots = pattern_slots(&t);
+            let shared: Vec<usize> = slots
+                .iter()
+                .copied()
+                .filter(|s| bound.contains(s))
+                .collect();
+            if !shared.is_empty() && est[i] > limits().hash_build {
+                stream = Box::new(
+                    windowed(index, stream, bgp_probe_pattern(ctx, t))
+                        .flat_map(move |base| probe_rows(ctx, index, t, base)),
+                );
+            } else {
+                let key_slots = shared.clone();
+                let table = ctx.shard.shared(node, 1 + i, || -> SharedTable {
+                    let (rel, _) = pattern_rows(ctx, index, &t)?;
+                    let mut table: HashMap<Vec<Val>, Vec<Row>> = HashMap::new();
+                    for r in rel {
+                        let key: Vec<Val> =
+                            key_slots.iter().map(|&s| r[s].clone().unwrap()).collect();
+                        table.entry(key).or_default().push(r);
+                    }
+                    Some(table)
+                });
+                if table.is_none() {
+                    // An unsatisfiable pattern: no solution in any shard.
+                    return Some(Box::new(std::iter::empty()));
+                }
+                let fill = slots.clone();
+                stream = Box::new(stream.flat_map(move |base| {
+                    let key: Vec<Val> = shared.iter().map(|&s| base[s].clone().unwrap()).collect();
+                    let out: Vec<Row> = (*table)
+                        .as_ref()
+                        .and_then(|t| t.get(&key))
+                        .map(|rs| {
+                            rs.iter()
+                                .map(|r| {
+                                    let mut row = base.clone();
+                                    for &s in &fill {
+                                        row[s] = r[s].clone();
+                                    }
+                                    row
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    out.into_iter()
+                }));
+            }
+            for s in slots {
+                if !bound.contains(&s) {
+                    bound.push(s);
+                }
+            }
+        }
+        return Some(stream);
+    }
+
+    // The materializing join: the prefix is built once for all shards.
+    let (&last_i, prefix_is) = order.split_last()?;
+    let last = lowered[last_i];
+    // A last pattern that routes to one tile is a query too small to split:
+    // say so before the prefix is built here, and again by the single thread.
+    let last_pat = (
+        const_subject(&last.0, dict)?,
+        const_predicate(&last.1)?,
+        const_object(&last.2, dict)?,
     );
-    let cut = |start: usize, end: usize| ctx.shard.applied(part, start, end);
-    let triples = index.scan_iter_cut((sid, pid, oid), &cut);
-    Some(Box::new(
-        canon_ahead(ctx, &t, triples).filter_map(move |triple| triple_row(ctx, &t, triple)),
-    ))
+    if index.scan_plan(last_pat).tiles_routed < 2 {
+        return None;
+    }
+    let prefix = ctx.shard.shared(node, 0, || {
+        let prefix_pats: Vec<TriplePattern> =
+            prefix_is.iter().map(|&i| patterns[i].clone()).collect();
+        let rows = eval_bgp_rows(ctx, index, &prefix_pats);
+        let shared: Vec<usize> = match rows.first() {
+            Some(first) => pattern_slots(&last)
+                .into_iter()
+                .filter(|&s| first[s].is_some())
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut buckets: HashMap<Vec<Val>, Vec<usize>> = HashMap::new();
+        if !shared.is_empty() {
+            for (i, r) in rows.iter().enumerate() {
+                let key: Vec<Val> = shared.iter().map(|&s| r[s].clone().unwrap()).collect();
+                buckets.entry(key).or_default().push(i);
+            }
+        }
+        SharedPrefix {
+            rows,
+            buckets,
+            shared,
+        }
+    });
+    if prefix.rows.is_empty() {
+        return None;
+    }
+    let shared = &prefix.shared;
+    let class_probe = !shared.is_empty()
+        && est[last_i] >= limits().probe_floor
+        && (prefix.rows.len() as f64) <= est[last_i]
+        && is_unbound_class(ctx, &last, shared);
+    if !shared.is_empty() && (probe_beats_scan(prefix.rows.len(), est[last_i]) || class_probe) {
+        // The prefix rows look the last pattern up: slice the rows.
+        let (lo, hi) = ctx.shard.applied_rows(part, prefix.rows.len());
+        let mine: Vec<Row> = prefix.rows[lo..hi].to_vec();
+        return Some(Box::new(
+            windowed(index, mine.into_iter(), bgp_probe_pattern(ctx, last))
+                .flat_map(move |base| probe_rows(ctx, index, last, base)),
+        ));
+    }
+    // The last pattern is scanned, and each of its rows joined to the prefix.
+    let scan = cut_scan(last)?;
+    let mut matches: Vec<usize> = Vec::new();
+    Some(Box::new(scan.flat_map(move |s| {
+        matches.clear();
+        if prefix.shared.is_empty() {
+            matches.extend(0..prefix.rows.len());
+        } else {
+            let key: Vec<Val> = prefix
+                .shared
+                .iter()
+                .map(|&i| s[i].clone().unwrap())
+                .collect();
+            if let Some(c) = prefix.buckets.get(&key) {
+                matches.extend_from_slice(c);
+            }
+        }
+        let out: Vec<Row> = matches
+            .iter()
+            .map(|&pi| {
+                let mut merged = prefix.rows[pi].clone();
+                for (slot, v) in s.iter().enumerate() {
+                    if v.is_some() {
+                        merged[slot] = v.clone();
+                    }
+                }
+                merged
+            })
+            .collect();
+        out.into_iter()
+    })))
 }
 
 /// `GRAPH ?g { one pattern }` over a quad-index file: every match of the

@@ -41,7 +41,7 @@ fn inlj_hint(ctx: &Ctx) -> Option<usize> {
 /// right BGP's patterns? Without a shared certain binding, per-row probing
 /// degenerates to re-evaluating the whole BGP for every left row — strictly
 /// worse than the hash join.
-fn shares_certain_var(ctx: &Ctx, patterns: &[TriplePattern], lcert: &[bool]) -> bool {
+pub(super) fn shares_certain_var(ctx: &Ctx, patterns: &[TriplePattern], lcert: &[bool]) -> bool {
     patterns
         .iter()
         .flat_map(|p| [&p.s, &p.p, &p.o])
@@ -325,7 +325,7 @@ fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
 
 /// Slots bound in **some** row the plan could yield (over-approximation: every
 /// variable the plan mentions).
-fn possible_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
+pub(super) fn possible_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
     let mut m = vec![false; n];
     mark_possible(ctx, plan, &mut m);
     m
@@ -1331,8 +1331,14 @@ pub(crate) fn eval_plan_iter<'q>(
     match plan {
         Plan::Bgp(patterns) => {
             if let Some(part) = ctx.shard.part_for(node) {
-                if let Some(rows) = crate::bgp::shard_scan_rows(ctx, index, patterns, part) {
+                if let Some(rows) = crate::bgp::shard_bgp_rows(ctx, index, patterns, part) {
                     return rows;
+                }
+                // A pattern that cannot be sliced (too small, or two large
+                // patterns merge-joined) runs whole in shard 0 alone.
+                // (The measuring pass builds nothing for it either.)
+                if ctx.shard.whole_in_first(part) || ctx.shard.measuring() {
+                    return Box::new(std::iter::empty());
                 }
             }
             // Under a small demand bound, probe the join pattern-by-pattern
@@ -1448,6 +1454,9 @@ pub(crate) fn eval_plan_iter<'q>(
             super::distinct_union::iter(ctx, index, vars, sources)
         }
         Plan::Join(l, r) => {
+            if ctx.shard.builds(node) {
+                return shared_hash_join(ctx, index, named_filter, node, l, r, false, None);
+            }
             // VALUES-driven pushdown: substitute few ground rows into the BGP
             // scan instead of scanning the whole pattern and hash-joining.
             if let Some(v) = values_pushdown(ctx, index, l, r) {
@@ -1461,6 +1470,9 @@ pub(crate) fn eval_plan_iter<'q>(
             join_iter(ctx, index, named_filter, l, r, false, None)
         }
         Plan::LeftJoin(l, r, cond) => {
+            if ctx.shard.builds(node) {
+                return shared_hash_join(ctx, index, named_filter, node, l, r, true, cond.as_ref());
+            }
             join_iter(ctx, index, named_filter, l, r, true, cond.as_ref())
         }
         // GRAPH switches the active graph index (subject to FROM NAMED).
@@ -1475,6 +1487,18 @@ pub(crate) fn eval_plan_iter<'q>(
                 if let Some(rows) = graph_var_scan(ctx, var, inner, ctx.shard.part_for(node)) {
                     return rows;
                 }
+            }
+            // A shard of a grouped query run on several threads walks its
+            // slice of the graphs: each graph's rows depend on no other graph.
+            // Not over a network: the whole walk fetches the section in bulk
+            // (it visits every graph), which slices would read piecemeal.
+            if let Some(part) = ctx
+                .shard
+                .part_for(node)
+                .filter(|_| !ctx.rete.reads_are_remote())
+            {
+                let (lo, hi) = ctx.shard.applied_rows(part, ctx.rete.named_graph_count());
+                return graph_var_walk(ctx, named_filter, var, inner, lo..hi, false);
             }
             graph_var_walk(
                 ctx,
@@ -1507,22 +1531,67 @@ fn graph_var_scan<'q>(
     part: Option<crate::row::ShardPart>,
 ) -> Option<RowIter<'q>> {
     let slot = ctx.slots.slot(var)?;
-    let Plan::Bgp(patterns) = inner else {
-        return None;
-    };
+    // The patterns every solution of the block has to match in its graph: the
+    // block itself when it is a BGP, else the BGP its solutions all extend
+    // (`{ ?i a :C ; :at ?t OPTIONAL { ?i :lat ?l } }`). A graph that holds no
+    // match of one of them yields no row, so only the graphs that do are
+    // walked; without this such a block was evaluated in every graph of the
+    // file (5.5 minutes over 43 M graphs for 80 k matches).
+    let whole = matches!(inner, Plan::Bgp(_));
+    let patterns = required_bgp(inner)?;
     if patterns.is_empty() {
         return None;
     }
-    if let Some(rows) = crate::bgp::quad_scan_rows(ctx, patterns, slot, part) {
-        return Some(rows);
+    if whole {
+        if let Some(rows) = crate::bgp::quad_scan_rows(ctx, patterns, slot, part) {
+            return Some(rows);
+        }
+        if patterns.len() < 2 {
+            return None;
+        }
     }
-    if patterns.len() < 2 {
-        return None;
+    // A shard of a grouped query run on several threads: the graphs holding a
+    // match of the most constrained pattern are listed once for all shards
+    // (in graph order, each once), and this shard walks its slice of them.
+    // The same graphs, in the same order, as the walk below.
+    if let Some(part) = part {
+        // A star on one class-typed subject: the class's subjects are sliced
+        // (`bgp::class_probe`), when the whole query would probe them.
+        if whole {
+            if let Some(rows) = crate::bgp::class_probe_rows(ctx, patterns, slot, Some(part)) {
+                return Some(rows);
+            }
+        }
+        let driver = crate::bgp::driver_pattern(ctx, patterns)?;
+        let graphs = ctx.shard.shared(part.0, 0, || -> Option<Vec<usize>> {
+            let scan = ctx.rete.named_quad_scan(driver)?;
+            let mut gs: Vec<u32> = scan.map(|(g, _)| g).collect();
+            gs.sort_unstable();
+            gs.dedup();
+            Some(
+                gs.into_iter()
+                    .filter_map(|g| ctx.rete.named_graph_ordinal_of_id(g))
+                    .collect(),
+            )
+        });
+        let all = (*graphs).as_ref()?;
+        let (lo, hi) = ctx.shard.applied_rows(part, all.len());
+        let mine: Vec<usize> = all[lo..hi].to_vec();
+        return Some(graph_var_walk(
+            ctx,
+            None,
+            var,
+            inner,
+            mine.into_iter(),
+            false,
+        ));
     }
     // A star on one class-typed subject: probe SPOG for the class's subjects
     // when that reads less than walking the graphs (`bgp::class_probe`).
-    if let Some(rows) = crate::bgp::class_probe_rows(ctx, patterns, slot) {
-        return Some(rows);
+    if whole {
+        if let Some(rows) = crate::bgp::class_probe_rows(ctx, patterns, slot, None) {
+            return Some(rows);
+        }
     }
     // Several patterns: the graphs holding a match of the most constrained one.
     let driver = crate::bgp::driver_pattern(ctx, patterns)?;
@@ -1550,6 +1619,22 @@ fn graph_var_scan<'q>(
         ctx.rete.named_graph_ordinal_of_id(g)
     });
     Some(graph_var_walk(ctx, None, var, inner, ordinals, false))
+}
+
+/// The basic graph pattern every solution of `plan` extends: `plan` itself,
+/// or the one under the left of its OPTIONALs and MINUS, its FILTERs and
+/// BINDs, and either side of a join. `None` when there is none (a UNION, a
+/// sub-select, a path).
+fn required_bgp(plan: &Plan) -> Option<&[TriplePattern]> {
+    match plan {
+        Plan::Bgp(patterns) => Some(patterns),
+        Plan::LeftJoin(l, _, _) | Plan::Minus(l, _) => required_bgp(l),
+        Plan::Filter(_, inner) | Plan::Extend(_, _, inner) => required_bgp(inner),
+        Plan::Join(l, r) => required_bgp(l)
+            .filter(|p| !p.is_empty())
+            .or_else(|| required_bgp(r)),
+        _ => None,
+    }
 }
 
 /// `l ⋈ GRAPH ?g { inner }` where the left side may bind `?g`: stream the left
@@ -2567,11 +2652,11 @@ fn union_pushdown<'q>(
     if rows.len() > budget {
         return None;
     }
-    let mut branches: Vec<std::rc::Rc<crate::bgp::ProbePlan>> = Vec::new();
+    let mut branches: Vec<std::sync::Arc<crate::bgp::ProbePlan>> = Vec::new();
     for p in &leaves {
         // An unknown constant empties that branch.
         if let Some(plan) = crate::bgp::ProbePlan::new(ctx, index, p, &cert) {
-            branches.push(std::rc::Rc::new(plan));
+            branches.push(std::sync::Arc::new(plan));
         }
     }
     Some(Box::new(branches.into_iter().flat_map(move |plan| {
@@ -2707,15 +2792,69 @@ fn minus_iter<'q>(
 /// match is emitted unchanged, and `cond` (the OPTIONAL's filter) decides which
 /// merges count as a match. `merge_rows` re-checks every shared slot, so
 /// maybe-bound slots outside the bucket key stay exact.
+/// The build side of a hash join: the right side's rows, bucketed on the
+/// join slots. Rows are `Send + Sync`, so a query run as shards on several
+/// threads builds it once and every shard probes the same table
+/// ([`crate::row::Shard::shared`]).
+pub(super) struct JoinTable {
+    right: Vec<Row>,
+    buckets: std::collections::HashMap<Vec<Val>, Vec<usize>>,
+    /// Right rows not fully bound on `jv`: candidates for every left row.
+    partial: Vec<usize>,
+    jv: Vec<usize>,
+}
+
+impl JoinTable {
+    /// Evaluate `r` whole and bucket it on the slots both `l` and `r`
+    /// certainly bind.
+    fn build(
+        ctx: &Ctx,
+        index: &GraphIndex,
+        nf: Option<&[String]>,
+        l: &Plan,
+        r: &Plan,
+        right: Vec<Row>,
+    ) -> JoinTable {
+        let _ = (index, nf);
+        let n = ctx.slots.len();
+        let jv: Vec<usize> = {
+            let lcert = certain_bound(ctx, l, n);
+            let rcert = certain_bound(ctx, r, n);
+            let rmask = bound_mask(&right, n);
+            (0..n)
+                .filter(|&i| lcert[i] && rcert[i] && rmask[i])
+                .collect()
+        };
+        let mut buckets: std::collections::HashMap<Vec<Val>, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut partial: Vec<usize> = Vec::new();
+        for (i, row) in right.iter().enumerate() {
+            // Building the hash table allocates without producing a row: a query
+            // under a memory ceiling ([`crate::guard`]) stops here too.
+            crate::guard::check();
+            match jv
+                .iter()
+                .map(|&s| row[s].clone())
+                .collect::<Option<Vec<Val>>>()
+            {
+                Some(k) => buckets.entry(k).or_default().push(i),
+                None => partial.push(i),
+            }
+        }
+        JoinTable {
+            right,
+            buckets,
+            partial,
+            jv,
+        }
+    }
+}
+
 struct JoinIter<'q> {
     ctx: &'q Ctx<'q>,
     index: &'q GraphIndex,
     left: RowIter<'q>,
-    right: Vec<Row>,
-    buckets: std::collections::HashMap<Vec<Val>, Vec<usize>>,
-    /// Right rows not fully bound on `jv` â€” candidates for every left row.
-    partial: Vec<usize>,
-    jv: Vec<usize>,
+    table: std::sync::Arc<JoinTable>,
     optional: bool,
     cond: Option<&'q FExpr>,
     cache: ExistsCache,
@@ -2728,7 +2867,12 @@ struct JoinIter<'q> {
 /// Does `other` certainly bind one of the path's endpoint variables? If so the
 /// path can be driven from that binding (the cheap `(Const, _)` traversal in
 /// [`eval_path`]) rather than enumerated from every node in the graph.
-fn path_endpoint_bound(ctx: &Ctx, other: &Plan, s: &PatternTerm, o: &PatternTerm) -> bool {
+pub(super) fn path_endpoint_bound(
+    ctx: &Ctx,
+    other: &Plan,
+    s: &PatternTerm,
+    o: &PatternTerm,
+) -> bool {
     let cb = certain_bound(ctx, other, ctx.slots.len());
     [s, o].into_iter().any(|t| match t {
         PatternTerm::Var(v) => ctx.slots.slot(v).is_some_and(|i| cb[i]),
@@ -3004,39 +3148,59 @@ fn join_iter<'q>(
             Box::new(std::iter::empty())
         };
     }
-    let n = ctx.slots.len();
-    let jv: Vec<usize> = {
-        let lcert = certain_bound(ctx, l, n);
-        let rcert = certain_bound(ctx, r, n);
-        let rmask = bound_mask(&right, n);
-        (0..n)
-            .filter(|&i| lcert[i] && rcert[i] && rmask[i])
-            .collect()
-    };
-    let mut buckets: std::collections::HashMap<Vec<Val>, Vec<usize>> =
-        std::collections::HashMap::new();
-    let mut partial: Vec<usize> = Vec::new();
-    for (i, row) in right.iter().enumerate() {
-        // Building the hash table allocates without producing a row: a query
-        // under a memory ceiling ([`crate::guard`]) stops here too.
-        crate::guard::check();
-        match jv
-            .iter()
-            .map(|&s| row[s].clone())
-            .collect::<Option<Vec<Val>>>()
-        {
-            Some(k) => buckets.entry(k).or_default().push(i),
-            None => partial.push(i),
-        }
-    }
+    let table = std::sync::Arc::new(JoinTable::build(ctx, index, nf, l, r, right));
     Box::new(JoinIter {
         ctx,
         index,
         left: left(),
-        right,
-        buckets,
-        partial,
-        jv,
+        table,
+        optional,
+        cond,
+        cache: ExistsCache::new(),
+        cur_left: None,
+        candidates: Vec::new(),
+        ci: 0,
+        matched: false,
+    })
+}
+
+/// `l ⋈ r` (or `l OPTIONAL r`) in a shard of a grouped query run on several
+/// threads: the hash join of [`join_iter`], with its build side made once for
+/// all shards. The calling thread's dry run evaluates `r` and builds the
+/// table; a worker finds it and streams its slice of `l` against it. Same
+/// rows, in the same order, as the hash join over the whole of `l`.
+#[allow(clippy::too_many_arguments)]
+fn shared_hash_join<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    node: usize,
+    l: &'q Plan,
+    r: &'q Plan,
+    optional: bool,
+    cond: Option<&'q FExpr>,
+) -> RowIter<'q> {
+    // The measuring pass only needs the left side's scans.
+    if ctx.shard.measuring() {
+        return eval_plan_iter(ctx, index, nf, l);
+    }
+    let table = ctx.shard.shared(node, 0, || {
+        let right = eval_plan_in(ctx, index, nf, r);
+        JoinTable::build(ctx, index, nf, l, r, right)
+    });
+    let left = eval_plan_iter(ctx, index, nf, l);
+    if table.right.is_empty() {
+        return if optional {
+            left
+        } else {
+            Box::new(std::iter::empty())
+        };
+    }
+    Box::new(JoinIter {
+        ctx,
+        index,
+        left,
+        table,
         optional,
         cond,
         cache: ExistsCache::new(),
@@ -3099,7 +3263,7 @@ impl Iterator for JoinIter<'_> {
                 while self.ci < self.candidates.len() {
                     let ri = self.candidates[self.ci];
                     self.ci += 1;
-                    if let Some(m) = merge_rows(left, &self.right[ri]) {
+                    if let Some(m) = merge_rows(left, &self.table.right[ri]) {
                         if self
                             .cond
                             .is_none_or(|f| f.boolean(self.ctx, self.index, &m, &mut self.cache))
@@ -3116,18 +3280,19 @@ impl Iterator for JoinIter<'_> {
             }
             let l = self.left.next()?;
             self.candidates = match self
+                .table
                 .jv
                 .iter()
                 .map(|&s| l[s].clone())
                 .collect::<Option<Vec<Val>>>()
             {
                 Some(k) => {
-                    let mut c = self.buckets.get(&k).cloned().unwrap_or_default();
-                    c.extend_from_slice(&self.partial);
+                    let mut c = self.table.buckets.get(&k).cloned().unwrap_or_default();
+                    c.extend_from_slice(&self.table.partial);
                     c
                 }
                 // The left row lacks a key slot: every right row is a candidate.
-                None => (0..self.right.len()).collect(),
+                None => (0..self.table.right.len()).collect(),
             };
             self.ci = 0;
             self.matched = false;

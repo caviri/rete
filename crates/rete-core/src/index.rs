@@ -2670,7 +2670,14 @@ impl GraphIndex {
         // handful of coalesced reads (4, 8, 16, … tiles). A bound leading scan
         // spans a single tile, so the prefetch no-ops and it faults just that
         // one tile, unchanged.
-        let window = std::cell::Cell::new(PREFETCH_WINDOW_START);
+        // A cut scan (a shard of a grouped query) is read to its end: it starts
+        // at the largest batch, so a slice over a network is a request or two,
+        // not a ramp of its own.
+        let window = std::cell::Cell::new(if cut.is_some() {
+            PREFETCH_WINDOW_MAX
+        } else {
+            PREFETCH_WINDOW_START
+        });
         (start..end)
             // Synopsis pre-fault prune: drop a routed tile the directory proves
             // can't match a bound secondary component, **without fetching it**

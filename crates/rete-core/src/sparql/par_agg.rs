@@ -2,44 +2,70 @@
 //!
 //! `SELECT … (COUNT(*) AS ?n) WHERE { … } GROUP BY …` over ten million rows
 //! spends its time per row: decoding a term, a string function, a lookup in
-//! the row's graph. None of it depends on any other row, and the evaluator ran
-//! all of it on one thread.
+//! the row's graph, a probe of a join. None of it depends on any other row,
+//! and the evaluator ran all of it on one thread.
 //!
-//! Here the scan that drives the pattern is cut into [`SHARDS`] slices of its
-//! tiles. Each worker thread takes slices in order, evaluates the *same* plan
-//! over one slice at a time in its own context (its own term memo; the
-//! contexts hold `Rc`s and never cross threads), and folds the rows into
-//! partial aggregates. The slices' groups are merged in slice order, which is
-//! scan order, so the answer is the one fold's answer: see the partial
-//! aggregation notes in `aggregate`.
+//! Here the scan that drives the pattern is cut into slices. Each worker
+//! thread takes slices in order and evaluates the *same* plan over one slice
+//! at a time, in its own context (its own term memos). What the slices have
+//! in common is made once, by the calling thread, and read by all of them:
+//! rows are `Send + Sync`, so a hash join's table, a basic graph pattern's
+//! prefix, or the list of graphs a block visits is one copy behind an `Arc`
+//! ([`crate::row::Shard::shared`]).
+//!
+//! **Two ways to aggregate.**
+//!
+//! - *Merged groups.* Each worker folds its slices into partial aggregates
+//!   and the calling thread merges them in slice order, which is scan order,
+//!   so every aggregate sees its rows in the order the single fold does (see
+//!   the partial aggregation notes in `aggregate`). The slices are fixed by
+//!   the file ([`SHARDS`]), not by the machine.
+//! - *One fold.* When an aggregate keeps a set of the values it saw
+//!   (`COUNT(DISTINCT …)`, `GROUP_CONCAT(DISTINCT …)`), or a slice holds more
+//!   groups than may wait for a merge ([`MAX_SHARD_GROUPS`]), the workers do
+//!   the per-row work and send their rows, cut down to the slots the fold
+//!   reads, to the calling thread, which folds them slice after slice exactly
+//!   as it folds the one scan. Memory is the single fold's, plus the rows in
+//!   flight ([`ROWS_AHEAD`]).
 //!
 //! **Which queries.** The driving scan has to sit where the algebra
-//! distributes over a union of its rows, and nothing the plan evaluates beside
-//! it may be repeated per slice at a cost. So the path from the top of the
-//! pattern to the scan goes through FILTER and BIND (without EXISTS), UNION
-//! (each branch split, or run in slice 0 alone when it cannot be), and the
-//! left side of a join or OPTIONAL whose right side is `GRAPH ?g { … }` with
-//! `?g` bound on the left (one lookup per row, nothing built). The scan
-//! itself is one triple pattern: in a graph, or under `GRAPH ?g` on a
-//! quad-index file. A hash join is not on the list: every slice would build
-//! its right side again.
+//! distributes over a union of its rows. The path from the top of the pattern
+//! to it goes through FILTER and BIND (without EXISTS), UNION (each branch
+//! split, or run in slice 0 alone when it cannot be), and the left side of a
+//! join or OPTIONAL. The right side of that join is either what the single
+//! thread looks up once per left row (`GRAPH ?g { … }` with `?g` bound on the
+//! left, a path from a bound endpoint, a BGP whose cheapest pattern is a fat
+//! scan), or it is built once into the hash table every slice probes. The
+//! scan itself is:
+//!
+//! - a basic graph pattern: its one pattern's tiles; or, with several
+//!   patterns, the tiles of the pattern `BgpSolutions` streams, or the prefix
+//!   rows that look the last pattern up (`bgp::shard_bgp_rows`);
+//! - a block under `GRAPH ?g`: a one-pattern scan over the quad orders, the
+//!   subjects of a class probe, the graphs its required pattern is found in,
+//!   or every graph.
 //!
 //! **Checked, not assumed.** The plan nodes are named by address and every one
 //! of them must be reached exactly once per slice ([`crate::row::Shard`]). A
 //! pushdown that evaluates a node some other way would hand its rows to every
 //! slice; this is checked on a dry run before any thread starts and again on
-//! every slice, and a miss means the query runs on one thread as before.
+//! every slice, and a miss means the query runs on one thread as before. The
+//! dry run measures first and builds second: a query whose scan is too short
+//! to split never pays for a table the single thread would not build.
 //!
-//! **Memory.** A slice holding more than [`MAX_SHARD_GROUPS`] groups stops the
-//! attempt (the one fold then runs): a slice's groups wait for the slices
-//! before it, and a query with millions of groups would hold them several
-//! times over. Workers run at most `2 × workers` slices ahead of the merge.
-//! Each worker's term memos are capped at its share of one context's.
+//! **Over a network.** A slice reads its tiles ahead in one batch (a cut scan
+//! starts at the largest window; a restricted quad scan faults its own
+//! tiles), so a remote file is cut into fewer, larger slices
+//! ([`REMOTE_SHARDS`], each at least [`REMOTE_MIN_TILES`] tiles) and a short
+//! scan stays one scan. A join that looks something up per row is not split
+//! there: lookups from several threads read half as many bytes again as one
+//! thread's in order. Nor is a walk of every graph, which fetches its section
+//! in bulk.
 //!
-//! **Local reads only.** A scan over a remote file reads ahead in a few
-//! growing batches; sixty-four slices would each start small, and the same
-//! bytes would come in many more requests. So a file whose reads are round
-//! trips ([`crate::Rete::reads_are_remote`]) keeps its one scan.
+//! **Memory.** Workers run at most `2 × workers` slices ahead of the calling
+//! thread. Each worker's term memos are capped at its share of one
+//! context's. A table built for all slices is the table the single thread's
+//! hash join builds.
 //!
 //! Native builds with the `parallel` feature only. `RETE_QUERY_THREADS=1` (or
 //! [`set_query_threads`]) turns it off.
@@ -118,20 +144,48 @@ mod threaded {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Condvar, Mutex};
 
-    use super::super::aggregate::{aggregate_partial, mergeable, Merger, PartialGroups};
-    use super::super::eval::{certain_bound, eval_plan_iter, expr_has_exists, query_ctx};
+    use super::super::aggregate::{
+        aggregate_folded, aggregate_partial, apply_pre, fold_slots, mergeable, Merger,
+        PartialGroups,
+    };
+    use super::super::eval::{
+        certain_bound, eval_plan_iter, expr_has_exists, path_endpoint_bound, possible_bound,
+        query_ctx, shares_certain_var,
+    };
     use super::super::{diag, GraphTarget, GroupSpec, Plan, Select};
     use super::query_threads;
     use crate::index::GraphIndex;
-    use crate::row::{Ctx, Row, MEMO_CAP_BYTES};
+    use crate::row::{Ctx, Row, SharedState, MEMO_CAP_BYTES};
 
     /// How many slices the driving scan is cut into (fewer when it has fewer
     /// tiles). Fixed, so the slices, and with them the order in which a
     /// floating-point SUM adds up, do not depend on the machine's core count.
     const SHARDS: usize = 64;
 
-    /// The most groups one slice may hold: see the module notes on memory.
+    /// The slices of a file read over a network: as many as the most workers,
+    /// each at least [`REMOTE_MIN_TILES`] tiles of the driving scan.
+    const REMOTE_SHARDS: usize = 16;
+
+    /// The fewest tiles a slice of a remote file's scan holds (about half a
+    /// megabyte): below it the requests would outnumber the single scan's.
+    const REMOTE_MIN_TILES: usize = 8;
+
+    /// The most groups one slice may hold when the slices' groups are merged:
+    /// see the module notes on memory.
     const MAX_SHARD_GROUPS: usize = 100_000;
+
+    /// Rows per message when the workers send rows to the one fold.
+    const ROW_CHUNK: usize = 2048;
+
+    /// About how many rows may wait for the one fold, over all workers.
+    const ROWS_AHEAD: usize = 1 << 21;
+
+    /// How many slices the driving scan is cut into when the rows go to one
+    /// fold. The fold sees the scan's rows in the scan's order whatever the
+    /// slices are, so they can be small: a worker then finishes a slice
+    /// before its share of the waiting rows is full, and does not stop to
+    /// wait for the fold.
+    const ROW_SHARDS: usize = 1024;
 
     /// A worker's stack: the main thread's usual 8 MiB, not a spawned
     /// thread's 2 MiB, since a worker evaluates the same (possibly deeply
@@ -151,43 +205,53 @@ mod threaded {
     struct Split {
         leaves: Vec<usize>,
         only_first: Vec<usize>,
+        /// Joins whose right side is built once for all slices.
+        builds: Vec<usize>,
     }
 
-    /// Find the driving scans under `plan` (see the module notes). `false`:
-    /// this pattern cannot be split, and `out` holds nothing to rely on.
-    fn split(ctx: &Ctx, plan: &Plan, from_named: bool, out: &mut Split) -> bool {
+    /// Find the driving scans under `plan` (see the module notes); `index` is
+    /// the graph `plan` is evaluated on. `false`: this pattern cannot be
+    /// split, and `out` holds nothing to rely on.
+    fn split(
+        ctx: &Ctx,
+        plan: &Plan,
+        index: &GraphIndex,
+        from_named: bool,
+        out: &mut Split,
+    ) -> bool {
         let node = plan as *const Plan as usize;
         match plan {
-            Plan::Bgp(patterns) if patterns.len() == 1 => {
+            Plan::Bgp(patterns) if !patterns.is_empty() => {
                 out.leaves.push(node);
                 true
             }
-            Plan::Graph(GraphTarget::Var(v), inner) => {
-                let one = matches!(&**inner, Plan::Bgp(p) if p.len() == 1);
-                if one
-                    && !from_named
-                    && ctx.rete.quad_named().is_some()
-                    && ctx.slots.slot(v).is_some()
-                {
+            // Any block under a graph variable: its one-pattern scan, the
+            // graphs its required pattern is found in, or every graph, sliced.
+            Plan::Graph(GraphTarget::Var(v), _) => {
+                if ctx.slots.slot(v).is_some() {
                     out.leaves.push(node);
                     true
                 } else {
                     false
                 }
             }
-            Plan::Graph(GraphTarget::Named(_), inner) => split(ctx, inner, from_named, out),
+            Plan::Graph(GraphTarget::Named(iri), inner) => match ctx.rete.graph_index(iri) {
+                Some(gi) => split(ctx, inner, gi, from_named, out),
+                None => false,
+            },
             Plan::Filter(e, inner) | Plan::Extend(_, e, inner) => {
-                !expr_has_exists(e) && split(ctx, inner, from_named, out)
+                !expr_has_exists(e) && split(ctx, inner, index, from_named, out)
             }
             Plan::Union(l, r) => {
                 // A branch that cannot be split runs whole, in slice 0 alone.
                 let mut branch = |p: &Plan| {
-                    let (a, b) = (out.leaves.len(), out.only_first.len());
-                    if split(ctx, p, from_named, out) {
+                    let mark = (out.leaves.len(), out.only_first.len(), out.builds.len());
+                    if split(ctx, p, index, from_named, out) {
                         true
                     } else {
-                        out.leaves.truncate(a);
-                        out.only_first.truncate(b);
+                        out.leaves.truncate(mark.0);
+                        out.only_first.truncate(mark.1);
+                        out.builds.truncate(mark.2);
                         out.only_first.push(p as *const Plan as usize);
                         false
                     }
@@ -196,27 +260,90 @@ mod threaded {
                 let r = branch(r);
                 l || r
             }
-            Plan::Join(l, r) => looked_up_per_row(ctx, l, r) && split(ctx, l, from_named, out),
+            Plan::Join(l, r) => join(ctx, node, l, r, index, from_named, out),
             Plan::LeftJoin(l, r, cond) => {
                 cond.as_ref().is_none_or(|c| !expr_has_exists(c))
-                    && looked_up_per_row(ctx, l, r)
-                    && split(ctx, l, from_named, out)
+                    && join(ctx, node, l, r, index, from_named, out)
             }
             _ => false,
         }
     }
 
-    /// Is `r` joined to `l` by one lookup per left row, with nothing built
-    /// from `r` as a whole? `GRAPH ?g { … }` with `?g` certainly bound on the
-    /// left (`graph_bound_join`).
-    fn looked_up_per_row(ctx: &Ctx, l: &Plan, r: &Plan) -> bool {
-        let Plan::Graph(GraphTarget::Var(gv), _) = r else {
+    /// `l ⋈ r` (or `l OPTIONAL r`) with the driving scan under `l`. The right
+    /// side is either looked up once per left row, as the single thread would
+    /// (nothing is built), or built once into a hash table every slice probes.
+    fn join(
+        ctx: &Ctx,
+        node: usize,
+        l: &Plan,
+        r: &Plan,
+        index: &GraphIndex,
+        from_named: bool,
+        out: &mut Split,
+    ) -> bool {
+        if looked_up_per_row(ctx, index, l, r) {
+            // Over a network every lookup is a request, and lookups from
+            // several threads at once read more than one thread's do in
+            // order (measured: half as many bytes again): not split.
+            return !ctx.rete.reads_are_remote() && split(ctx, l, index, from_named, out);
+        }
+        if !buildable(r) {
             return false;
-        };
-        let Some(slot) = ctx.slots.slot(gv) else {
-            return false;
-        };
-        certain_bound(ctx, l, ctx.slots.len())[slot]
+        }
+        let mark = out.builds.len();
+        out.builds.push(node);
+        if split(ctx, l, index, from_named, out) {
+            true
+        } else {
+            out.builds.truncate(mark);
+            false
+        }
+    }
+
+    /// Is `r` joined to `l` by one lookup per left row, whatever the rows,
+    /// with nothing built from `r` as a whole? The three cases `join_iter`
+    /// decides before it sees a row: `GRAPH ?g { … }` with `?g` possibly
+    /// bound on the left, a property path with an endpoint bound on the left,
+    /// and a BGP that shares a certainly bound variable and whose cheapest
+    /// pattern is a fat scan.
+    fn looked_up_per_row(ctx: &Ctx, index: &GraphIndex, l: &Plan, r: &Plan) -> bool {
+        let lcert = certain_bound(ctx, l, ctx.slots.len());
+        match r {
+            // As `join_iter` decides it: possibly bound is enough. A row that
+            // leaves `?g` unbound joins with every graph, and that walk is
+            // then made, once, in the slice the row is in.
+            Plan::Graph(GraphTarget::Var(gv), _) => ctx
+                .slots
+                .slot(gv)
+                .is_some_and(|slot| possible_bound(ctx, l, ctx.slots.len())[slot]),
+            Plan::Path(s, _, o) => path_endpoint_bound(ctx, l, s, o),
+            Plan::Bgp(patterns) => {
+                !patterns.is_empty()
+                    && shares_certain_var(ctx, patterns, &lcert)
+                    && crate::bgp::bgp_min_estimate(ctx, index, patterns)
+                        .is_none_or(|n| n >= crate::bgp::FAT_SCAN_ROWS)
+            }
+            _ => false,
+        }
+    }
+
+    /// May the right side of a join be evaluated whole and built into a
+    /// table? The shapes the single thread hash-joins. Not the ones it would
+    /// rather push the left rows into (VALUES, a UNION of patterns, an
+    /// entailed atom), nor a path, which it drives from a bound endpoint.
+    fn buildable(r: &Plan) -> bool {
+        match r {
+            Plan::Bgp(_) | Plan::Subquery(_) => true,
+            Plan::Graph(_, inner) => buildable(inner),
+            Plan::Filter(e, inner) | Plan::Extend(_, e, inner) => {
+                !expr_has_exists(e) && buildable(inner)
+            }
+            Plan::Join(a, b) => buildable(a) && buildable(b),
+            Plan::LeftJoin(a, b, cond) => {
+                cond.as_ref().is_none_or(|c| !expr_has_exists(c)) && buildable(a) && buildable(b)
+            }
+            _ => false,
+        }
     }
 
     /// Runs its closure when dropped by a panic's unwinding.
@@ -230,7 +357,8 @@ mod threaded {
         }
     }
 
-    /// Which slice a worker takes next, and how far the merge has come.
+    /// Which slice a worker takes next, and how far the calling thread has
+    /// come (slices merged, or the slice whose rows it is folding).
     struct Claims {
         next: usize,
         merged: usize,
@@ -244,6 +372,51 @@ mod threaded {
         Diag(diag::Taken),
     }
 
+    /// How a run on several threads ended.
+    enum Outcome {
+        Done(Vec<Row>),
+        /// A slice held more groups than may wait for a merge.
+        TooManyGroups,
+        Failed,
+    }
+
+    /// What every run needs: the query, the split, and what was built for all
+    /// slices.
+    struct Job<'j, 'q> {
+        rete: &'q crate::file::Rete,
+        sel: &'q Select,
+        active: &'q GraphIndex,
+        nf: Option<&'q [String]>,
+        g: &'q GroupSpec,
+        sp: &'j Split,
+        shared: &'j SharedState,
+        /// The number of slices when their groups are merged.
+        n: usize,
+        /// The length of the longest driving scan, in tiles (or rows).
+        tiles: usize,
+        /// The file is read over a network.
+        remote: bool,
+        workers: usize,
+    }
+
+    impl Job<'_, '_> {
+        /// A worker's own context: its share of the memos, the split, and
+        /// what is shared.
+        fn worker_ctx(&self) -> Ctx<'_> {
+            let mut wctx = query_ctx(self.rete, self.sel);
+            let memo_cap = (MEMO_CAP_BYTES / self.workers).max(MIN_MEMO_CAP);
+            wctx.resolver.set_memo_cap(memo_cap);
+            wctx.exhaustive.set(true);
+            wctx.shard.set_plan(
+                self.sp.leaves.clone(),
+                self.sp.only_first.clone(),
+                self.sp.builds.clone(),
+                self.shared.clone(),
+            );
+            wctx
+        }
+    }
+
     pub(in super::super) fn aggregate_shards<'q>(
         ctx: &'q Ctx<'q>,
         sel: &'q Select,
@@ -255,35 +428,87 @@ mod threaded {
         if threads < 2 || IN_WORKER.with(Cell::get) || crate::guard::armed_here() {
             return None;
         }
-        // Over a network one scan batches its reads into a few requests; cut
-        // into slices it would make many small ones. Local reads only.
-        if ctx.rete.reads_are_remote() {
-            return None;
-        }
-        if !mergeable(g) || g.pre.iter().any(|(_, e)| expr_has_exists(e)) {
+        if g.pre.iter().any(|(_, e)| expr_has_exists(e)) {
             return None;
         }
         let mut sp = Split::default();
-        if !split(ctx, &sel.plan, nf.is_some(), &mut sp) || sp.leaves.is_empty() {
+        if !split(ctx, &sel.plan, active, nf.is_some(), &mut sp) || sp.leaves.is_empty() {
             return None;
         }
 
-        // Dry run: build slice 0's pipeline in this context, pull nothing. It
-        // must reach every split node once, and it tells how many tiles the
-        // longest driving scan has.
-        ctx.shard.set_plan(sp.leaves.clone(), sp.only_first.clone());
-        ctx.shard.begin(Some((0, SHARDS)));
-        drop(eval_plan_iter(ctx, active, nf, &sel.plan));
-        let (exact, tiles) = (ctx.shard.exact(), ctx.shard.tiles());
+        // Dry runs: build slice 0's pipeline in this context, pull nothing.
+        // The first only measures: it must reach every split node once, and
+        // it tells how long the longest driving scan is. A scan too short to
+        // split ends here, before anything is built for it. The second
+        // builds what the slices share (a join's table).
+        ctx.shard.set_plan(
+            sp.leaves.clone(),
+            sp.only_first.clone(),
+            sp.builds.clone(),
+            SharedState::new(),
+        );
+        let dry = |measuring: bool| {
+            ctx.shard.set_measuring(measuring);
+            ctx.shard.begin(Some((0, SHARDS)));
+            drop(eval_plan_iter(ctx, active, nf, &sel.plan));
+            (ctx.shard.exact(), ctx.shard.tiles())
+        };
+        let (mut exact, tiles) = dry(true);
+        if exact && tiles >= 2 && !sp.builds.is_empty() {
+            exact = dry(false).0;
+        }
+        let shared = ctx.shard.shared_state();
         ctx.shard.clear();
-        let n = SHARDS.min(tiles);
+        // Over a network a slice is a request or two (it reads its tiles ahead
+        // in one batch), so there are fewer of them and none is small: a short
+        // scan stays one scan, with its few coalesced requests.
+        let remote = ctx.rete.reads_are_remote();
+        let n = if remote {
+            REMOTE_SHARDS.min(tiles / REMOTE_MIN_TILES)
+        } else {
+            SHARDS.min(tiles)
+        };
         if !exact || n < 2 {
             return None;
         }
-        let workers = threads.min(n);
-        let window = 2 * workers;
-        let memo_cap = (MEMO_CAP_BYTES / workers).max(MIN_MEMO_CAP);
+        let job = Job {
+            rete: ctx.rete,
+            sel,
+            active,
+            nf,
+            g,
+            sp: &sp,
+            shared: &shared,
+            n,
+            tiles,
+            remote,
+            workers: threads.min(n),
+        };
+        // The slices' groups are merged when every aggregate can be; when one
+        // cannot (a set of distinct values), or a slice has too many groups
+        // to hold while it waits, the workers send their rows to one fold.
+        let outcome = if mergeable(g) {
+            match merge_groups(ctx, &job) {
+                Outcome::TooManyGroups => fold_rows(ctx, &job),
+                other => other,
+            }
+        } else {
+            fold_rows(ctx, &job)
+        };
+        match outcome {
+            Outcome::Done(rows) => {
+                super::SHARDED.fetch_add(1, Ordering::Relaxed);
+                Some(rows)
+            }
+            _ => None,
+        }
+    }
 
+    /// Each worker folds its slices into partial aggregates; the calling
+    /// thread merges them in slice order.
+    fn merge_groups(ctx: &Ctx, job: &Job) -> Outcome {
+        let (n, workers) = (job.n, job.workers);
+        let window = 2 * workers;
         let claims = Mutex::new(Claims {
             next: 0,
             merged: 0,
@@ -291,6 +516,7 @@ mod threaded {
         });
         let wake = Condvar::new();
         let abort = AtomicBool::new(false);
+        let too_many = AtomicBool::new(false);
         let give_up = || {
             abort.store(true, Ordering::Relaxed);
             if let Ok(mut c) = claims.lock() {
@@ -298,7 +524,6 @@ mod threaded {
             }
             wake.notify_all();
         };
-        let rete = ctx.rete;
         let (tx, rx) = mpsc::channel::<Msg>();
         let mut merger = Merger::default();
         let mut failed = false;
@@ -306,18 +531,15 @@ mod threaded {
         std::thread::scope(|scope| {
             for _ in 0..workers {
                 let tx = tx.clone();
-                let (claims, wake, abort, give_up, sp) = (&claims, &wake, &abort, &give_up, &sp);
+                let (claims, wake, abort, too_many, give_up) =
+                    (&claims, &wake, &abort, &too_many, &give_up);
                 let worker = move || {
                     // A worker that panics never sends its slice: the others
                     // must not wait for the merge to pass it.
                     let _stop = OnPanic(give_up);
                     IN_WORKER.with(|w| w.set(true));
                     diag::begin();
-                    let mut wctx = query_ctx(rete, sel);
-                    wctx.resolver.set_memo_cap(memo_cap);
-                    wctx.exhaustive.set(true);
-                    wctx.shard
-                        .set_plan(sp.leaves.clone(), sp.only_first.clone());
+                    let wctx = job.worker_ctx();
                     let wctx = &wctx;
                     loop {
                         let i = {
@@ -336,12 +558,17 @@ mod threaded {
                         let Some(i) = i else { break };
                         wctx.shard.begin(Some((i, n)));
                         let mut seen = 0u32;
-                        let rows = eval_plan_iter(wctx, active, nf, &sel.plan).take_while(|_| {
-                            seen = seen.wrapping_add(1);
-                            !seen.is_multiple_of(4096) || !abort.load(Ordering::Relaxed)
-                        });
-                        let part = aggregate_partial(wctx, rows, g, MAX_SHARD_GROUPS)
-                            .filter(|_| wctx.shard.exact() && !abort.load(Ordering::Relaxed));
+                        let rows = eval_plan_iter(wctx, job.active, job.nf, &job.sel.plan)
+                            .take_while(|_| {
+                                seen = seen.wrapping_add(1);
+                                !seen.is_multiple_of(4096) || !abort.load(Ordering::Relaxed)
+                            });
+                        let folded = aggregate_partial(wctx, rows, job.g, MAX_SHARD_GROUPS);
+                        if folded.is_none() {
+                            too_many.store(true, Ordering::Relaxed);
+                        }
+                        let part =
+                            folded.filter(|_| wctx.shard.exact() && !abort.load(Ordering::Relaxed));
                         let gone = part.is_none();
                         if gone {
                             give_up();
@@ -353,7 +580,7 @@ mod threaded {
                     let _ = tx.send(Msg::Diag(diag::take()));
                 };
                 // A thread that cannot be started is one worker fewer; with
-                // none at all no slice arrives and the single fold runs.
+                // none at all no slice arrives and the attempt fails.
                 if std::thread::Builder::new()
                     .name("rete-query".into())
                     .stack_size(WORKER_STACK)
@@ -368,9 +595,10 @@ mod threaded {
             // Merge in slice order as the slices arrive.
             let mut pending: BTreeMap<usize, PartialGroups> = BTreeMap::new();
             let mut next = 0usize;
+            let mut diags = Vec::new();
             for msg in rx {
                 match msg {
-                    Msg::Diag(taken) => diag::absorb(taken),
+                    Msg::Diag(taken) => diags.push(taken),
                     Msg::Part(_, None) => {
                         failed = true;
                         pending.clear();
@@ -393,12 +621,172 @@ mod threaded {
             if next != n {
                 failed = true;
             }
+            // Only a run that is kept reports what its workers recorded: a
+            // run given up is evaluated again, and records it all again.
+            if !failed {
+                diags.into_iter().for_each(diag::absorb);
+            }
         });
 
         if failed {
-            return None;
+            return if too_many.load(Ordering::Relaxed) {
+                Outcome::TooManyGroups
+            } else {
+                Outcome::Failed
+            };
         }
-        super::SHARDED.fetch_add(1, Ordering::Relaxed);
-        Some(merger.finish(ctx, g))
+        Outcome::Done(merger.finish(ctx, job.g))
+    }
+
+    /// Each worker evaluates its slices and sends the rows; the calling
+    /// thread folds them, slice after slice, exactly as it folds the one
+    /// scan's rows. Whatever the aggregates keep (distinct sets, any number of
+    /// groups) is kept once, by the one fold. The workers do the per-row work
+    /// of the pattern and of the aggregated expressions.
+    fn fold_rows(ctx: &Ctx, job: &Job) -> Outcome {
+        // (A remote file keeps its few large slices: see `aggregate_shards`.)
+        let n = if job.remote {
+            job.n
+        } else {
+            ROW_SHARDS.min(job.tiles)
+        };
+        let workers = job.workers;
+        // The slots the fold reads: a row is cut down to them before it is
+        // sent, so what waits for the fold is a few values a row.
+        let keep = fold_slots(ctx, job.g);
+        let keep = &keep;
+        // A slice's rows wait in its own bounded channel, so a worker ahead
+        // of the fold stops when its share of the rows that may wait is full.
+        let chunks_ahead = (ROWS_AHEAD / workers / ROW_CHUNK).max(1);
+        let mut senders = Vec::with_capacity(n);
+        let mut receivers = Vec::with_capacity(n);
+        for _ in 0..n {
+            let (tx, rx) = mpsc::sync_channel::<Vec<Row>>(chunks_ahead);
+            senders.push(Some(tx));
+            receivers.push(rx);
+        }
+        let senders = Mutex::new(senders);
+        let claims = Mutex::new(Claims {
+            next: 0,
+            merged: 0,
+            stop: false,
+        });
+        let wake = Condvar::new();
+        let abort = AtomicBool::new(false);
+        let give_up = || {
+            abort.store(true, Ordering::Relaxed);
+            if let Ok(mut c) = claims.lock() {
+                c.stop = true;
+            }
+            // A slice nobody took has its sender here: dropped, so the fold
+            // does not wait for it.
+            if let Ok(mut s) = senders.lock() {
+                s.iter_mut().for_each(|tx| *tx = None);
+            }
+            wake.notify_all();
+        };
+        let (dtx, drx) = mpsc::channel::<diag::Taken>();
+        let mut out = Vec::new();
+
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let dtx = dtx.clone();
+                let (claims, wake, abort, give_up, senders) =
+                    (&claims, &wake, &abort, &give_up, &senders);
+                let worker = move || {
+                    let _stop = OnPanic(give_up);
+                    IN_WORKER.with(|w| w.set(true));
+                    diag::begin();
+                    let wctx = job.worker_ctx();
+                    let wctx = &wctx;
+                    loop {
+                        // At most `2 × workers` slices ahead of the one being
+                        // folded: what waits is bounded by slices in flight.
+                        let i = {
+                            let mut c = claims.lock().unwrap();
+                            loop {
+                                if c.stop || c.next >= n {
+                                    break None;
+                                }
+                                if c.next < c.merged + 2 * workers {
+                                    c.next += 1;
+                                    break Some(c.next - 1);
+                                }
+                                c = wake.wait(c).unwrap();
+                            }
+                        };
+                        let Some(i) = i else { break };
+                        let Some(tx) = senders.lock().unwrap()[i].take() else {
+                            break;
+                        };
+                        wctx.shard.begin(Some((i, n)));
+                        let mut chunk: Vec<Row> = Vec::with_capacity(ROW_CHUNK);
+                        let mut open = true;
+                        for mut row in eval_plan_iter(wctx, job.active, job.nf, &job.sel.plan) {
+                            apply_pre(wctx, &mut row, job.g);
+                            chunk.push(keep.iter().map(|&s| row[s].take()).collect());
+                            if chunk.len() == ROW_CHUNK {
+                                let full =
+                                    std::mem::replace(&mut chunk, Vec::with_capacity(ROW_CHUNK));
+                                if tx.send(full).is_err() || abort.load(Ordering::Relaxed) {
+                                    open = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if open && !chunk.is_empty() {
+                            open = tx.send(chunk).is_ok();
+                        }
+                        if !wctx.shard.exact() {
+                            give_up();
+                        }
+                        if !open || abort.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                    let _ = dtx.send(diag::take());
+                };
+                if std::thread::Builder::new()
+                    .name("rete-query".into())
+                    .stack_size(WORKER_STACK)
+                    .spawn_scoped(scope, worker)
+                    .is_err()
+                {
+                    // Fewer workers; with none, no slice would ever be taken.
+                    give_up();
+                    break;
+                }
+            }
+            drop(dtx);
+
+            // The one fold: slice after slice, each slice's rows in order.
+            let (claims, wake, abort) = (&claims, &wake, &abort);
+            let rows = receivers
+                .into_iter()
+                .enumerate()
+                .flat_map(move |(i, rx)| {
+                    if let Ok(mut c) = claims.lock() {
+                        c.merged = i;
+                    }
+                    wake.notify_all();
+                    rx.into_iter().flatten()
+                })
+                .take_while(|_| !abort.load(Ordering::Relaxed));
+            out = aggregate_folded(ctx, rows, job.g, keep);
+            if abort.load(Ordering::Relaxed) {
+                // Workers blocked on a full channel see it closed (the
+                // receivers went with the iterator) and stop.
+                give_up();
+            } else {
+                // Every slice was folded to its end; the workers are done or
+                // about to be. Their records come once they have all gone.
+                wake.notify_all();
+            }
+        });
+        if abort.load(Ordering::Relaxed) {
+            return Outcome::Failed;
+        }
+        drx.into_iter().for_each(diag::absorb);
+        Outcome::Done(out)
     }
 }
