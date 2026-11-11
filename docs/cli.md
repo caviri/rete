@@ -643,8 +643,8 @@ ceiling of the card-cost measurement; the spill (sorted runs, a few bytes per st
 and order) goes to `--tmp-dir`, by default beside the output. The 2018 nanopub dump
 (378.7 M quads, 2.48 GB) is re-encoded in 28 minutes at a peak of 2.8 GB under
 `docker --memory 4g` with `--memory-budget-mb 2800`, the 202 MB OpenCitations sample in
-110 s at 2.0 GB; with `--cluster-subjects-by-class` the dump was killed under 4 GB at the default sort
-run size (100 M rows) and completed with `RETE_QUAD_RUN_ROWS=50000000`. See the
+110 s at 2.0 GB; with `--cluster-subjects-by-class` the dump was converted with
+`RETE_QUAD_RUN_ROWS=50000000` (the default sort run is 100 M rows; not measured under 4 GB). See the
 CHANGELOG for the figures. A source with a community
 pyramid (or per-graph named graphs) is re-encoded in memory instead, since the pyramid is
 built in memory.
