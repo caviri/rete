@@ -1544,6 +1544,9 @@ fn pattern_scan_bytes(ctx: &Ctx, index: &GraphIndex, t: &(SlotTerm, SlotTerm, Sl
 
 /// [`pattern_scan_bytes`] for a pattern already in role-id space.
 pub(crate) fn routed_scan_bytes(index: &GraphIndex, pattern: Pattern) -> u64 {
+    if let Some(u) = index.union() {
+        return u.routed_bytes(pattern);
+    }
     let sections = index.tile_sections();
     let mut best = u64::MAX;
     // Only the permutations the FILE carries: an absent section is an empty

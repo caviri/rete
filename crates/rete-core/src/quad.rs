@@ -1132,6 +1132,55 @@ impl QuadCore {
         self.failed.store(true, Ordering::Relaxed);
     }
 
+    /// The scan of `pat` over the order in slot `slot` (see [`QuadNamed::scan`]).
+    fn scan_slot(
+        self: &Arc<Self>,
+        pat: (Option<u32>, Option<u32>, Option<u32>),
+        slot: usize,
+    ) -> Option<QuadScan> {
+        let perm = quad7::perm_of(slot);
+        let last = quad7::is_last(slot);
+        let abc = perm.order_pattern(pat);
+        let (dir, base) = match abc[0] {
+            Some(a) if last && self.is_clustered(slot) => {
+                // Subject `a` is in the one run of its class.
+                match self.resolve_run(slot, a)? {
+                    Some(run) => self.dir_in_run(slot, run, a)?,
+                    None => (Arc::from(Vec::new()), 0),
+                }
+            }
+            Some(a) if last => self.dir_for_graph(slot, a)?,
+            _ => (self.dir(slot)?, 0),
+        };
+        let (next_tile, end_tile) = if last {
+            // The tiles whose `(a, b)` key range can hold the bound prefix.
+            let (lo, hi) = match (abc[0], abc[1]) {
+                (Some(a), Some(b)) => ((a, b), (a, b)),
+                (Some(a), None) => ((a, 0), (a, u32::MAX)),
+                _ => ((0, 0), (u32::MAX, u32::MAX)),
+            };
+            let from = dir.partition_point(|t| (t.last_g, t.last_a) < lo);
+            let to = dir.partition_point(|t| (t.first_g, t.first_a) <= hi);
+            (base + from, base + to.max(from))
+        } else {
+            (base, base + dir.len())
+        };
+        Some(QuadScan {
+            core: Arc::clone(self),
+            dir,
+            base,
+            perm,
+            si: slot,
+            last,
+            abc,
+            cols: subject_columns(perm),
+            next_tile,
+            end_tile,
+            ahead: 0,
+            buf: Vec::new().into_iter(),
+        })
+    }
+
     fn pre(&self) -> Option<&Preamble> {
         if let Some(v) = &self.v06 {
             return Some(&v.pre);
@@ -2647,47 +2696,7 @@ impl QuadNamed {
                     std::cmp::Reverse(s),
                 )
             })?;
-        let perm = quad7::perm_of(slot);
-        let last = quad7::is_last(slot);
-        let abc = perm.order_pattern(pat);
-        let (dir, base) = match abc[0] {
-            Some(a) if last && self.core.is_clustered(slot) => {
-                // Subject `a` is in the one run of its class.
-                match self.core.resolve_run(slot, a)? {
-                    Some(run) => self.core.dir_in_run(slot, run, a)?,
-                    None => (Arc::from(Vec::new()), 0),
-                }
-            }
-            Some(a) if last => self.core.dir_for_graph(slot, a)?,
-            _ => (self.core.dir(slot)?, 0),
-        };
-        let (next_tile, end_tile) = if last {
-            // The tiles whose `(a, b)` key range can hold the bound prefix.
-            let (lo, hi) = match (abc[0], abc[1]) {
-                (Some(a), Some(b)) => ((a, b), (a, b)),
-                (Some(a), None) => ((a, 0), (a, u32::MAX)),
-                _ => ((0, 0), (u32::MAX, u32::MAX)),
-            };
-            let from = dir.partition_point(|t| (t.last_g, t.last_a) < lo);
-            let to = dir.partition_point(|t| (t.first_g, t.first_a) <= hi);
-            (base + from, base + to.max(from))
-        } else {
-            (base, base + dir.len())
-        };
-        Some(QuadScan {
-            core: Arc::clone(&self.core),
-            dir,
-            base,
-            perm,
-            si: slot,
-            last,
-            abc,
-            cols: subject_columns(perm),
-            next_tile,
-            end_tile,
-            ahead: 0,
-            buf: Vec::new().into_iter(),
-        })
+        self.core.scan_slot(pat, slot)
     }
 
     /// The ordinal of the graph with subject id `g`, or `None` when the file
@@ -2950,6 +2959,125 @@ impl QuadScan {
             }
         }
         false
+    }
+}
+
+impl QuadScan {
+    /// The permutation whose order the scan walks.
+    pub(crate) fn perm(&self) -> IndexPermutation {
+        self.perm
+    }
+
+    /// Are the rows globally sorted by `(a, b, c, g)`? A clustered order with
+    /// no bound leading column is sorted only within each class run.
+    pub(crate) fn globally_ordered(&self) -> bool {
+        self.last && !(self.core.is_clustered(self.si) && self.abc[0].is_none())
+    }
+
+    /// The `(a, b, c)` of the first or last row of tile `ti` (absolute, within
+    /// this scan's directory), whatever the pattern: a bound between tiles.
+    fn edge_key(&self, ti: usize, first: bool) -> Option<(u32, u32, u32)> {
+        if ti < self.base || ti >= self.base + self.dir.len() {
+            return None;
+        }
+        let entry = self
+            .core
+            .tile_capped(self.si, &self.dir, self.base, ti, ti + 1)?;
+        let mut rows: Vec<quad7::Row4> = Vec::new();
+        quad7::decode_tile(entry.body(), quad7::subject_col(self.perm), &mut rows)?;
+        let r = if first { rows.first() } else { rows.last() }?;
+        Some((r.0, r.1, r.2))
+    }
+
+    /// The first row's `(a, b, c)` of tile `ti`.
+    pub(crate) fn first_key(&self, ti: usize) -> Option<(u32, u32, u32)> {
+        self.edge_key(ti, true)
+    }
+
+    /// The last row's `(a, b, c)` of tile `ti`.
+    pub(crate) fn last_key(&self, ti: usize) -> Option<(u32, u32, u32)> {
+        self.edge_key(ti, false)
+    }
+
+    /// What the scan would read, from the directory alone: the tiles in its
+    /// range, those the synopses admit, their stored bytes, the stored bytes
+    /// of the range, and the order's tile count.
+    pub(crate) fn plan(&self) -> QuadPlan {
+        let mut p = QuadPlan {
+            routed: self.end_tile.saturating_sub(self.next_tile),
+            ..QuadPlan::default()
+        };
+        for ti in self.next_tile..self.end_tile {
+            let t = &self.dir[ti - self.base];
+            p.routed_bytes += t.range.len;
+            if self.tile_may_match(t) {
+                p.admitted += 1;
+                p.admitted_bytes += t.range.len;
+            }
+        }
+        p.order_tiles = self.core.order_tiles(self.si).max(1);
+        p.quads = self.core.pre().map_or(0, |p| p.quad_count);
+        p
+    }
+}
+
+/// See [`QuadScan::plan`].
+#[derive(Default, Clone, Copy)]
+pub(crate) struct QuadPlan {
+    pub(crate) routed: usize,
+    pub(crate) admitted: usize,
+    pub(crate) routed_bytes: u64,
+    pub(crate) admitted_bytes: u64,
+    pub(crate) order_tiles: usize,
+    pub(crate) quads: u64,
+}
+
+/// A handle on the quad index that does not borrow its file: what a union
+/// default graph scans. Only made for an index with all three graph-last
+/// orders (SPOG, POSG, OSPG), which a scan over every graph walks with the
+/// graph as the last column, so one triple's quads are adjacent.
+#[derive(Clone)]
+pub(crate) struct QuadSrc(Arc<QuadCore>);
+
+impl QuadSrc {
+    /// A scan of `pat` in the graph-last order over `perm` (SPO, POS or OSP).
+    pub(crate) fn scan(
+        &self,
+        pat: (Option<u32>, Option<u32>, Option<u32>),
+        perm: IndexPermutation,
+    ) -> Option<QuadScan> {
+        self.0.scan_slot(pat, quad7::last_slot(perm))
+    }
+
+    /// Do reads cost a round trip each?
+    pub(crate) fn is_remote(&self) -> bool {
+        !self.0.reader.is_local()
+    }
+
+    pub(crate) fn read_concurrency(&self) -> usize {
+        self.0.read_concurrency
+    }
+}
+
+impl QuadNamed {
+    /// The union-scan handle, when the index has the three graph-last orders.
+    pub(crate) fn union_src(&self) -> Option<QuadSrc> {
+        (self.core.mask() & quad7::LAST_MASK == quad7::LAST_MASK)
+            .then(|| QuadSrc(Arc::clone(&self.core)))
+    }
+}
+
+impl QuadCore {
+    /// How many tiles order slot `si` has, from what is already known (a
+    /// resident directory, or the leaves the root lists); 0 when unknown.
+    fn order_tiles(&self, si: usize) -> usize {
+        if let Some(d) = self.dirs[si].get() {
+            return d.len();
+        }
+        match &self.v06 {
+            Some(v) => v.orders[si].iter().map(|l| l.n).sum(),
+            None => 0,
+        }
     }
 }
 

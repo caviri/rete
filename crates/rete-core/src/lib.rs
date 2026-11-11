@@ -101,6 +101,7 @@ mod text_index_spill;
 pub mod tiling;
 #[doc(hidden)]
 pub mod triples;
+mod union_scan;
 pub mod v06;
 #[doc(hidden)]
 pub mod varint;
