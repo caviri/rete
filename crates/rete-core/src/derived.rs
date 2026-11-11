@@ -358,6 +358,9 @@ pub fn elided_runs(fams: &[Family]) -> Vec<(usize, usize)> {
 /// The candidate subjects a lookup looks at, at most, for one term.
 const MAX_CANDIDATES: usize = 1 << 20;
 
+/// Length, first id, last id and a hash of an id list.
+type Signature = (usize, Option<u32>, Option<u32>, u64);
+
 /// Objects decoded within one batch: the citing OMID of a run of citations is
 /// the same object for each of them.
 struct Memo(std::collections::HashMap<u32, Option<std::sync::Arc<str>>>);
@@ -389,7 +392,7 @@ pub struct DerivedTerms {
     /// The last term rebuilt: a subject is decoded again for each row it is in.
     last: std::sync::Mutex<Option<(u32, String)>>,
     /// Signature of the last id list [`Self::prefetch`] warmed.
-    prefetched: std::sync::Mutex<Option<(usize, Option<u32>, Option<u32>, u64)>>,
+    prefetched: std::sync::Mutex<Option<Signature>>,
 }
 
 impl DerivedTerms {
