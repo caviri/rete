@@ -30,17 +30,21 @@
 //!
 //! **Which queries.** The driving scan has to sit where the algebra
 //! distributes over a union of its rows. The path from the top of the pattern
-//! to it goes through FILTER and BIND (without EXISTS), UNION (each branch
-//! split, or run in slice 0 alone when it cannot be), and the left side of a
-//! join or OPTIONAL. The right side of that join is either what the single
+//! to it goes through FILTER and BIND, UNION (each branch split, or run in
+//! slice 0 alone when it cannot be), a sub-select that only projects, and
+//! the left side of a join, an OPTIONAL or a MINUS. An EXISTS in a FILTER
+//! has its solutions evaluated once, by the first slice that needs them
+//! (`ExistsCell`); a MINUS has its right side indexed once, as a join has.
+//! The right side of that join is either what the single
 //! thread looks up once per left row (`GRAPH ?g { … }` with `?g` bound on the
 //! left, a path from a bound endpoint, a BGP whose cheapest pattern is a fat
 //! scan), or it is built once into the hash table every slice probes. The
 //! scan itself is:
 //!
 //! - a basic graph pattern: its one pattern's tiles; or, with several
-//!   patterns, the tiles of the pattern `BgpSolutions` streams, or the prefix
-//!   rows that look the last pattern up (`bgp::shard_bgp_rows`);
+//!   patterns, the tiles of the pattern `BgpSolutions` streams, the prefix
+//!   rows that look the last pattern up, or a range of subjects when two
+//!   large patterns are merge-joined on theirs (`bgp::shard_bgp_rows`);
 //! - a block under `GRAPH ?g`: a one-pattern scan over the quad orders, the
 //!   subjects of a class probe, the graphs its required pattern is found in,
 //!   or every graph.
@@ -149,10 +153,10 @@ mod threaded {
         PartialGroups,
     };
     use super::super::eval::{
-        certain_bound, eval_plan_iter, expr_has_exists, path_endpoint_bound, possible_bound,
-        query_ctx, shares_certain_var,
+        certain_bound, eval_plan_iter, expr_has_exists, only_projects, path_endpoint_bound,
+        possible_bound, query_ctx, shares_certain_var,
     };
-    use super::super::{diag, GraphTarget, GroupSpec, Plan, Select};
+    use super::super::{diag, ExistsCell, FExpr, GraphTarget, GroupSpec, Plan, Select};
     use super::query_threads;
     use crate::index::GraphIndex;
     use crate::row::{Ctx, Row, SharedState, MEMO_CAP_BYTES};
@@ -205,8 +209,56 @@ mod threaded {
     struct Split {
         leaves: Vec<usize>,
         only_first: Vec<usize>,
-        /// Joins whose right side is built once for all slices.
+        /// Joins and MINUSes whose right side is built once for all slices.
         builds: Vec<usize>,
+        /// EXISTS sub-plans of the filters on the way to the scan: each is
+        /// evaluated once, by the first slice that needs it.
+        exists: Vec<usize>,
+    }
+
+    /// The EXISTS sub-plans of `e` (not the ones nested inside them, which
+    /// belong to their own evaluation).
+    fn exists_plans(e: &FExpr, out: &mut Vec<usize>) {
+        match e {
+            FExpr::Exists(plan) => out.push(plan.as_ref() as *const Plan as usize),
+            FExpr::Var(_) | FExpr::Const(_) | FExpr::Bound(_) => {}
+            FExpr::Not(a) => exists_plans(a, out),
+            FExpr::Arith(_, a, b)
+            | FExpr::SameTerm(a, b)
+            | FExpr::Compare(_, a, b)
+            | FExpr::And(a, b)
+            | FExpr::Or(a, b) => {
+                exists_plans(a, out);
+                exists_plans(b, out);
+            }
+            FExpr::If(c, t, f) => {
+                exists_plans(c, out);
+                exists_plans(t, out);
+                exists_plans(f, out);
+            }
+            FExpr::In(x, list) => {
+                exists_plans(x, out);
+                list.iter().for_each(|e| exists_plans(e, out));
+            }
+            FExpr::Func(_, args) | FExpr::Coalesce(args) => {
+                args.iter().for_each(|e| exists_plans(e, out));
+            }
+        }
+    }
+
+    /// May a condition (a FILTER, an OPTIONAL's) sit on the way to the scan?
+    /// Yes without EXISTS. With it, on a local file: its sub-plans are noted
+    /// and each is evaluated once for all slices. Over a network not: an
+    /// EXISTS probed per row would be one request per row from every thread.
+    fn condition(ctx: &Ctx, e: &FExpr, out: &mut Split) -> bool {
+        if !expr_has_exists(e) {
+            return true;
+        }
+        if ctx.rete.reads_are_remote() {
+            return false;
+        }
+        exists_plans(e, &mut out.exists);
+        true
     }
 
     /// Find the driving scans under `plan` (see the module notes); `index` is
@@ -239,19 +291,61 @@ mod threaded {
                 Some(gi) => split(ctx, inner, gi, from_named, out),
                 None => false,
             },
-            Plan::Filter(e, inner) | Plan::Extend(_, e, inner) => {
+            Plan::Filter(e, inner) => {
+                let mark = out.exists.len();
+                if condition(ctx, e, out) && split(ctx, inner, index, from_named, out) {
+                    true
+                } else {
+                    out.exists.truncate(mark);
+                    false
+                }
+            }
+            Plan::Extend(_, e, inner) => {
                 !expr_has_exists(e) && split(ctx, inner, index, from_named, out)
+            }
+            // A sub-select that only projects: the scan is in its pattern,
+            // which has its own variables' slots.
+            Plan::Subquery(sub) if only_projects(sub) => {
+                let sub_ctx = query_ctx(ctx.rete, sub);
+                split(&sub_ctx, &sub.plan, index, from_named, out)
+            }
+            // The left side holds the scan; the right side is probed per row
+            // where the single thread does that, else indexed once.
+            Plan::Minus(l, r) => {
+                let lcert = certain_bound(ctx, l, ctx.slots.len());
+                let probed = matches!(&**r, Plan::Bgp(patterns)
+                    if crate::bgp::CorrelatedProbe::new(ctx, index, patterns, &lcert).is_some());
+                if probed {
+                    return !ctx.rete.reads_are_remote() && split(ctx, l, index, from_named, out);
+                }
+                if !buildable(r) {
+                    return false;
+                }
+                let mark = out.builds.len();
+                out.builds.push(node);
+                if split(ctx, l, index, from_named, out) {
+                    true
+                } else {
+                    out.builds.truncate(mark);
+                    false
+                }
             }
             Plan::Union(l, r) => {
                 // A branch that cannot be split runs whole, in slice 0 alone.
                 let mut branch = |p: &Plan| {
-                    let mark = (out.leaves.len(), out.only_first.len(), out.builds.len());
+                    let mark = (
+                        out.leaves.len(),
+                        out.only_first.len(),
+                        out.builds.len(),
+                        out.exists.len(),
+                    );
                     if split(ctx, p, index, from_named, out) {
                         true
                     } else {
                         out.leaves.truncate(mark.0);
                         out.only_first.truncate(mark.1);
                         out.builds.truncate(mark.2);
+                        out.exists.truncate(mark.3);
                         out.only_first.push(p as *const Plan as usize);
                         false
                     }
@@ -262,8 +356,15 @@ mod threaded {
             }
             Plan::Join(l, r) => join(ctx, node, l, r, index, from_named, out),
             Plan::LeftJoin(l, r, cond) => {
-                cond.as_ref().is_none_or(|c| !expr_has_exists(c))
+                let mark = out.exists.len();
+                if cond.as_ref().is_none_or(|c| condition(ctx, c, out))
                     && join(ctx, node, l, r, index, from_named, out)
+                {
+                    true
+                } else {
+                    out.exists.truncate(mark);
+                    false
+                }
             }
             _ => false,
         }
@@ -457,8 +558,15 @@ mod threaded {
         if exact && tiles >= 2 && !sp.builds.is_empty() {
             exact = dry(false).0;
         }
-        let shared = ctx.shard.shared_state();
+        let mut shared = ctx.shard.shared_state();
         ctx.shard.clear();
+        // An empty cell for each EXISTS on the way: the first slice whose row
+        // needs its solutions fills it, the others read it.
+        for &plan in &sp.exists {
+            shared
+                .entry((plan, 0))
+                .or_insert_with(|| std::sync::Arc::new(ExistsCell::default()));
+        }
         // Over a network a slice is a request or two (it reads its tiles ahead
         // in one batch), so there are fewer of them and none is small: a short
         // scan stays one scan, with its few coalesced requests.

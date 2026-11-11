@@ -747,23 +747,28 @@ in the same order.</p>
 <li>a basic graph pattern. With one triple pattern its index tiles are sliced.
 With several, the pattern the join streams is sliced, and what the others
 join against (the prefix, a small pattern's hash table) is built once and
-read by every thread;</li>
+read by every thread. Two large patterns that share their subject are
+merge-joined, both in subject order: there the slice is a range of
+subjects, the same on both sides;</li>
 <li>a block under <code>GRAPH ?g</code>: a one-pattern scan, the subjects of a class
 probe, the graphs the block's required pattern is found in, or every graph.</li>
 </ul>
-<p>Above it the pattern may have <code>FILTER</code> and <code>BIND</code> (without <code>EXISTS</code>), <code>UNION</code>
-(a branch that cannot be sliced runs once), and joins and <code>OPTIONAL</code>s. The
-right side of a join is looked up per row where the single thread does that,
-and otherwise built once into the hash table every slice probes; rows are
-shared between threads, so there is one copy of it.</p>
+<p>Above it the pattern may have <code>FILTER</code> and <code>BIND</code>, <code>UNION</code> (a branch that
+cannot be sliced runs once), joins, <code>OPTIONAL</code>s, <code>MINUS</code>, and a sub-select that
+only projects. The right side of a join or a <code>MINUS</code> is looked up per row
+where the single thread does that, and otherwise built once into the table
+every slice probes; the solutions of an <code>EXISTS</code> in a <code>FILTER</code> are evaluated
+once, by the first slice that needs them. Rows are shared between threads, so
+there is one copy of each.</p>
 <p>Aggregates are merged from per-slice partial results when they can be
 (<code>COUNT</code>, <code>SUM</code>, <code>AVG</code>, <code>MIN</code>, <code>MAX</code>, <code>SAMPLE</code>, <code>GROUP_CONCAT</code>). When they keep
 a set of values (<code>COUNT(DISTINCT …)</code>, <code>GROUP_CONCAT(DISTINCT …)</code>) or a slice
 has more than 100,000 groups, the threads do the per-row work and send their
 rows to one fold, which uses the memory the single thread uses.</p>
-<p>Not sliced: a pattern whose path to the scan goes through <code>EXISTS</code>, <code>MINUS</code>, a
-sub-select or <code>VALUES</code>; two large patterns merge-joined on their subject; a
-query under a memory guard.</p>
+<p>Not sliced: a pattern whose path to the scan goes through <code>VALUES</code>, a
+sub-select that aggregates, sorts or slices (it runs on several threads
+itself when it groups), or an <code>EXISTS</code> inside a <code>BIND</code>; a join whose large
+scan is on its right side; a query under a memory guard.</p>
 <p><code>SUM</code> and <code>AVG</code> add the slices' sums. The slices are fixed by the file (at most
 64), not by the machine, so the result is the same on any number of threads;
 it is the single thread's result whenever the additions are exact, as they are
@@ -772,8 +777,8 @@ for integers.</p>
 at most 16 slices of at least 8 tiles each, and a short scan stays one scan
 with its few requests. A join that looks something up per row is not sliced
 there (several threads' lookups read half as many bytes again as one thread's
-in order), nor is a walk of every graph. A reader says whether its reads are
-local with <code>RangeReader::is_local</code>.</p>
+in order), nor is a walk of every graph, nor a pattern with <code>EXISTS</code>. A reader
+says whether its reads are local with <code>RangeReader::is_local</code>.</p>
 <p>The thread count is the machine's cores, at most 16. <code>RETE_QUERY_THREADS=N</code>
 sets it, <code>1</code> turns it off, and a library caller uses
 <code>rete_core::query::set_query_threads</code>. The browser engine has one thread.</p>
@@ -797,6 +802,9 @@ sets it, <code>1</code> turns it off, and a library caller uses
 <tr><td>authors per year, <code>COUNT(DISTINCT ?c)</code> over three patterns</td><td>7.3 s</td><td>1.6 s</td></tr>
 <tr><td>a class, an <code>OPTIONAL</code> looked up per row and one hash-joined</td><td>2.5 s</td><td>0.9 s</td></tr>
 <tr><td>papers per author initial (5.1 M labels, 9.5 M <code>dc:creator</code> lookups)</td><td>179 s</td><td>19 s</td></tr>
+<tr><td>two large patterns merge-joined on their subject, <code>COUNT(DISTINCT)</code></td><td>14.2 s</td><td>2.5 s</td></tr>
+<tr><td>a star <code>MINUS { ?d swrc:pages ?pg }</code> (3.4 M rows, probed per row)</td><td>241 s</td><td>34 s</td></tr>
+<tr><td>a star with <code>FILTER NOT EXISTS { ?d dc:subject ?s }</code></td><td>16.1 s</td><td>2.8 s</td></tr>
 </tbody></table>
 <p>Over a simulated link the pubmed query (32 MB) took 20 s on one thread and
 4.1 s sliced at 60 ms and 40 MB/s, and 34 s and 11.5 s at 120 ms and 4 MB/s,
@@ -808,7 +816,9 @@ dictionary on every row and is now looked up once per distinct value;
 <code>BIND</code>s of its group ran after them; the graph directory of a file with more
 than two million graphs kept one read-ahead window, so a lookup of each row's
 graph read and decoded a block again; finding one graph in a tile walked the
-tile's segment headers; and a block under <code>GRAPH ?g</code> that was not a plain
+tile's segment headers; the cache of decoded chunks and tiles was one lock
+with a recency tree updated on every lookup (it is now split into parts, and
+a lookup writes nothing every thread shares); and a block under <code>GRAPH ?g</code> that was not a plain
 basic graph pattern (one with an <code>OPTIONAL</code> or a <code>FILTER</code> inside) was
 evaluated in every graph of the file instead of the graphs its required
 pattern is found in. Native builds also turn on the <code>regex</code> crate's DFA and

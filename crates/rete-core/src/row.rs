@@ -302,6 +302,50 @@ impl Shard {
         made
     }
 
+    /// Is this context evaluating a shard (or measuring for one)?
+    pub(crate) fn active(&self) -> bool {
+        self.part.get().is_some()
+    }
+
+    /// What was put under `(node, sub)` for all shards, if anything: a cell
+    /// the calling thread made before the workers started, which the first
+    /// shard to need it fills.
+    pub(crate) fn cell<T: Send + Sync + 'static>(
+        &self,
+        node: usize,
+        sub: usize,
+    ) -> Option<std::sync::Arc<T>> {
+        let have = self.shared.borrow().get(&(node, sub)).cloned()?;
+        have.downcast::<T>().ok()
+    }
+
+    /// Evaluate the same shard as `outer`: for the context of a sub-select
+    /// that only projects, whose pattern holds the driving scan.
+    pub(crate) fn adopt(&self, outer: &Shard) {
+        self.part.set(outer.part.get());
+        self.measuring.set(outer.measuring.get());
+        *self.leaves.borrow_mut() = outer.leaves.borrow().clone();
+        *self.only_first.borrow_mut() = outer.only_first.borrow().clone();
+        *self.builds.borrow_mut() = outer.builds.borrow().clone();
+        *self.shared.borrow_mut() = outer.shared.borrow().clone();
+        self.reached.borrow_mut().clear();
+        self.tiles.set(0);
+    }
+
+    /// Hand `outer` what this context reached, measured and built ([`adopt`](Self::adopt)).
+    pub(crate) fn give_back(&self, outer: &Shard) {
+        outer
+            .reached
+            .borrow_mut()
+            .extend(self.reached.borrow().iter().copied());
+        outer.tiles.set(outer.tiles.get().max(self.tiles.get()));
+        let mine = self.shared.borrow();
+        let mut theirs = outer.shared.borrow_mut();
+        for (k, v) in mine.iter() {
+            theirs.entry(*k).or_insert_with(|| v.clone());
+        }
+    }
+
     /// A leaf that slices rows it holds, not tiles (a pattern's prefix, a
     /// list of graphs): the bounds of its slice of `len` rows.
     pub(crate) fn applied_rows(&self, part: ShardPart, len: usize) -> (usize, usize) {

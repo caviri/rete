@@ -2951,6 +2951,130 @@ mod tests {
         }
     }
 
+    /// The shards of a BGP ([`shard_bgp_rows`]) add up to the BGP: for every
+    /// join path and every shard count, the slices' rows one after the other
+    /// are the rows of [`BgpSolutions::new`], in its order. The file is cut
+    /// into small tiles so that a slice is a real part of a scan.
+    #[test]
+    fn the_shards_of_a_bgp_add_up_to_it_on_every_join_path() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        let mut x: u64 = 11;
+        let mut next = |m: u64| {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (x >> 33) % m
+        };
+        for i in 0..400 {
+            let s = format!("s{i:03}");
+            owned.push((s.clone(), "a".into(), format!("C{}", next(3))));
+            for p in 0..4 {
+                for _ in 0..next(3) {
+                    owned.push((s.clone(), format!("p{p}"), format!("s{:03}", next(400))));
+                }
+            }
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(96);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        let queries: Vec<Vec<TriplePattern>> = vec![
+            vec![pat("?s", "p0", "?a")],
+            vec![pat("?s", "p0", "?a"), pat("?s", "p1", "?b")],
+            vec![pat("?s", "a", "C1"), pat("?s", "p0", "?a")],
+            vec![pat("?s", "p0", "?a"), pat("?a", "p2", "?b")],
+            vec![pat("?s", "p0", "?x"), pat("?s", "p1", "?x")],
+            vec![
+                pat("?s", "p3", "?o"),
+                pat("?o", "a", "C0"),
+                pat("?s", "p1", "?z"),
+            ],
+            vec![
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+                pat("?b", "p2", "?c"),
+            ],
+        ];
+        // A plan node's address, as the evaluator would name this BGP.
+        const NODE: usize = 1;
+        let mut sliced = 0usize;
+        let mut merged = 0usize;
+        for (name, limits) in [
+            ("defaults", None),
+            (
+                "probe everything",
+                Some(PlanLimits {
+                    probe_floor: 0.0,
+                    stream_seed: f64::MAX,
+                    hash_build: f64::MAX,
+                }),
+            ),
+            (
+                "stream + hash",
+                Some(PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: f64::MAX,
+                }),
+            ),
+            (
+                "stream + probe",
+                Some(PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: 0.0,
+                }),
+            ),
+        ] {
+            TEST_LIMITS.with(|c| c.set(limits));
+            for q in &queries {
+                let mut slots = crate::row::Slots::new();
+                collect_pattern_slots(q, &mut slots);
+                let ctx = Ctx::new(&rete, slots);
+                let index = rete.default_index();
+                let whole: Vec<Row> = BgpSolutions::new(&ctx, index, q).collect();
+                assert!(!whole.is_empty(), "{name}: {q:?}");
+                for n in [1usize, 2, 5, 13] {
+                    ctx.shard
+                        .set_plan(vec![NODE], Vec::new(), Vec::new(), Default::default());
+                    let mut parts: Vec<Row> = Vec::new();
+                    let mut ok = true;
+                    for i in 0..n {
+                        ctx.shard.begin(Some((i, n)));
+                        match shard_bgp_rows(&ctx, index, q, (NODE, i, n)) {
+                            Some(rows) => parts.extend(rows),
+                            None => ok = false,
+                        }
+                    }
+                    ctx.shard.clear();
+                    if !ok {
+                        continue;
+                    }
+                    sliced += 1;
+                    assert_eq!(parts, whole, "{name}, {n} shards: {q:?}");
+                }
+                // The two-pattern star streams as a merge join when both
+                // patterns are large: that path is one of those sliced.
+                if limits.is_some_and(|l| l.stream_seed == 0.0) && q.len() == 2 {
+                    let lowered = lower(q, &ctx).unwrap();
+                    if merge_stream(&ctx, index, lowered[0], lowered[1], None).is_some() {
+                        merged += 1;
+                    }
+                }
+            }
+            TEST_LIMITS.with(|c| c.set(None));
+        }
+        assert!(sliced > 60, "{sliced} sliced cases");
+        assert!(merged >= 2, "{merged} merge joins");
+    }
+
     #[test]
     fn single_pattern_binds_variable() {
         let bytes = rete_from(&[("Alice", "knows", "Bob"), ("Bob", "knows", "Carol")]);

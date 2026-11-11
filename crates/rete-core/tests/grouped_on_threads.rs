@@ -305,11 +305,33 @@ fn queries() -> Vec<(&'static str, bool)> {
             "SELECT (COUNT(*) AS ?n) (COUNT(?k) AS ?ks) WHERE { { GRAPH ?g { ?s ex:score ?v } } UNION              { SELECT ?k WHERE { ?np ex:featured ?k } } }",
             true,
         ),
-        // Not split: EXISTS reads the whole row and keeps its own table.
+        // EXISTS: its solutions are evaluated once, by the first slice that
+        // needs them, and read by the others.
         (
             "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
              FILTER EXISTS { GRAPH ?pv { ?e rdfs:label ?l } } }",
-            false,
+            true,
+        ),
+        (
+            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
+             FILTER(NOT EXISTS { GRAPH ?p2 { ?x ex:source ?s FILTER(STRENDS(STR(?s), \"#3\")) } } \
+             && ?e != <http://ex/grade/4>) } GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
+        // MINUS: the right side is indexed once for all slices.
+        (
+            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
+             MINUS { GRAPH ?p2 { ?x ex:source ?s FILTER(STRENDS(STR(?s), \"#5\")) } } } \
+             GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
+        // A sub-select that only projects: the scan inside it is sliced.
+        (
+            "SELECT ?host (COUNT(*) AS ?n) WHERE { { SELECT ?np ?host WHERE { \
+             GRAPH ?h { ?np a ex:Nanopublication } \
+             BIND(STRBEFORE(STRAFTER(STR(?np), \"//\"), \"/\") AS ?host) } } \
+             FILTER(?host != \"alpha.example\") } GROUP BY ?host ORDER BY ?host",
+            true,
         ),
         // Not split: the default graph's few triples are one tile.
         (
@@ -370,6 +392,23 @@ fn pattern_queries() -> Vec<(&'static str, bool)> {
         // A constant class, a hop, a distinct count.
         (
             "SELECT ?v (COUNT(DISTINCT ?u) AS ?n) WHERE {              ?t a ex:Kind3 ; ex:link ?u . ?u ex:value ?v } GROUP BY ?v ORDER BY ?v",
+            true,
+        ),
+        // MINUS and NOT EXISTS over patterns of the default graph.
+        (
+            "SELECT ?k (COUNT(*) AS ?n) WHERE { ?t a ?k ; ex:value ?v \
+             MINUS { ?t ex:link ?u . ?u a ex:Kind0 } } GROUP BY ?k ORDER BY ?k",
+            true,
+        ),
+        (
+            "SELECT ?k (COUNT(*) AS ?n) (MAX(?v) AS ?top) WHERE { ?t a ?k ; ex:value ?v \
+             FILTER NOT EXISTS { ?t ex:link ?u . ?u ex:value ?v } } GROUP BY ?k ORDER BY ?k",
+            true,
+        ),
+        // A projecting sub-select around a star, joined to a pattern.
+        (
+            "SELECT ?k (COUNT(*) AS ?n) WHERE { { SELECT ?t ?k WHERE { ?t a ?k ; ex:value ?v \
+             FILTER(?v > 5) } } ?t ex:link ?u } GROUP BY ?k ORDER BY ?k",
             true,
         ),
         // A pattern joined to an OPTIONAL pattern and a second block.

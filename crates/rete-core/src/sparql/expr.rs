@@ -174,9 +174,10 @@ impl FExpr {
                         _ => None,
                     };
                     ExistsEntry {
-                        sols: Vec::new(),
+                        sols: Default::default(),
                         loaded: false,
                         probe: None,
+                        cell: None,
                         corr,
                     }
                 });
@@ -184,14 +185,26 @@ impl FExpr {
                     return Some(c.probe(ctx, index, b));
                 }
                 if !entry.loaded {
-                    entry.sols = eval_plan_in(ctx, index, None, plan);
+                    // A shard of a grouped query run on several threads: the
+                    // solutions are made once for all of them.
+                    let cell = ctx.shard.cell::<ExistsCell>(key as usize, 0);
+                    let load = || std::sync::Arc::new(eval_plan_in(ctx, index, None, plan));
+                    entry.sols = match &cell {
+                        Some(c) => c.sols.get_or_init(load).clone(),
+                        None => load(),
+                    };
+                    entry.cell = cell;
                     entry.loaded = true;
                 }
                 if entry.sols.is_empty() {
                     return Some(false);
                 }
                 if entry.probe.is_none() {
-                    entry.probe = Some(build_exists_probe(b, &entry.sols));
+                    let build = || std::sync::Arc::new(build_exists_probe(b, &entry.sols));
+                    entry.probe = Some(match &entry.cell {
+                        Some(c) => c.probe.get_or_init(build).clone(),
+                        None => build(),
+                    });
                 }
                 Some(exists_matches(b, entry))
             }
