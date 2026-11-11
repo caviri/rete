@@ -796,10 +796,12 @@ index, <code>3</code> quad index, <code>4</code> label index, <code>5</code> tex
 unsigned LEB128 varints, byte strings are length-prefixed.</p>
 <ul>
 <li><strong>Dictionary</strong> (always four sections, in the order shared, subject-only,
-object-only, predicates): term count, restart interval, chunk count, the
-section's offset and length within <code>dict</code>, then per leaf: entry count, offset
-and stored length within <code>dict-leaves</code>, the first chunk's first run, its data
-offset within the section, and its separator key.</li>
+object-only, predicates): term count, then in <code>0x08</code> the five <strong>group counts</strong>
+(§5.2: blank nodes, IRIs, text literals, typed literals, quoted triples; they
+add up to the term count), restart interval, chunk count, the section's offset
+and length within <code>dict</code>, then per leaf: entry count, offset and stored length
+within <code>dict-leaves</code>, the first chunk's first run, its data offset within the
+section, and its separator key (a separator in the section's order, §5.2).</li>
 <li><strong>Index</strong> (one per stored permutation): permutation number, tile count, the
 permutation's offset and length within <code>index</code>, then per leaf: entry count,
 offset, stored length, the first tile's lowest and the last tile's highest
@@ -957,11 +959,11 @@ against this layout: it changes no round trip of the 83 measured runs or of the
 Meta projection, the predicate pair grows by 39–44%, and <code>convert</code> would have
 to re-tile every permutation instead of copying its tiles.</p>
 <h3 id="47-content-hash-and-verify">4.7 Content hash and verify</h3>
-<pre><code>content hash = BLAKE3("rete/0x07" ‖ header[4..8] ‖ header[48..80]
+<pre><code>content hash = BLAKE3("rete/0x08" ‖ header[4..8] ‖ header[48..80]
                       ‖ card length (u32) ‖ card digest
                       ‖ root length (u32) ‖ root digest)[0..16]
 </code></pre>
-<p>(<code>"rete/0x06"</code> for a <code>0x06</code> file.) <code>header[4..8]</code> is the version, the flags and
+<p>(<code>"rete/0x07"</code> and <code>"rete/0x06"</code> for a <code>0x07</code> and a <code>0x06</code> file.) <code>header[4..8]</code> is the version, the flags and
 the header length;
 <code>header[48..80]</code> the counts, the mask, the codecs, the pyramid levels and the
 presence bits. Through the root digest the hash covers every section digest, so
@@ -1218,8 +1220,8 @@ existed. GSPO, POSG and OSPG are untouched.</p>
 <p>Other differences: the version byte, the footer (<code>07 00 00 00 "RETE"</code>), the
 hash domain (<code>"rete/0x07"</code>) and the <code>format_version</code> a card is stamped with
 (<code>7</code>).</p>
-<p><strong>Compatibility.</strong> Writers write <code>0x07</code> only; the reader reads <code>0x05</code>, <code>0x06</code> and
-<code>0x07</code>. A reader that predates <code>0x07</code> refuses the file at the header, by name:
+<p><strong>Compatibility.</strong> (As of <code>0x07</code>; §4.11 is the current one.) Writers wrote <code>0x07</code>
+only; the reader read <code>0x05</code>, <code>0x06</code> and <code>0x07</code>. A reader that predates <code>0x07</code> refuses the file at the header, by name:
 <code>unsupported .rete format 0x07; this Rete build reads 0x05..=0x06</code>. It cannot
 read a <code>0x07</code> file as a <code>0x06</code> one with an unknown section, because the root's
 label unit no longer holds the root node. There is no backward-compatibility
@@ -1230,15 +1232,40 @@ named graphs, deriving SPOG, POSG and OSPG from the input's <code>G+SPO</code> t
 sort pass each (external past 100 M quads) and dropping the other graph-leading
 orders; the catalog is converted in step, and the <code>0x06</code> reader is removed once
 it is.</p>
+<h3 id="411-format-0x08-and-compatibility">4.11 Format <code>0x08</code> and compatibility</h3>
+<p><code>0x08</code> is <code>0x07</code> with one change: <strong>the dictionary's term order</strong> (§5.2). Every
+other section, leaf and unit root is laid out as in <code>0x07</code>, apart from the
+dictionary unit root, which gains the five group counts per section (§4.2), and
+the routing keys of the dictionary's chunks, which are separators in the new
+order. The same code reads <code>0x06</code>, <code>0x07</code> and <code>0x08</code>: the header's version byte
+says which order a file's dictionary is in.</p>
+<p>Other differences: the version byte, the footer (<code>08 00 00 00 "RETE"</code>), the hash
+domain (<code>"rete/0x08"</code>) and the <code>format_version</code> a card is stamped with (<code>8</code>).</p>
+<p><strong>Compatibility.</strong> Writers write <code>0x08</code> only; the reader reads <code>0x05</code>, <code>0x06</code>,
+<code>0x07</code> and <code>0x08</code>. A reader that predates <code>0x08</code> refuses the file at the header,
+by name: <code>unsupported .rete format 0x08; this Rete build reads 0x05..=0x07</code>
+(0.6.0 says exactly that). There is no backward-compatibility promise before
+1.0.0, and none is possible here: a <code>0x07</code> reader would search the dictionary in
+byte order and miss terms. <code>rete convert</code> turns a <code>0x05</code>, <code>0x06</code> or <code>0x07</code> file
+into a <code>0x08</code> one. Because every term gets a new id, it is a <strong>re-encode, not a
+copy</strong>: the statements are walked through the source and written by the
+memory-bounded builder (sorted terms, every permutation, the quad orders, the
+label and text indexes, the schema and the class clusters rebuilt for the new
+ids; the card, its annex and the build record kept), inside <code>--memory-budget-mb</code>
+with its spill in <code>--tmp-dir</code>. A source with a community pyramid is re-encoded in
+memory. Converting a <code>0x08</code> file again rewrites it under the current leaf policy
+and gives the same bytes.</p>
 <hr />
 <h2 id="5-dictionary">5. Dictionary</h2>
 <img class="img-sq" src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
 <p><em>Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.</em></p>
 <ul>
 <li>
-<p>Terms are <strong>sorted within each kind</strong> and <strong>front-coded</strong> (store the shared
-prefix length + the suffix vs. the previous term). Cheap to compress, supports
-binary search for <code>string → id</code>, and prefix-friendly for IRI namespaces.</p>
+<p>Terms are <strong>sorted within each kind</strong>, in the order of §5.2, and
+<strong>front-coded</strong> (store the shared prefix length + the suffix vs. the previous
+term). Cheap to compress, supports binary search for <code>string → id</code>, and
+prefix-friendly for IRI namespaces. Up to <code>0x07</code> the order is the bytes of the
+stored token; from <code>0x08</code> it is the SPARQL <code>ORDER BY</code> order.</p>
 </li>
 <li>
 <p>IDs are assigned so that <strong>shared terms get the lowest IDs</strong>, then subjects,
@@ -1295,8 +1322,9 @@ supports <code>O(log n)</code> term↔ID lookup once loaded. Each section is add
 </ul>
 <h3 id="51-section-encoding-front-coded-restart-indexed">5.1 Section encoding (front-coded, restart-indexed)</h3>
 <p>Each dictionary <em>kind</em> (shared / subjects / objects / predicates / graphs) is one
-<strong>section</strong>. Within a section terms are UTF-8, <strong>sorted ascending</strong>, deduped, and
-assigned <strong>dense 1-based IDs</strong> in that order (ID <code>0</code> is reserved as "absent").</p>
+<strong>section</strong>. Within a section terms are UTF-8, <strong>sorted ascending in the section's
+order</strong> (§5.2), deduped, and assigned <strong>dense 1-based IDs</strong> in that order (ID <code>0</code>
+is reserved as "absent").</p>
 <p>Terms are stored in <strong>runs of <code>R</code> entries</strong> (default <code>R = 16</code>, the <em>restart
 interval</em>). Each run begins at a <strong>restart point</strong> storing the full term; the
 remaining <code>R-1</code> entries are <em>front-coded</em> against their predecessor:</p>
@@ -1314,6 +1342,56 @@ that run comparing each materialized term; return its ID or <code>None</code>.</
 </ul>
 <p>Restart points are also the natural <strong>chunk/compression boundaries</strong>: a client
 fetches just the run(s) covering the IDs/terms a query touches.</p>
+<h3 id="52-term-order-0x05-0x07-bytes-0x08-sparql">5.2 Term order (<code>0x05</code>-<code>0x07</code> bytes, <code>0x08</code> SPARQL)</h3>
+<p>IDs are lexical ranks, so the order a section uses decides what comparing two
+IDs means. Formats <code>0x05</code> to <code>0x07</code> sort the <strong>bytes of the stored token</strong>
+(<code>&lt;iri&gt;</code>, <code>_:b</code>, <code>"lit"</code> with its suffix). That is not the order SPARQL's
+<code>ORDER BY</code> uses: an IRI's closing <code>&gt;</code> is above <code>-</code>, <code>.</code>, <code>/</code> and the digits, so
+<code>&lt;…/Ng8130_provenance&gt;</code> sorts before <code>&lt;…/Ng8&gt;</code>, which is the case for every
+nanopublication; a closing quote sorts <code>"a b"</code> before <code>"a"</code>; literals sort
+before IRIs before blank nodes. An <code>ORDER BY ?s</code> over a result therefore had to
+decode every key (181 MB of dictionary for the 653 k subjects of one class of the
+2018 nanopub dump) to sort it.</p>
+<p><code>0x08</code> sorts each section so that <strong>ID order is the engine's <code>ORDER BY</code> order</strong>
+(SPARQL 1.1 §15.1: blank nodes, then IRIs, then literals) wherever that order is
+a function of the term alone. A term belongs to one <strong>group</strong>; groups are
+ordered as listed, and a group sorts as shown:</p>
+<table><thead><tr><th>group</th><th>terms</th><th>sorted by</th></tr></thead><tbody>
+<tr><td>0 blank</td><td><code>_:…</code></td><td>the token's bytes</td></tr>
+<tr><td>1 IRI</td><td><code>&lt;…&gt;</code></td><td>the IRI text without <code>&lt;</code> and <code>&gt;</code>, by code point (= UTF-8 byte order)</td></tr>
+<tr><td>2 text</td><td>a simple, <code>xsd:string</code> or language-tagged literal</td><td>the lexical form with its escapes resolved (code point), then <code>rdf:dirLangString</code> &lt; <code>rdf:langString</code> &lt; <code>xsd:string</code>, then the language tag lower-cased, then the token</td></tr>
+<tr><td>3 typed</td><td>any other literal (numbers, booleans, dates, other datatypes) and anything that is no term</td><td>the token's bytes</td></tr>
+<tr><td>4 triple</td><td><code>&lt;&lt; … &gt;&gt;</code></td><td>the token's bytes</td></tr>
+</tbody></table>
+<p>So <code>&lt;…/Ng8&gt;</code> sorts before <code>&lt;…/Ng8130_provenance&gt;</code>, <code>"a"</code> before <code>"a b"</code>, and
+<code>"a"@en</code> before <code>"a"</code>. The comparison is total (two terms compare equal only if
+they are the same bytes), UTF-8 byte order equals code point order, and the
+empty string sorts first (a chunk directory's first key is empty).</p>
+<p>Groups 0, 1, 2 and 4 are <strong>order-exact</strong>: two terms of one section that are in
+them compare as their IDs do. Group 3 is not, because <code>ORDER BY</code> puts numbers
+and dates by value, and the dictionary cannot. A reader that sorts by ID
+decodes group 3 and compares across sections (the shared, subject-only and
+object-only sections are three separately sorted lists with their own ID
+ranges); it decodes only what it must. The engine's text order
+(<code>sparql::value::order_cmp</code>) and this one are the same function on group 2, and
+a test holds them to it.</p>
+<p>The dictionary unit root (§4.2) records, per section, how many terms are in each
+group. They give the ID ranges: IDs <code>1..=g0+g1</code> are blank nodes and IRIs,
+<code>..=+g2</code> text literals, <code>..=+g3</code> typed literals, and the rest quoted triples.
+They replace the old assumption that literals are a prefix of a section: the
+literal object IDs are the run after the IRIs. <code>rete verify</code> checks that every
+section is strictly increasing in its order and that the counts are what the
+terms say.</p>
+<p><strong>Chunk routing.</strong> A chunk's directory key is a <em>separator</em> <code>k</code> with
+<code>last(prev) &lt; k ≤ first(this)</code> <strong>in the section's order</strong>. Between two IRIs it
+is the shortest separator of their texts written as an IRI (<code>&lt;</code> + text + <code>&gt;</code>);
+between two text literals the shortest separator of their lexical forms written
+as a simple literal; at any other boundary the first term itself. A lookup
+routes and searches with the order the file's version names, and a reader must
+not search a <code>0x08</code> section bytewise.</p>
+<p>Front coding is not hurt: terms with a shared prefix stay adjacent. On the 2018
+nanopub dump and the OpenCitations sample the dictionary's size changes by about
+0 % (see the CHANGELOG for the figures).</p>
 <hr />
 <h2 id="6-triples--quads">6. Triples / quads</h2>
 <img class="img-sq" src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">
@@ -1348,7 +1426,7 @@ builds tabulated in
 <a href="BENCHMARK.html#the-merge-join-permutations-cost-vs-benefit">BENCHMARK.md</a>.</li>
 <li><strong>A file with fewer than six permutations is not readable by a Rete that
 predates the mask.</strong> Such a reader passes six to the index container's
-section-count check and gets <code>malformed container: expected 6 permutation sections</code> (resident) or <code>unexpected container section count</code> (ranged), exit
+section-count check and gets <code>malformed container: expected 6 permutation  sections</code> (resident) or <code>unexpected container section count</code> (ranged), exit
 1, on every command that touches the index — a loud refusal, not a wrong
 answer. Its <code>info</code>, <code>verify</code> and <code>card-url</code> still work, because they read
 only the header and the metadata section.</li>
@@ -1520,7 +1598,7 @@ stay correct with it. A predicate-restricted index does not, so it is filed
 under a kind they do not know: they preserve it, never open it, and answer
 <code>CONTAINS</code> by scanning and <code>rete search --contains</code> with "no text index". The
 header maps either kind onto the same text-index offset and length.</p>
-<p>A kind-<code>11</code> section is <code>digest(16) | payload</code>, where <code>digest = blake3(payload)[..16]</code> and the payload is the kind-<code>6</code> layout above. In generation 1
+<p>A kind-<code>11</code> section is <code>digest(16) | payload</code>, where <code>digest =  blake3(payload)[..16]</code> and the payload is the kind-<code>6</code> layout above. In generation 1
 it is outside the content hash (§4.9) and verified by that digest instead, so a
 reader that
 cannot see it still verifies the file; a reader skips the digest to reach the
@@ -1745,7 +1823,7 @@ leading id may run over several tiles. The estimate counts the bytes above; only
 its determinism matters, which is why the in-RAM build, the memory-bounded
 build and <code>convert</code> write the same bytes.</p>
 <p><strong>Directory.</strong> One entry per tile in the leaves of §4.3: the first row's
-<code>(a, b)</code>, the last row's <code>(a, b)</code>, the stored length, the synopsis <code>(min c, max c, min g, max g)</code>. Leaves follow the small-leaf policy (§9); the root lists
+<code>(a, b)</code>, the last row's <code>(a, b)</code>, the stored length, the synopsis <code>(min c,  max c, min g, max g)</code>. Leaves follow the small-leaf policy (§9); the root lists
 each leaf's first and last key, so a lookup on a leading id reads the leaf (or
 the few leaves) whose range holds it.</p>
 <p><strong>Layout is order-major</strong>, in the order GSPO, SPOG, POSG, OSPG, each order's
@@ -1927,7 +2005,7 @@ smaller file). The probe still wins <code>COUNT</code> of its subjects' rows, 37
 requests, 22.1 MB by the walk to 10.0 s, 44 requests, 13.6 MB, on either file; a
 bound subject is 1.3 s, 12 requests on both.</p>
 <p>SPO and SOP measured in the first step (the synthetic OpenAIRE-shaped file, 30.0 M
-triples, nine classes, one of them, Software, 1,800 records): <code>?r a &lt;Software&gt; . ?r &lt;subject&gt; ?t</code> 16.3 s, 59.0 MB unclustered, 1.13 s, 1.77 MB clustered; a bound
+triples, nine classes, one of them, Software, 1,800 records): <code>?r a &lt;Software&gt; .  ?r &lt;subject&gt; ?t</code> 16.3 s, 59.0 MB unclustered, 1.13 s, 1.77 MB clustered; a bound
 subject 0.67 to 0.75 s, 5 to 7 requests unclustered, 0.90 to 0.98 s, 12 to 14
 requests clustered; the OpenCitations sample's default graph: Book (12,957
 records) 2.6 s, 5.3 MB to 1.67 s, 2.0 MB; foaf:Agent (375,709, a common class) 2.9 s
@@ -2064,7 +2142,7 @@ class is a depth-0 root and this degrades to a single flat histogram (= the
 Dataset Card's <code>classes</code>).</li>
 <li><strong><code>level_links</code></strong> — the <strong>lateral</strong> class-relation graph rolled up per level: the
 non-<code>is-a</code> connections <code>(s_class, predicate, o_class, count)</code> between abstract
-classes, so a level is a leveled <em>graph</em> not just a histogram (<code>Person memberOf Organisation</code> at a fine level becomes <code>Agent memberOf Agent</code> at a coarse one).
+classes, so a level is a leveled <em>graph</em> not just a histogram (<code>Person memberOf  Organisation</code> at a fine level becomes <code>Agent memberOf Agent</code> at a coarse one).
 <code>rdf:type</code> and <code>rdfs:subClassOf</code> triples are excluded — they are the hierarchy
 itself, not data relations.</li>
 <li><strong><code>descriptors</code></strong> (Phase 4) — a per-community refinement index: the dominant

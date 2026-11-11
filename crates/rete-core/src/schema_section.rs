@@ -190,17 +190,21 @@ pub(crate) struct SchemaIds {
     pub equivalent_pid: Option<u32>,
     /// `S`, the shared-term count: object ids `1..=S` are also subjects.
     pub n_shared: u32,
-    /// Shared ids `1..=shared_literals` are literals (normally none).
-    pub shared_literals: u32,
-    /// Object ids `S+1..=S+objonly_literals` are literals: literals (`"…`)
-    /// sort before IRIs (`<`) and blank nodes (`_`) in every section.
-    pub objonly_literals: u32,
+    /// Shared ids `a+1..=b` are literals (normally none). In a byte-ordered
+    /// dictionary literals (`"…`) sort before IRIs (`<`) and blank nodes (`_`),
+    /// so `a` is 0; in the SPARQL order they follow the blank nodes and IRIs.
+    pub shared_literals: (u32, u32),
+    /// Object ids `S+a+1..=S+b` are literals.
+    pub objonly_literals: (u32, u32),
 }
 
 impl SchemaIds {
     fn is_literal(&self, o: u32) -> bool {
-        o <= self.shared_literals
-            || (o > self.n_shared && o - self.n_shared <= self.objonly_literals)
+        (o > self.shared_literals.0 && o <= self.shared_literals.1)
+            || (o > self.n_shared && {
+                let l = o - self.n_shared;
+                l > self.objonly_literals.0 && l <= self.objonly_literals.1
+            })
     }
 
     /// The type predicate term a build uses: the override, else `rdf:type`.
@@ -227,10 +231,21 @@ impl SchemaIds {
             }
             lo
         };
-        let shared_literals = prefix_len(n_shared, &|i| dict.object_term(i));
-        let objonly_literals = prefix_len(dict.object_only_count(), &|i| {
-            dict.object_term(n_shared + i)
-        });
+        let (shared_literals, objonly_literals) = match dict
+            .literal_objects()
+            .filter(|_| dict.order() == crate::term_order::TermOrder::Sparql)
+        {
+            Some(l) => (l.shared, l.only),
+            None => (
+                (0, prefix_len(n_shared, &|i| dict.object_term(i))),
+                (
+                    0,
+                    prefix_len(dict.object_only_count(), &|i| {
+                        dict.object_term(n_shared + i)
+                    }),
+                ),
+            ),
+        };
         SchemaIds {
             type_pid,
             type_term: type_pid.map(|_| type_term),

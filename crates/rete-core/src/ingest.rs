@@ -1741,6 +1741,7 @@ fn finish_assembly<M: IntoMetadata>(
     let dict_container = crate::file::encode_dict_container(&dict, codec);
     let term_count = dict.term_count() as u64;
     let has_quoted_triples = dict.has_quoted_triples();
+    let term_order = dict.order();
     drop(dict);
     crate::build_trace::lap(crate::build_trace::Phase::DictionarySection);
 
@@ -1837,6 +1838,7 @@ fn finish_assembly<M: IntoMetadata>(
         text_index_partial,
         text_index_named,
         codec,
+        term_order,
     );
     // Kinds 8 and 9 go after everything else: they are outside the content
     // hash, so appending them moves nothing and changes no hash.

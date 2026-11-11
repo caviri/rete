@@ -175,9 +175,15 @@ use crate::extbuild_spill::{
 };
 use crate::index::GroupSizer;
 use crate::ingest::{BuildStats, GraphLayout, IngestError, RawQuad};
+use crate::term_order::TermOrder;
 use crate::triples::TripleBlockBuilder;
 use crate::varint::write_uvarint;
 use crate::DictionaryBuilder;
+
+/// The order of the dictionary this build writes: the SPARQL order of format
+/// `0x08`. Every chunk's terms are sorted in it, the merge compares in it, and
+/// the finished sections are in it.
+const ORDER: TermOrder = TermOrder::Sparql;
 
 /// An id-triple in a single permutation's ordering.
 type IdTriple = (u32, u32, u32);
@@ -1000,7 +1006,7 @@ impl<'a> Chunker<'a> {
     /// chunk's counts are in ([`select_frequent_objects`]); a chunk only
     /// counts.
     fn new_builder(count_objects: bool) -> DictionaryBuilder {
-        let b = DictionaryBuilder::default();
+        let b = DictionaryBuilder::default().with_order(ORDER);
         if count_objects {
             b.with_object_counts()
         } else {
@@ -1314,7 +1320,7 @@ impl SpaceStream {
             (Some(_), None) => true,
             (None, Some(_)) => false,
             // sections are disjoint, so strict ordering decides
-            (Some(x), Some(y)) => x < y,
+            (Some(x), Some(y)) => ORDER.cmp_str(x, y) == std::cmp::Ordering::Less,
         };
         if take_a {
             let t = self.a_next.take().unwrap();
@@ -1376,9 +1382,8 @@ impl PartialOrd for HeapEntry {
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // BinaryHeap is a max-heap; invert for ascending term order
-        other
-            .term
-            .cmp(&self.term)
+        ORDER
+            .cmp_str(&other.term, &self.term)
             .then_with(|| other.chunk.cmp(&self.chunk))
     }
 }
@@ -1468,7 +1473,8 @@ impl Frequent {
     /// in the in-RAM builder's order: more statements, ties by term order
     /// (`DictionaryBuilder::build`).
     fn is_beaten_by(&self, count: u64, term: &str) -> bool {
-        count > self.count || (count == self.count && term < self.term.as_str())
+        count > self.count
+            || (count == self.count && ORDER.cmp_str(term, &self.term) == std::cmp::Ordering::Less)
     }
 }
 
@@ -1488,7 +1494,7 @@ impl Ord for Frequent {
         other
             .count
             .cmp(&self.count)
-            .then_with(|| self.term.cmp(&other.term))
+            .then_with(|| ORDER.cmp_str(&self.term, &other.term))
     }
 }
 
@@ -1564,7 +1570,7 @@ fn select_frequent_objects(
         }
         while subject
             .as_ref()
-            .is_some_and(|(s, _)| s.as_str() < term.as_str())
+            .is_some_and(|(s, _)| ORDER.cmp_str(s, &term) == std::cmp::Ordering::Less)
         {
             subject = subjects.next()?;
         }
@@ -1591,7 +1597,7 @@ fn select_frequent_objects(
     }
     let _ = std::fs::remove_file(&empty);
     let mut promoted: Vec<Frequent> = top.into_vec();
-    promoted.sort_unstable_by(|a, b| a.term.cmp(&b.term));
+    promoted.sort_unstable_by(|a, b| ORDER.cmp_str(&a.term, &b.term));
     let least = promoted.iter().map(|f| f.count).min().unwrap_or(0);
     eprintln!(
         "extbuild: frequent objects — {} of {candidates} object-only term(s) promoted to the \
@@ -1681,7 +1687,7 @@ fn merge_dictionaries_with(
             (None, None) => break,
             (Some(_), None) => Class::SubjOnly,
             (None, Some(_)) => Class::ObjOnly,
-            (Some((st, _)), Some((ot, _))) => match st.cmp(ot) {
+            (Some((st, _)), Some((ot, _))) => match ORDER.cmp_str(st, ot) {
                 std::cmp::Ordering::Less => Class::SubjOnly,
                 std::cmp::Ordering::Greater => Class::ObjOnly,
                 std::cmp::Ordering::Equal => Class::Shared,
@@ -1707,9 +1713,7 @@ fn merge_dictionaries_with(
                     }
                 }
                 has_quoted |= term.starts_with("<<");
-                if term.starts_with('"') {
-                    schema_facts.shared_literals += 1;
-                }
+                schema_facts.shared_groups.add(term.as_bytes());
                 shared_sec.push(&term)?;
                 ranks[0] += 1;
                 s_item = subjects.next()?;
@@ -1755,15 +1759,11 @@ fn merge_dictionaries_with(
                 }
                 has_quoted |= term.starts_with("<<");
                 if promote {
-                    if term.starts_with('"') {
-                        schema_facts.shared_literals += 1;
-                    }
+                    schema_facts.shared_groups.add(term.as_bytes());
                     shared_sec.push(&term)?;
                     ranks[0] += 1;
                 } else {
-                    if term.starts_with('"') {
-                        schema_facts.objonly_literals += 1;
-                    }
+                    schema_facts.objonly_groups.add(term.as_bytes());
                     obj_sec.push(&term)?;
                     ranks[2] += 1;
                 }
@@ -2037,7 +2037,7 @@ impl RawSectionWriter {
             } else {
                 match &prev_last {
                     None => first_term,
-                    Some(pl) => crate::dict::shortest_separator(pl, &first_term),
+                    Some(pl) => ORDER.separator(pl, &first_term),
                 }
             };
             if next.is_some() {
@@ -2838,6 +2838,11 @@ fn spill_image(
             }
             | if text.is_some_and(|t| t.named) {
                 FLAG_TEXT_INDEX_NAMED_GRAPHS
+            } else {
+                0
+            }
+            | if ORDER == TermOrder::Sparql {
+                crate::header::FLAG_SPARQL_TERM_ORDER
             } else {
                 0
             },

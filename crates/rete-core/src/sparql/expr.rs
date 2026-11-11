@@ -1381,9 +1381,29 @@ fn lang_matches(tag: &str, range: &str) -> bool {
 /// [`value::order_cmp`] order — blank nodes, IRIs, literals (numbers by value,
 /// strings by code point, …). Each key is classified once at construction so a
 /// comparison never re-parses.
+///
+/// A value of a `0x08` file in an order-exact dictionary group is not decoded
+/// at all: [`SortKey::Slot`] carries its section and id, and two keys of one
+/// section compare as the ids do. Across sections (a subject column holds
+/// shared and subject-only ids) one of the two is decoded, once, and placed
+/// among the other section's ids by a rank (one chunk read), so a key that
+/// stays (the bounds of a top-k) is decoded once and every other row compares
+/// against it as an id. The ids and the engine's order agree by construction
+/// (`term_order`, SPEC.md section 5), so the sorted rows are the rows the
+/// decode path sorts.
 pub(super) enum SortKey {
     Unbound,
     Bound(value::OrderKey),
+    Slot {
+        section: u8,
+        id: u32,
+        /// The tagged value, for the decode a cross-section comparison needs.
+        val: crate::row::Val,
+        decoded: std::cell::OnceCell<Option<value::OrderKey>>,
+        /// This key's rank in each dictionary section: how many terms of the
+        /// section sort before it (see [`SortKey::rank_in`]).
+        ranks: [std::cell::OnceCell<Option<u32>>; 4],
+    },
 }
 
 impl SortKey {
@@ -1394,13 +1414,101 @@ impl SortKey {
         }
     }
 
-    pub(super) fn cmp(&self, other: &SortKey) -> std::cmp::Ordering {
+    /// The key of a bound value: by id when the dictionary can say where it
+    /// sorts, else decoded.
+    pub(super) fn of_val(ctx: &Ctx, val: &crate::row::Val) -> Self {
+        match ctx.resolver.order_slot(val) {
+            Some((section, id)) => SortKey::Slot {
+                section,
+                id,
+                val: val.clone(),
+                decoded: std::cell::OnceCell::new(),
+                ranks: Default::default(),
+            },
+            None => SortKey::of(ctx.resolver.str_of(val)),
+        }
+    }
+
+    /// The key as a decoded value; `None` for an unbound one.
+    fn decoded(&self, ctx: &Ctx) -> Option<&value::OrderKey> {
+        match self {
+            SortKey::Unbound => None,
+            SortKey::Bound(k) => Some(k),
+            SortKey::Slot { val, decoded, .. } => decoded
+                .get_or_init(|| ctx.resolver.str_of(val).map(value::OrderKey::new))
+                .as_ref(),
+        }
+    }
+
+    /// Has this key been decoded already (a bound that stays, not a row passing)?
+    fn is_decoded(&self) -> bool {
+        match self {
+            SortKey::Slot { decoded, .. } => decoded.get().is_some(),
+            _ => true,
+        }
+    }
+
+    /// How many terms of dictionary section `section` sort before this key,
+    /// decoding it once and reading the one chunk it routes to; cached.
+    fn rank_in(&self, section: u8, ctx: &Ctx) -> Option<u32> {
+        let SortKey::Slot { ranks, .. } = self else {
+            return None;
+        };
+        *ranks[section as usize & 3].get_or_init(|| {
+            let k = self.decoded(ctx)?;
+            ctx.resolver.rank_in(section, &k.token)
+        })
+    }
+
+    pub(super) fn cmp(&self, other: &SortKey, ctx: &Ctx) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         match (self, other) {
             (SortKey::Unbound, SortKey::Unbound) => Ordering::Equal,
             (SortKey::Unbound, _) => Ordering::Less,
             (_, SortKey::Unbound) => Ordering::Greater,
-            (SortKey::Bound(a), SortKey::Bound(b)) => a.cmp(b),
+            (
+                SortKey::Slot {
+                    section: sa, id: a, ..
+                },
+                SortKey::Slot {
+                    section: sb, id: b, ..
+                },
+            ) => {
+                if sa == sb {
+                    return a.cmp(b);
+                }
+                // Two sections. The pivot is the key that is decoded already
+                // (the other is a row passing a bound), else `other`: its rank
+                // among the first one's ids says on which side that id falls.
+                if self.is_decoded() && !other.is_decoded() {
+                    if let Some(r) = self.rank_in(*sb, ctx) {
+                        return if *b <= r {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Less
+                        };
+                    }
+                } else if let Some(r) = other.rank_in(*sa, ctx) {
+                    return if *a <= r {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
+                    };
+                }
+                Self::cmp_decoded(self, other, ctx)
+            }
+            (a, b) => Self::cmp_decoded(a, b, ctx),
+        }
+    }
+
+    /// Compare two keys as decoded values (unbound first), the engine's order.
+    fn cmp_decoded(a: &SortKey, b: &SortKey, ctx: &Ctx) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (a.decoded(ctx), b.decoded(ctx)) {
+            (Some(x), Some(y)) => x.cmp(y),
+            (None, None) => Ordering::Equal,
+            (None, _) => Ordering::Less,
+            (_, None) => Ordering::Greater,
         }
     }
 }
@@ -1549,12 +1657,12 @@ mod tests {
         let one = SortKey::of(Some(Rc::from("1")));
         let two = SortKey::of(Some(Rc::from("2")));
         let text = SortKey::of(Some(Rc::from("z")));
-        assert_eq!(unbound.cmp(&unbound), std::cmp::Ordering::Equal);
-        assert_eq!(unbound.cmp(&one), std::cmp::Ordering::Less);
-        assert_eq!(one.cmp(&unbound), std::cmp::Ordering::Greater);
-        assert_eq!(one.cmp(&two), std::cmp::Ordering::Less);
+        assert_eq!(unbound.cmp(&unbound, &ctx), std::cmp::Ordering::Equal);
+        assert_eq!(unbound.cmp(&one, &ctx), std::cmp::Ordering::Less);
+        assert_eq!(one.cmp(&unbound, &ctx), std::cmp::Ordering::Greater);
+        assert_eq!(one.cmp(&two, &ctx), std::cmp::Ordering::Less);
         // Text sorts before numbers (ORDER BY between kinds, value::order_cmp).
-        assert_eq!(text.cmp(&two), std::cmp::Ordering::Less);
+        assert_eq!(text.cmp(&two, &ctx), std::cmp::Ordering::Less);
     }
 
     /// SPARQL 1.1 §17.2 / §17.3 / §17.4.1: an error is a value of its own that

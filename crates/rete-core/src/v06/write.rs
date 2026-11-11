@@ -14,7 +14,6 @@ use std::io::{Seek, SeekFrom, Write};
 use super::parts::Parts;
 use super::*;
 use crate::file::{compress, FileError};
-use crate::header::CURRENT_FORMAT_VERSION;
 use crate::reader::RangeReader;
 
 /// How quad tiles are clustered in the data region.
@@ -477,9 +476,11 @@ fn build_front(
                     (l, run, co, key)
                 })
                 .collect(),
+            groups: d.groups,
         };
     }
-    f.units.push((tag::DICT, encode_dict_root(&droots)));
+    f.units
+        .push((tag::DICT, encode_dict_root(&droots, version)));
     // Index.
     let mut proots = Vec::new();
     for (pi, p) in parts.index.iter().enumerate() {
@@ -581,7 +582,7 @@ fn build_front(
                     &mut f.leaf_max[2],
                     |e, i| {
                         let _ = i;
-                        encode_qtile_leaf(e, e[0].off, version == VERSION)
+                        encode_qtile_leaf(e, e[0].off, has_v07(version))
                     },
                 ) {
                     l.first += a;
@@ -623,7 +624,7 @@ fn build_front(
             // node follows in its own section (kind LABEL_ROOT).
             encode_label_root(&LabelRoot {
                 data_len: l.data_len,
-                head: if version == VERSION {
+                head: if has_v07(version) {
                     l.head[..l.head.len().min(crate::label_index::PREAMBLE_LEN)].to_vec()
                 } else {
                     l.head.clone()
@@ -805,16 +806,34 @@ pub fn assemble_with<W: Write + Seek>(
     opts: WriteOpts,
     hooks: &mut Hooks<'_>,
 ) -> Result<Written, FileError> {
+    // The terms' order is part of the generation: a `0x08` file holds its
+    // dictionary in the SPARQL order, an older one in byte order, and a reader
+    // searches with the one its version names.
+    if parts.order != term_order(opts.version) {
+        return Err(FileError::Container(
+            "the dictionary's term order is not that of the format generation being written: `rete convert` re-sorts a dictionary",
+        ));
+    }
+    if parts.order == crate::term_order::TermOrder::Sparql
+        && parts
+            .dict
+            .iter()
+            .any(|d| d.groups.total() != d.term_count as u64)
+    {
+        return Err(FileError::Container(
+            "0x08 dictionary term groups do not add up to the term count",
+        ));
+    }
     // `0x07` writes SPOG, POSG and OSPG next to GSPO: derive them from the GSPO
     // tiles first (the other graph-leading orders of the input are dropped).
-    if opts.version == VERSION && super::neworders::needed(parts) {
+    if has_v07(opts.version) && super::neworders::needed(parts) {
         let (derived, extras) = super::neworders::derive(parts, input, &opts.spill())?;
         let layered = super::neworders::Layered::new(input, &extras);
         return assemble_with(&derived, &layered, out, opts.clone(), hooks);
     }
     // `--cluster-subjects-by-class`: the subject-leading permutations by class
     // (or back to subject order). Another pass over the input, same shape.
-    if opts.version == VERSION && super::cluster::needed(parts, opts.cluster) {
+    if has_v07(opts.version) && super::cluster::needed(parts, opts.cluster) {
         if let Some((derived, extras)) =
             super::cluster::derive(parts, input, opts.cluster, &opts.spill())?
         {
@@ -841,7 +860,7 @@ pub fn assemble_with<W: Write + Seek>(
     // Quad clustering (`0x06`): graph-major when the mean graph is under a tile.
     let graph_major = match (&parts.quad, opts.quad) {
         (None, _) => false,
-        (_, _) if opts.version == VERSION => false,
+        (_, _) if has_v07(opts.version) => false,
         (Some(_), QuadClustering::GraphMajor) => true,
         (Some(_), QuadClustering::OrderMajor) => false,
         (Some(q), QuadClustering::Auto) => {
@@ -1009,7 +1028,7 @@ pub fn assemble_with<W: Write + Seek>(
         ));
     }
     // The label index's root node: cold, read only by a label search.
-    if let (Some(l), true) = (&parts.labels, opts.version == VERSION) {
+    if let (Some(l), true) = (&parts.labels, has_v07(opts.version)) {
         let pre = crate::label_index::PREAMBLE_LEN;
         if l.head.len() > pre {
             fronts.push((kind::LABEL_ROOT, l.head[pre..].to_vec(), 0));
@@ -1031,10 +1050,10 @@ pub fn assemble_with<W: Write + Seek>(
     let card = hot_card
         .as_ref()
         .filter(|c| !c.is_empty())
-        .map(|c| compress(codec, &stamp_card_version(c)));
+        .map(|c| compress(codec, &stamp_card_version(c, opts.version)));
     let mut data = data;
     if let Some(raw) = annex_raw.as_ref().filter(|a| !a.is_empty()) {
-        if opts.version != VERSION {
+        if !has_v07(opts.version) {
             return Err(FileError::Container("0x06 has no card annex"));
         }
         data.push(DataSec {
@@ -1233,13 +1252,14 @@ fn presence_of(p: &Parts) -> u16 {
     x
 }
 
-/// A card written into a `0x07` file says `"format_version":7`. The cards the
+/// A card written into a `0x08` file says `"format_version":8` (`version` is
+/// the generation of the file it enters; a `0x07` file keeps saying 7). The cards the
 /// core builders derive stamp the `0x05` layout they were produced for
 /// (`LEGACY_FORMAT_VERSION`); every card entering a `0x06` file passes here, so
 /// a build, a converted build and a re-card agree on the stamp. Only the first
-/// compact `"format_version":N` with N below 7 is rewritten; anything else is
+/// compact `"format_version":N` with N below `version` is rewritten; anything else is
 /// returned unchanged.
-pub fn stamp_card_version(card: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+pub fn stamp_card_version(card: &[u8], version: u8) -> std::borrow::Cow<'_, [u8]> {
     const KEY: &[u8] = b"\"format_version\":";
     let Some(at) = card.windows(KEY.len()).position(|w| w == KEY) else {
         return std::borrow::Cow::Borrowed(card);
@@ -1248,9 +1268,9 @@ pub fn stamp_card_version(card: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let digits = card[s..].iter().take_while(|b| b.is_ascii_digit()).count();
     let old = std::str::from_utf8(&card[s..s + digits]).unwrap_or("");
     match old.parse::<u8>() {
-        Ok(v) if v < CURRENT_FORMAT_VERSION => {
+        Ok(v) if v < version => {
             let mut out = card[..s].to_vec();
-            out.extend_from_slice(CURRENT_FORMAT_VERSION.to_string().as_bytes());
+            out.extend_from_slice(version.to_string().as_bytes());
             out.extend_from_slice(&card[s + digits..]);
             std::borrow::Cow::Owned(out)
         }
@@ -1441,7 +1461,7 @@ fn plan_card(
         }
         None => (None, None),
     };
-    let stored = hot.map(|c| compress(codec, &stamp_card_version(&c)));
+    let stored = hot.map(|c| compress(codec, &stamp_card_version(&c, h.version)));
     let root = Root06::decode(root_bytes, codec)?;
     let old = root.section(kind::CARD_ANNEX).copied();
     let new_stored = annex_raw.as_ref().map(|a| compress(codec, a));
@@ -1794,18 +1814,28 @@ mod stamp_tests {
 
     #[test]
     fn stamps_older_versions_only() {
-        let s = |b: &[u8]| stamp_card_version(b).into_owned();
+        let s = |b: &[u8]| stamp_card_version(b, 8).into_owned();
         assert_eq!(
             s(br#"{"a":1,"format_version":5}"#),
-            br#"{"a":1,"format_version":7}"#
+            br#"{"a":1,"format_version":8}"#
         );
         assert_eq!(
             s(br#"{"format_version":5,"z":2}"#),
-            br#"{"format_version":7,"z":2}"#
+            br#"{"format_version":8,"z":2}"#
         );
-        assert_eq!(s(br#"{"format_version":6}"#), br#"{"format_version":7}"#);
-        assert_eq!(s(br#"{"format_version":7}"#), br#"{"format_version":7}"#);
+        assert_eq!(s(br#"{"format_version":6}"#), br#"{"format_version":8}"#);
+        assert_eq!(s(br#"{"format_version":7}"#), br#"{"format_version":8}"#);
         assert_eq!(s(br#"{"format_version":8}"#), br#"{"format_version":8}"#);
+        assert_eq!(s(br#"{"format_version":9}"#), br#"{"format_version":9}"#);
         assert_eq!(s(br#"{"title":"x"}"#), br#"{"title":"x"}"#);
+        // a 0x07 file keeps saying 7
+        assert_eq!(
+            stamp_card_version(br#"{"format_version":5}"#, 7).as_ref(),
+            br#"{"format_version":7}"#
+        );
+        assert_eq!(
+            stamp_card_version(br#"{"format_version":7}"#, 7).as_ref(),
+            br#"{"format_version":7}"#
+        );
     }
 }

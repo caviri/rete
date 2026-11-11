@@ -30,7 +30,7 @@ pub const MAGIC: [u8; 4] = *b"RETE";
 /// does it pin reader capability: writer semantics changed inside `0x05` nine
 /// days after the freeze (#68 split oversized index groups across tiles), so a
 /// `0x05` file can need a reader newer than the one that froze `0x05`.
-pub const CURRENT_FORMAT_VERSION: u8 = 0x07;
+pub const CURRENT_FORMAT_VERSION: u8 = 0x08;
 
 /// Format generation `0x05` (stable generation 1, the 1 KiB section-directory
 /// layout this module parses). Every reader still reads it while the catalog is
@@ -92,6 +92,16 @@ pub const FLAG_QUAD_INDEX: u8 = 0b0000_1000;
 /// the bit it scans and never faults the index's token table. Bit 3
 /// (`0b0000_1000`) belongs to the quad index. Older readers ignore unknown bits.
 pub const FLAG_TEXT_INDEX_NAMED_GRAPHS: u8 = 0b0001_0000;
+
+/// Flag bit of a `0x05` **image**: the dictionary sections are in the SPARQL
+/// term order ([`crate::term_order::TermOrder::Sparql`]), not byte order.
+///
+/// A real `0x05` file never has it (the order of `0x05` is byte order, and no
+/// writer has put a `0x05` file on disk since `0x06`); the in-memory image a
+/// build hands to the `0x08` writer, and the datasets the wasm playground builds
+/// in the browser, do. The writer of a file refuses to stamp an older
+/// generation on such an image.
+pub const FLAG_SPARQL_TERM_ORDER: u8 = 0b0010_0000;
 
 /// Length of the BLAKE3 self-digest that heads a predicate-restricted text
 /// index section ([`SectionKind::TextIndexPartial`], kind 11):
@@ -568,6 +578,19 @@ impl Header {
         self.flags & FLAG_HAS_QUOTED_TRIPLES != 0
     }
 
+    /// How this file orders its dictionary terms: the SPARQL order from `0x08`
+    /// (and in a `0x05` image with [`FLAG_SPARQL_TERM_ORDER`]), byte order
+    /// otherwise.
+    pub fn term_order(&self) -> crate::term_order::TermOrder {
+        if self.version >= 0x08
+            || (self.version == 0x05 && self.flags & FLAG_SPARQL_TERM_ORDER != 0)
+        {
+            crate::term_order::TermOrder::Sparql
+        } else {
+            crate::term_order::TermOrder::Bytewise
+        }
+    }
+
     /// Do the tiled index sections carry a [`FLAG_TILE_SYNOPSIS`] trailer?
     pub fn has_tile_synopsis(&self) -> bool {
         self.flags & FLAG_TILE_SYNOPSIS != 0
@@ -862,7 +885,7 @@ mod tests {
                 HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x07
+                    max: 0x08
                 } if *found == old
             ));
             assert!(error
@@ -870,7 +893,7 @@ mod tests {
                 .contains("Pre-1.0 files must be rebuilt from RDF source with `rete build`"));
         }
 
-        for unsupported in [0x00, 0x08, 0xff] {
+        for unsupported in [0x00, 0x09, 0xff] {
             let mut bytes = current;
             bytes[4] = unsupported;
             assert!(matches!(
@@ -878,7 +901,7 @@ mod tests {
                 Err(HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x07
+                    max: 0x08
                 }) if found == unsupported
             ));
         }

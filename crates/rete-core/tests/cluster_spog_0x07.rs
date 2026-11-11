@@ -121,6 +121,33 @@ fn four() -> ClusterOpts {
     }
 }
 
+/// The same image with a byte-ordered dictionary (what `0x06` and `0x07` hold).
+fn v5_legacy() -> &'static [u8] {
+    static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BYTES.get_or_init(|| {
+        let _g = BUILD.lock().unwrap_or_else(|e| e.into_inner());
+        let mut o = write_options();
+        o.tile_budget = 2 * 1024;
+        rete_core::write_opts::set_write_options(o);
+        rete_core::term_order::with_builder_order(
+            rete_core::term_order::TermOrder::Bytewise,
+            || {
+                assemble_dataset_with_layout(
+                    dataset(),
+                    false,
+                    false,
+                    None,
+                    PyramidAlgo::Louvain,
+                    PermSet::ALL,
+                    GraphLayout::Quad,
+                    |_, _| Vec::<u8>::new(),
+                )
+                .0
+            },
+        )
+    })
+}
+
 fn opts(cluster: Option<ClusterOpts>) -> WriteOpts {
     WriteOpts {
         cluster,
@@ -152,7 +179,7 @@ fn v06() -> &'static [u8] {
             version: VERSION_06,
             ..Default::default()
         };
-        convert_image(v5(), o).unwrap()
+        convert_image(v5_legacy(), o).unwrap()
     })
 }
 

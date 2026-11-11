@@ -441,6 +441,16 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
                 bad.push(format!("quad order ({p})"));
             }
         }
+        // The dictionary's term order: every section sorted in the order its
+        // generation names, the root's group counts, every routing key.
+        let mut dict_terms = 0u64;
+        if bad.is_empty() && only.is_none_or(|k| k == rete_core::v06::kind::DICT_DATA) {
+            let (n, problems) = rete_core::v06::check_dictionary(&reader)?;
+            dict_terms = n;
+            for p in problems {
+                bad.push(format!("dictionary ({p})"));
+            }
+        }
         // The class clusters: every row is in the run of its subject's class.
         let mut clusters = 0usize;
         if bad.is_empty()
@@ -459,6 +469,18 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
                 format!(", and the {orders} quad orders agree")
             } else {
                 String::new()
+            };
+            let checked = if dict_terms > 0 {
+                format!(
+                    "{checked}, and the {dict_terms} dictionary terms are in {} order",
+                    if head[4] >= rete_core::v06::VERSION {
+                        "SPARQL"
+                    } else {
+                        "byte"
+                    }
+                )
+            } else {
+                checked
             };
             let checked = if clusters > 0 {
                 format!("{checked}, and the {clusters} clustered orders hold their classes")
@@ -756,7 +778,8 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
             hex(&s.digest)
         );
     }
-    print_leaf_counts(&root);
+    print_leaf_counts(&root, h.version);
+    print_term_order(&root, h.version);
     print_clusters(&root);
     print_quad_orders(&h, &root);
     Ok(())
@@ -878,15 +901,52 @@ fn codec_name(id: u8) -> String {
     }
 }
 
+/// The order of the dictionary's terms (SPEC.md section 5.2), and from `0x08`
+/// the terms per group of each section, which say where the order-exact id
+/// ranges are: blank nodes, IRIs, text literals, typed literals, triples.
+fn print_term_order(root: &rete_core::v06::Root06, version: u8) {
+    use rete_core::v06::{decode_dict_root, tag};
+    let sparql = rete_core::v06::term_order(version) == rete_core::term_order::TermOrder::Sparql;
+    println!(
+        "  term order   : {}",
+        if sparql {
+            "SPARQL (ids compare as ORDER BY does within a section, outside the typed literals)"
+        } else {
+            "bytewise (the stored token's bytes)"
+        }
+    );
+    if !sparql {
+        return;
+    }
+    if let Some(Ok(d)) = root.unit(tag::DICT).map(|u| decode_dict_root(u, version)) {
+        let names = ["shared", "subject-only", "object-only", "predicates"];
+        println!("    groups per section (blank, iri, text, typed, triple):");
+        for (n, s) in names.iter().zip(&d) {
+            println!(
+                "      {n:<13} {}",
+                s.groups
+                    .0
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+    }
+}
+
 /// Leaves per directory, from the root alone: `dict` (shared, subject, object,
 /// predicate), `index` and `quad` (per stored order), `text`.
-fn print_leaf_counts(root: &rete_core::v06::Root06) {
+fn print_leaf_counts(root: &rete_core::v06::Root06, root_version: u8) {
     use rete_core::v06::{
         decode_dict_root, decode_index_root, decode_quad_root, decode_text_root, tag,
     };
     let list = |v: Vec<usize>| v.iter().map(usize::to_string).collect::<Vec<_>>().join(" ");
     println!("  leaves       :");
-    if let Some(Ok(d)) = root.unit(tag::DICT).map(decode_dict_root) {
+    if let Some(Ok(d)) = root
+        .unit(tag::DICT)
+        .map(|u| decode_dict_root(u, root_version))
+    {
         println!(
             "    dict   {}",
             list(d.iter().map(|s| s.leaves.len()).collect())

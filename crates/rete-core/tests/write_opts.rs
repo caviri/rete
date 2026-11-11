@@ -336,9 +336,13 @@ fn writer_knobs_change_bytes_not_answers() {
         );
     }
     // The shared section stays in term order, so where a promoted term lands
-    // is where it sorts: a literal (`"`) ahead of every IRI, a
-    // `<http://vocab/…>` class after the `<http://ex/item/…>` entities.
-    assert_eq!(dict.object_id("\"published\""), Some(1));
+    // is where it sorts: a literal after every IRI (the SPARQL order of 0x08),
+    // a `<http://vocab/…>` class after the `<http://ex/item/…>` entities.
+    assert_eq!(
+        dict.object_id("\"published\""),
+        Some(dict.shared_count()),
+        "the one literal closes the shared section"
+    );
     assert!(dict.object_id("<http://vocab/Book>").unwrap() > 6000);
     // The card a re-card derives by streaming the promoted file (`rete
     // recard`) is the card derived from the quads: a promoted literal in the

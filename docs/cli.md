@@ -624,16 +624,30 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--quad-clustering auto|graph|order] [--cluster-subjects-by-class] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
-Turn a format `0x05` or `0x06` file into format `0x07` ([SPEC §4](SPEC.md#4-file-layout))
-without rebuilding it. The sections are read through ranges and their payload —
-dictionary chunks, index tiles, quad tiles, label blocks, postings, the pyramid
-— copied byte for byte; the directories are re-cut into leaves at the front,
-next to the card and the statistics. Nothing is parsed as RDF, so the cost is
-one read and one write of the file. The input may be a path or an http(s) URL.
+### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--cluster-subjects-by-class] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
+Turn a format `0x05`, `0x06` or `0x07` file into format `0x08`
+([SPEC §4.11](SPEC.md#411-format-0x08-and-compatibility)) without going back to the
+RDF source. Format `0x08` keeps its dictionary in the SPARQL order
+([SPEC §5.2](SPEC.md#52-term-order-0x05-0x07-bytes-0x08-sparql)), so every term gets a
+new id and every structure that holds ids has to be written again: **a conversion is a
+re-encode, not a copy of the payload.** The statements are walked through the source
+(never as text) and written by the memory-bounded builder, `rete merge` of one file:
+the terms are sorted and merged, every index and quad order is sorted and tiled again,
+and the label index, the text index (with its scope), the SCHEMA section and, with
+`--cluster-subjects-by-class`, the class clusters are rebuilt for the new ids. The
+card, its annex and the build record are kept. The input may be a path or an http(s)
+URL.
 
-The card is carried as it is. The build record is carried too, with a
-`conversions` entry added that names the converting engine, the time, the
+`--memory-budget-mb` (default 2048) is the builder's working-set target and the
+ceiling of the card-cost measurement; the spill (sorted runs, a few bytes per statement
+and order) goes to `--tmp-dir`, by default beside the output. The 2018 nanopub dump
+(378.7 M quads) and the 202 MB OpenCitations sample are re-encoded under a 4 GB
+container; see the CHANGELOG for time, peak memory and size. A source with a community
+pyramid (or per-graph named graphs) is re-encoded in memory instead, since the pyramid is
+built in memory.
+
+The card is carried as it is (its `format_version` says 8). The build record is carried
+too, with a `conversions` entry added that names the converting engine, the time, the
 command and flags, and the source's format, content hash and size (a file
 without a record gets one holding just that). The output has the content hash
 `rete build` gives the same data and flags — not the `0x05` file's, since the
@@ -646,48 +660,35 @@ costs are recorded as `query_costs` in the new `conversions` entry — the sourc
 record's own costs were measured on the old layout and are kept as they were,
 but no longer describe this file. `rete card`, `card-audit` and
 `build_record()` show the conversion's. `--no-card-costs` skips the run;
-`--memory-budget-mb` bounds it as it does the build's. Two inputs take more than
-a copy:
+`--memory-budget-mb` bounds it as it does the build's.
 
-- **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section) are re-encoded as
-  a quad index from the decoded statements, as `repyramid` would. This reads the
-  file whole.
-- **Legacy labels only.** A file whose only labels are the pyramid's legacy
-  block (at most 8,192 entries) gets the label index `build --label-index`
-  writes, from the label predicates' triples read through the index.
+Two inputs are re-encoded in memory instead of by the bounded builder, because they
+carry something the builder does not write:
+
+- **A community pyramid.** Its levels are built over the whole graph, in memory, as
+  `repyramid` does.
+- **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section): re-encoded as a quad
+  index from the decoded statements. A file whose only labels are the pyramid's legacy
+  block (at most 8,192 entries) gets the label index `build --label-index` writes;
   `--no-label-index` skips it.
 
-**Named graphs get the `0x07` quad orders.** A file with a quad index comes out with
-GSPO, SPOG, POSG and OSPG (SPEC §6.5): GSPO's tiles are copied, and the other three
-are derived from them, one sort pass each, one order at a time. Up to 100 M named
-quads are sorted in RAM; past that the sort spills runs of 100 M (zstd, about 4 GB
-of spill per 1 G quads) into `--tmp-dir` (default: beside the output) and merges them
-straight into the tiles, so the 3.88 GB nanopub dump (378.7 M quads) converts in
-75 s with a 1.8 GB peak and 1.6 GB of spill, to 2.51 GB. The graph-leading
-`G+POS`, `G+OSP` (and `G+SOP`, `G+PSO`, `G+OPS`) orders of the input are not
-written; `RETE_QUAD_RUN_ROWS` changes the run size (RAM against disk), never the
-bytes.
+**Named graphs** come out with the four `0x07` quad orders (GSPO, SPOG, POSG, OSPG, SPEC
+§6.5); the graph-leading `G+POS` and the others of a `0x06` input are not written.
+`--quad-clustering` is accepted for `0x06` scripts and ignored: `0x07` and `0x08` are
+order-major, always.
 
-`--quad-clustering` applies to a `0x06` output only (`0x07` is order-major, always):
-`graph` puts the tiles of every order for one block of graphs side by side, `order`
-keeps each order contiguous.
-
-**A `0x06` input** is written again, as `0x07`: the payload is copied verbatim and only the
-directory leaves, the root and the section table are cut anew, the label index's root node
-moves out of the root into its own section, and the annex is created only if the card has
-a field over the 8 KiB hot cap (never, for a card written under today's rules), under the
-writer's current leaf policy ([SPEC §4.3](SPEC.md#4-file-layout)). That is how a
-file written before 0.5.6 gets small directory leaves without a rebuild: on the
-3.88 GB nanopub dump it takes 2.4 s and about 100 MB of memory. The card and the
-build record are kept as they are (the card's starter-query costs are not
-measured again, so a layout change is not reflected in them), and a
-The content
-hash changes (the leaf bytes are part of it), the data does not.
+**What a converted file is.** The same statements under the same card: a query returns the
+same rows from the input and the output (the tests compare the sorted rows of every query
+and the exact order of every `ORDER BY`). It is the file `rete build` writes for the same
+data and flags, record apart, byte for byte (the content hash is the build's). Converting
+twice, or converting a `0x08` file, gives the same bytes; a `0x08` input is only written
+again under the current directory-leaf policy, payload copied (about two seconds for the
+2.4 GB nanopub dump). `rete verify` of the output checks the dictionary's order.
 
 ```sh
-rete convert davidrumsey.rete -o davidrumsey-06.rete
-rete convert nanopubs.rete -o nanopubs-leaves.rete   # a 0x06 file: directory leaves re-cut
-rete verify davidrumsey-06.rete
+rete convert davidrumsey.rete -o davidrumsey-08.rete
+rete convert nanopubs.rete -o nanopubs-08.rete --memory-budget-mb 2800 --tmp-dir /scratch
+rete verify davidrumsey-08.rete
 ```
 
 ### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …] [--no-card-costs]`

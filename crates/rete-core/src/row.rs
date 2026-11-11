@@ -357,6 +357,25 @@ impl<'a> Resolver<'a> {
         t
     }
 
+    /// Where a value sorts for `ORDER BY` without decoding it: `(section,
+    /// section-local id)` when the file's dictionary is in the SPARQL order and
+    /// the id is in an order-exact group (`Dictionary::order_slot`). Two values
+    /// of one section compare as their local ids do. `None` for a computed
+    /// string, a typed literal, and any value of a byte-ordered file.
+    pub(crate) fn order_slot(&self, v: &Val) -> Option<(u8, u32)> {
+        match v {
+            Val::Id(id) if *id >= 0 => self.dict.order_slot(*id as u32),
+            Val::Id(id) => self.dict.predicate_order_slot((-id - 1) as u32),
+            Val::Str(_) => None,
+        }
+    }
+
+    /// How many terms of dictionary section `section` sort before `term`
+    /// ([`Dictionary::rank_in_section`]).
+    pub(crate) fn rank_in(&self, section: u8, term: &str) -> Option<u32> {
+        self.dict.rank_in_section(section as usize, term)
+    }
+
     /// The term string of a value (memoized for ids, shared for strings).
     pub(crate) fn str_of(&self, v: &Val) -> Option<Rc<str>> {
         match v {

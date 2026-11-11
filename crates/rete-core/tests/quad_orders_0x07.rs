@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 
 use rete_core::ingest::{assemble_dataset_with_layout, GraphLayout, RawQuad};
 use rete_core::v06::write::{convert_image, rewrite, WriteOpts};
-use rete_core::v06::{decode_quad_root, kind, open::read_front, tag, VERSION, VERSION_06};
+use rete_core::v06::{
+    decode_quad_root, kind, open::read_front, tag, VERSION, VERSION_06, VERSION_07,
+};
 use rete_core::write_opts::{set_quad_run_rows, set_quad_view_synth_max, write_options};
 use rete_core::{eval_query, PermSet, PyramidAlgo, QueryOutput, RangeReader, Rete, SliceReader};
 
@@ -361,16 +363,39 @@ fn a_0x07_file_answers_like_the_0x06_file_on_every_shape() {
 #[test]
 fn the_graph_leading_orders_of_the_input_do_not_matter() {
     // A 0x05 image with six graph-leading orders, and one with GSPO alone, make
-    // the same 0x07 file: only GSPO is read, the rest is derived.
-    assert!(convert_image(v5_legacy(), WriteOpts::default()).unwrap() == v07());
+    // the same 0x07 file: only GSPO is read, the rest is derived. (Both have a
+    // byte-ordered dictionary, which is what `0x07` holds.)
+    let seven = WriteOpts {
+        version: VERSION_07,
+        ..Default::default()
+    };
+    let gspo_only = rete_core::term_order::with_builder_order(
+        rete_core::term_order::TermOrder::Bytewise,
+        || image_of(dataset(), false),
+    );
+    assert!(
+        convert_image(v5_legacy(), seven.clone()).unwrap()
+            == convert_image(&gspo_only, seven).unwrap()
+    );
 }
 
 #[test]
 fn the_conversion_from_0x06_is_the_conversion_from_0x05() {
+    let seven = WriteOpts {
+        version: VERSION_07,
+        ..Default::default()
+    };
     let src = SliceReader::new(v06());
     let mut out = std::io::Cursor::new(Vec::new());
-    rewrite(&src, &mut out, WriteOpts::default()).unwrap();
-    assert_eq!(out.into_inner(), v07(), "0x06 -> 0x07 equals 0x05 -> 0x07");
+    rewrite(&src, &mut out, seven.clone()).unwrap();
+    assert_eq!(
+        out.into_inner(),
+        convert_image(v5_legacy(), seven).unwrap(),
+        "0x06 -> 0x07 equals 0x05 -> 0x07"
+    );
+    // A byte-ordered dictionary is not a 0x08 one: that is a re-encode.
+    let mut sink = std::io::Cursor::new(Vec::new());
+    assert!(rewrite(&src, &mut sink, WriteOpts::default()).is_err());
 }
 
 #[test]

@@ -1031,7 +1031,18 @@ const DICT_CHUNK_BUDGET: usize = crate::write_opts::DEFAULT_DICT_CHUNK_BYTES;
 /// invariant, so readers of either vintage route both correctly; the
 /// separator is simply orders of magnitude smaller when the boundary term is a
 /// long literal.
+#[cfg(test)]
 fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
+    encode_chunked_dict_section_ordered(raw, codec, crate::term_order::TermOrder::Bytewise)
+}
+
+/// [`encode_chunked_dict_section`] for a section whose terms are sorted in
+/// `order`: the routing keys are separators in that order.
+fn encode_chunked_dict_section_ordered(
+    raw: &[u8],
+    codec: u8,
+    order: crate::term_order::TermOrder,
+) -> Vec<u8> {
     let meta = crate::dict::parse_meta(raw).unwrap_or(crate::dict::SectionMeta {
         term_count: 0,
         restart_interval: 1,
@@ -1099,7 +1110,7 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
                 // Undecodable predecessor: the verbatim first term is always a
                 // valid separator, just not a short one.
                 None => first,
-                Some(pl) => crate::dict::shortest_separator(pl, &first),
+                Some(pl) => order.separator(pl, &first),
             }
         };
         if i + 1 < bounds.len() {
@@ -1455,7 +1466,11 @@ fn decode_chunked_dict_section(
     ))
 }
 
-fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, FileError> {
+fn decode_dictionary_container(
+    bytes: &[u8],
+    codec: u8,
+    order: crate::term_order::TermOrder,
+) -> Result<Dictionary, FileError> {
     let dsecs = decode_container(bytes, CODEC_NONE)?;
     if dsecs.len() != 4 {
         return Err(FileError::Container("expected 4 dictionary sections"));
@@ -1465,12 +1480,9 @@ fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, Fi
     let cache = crate::chunk_cache::ChunkCache::unlimited_arc();
     let mut sections = Vec::with_capacity(4);
     for (si, sec) in dsecs.iter().enumerate() {
-        sections.push(decode_chunked_dict_section(
-            sec,
-            codec,
-            cache.clone(),
-            si as u8,
-        )?);
+        sections.push(
+            decode_chunked_dict_section(sec, codec, cache.clone(), si as u8)?.with_order(order),
+        );
     }
     let arr: [crate::dict::ChunkedSection; 4] = sections
         .try_into()
@@ -2239,7 +2251,7 @@ pub(crate) fn encode_dict_container(dict: &Dictionary, codec: u8) -> Vec<u8> {
     let raw_sections = dict.sections();
     let dict_payloads: Vec<Vec<u8>> = raw_sections
         .iter()
-        .map(|raw| encode_chunked_dict_section(raw, codec))
+        .map(|raw| encode_chunked_dict_section_ordered(raw, codec, dict.order()))
         .collect();
     encode_container(
         &[
@@ -2328,6 +2340,7 @@ pub fn write_dataset_with_metadata_v05(
         text_index_partial,
         text_index_named,
         codec,
+        dict.order(),
     )
 }
 
@@ -2357,6 +2370,7 @@ pub(crate) fn write_dataset_from_parts(
     text_index_partial: bool,
     text_index_named: bool,
     codec: u8,
+    term_order: crate::term_order::TermOrder,
 ) -> Vec<u8> {
     // The named graphs: either the per-graph section (kind 5) or the quad index
     // (kind 10), whose digest the root container's seal carries. An empty quad
@@ -2452,6 +2466,11 @@ pub(crate) fn write_dataset_from_parts(
             }
             | if text_len > 0 && text_index_named {
                 crate::header::FLAG_TEXT_INDEX_NAMED_GRAPHS
+            } else {
+                0
+            }
+            | if term_order == crate::term_order::TermOrder::Sparql {
+                crate::header::FLAG_SPARQL_TERM_ORDER
             } else {
                 0
             },
@@ -4212,6 +4231,7 @@ impl Rete {
         let dict = decode_dictionary_container(
             region(header.dictionary_offset, header.dictionary_len)?,
             header.dict_codec,
+            header.term_order(),
         )?;
 
         check_named_layout(&header)?;
@@ -5137,6 +5157,65 @@ impl Rete {
         (triples, sid, done)
     }
 
+    /// Every quad of the **named graphs** of a quad-index file, as
+    /// `(s, p, o, Some(graph))`, in graph order, handed to `visit` in batches
+    /// of at least `batch` quads (the terms of a batch are faulted in one
+    /// coalesced read). One sequential pass over the graph-leading tiles: no
+    /// view per graph and no list of the graphs' names, so it walks 43 M graphs
+    /// in the memory of a batch (`graph_names` memoises every name, which over
+    /// that many graphs is gigabytes). `Ok(false)`, and nothing visited, when
+    /// the file has no quad index to scan (a per-graph file: walk
+    /// [`graph_names`](Self::graph_names) and [`dump_batch`](Self::dump_batch)
+    /// instead). A failed read is recorded ([`index_incomplete`](Self::index_incomplete)).
+    pub fn dump_named_quads<E>(
+        &self,
+        batch: usize,
+        visit: &mut dyn FnMut(crate::ingest::RawQuad) -> Result<(), E>,
+    ) -> Result<bool, E> {
+        let Some(scan) = self.named_quad_scan((None, None, None)) else {
+            return Ok(false);
+        };
+        let dict = self.dictionary();
+        let batch = batch.max(1);
+        let mut ids: Vec<(u32, (u32, u32, u32))> = Vec::with_capacity(batch.min(1 << 20));
+        // The graph names of one batch decode once each.
+        let mut graph: Option<(u32, String)> = None;
+        let mut flush = |ids: &mut Vec<(u32, (u32, u32, u32))>| -> Result<(), E> {
+            let mut nodes = Vec::with_capacity(ids.len() * 3);
+            let mut preds = Vec::with_capacity(ids.len());
+            for &(g, (s, p, o)) in ids.iter() {
+                nodes.push(dict.subject_node(g));
+                nodes.push(dict.subject_node(s));
+                nodes.push(dict.object_node(o));
+                preds.push(p);
+            }
+            dict.prefetch_terms(&nodes, &preds);
+            for (g, (s, p, o)) in ids.drain(..) {
+                if graph.as_ref().is_none_or(|(id, _)| *id != g) {
+                    graph = dict.subject_term(g).map(|name| (g, name));
+                }
+                let (Some((_, name)), Some(s), Some(p), Some(o)) = (
+                    graph.as_ref(),
+                    dict.subject_term(s),
+                    dict.predicate_term(p),
+                    dict.object_term(o),
+                ) else {
+                    continue;
+                };
+                visit((s, p, o, Some(name.clone())))?;
+            }
+            Ok(())
+        };
+        for q in scan {
+            ids.push(q);
+            if ids.len() >= batch {
+                flush(&mut ids)?;
+            }
+        }
+        flush(&mut ids)?;
+        Ok(true)
+    }
+
     /// How many named graphs this dataset has. On a lazy ranged open this
     /// reads only the section's leading count varint — never the graphs.
     pub fn named_graph_count(&self) -> usize {
@@ -5340,7 +5419,8 @@ impl Rete {
         let header = Header::from_bytes(&head)?;
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+        let dict =
+            decode_dictionary_container(&dict_bytes, header.dict_codec, header.term_order())?;
 
         check_named_layout(&header)?;
         let index_bytes = reader.read_at(header.root_dir_offset, header.root_dir_len)?;
@@ -6199,7 +6279,7 @@ fn route_pattern<R: RangeReader>(
     let header = Header::from_bytes(&head)?;
 
     let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-    let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+    let dict = decode_dictionary_container(&dict_bytes, header.dict_codec, header.term_order())?;
 
     let Some(pattern) = resolve_query_pattern(&dict, s, p, o) else {
         return Ok(None);
@@ -6326,17 +6406,20 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
     let mut section_ranges: [std::sync::Arc<Vec<ByteRange>>; 4] = Default::default();
     for si in 0..4 {
         if !want[si] {
-            dict_sections.push(crate::dict::ChunkedSection::from_parts(
-                crate::dict::SectionMeta {
-                    term_count: 0,
-                    restart_interval: 1,
-                    restart_offsets: Vec::new(),
-                },
-                Vec::new(),
-                None,
-                cache.clone(),
-                si as u8,
-            ));
+            dict_sections.push(
+                crate::dict::ChunkedSection::from_parts(
+                    crate::dict::SectionMeta {
+                        term_count: 0,
+                        restart_interval: 1,
+                        restart_offsets: Vec::new(),
+                    },
+                    Vec::new(),
+                    None,
+                    cache.clone(),
+                    si as u8,
+                )
+                .with_order(header.term_order()),
+            );
             continue;
         }
         let section = locate_container_section_ranged(
@@ -6388,7 +6471,8 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
                 cache.clone(),
                 si as u8,
             )
-            .with_bulk_loader(bulk),
+            .with_bulk_loader(bulk)
+            .with_order(header.term_order()),
         );
     }
     let dict_arr: [crate::dict::ChunkedSection; 4] = dict_sections
@@ -6912,7 +6996,8 @@ impl SummaryView {
         }
 
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
-        let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
+        let dict =
+            decode_dictionary_container(&dict_bytes, header.dict_codec, header.term_order())?;
 
         let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
         let mut meta =
@@ -7349,7 +7434,7 @@ pub(crate) fn dict_chunk_keys_for_test(image: &[u8]) -> Vec<Vec<Vec<u8>>> {
         use crate::v06::{decode_chunk_leaf, decode_dict_root, kind, open, tag};
         let r = crate::reader::SliceReader::new(image);
         let (h, root) = open::read_front(&r).unwrap();
-        let roots = decode_dict_root(root.unit(tag::DICT).unwrap()).unwrap();
+        let roots = decode_dict_root(root.unit(tag::DICT).unwrap(), h.version).unwrap();
         let leaves = open::read_section(&r, &h, &root, kind::DICT_LEAVES)
             .unwrap()
             .unwrap();
@@ -8612,6 +8697,111 @@ mod tests {
                 }
                 for p in &probes {
                     prop_assert_eq!(sec_s.id(p), sec_v.id(p), "probe diverged: {:?}", p);
+                }
+            }
+        }
+    }
+
+    /// The same property for a SPARQL-ordered section (format `0x08`): terms of
+    /// every group (IRIs that are prefixes of each other, blank nodes, text
+    /// literals with spaces, tags and escapes, typed literals), big enough to
+    /// make several chunks. Every separator lies between its neighbours **in
+    /// that order**, every term is found at its rank, and arbitrary and
+    /// mutated probes are found exactly when a linear search finds them.
+    mod sparql_order_props {
+        use super::*;
+        use crate::term_order::TermOrder;
+        use proptest::prelude::*;
+
+        fn term_set() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec(("[a-c]{1,5}", 0u8..7, 200usize..900), 60..220).prop_map(
+                |specs| {
+                    let mut terms: Vec<String> = specs
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (core, kind, pad))| {
+                            let block = "z".repeat(pad);
+                            match kind {
+                                // an IRI and its extension: Ng8 / Ng8130_provenance
+                                0 => format!("<http://ex/{core}/{}>", i % 40),
+                                1 => format!("<http://ex/{core}/{}{block}_provenance>", i % 40),
+                                2 => format!("_:{core}{i}"),
+                                3 => format!("\"{block} {core}{i:04}\""),
+                                4 => format!("\"{core}{i:04}\"@{}", ["en", "EN", "fr"][i % 3]),
+                                5 => format!("\"{core}\\\"{i:04}{block}\""),
+                                _ => format!("\"{core}{i}\"^^<http://ex/dt>"),
+                            }
+                        })
+                        .collect();
+                    terms.sort_by(|a, b| TermOrder::Sparql.cmp_str(a, b));
+                    terms.dedup();
+                    terms
+                },
+            )
+        }
+
+        fn section_of(terms: &[String]) -> Vec<u8> {
+            let mut b = crate::dict::DictSectionBuilder::new()
+                .with_restart_interval(16)
+                .with_order(TermOrder::Sparql);
+            for t in terms {
+                b.push(t.clone());
+            }
+            b.build()
+        }
+
+        proptest! {
+            #[test]
+            fn prop_a_sparql_ordered_section_routes_and_finds(
+                terms in term_set(),
+                extra in prop::collection::vec(any::<String>(), 0..8),
+            ) {
+                let raw = section_of(&terms);
+                let payload = encode_chunked_dict_section_ordered(&raw, CODEC_NONE, TermOrder::Sparql);
+                let (_m, es) = parse_chunked_dict_dir(&payload, payload.len() as u64).unwrap();
+                let bounds = chunk_bounds_of(&payload, CODEC_NONE);
+                let o = TermOrder::Sparql;
+                prop_assert!(es[0].key.is_empty());
+                for i in 1..es.len() {
+                    prop_assert!(o.cmp(&bounds[i - 1].1, &es[i].key) == std::cmp::Ordering::Less);
+                    prop_assert!(o.cmp(&es[i].key, &bounds[i].0) != std::cmp::Ordering::Greater);
+                    prop_assert!(o.cmp(&es[i - 1].key, &es[i].key) == std::cmp::Ordering::Less);
+                }
+                let sec = decode_chunked_dict_section(
+                    &payload,
+                    CODEC_NONE,
+                    crate::chunk_cache::ChunkCache::unlimited_arc(),
+                    0,
+                )
+                .unwrap()
+                .with_order(o);
+                for (i, t) in terms.iter().enumerate() {
+                    prop_assert_eq!(sec.id(t), Some(i as u32 + 1));
+                    prop_assert_eq!(sec.term(i as u32 + 1), Some(t.clone()));
+                }
+                // the counts of the groups are the terms'
+                let mut counts = crate::term_order::GroupCounts::default();
+                terms.iter().for_each(|t| counts.add(t.as_bytes()));
+                prop_assert_eq!(sec.groups(), Some(counts));
+                let mut probes: Vec<String> = extra;
+                probes.push(String::new());
+                for (first, last) in &bounds {
+                    for base in [first, last] {
+                        if let Ok(s) = std::str::from_utf8(base) {
+                            probes.push(s.to_string());
+                            probes.push(format!("{s}\u{1}"));
+                        }
+                    }
+                }
+                for p in &probes {
+                    let want = terms.iter().position(|t| t == p).map(|i| i as u32 + 1);
+                    prop_assert_eq!(sec.id(p), want, "probe: {:?}", p);
+                    // the rank is the number of terms below the probe
+                    let below = terms
+                        .iter()
+                        .filter(|t| o.cmp_str(t, p) == std::cmp::Ordering::Less)
+                        .count() as u32;
+                    prop_assert_eq!(sec.rank(p), Some(below), "rank of {:?}", p);
                 }
             }
         }

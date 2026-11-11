@@ -199,7 +199,8 @@ impl V06File {
             .root
             .unit(tag::DICT)
             .ok_or(FileError::Container("0x06 file has no dictionary"))?;
-        let roots = decode_dict_root(unit)?;
+        let roots = decode_dict_root(unit, self.h.version)?;
+        let order = term_order(self.h.version);
         let leaves_base = self.section(kind::DICT_LEAVES).map_or(0, |r| r.offset);
         let data_base = self.section(kind::DICT_DATA).map_or(0, |r| r.offset);
         let cache = crate::chunk_cache::ChunkCache::unlimited_arc();
@@ -214,13 +215,10 @@ impl V06File {
                 restart_offsets: Vec::new(),
             };
             if !want[si] {
-                sections.push(ChunkedSection::from_parts(
-                    meta,
-                    Vec::new(),
-                    None,
-                    cache.clone(),
-                    si as u8,
-                ));
+                sections.push(
+                    ChunkedSection::from_parts(meta, Vec::new(), None, cache.clone(), si as u8)
+                        .with_order(order),
+                );
                 dirs.push(None);
                 continue;
             }
@@ -256,10 +254,14 @@ impl V06File {
                     .map(|b| decompress_bounded(codec, b, max).ok())
                     .collect()
             });
-            sections.push(
+            let mut section =
                 ChunkedSection::leafed(meta, dir.clone(), loader, cache.clone(), si as u8)
-                    .with_bulk_loader(bulk),
-            );
+                    .with_bulk_loader(bulk)
+                    .with_order(order);
+            if order == crate::term_order::TermOrder::Sparql {
+                section = section.with_groups(s.groups);
+            }
+            sections.push(section);
             dirs.push(Some(dir));
         }
         let arr: [ChunkedSection; 4] = sections
@@ -589,7 +591,7 @@ impl V06File {
                 leaves,
                 data,
                 self.h.internal_codec,
-                self.h.version == VERSION,
+                has_v07(self.h.version),
             )
             .and_then(|v| v.with_clusters(&clusters))
             .map(|mut v| {

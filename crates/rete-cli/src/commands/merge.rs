@@ -78,13 +78,13 @@ const BATCH: usize = 10_000;
 /// the file), or lazily with no cap on its caches, and with every named
 /// graph's index kept once walked. None of it was in the budget: two halves of
 /// the OpenCitations sample merged at 3,026 MiB with a budget of 2,000.
-fn reader_share(budget: u64) -> u64 {
+pub(crate) fn reader_share(budget: u64) -> u64 {
     (budget / 4).clamp(64 << 20, 1 << 30)
 }
 
 /// Open one input for the walk: always by range, never read whole, with its
 /// caches capped to `share` bytes.
-fn open_input(path: &str, share: u64) -> anyhow::Result<Rete> {
+pub(crate) fn open_input(path: &str, share: u64) -> anyhow::Result<Rete> {
     crate::commands::range_source::open_local_ranged(path, Some(share))
 }
 
@@ -95,21 +95,27 @@ fn open_input(path: &str, share: u64) -> anyhow::Result<Rete> {
 /// `rete export`, it charges the named-graph directory it walks to the
 /// reader's share and drops each named graph's index once the graph is done,
 /// so a shard of many graphs holds one graph's tiles at a time.
-fn stream_file<E>(
+pub(crate) fn stream_file<E>(
     rete: &mut Rete,
     label: &str,
     share: u64,
     visit: &mut dyn FnMut(RawQuad) -> Result<(), E>,
 ) -> Result<u64, E> {
-    // `None` = the default graph, then each named graph in turn — the same slot
-    // walk the language clients do.
-    let mut slots: Vec<Option<String>> = vec![None];
-    slots.extend(rete.graph_names().iter().map(|g| Some((*g).to_string())));
-    // Listing the graphs walked the directory, which stays resident: take it
-    // out of the dictionary's share.
+    // The default graph, then the named graphs. A quad-index file's named
+    // graphs come out of one pass over their tiles (`dump_named_quads`): no
+    // list of the graphs' names (43 M of them are gigabytes) and no view per
+    // graph. A per-graph file (kind 5) has no such pass and walks its graphs.
     rete.set_memory_budget(Some(share));
-
     let mut total: u64 = 0;
+    let mut slots: Vec<Option<String>> = vec![None];
+    if rete.header().has_quad_index() {
+        // Counted by the pass below.
+    } else {
+        // Listing the graphs walked the directory, which stays resident: it is
+        // charged to the reader's share.
+        slots.extend(rete.graph_names().iter().map(|g| Some((*g).to_string())));
+        rete.set_memory_budget(Some(share));
+    }
     for slot in slots {
         let mut cursor = 0u32;
         loop {
@@ -126,6 +132,15 @@ fn stream_file<E>(
         if let Some(g) = &slot {
             rete.release_named_graph(g);
         }
+    }
+    if rete.header().has_quad_index() {
+        let mut named = 0u64;
+        let pass = rete.dump_named_quads(BATCH, &mut |q| {
+            named += 1;
+            visit(q)
+        })?;
+        debug_assert!(pass, "a quad-index file has a scan");
+        total += named;
     }
     eprintln!("merge: {label} contributed {total} quad(s)");
     Ok(total)
