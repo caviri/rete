@@ -115,6 +115,20 @@ pub(crate) struct Resolver<'a> {
     /// compiling per row dominates the match, and a metacharacter-free pattern
     /// doesn't need the regex engine at all.
     regexes: RefCell<HashMap<(String, String), Matcher>>,
+    /// `(flags, pattern)` → compiled REPLACE regex (`None`: invalid pattern).
+    /// REPLACE in a BIND runs per row, exactly like REGEX in a FILTER.
+    replacers: RefCell<Vec<(String, String, Option<Regex>)>>,
+    /// Computed term string → its canonical value ([`Self::canon_term`]).
+    /// A BIND or an aggregate yields the same few strings over and over (a
+    /// namespace, a month, a source name), and canonicalizing one is several
+    /// dictionary lookups: on a ranged file, chunk reads. Bounded like `terms`.
+    canon: RefCell<HashMap<Rc<str>, Val>>,
+    /// Approximate heap held by `canon`.
+    canon_bytes: std::cell::Cell<usize>,
+    /// The dictionary chunk of each section the last term came from: a scan's
+    /// ids are mostly neighbours, and the next one skips the shared chunk
+    /// cache and its lock.
+    hold: RefCell<crate::dictionary::TermHold>,
 }
 
 /// A compiled REGEX matcher: plain (case-folded) substring search for literal
@@ -187,6 +201,106 @@ fn ascii_ci_contains(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
+/// Which slice of the query's driving scan this context evaluates, when a
+/// grouped query runs as shards on several threads (`sparql::par_agg`).
+///
+/// The plan nodes are named by address: the workers share one lowered plan.
+/// `leaves` are the scans that split their tile range by `part`; `only_first`
+/// are sub-plans that cannot be split and so run in shard 0 alone. Every one of
+/// them must be reached exactly once per shard ([`Shard::exact`]): a plan that
+/// evaluates them some other way (a pushdown that rewrites the node) would
+/// otherwise return its rows once per shard.
+#[derive(Default)]
+pub(crate) struct Shard {
+    /// `(index, count)`; `None` is the whole query.
+    part: std::cell::Cell<Option<(usize, usize)>>,
+    leaves: RefCell<Vec<usize>>,
+    only_first: RefCell<Vec<usize>>,
+    /// The named nodes reached in this shard, one entry per time.
+    reached: RefCell<Vec<usize>>,
+    /// The longest tile range a leaf split, in tiles.
+    tiles: std::cell::Cell<usize>,
+}
+
+/// A leaf's slice: `(plan node, shard index, shard count)`.
+pub(crate) type ShardPart = (usize, usize, usize);
+
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+impl Shard {
+    /// Name the plan nodes this context splits on (addresses of plan nodes).
+    pub(crate) fn set_plan(&self, leaves: Vec<usize>, only_first: Vec<usize>) {
+        *self.leaves.borrow_mut() = leaves;
+        *self.only_first.borrow_mut() = only_first;
+    }
+
+    /// Evaluate shard `part` next (`None`: the whole query); forgets what the
+    /// last one reached.
+    pub(crate) fn begin(&self, part: Option<(usize, usize)>) {
+        self.part.set(part);
+        self.reached.borrow_mut().clear();
+        self.tiles.set(0);
+    }
+
+    /// Back to the whole query, with no plan nodes named.
+    pub(crate) fn clear(&self) {
+        self.leaves.borrow_mut().clear();
+        self.only_first.borrow_mut().clear();
+        self.begin(None);
+    }
+
+    /// The slice the scan of plan node `node` must keep, when it is a leaf.
+    #[inline]
+    pub(crate) fn part_for(&self, node: usize) -> Option<ShardPart> {
+        let (i, n) = self.part.get()?;
+        self.leaves.borrow().contains(&node).then_some((node, i, n))
+    }
+
+    /// A leaf applied its slice to the tile range `[start, end)`: the bounds
+    /// of the slice within it.
+    pub(crate) fn applied(&self, part: ShardPart, start: usize, end: usize) -> (usize, usize) {
+        let (node, i, n) = part;
+        self.reached.borrow_mut().push(node);
+        let len = end.saturating_sub(start);
+        self.tiles.set(self.tiles.get().max(len));
+        let n = n.max(1);
+        let cut = |k: usize| start + (len as u128 * k as u128 / n as u128) as usize;
+        (cut(i), cut(i + 1))
+    }
+
+    /// Is plan node `node` one that only shard 0 evaluates, and is this
+    /// another shard? Records the visit.
+    #[inline]
+    pub(crate) fn skips(&self, node: usize) -> bool {
+        let Some((i, _)) = self.part.get() else {
+            return false;
+        };
+        if !self.only_first.borrow().contains(&node) {
+            return false;
+        }
+        self.reached.borrow_mut().push(node);
+        i != 0
+    }
+
+    /// Was every named node reached exactly once in this shard?
+    pub(crate) fn exact(&self) -> bool {
+        let mut want: Vec<usize> = self
+            .leaves
+            .borrow()
+            .iter()
+            .chain(self.only_first.borrow().iter())
+            .copied()
+            .collect();
+        want.sort_unstable();
+        let mut got = self.reached.borrow().clone();
+        got.sort_unstable();
+        want == got
+    }
+
+    pub(crate) fn tiles(&self) -> usize {
+        self.tiles.get()
+    }
+}
+
 impl<'a> Resolver<'a> {
     pub(crate) fn new(dict: &'a Dictionary) -> Self {
         Resolver {
@@ -198,7 +312,18 @@ impl<'a> Resolver<'a> {
             nums_bytes: std::cell::Cell::new(0),
             memo_cap: MEMO_CAP_BYTES,
             regexes: RefCell::new(HashMap::new()),
+            replacers: RefCell::new(Vec::new()),
+            canon: RefCell::new(HashMap::new()),
+            canon_bytes: std::cell::Cell::new(0),
+            hold: RefCell::new(Default::default()),
         }
+    }
+
+    /// Lower the byte cap of each memo: a worker of a sharded query gets its
+    /// share, so the workers together hold what one context would.
+    #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+    pub(crate) fn set_memo_cap(&mut self, cap: usize) {
+        self.memo_cap = cap;
     }
 
     /// Does `text` match the SPARQL REGEX `pattern` under `flags`? The matcher
@@ -248,8 +373,8 @@ impl<'a> Resolver<'a> {
     /// SPARQL `REPLACE(text, pattern, replacement [, flags])`: every match of
     /// `pattern` (with the i/m/s/x flag subset) is replaced, `$N` referring to
     /// capture groups. Returns `None` for an invalid pattern (a type error).
-    /// Not memoized — REPLACE always needs the full engine (no substring fast
-    /// path) and is rare relative to FILTER REGEX.
+    /// The regex is compiled once per query (memoized), like REGEX: a BIND
+    /// runs it on every row, and compiling cost more than the replace itself.
     pub(crate) fn regex_replace(
         &self,
         pattern: &str,
@@ -257,16 +382,27 @@ impl<'a> Resolver<'a> {
         text: &str,
         replacement: &str,
     ) -> Option<String> {
-        let on: String = ['i', 'm', 's', 'x']
-            .iter()
-            .filter(|c| flags.contains(**c))
-            .collect();
-        let inline = if on.is_empty() {
-            String::new()
-        } else {
-            format!("(?{on})")
+        let mut memo = self.replacers.borrow_mut();
+        // A query has a handful of REPLACE patterns: a scan by reference beats
+        // hashing (and allocating) an owned `(flags, pattern)` key per row.
+        let at = match memo.iter().position(|(f, p, _)| f == flags && p == pattern) {
+            Some(i) => i,
+            None => {
+                let on: String = ['i', 'm', 's', 'x']
+                    .iter()
+                    .filter(|c| flags.contains(**c))
+                    .collect();
+                let inline = if on.is_empty() {
+                    String::new()
+                } else {
+                    format!("(?{on})")
+                };
+                let re = Regex::new(&format!("{inline}{pattern}")).ok();
+                memo.push((flags.to_string(), pattern.to_string(), re));
+                memo.len() - 1
+            }
         };
-        let re = Regex::new(&format!("{inline}{pattern}")).ok()?;
+        let re = memo[at].2.as_ref()?;
         Some(re.replace_all(text, replacement).into_owned())
     }
 
@@ -335,12 +471,17 @@ impl<'a> Resolver<'a> {
         if let Some(t) = self.terms.borrow().get(&id) {
             return t.clone();
         }
-        let t: Option<Rc<str>> = if id >= 0 {
-            self.dict
-                .node_term(id as u32)
-                .map(|t| Rc::from(crate::terms::canonical_literal(&t).as_ref()))
-        } else {
-            self.dict.predicate_term((-id - 1) as u32).map(Rc::from)
+        let t: Option<Rc<str>> = {
+            let mut hold = self.hold.borrow_mut();
+            if id >= 0 {
+                self.dict
+                    .node_term_held(id as u32, &mut hold)
+                    .map(|t| Rc::from(crate::terms::canonical_literal(&t).as_ref()))
+            } else {
+                self.dict
+                    .predicate_term_held((-id - 1) as u32, &mut hold)
+                    .map(Rc::from)
+            }
         };
         let add = MEMO_ENTRY_OVERHEAD + t.as_ref().map_or(0, |t| t.len());
         let mut map = self.terms.borrow_mut();
@@ -405,13 +546,26 @@ impl<'a> Resolver<'a> {
     /// term is a node, a predicate tag when it is only a predicate, else the
     /// string itself. Guarantees `Val::Str` is never term-equal to any `Val::Id`.
     pub(crate) fn canon_term(&self, term: &str) -> Val {
-        if let Some(n) = self.dict.node_of_term(term) {
+        if let Some(v) = self.canon.borrow().get(term) {
+            return v.clone();
+        }
+        let key: Rc<str> = Rc::from(term);
+        let v = if let Some(n) = self.dict.node_of_term(term) {
             Val::Id(n as i64)
         } else if let Some(p) = self.dict.predicate_id(term) {
             Val::Id(-(p as i64) - 1)
         } else {
-            Val::Str(Rc::from(term))
+            Val::Str(key.clone())
+        };
+        let add = MEMO_ENTRY_OVERHEAD + term.len();
+        let mut map = self.canon.borrow_mut();
+        if self.canon_bytes.get() + add > self.memo_cap {
+            map.clear();
+            self.canon_bytes.set(0);
         }
+        map.insert(key, v.clone());
+        self.canon_bytes.set(self.canon_bytes.get() + add);
+        v
     }
 
     /// The numeric value of `v` (literal lexical form or bare number), memoized.
@@ -475,6 +629,9 @@ pub(crate) struct Ctx<'a> {
     /// across the whole scan (`bgp::CanonAhead`), not per run. Never an input
     /// to an answer.
     pub(crate) decode_ahead: std::cell::RefCell<Option<(usize, Vec<bool>)>>,
+    /// The slice of the driving scan this context evaluates ([`Shard`]); the
+    /// whole query unless a grouped query is running as shards.
+    pub(crate) shard: Shard,
 }
 
 impl<'a> Ctx<'a> {
@@ -500,6 +657,7 @@ impl<'a> Ctx<'a> {
             exhaustive: std::cell::Cell::new(false),
             miss_mask: std::cell::Cell::new(0),
             decode_ahead: std::cell::RefCell::new(None),
+            shard: Shard::default(),
         }
     }
 }
@@ -712,5 +870,51 @@ mod tests {
             Some("<Aa> bb".to_string())
         );
         assert_eq!(resolver.regex_replace("[", "", "x", "y"), None);
+        // Compiled once for each `(flags, pattern)`, the invalid one included.
+        for _ in 0..3 {
+            assert_eq!(
+                resolver.regex_replace("(a+)", "i", "Aa bb", "<$1>"),
+                Some("<Aa> bb".to_string())
+            );
+            assert_eq!(
+                resolver.regex_replace("(a+)", "", "Aa bb", "<$1>"),
+                Some("A<a> bb".to_string())
+            );
+            assert_eq!(resolver.regex_replace("[", "", "x", "y"), None);
+        }
+        assert_eq!(resolver.replacers.borrow().len(), 3);
+    }
+
+    /// A computed string is looked up in the dictionary once, then answered
+    /// from the memo, with the same value; the memo is bounded like the
+    /// others and a reset changes no answer.
+    #[test]
+    fn canonical_values_are_memoized_and_bounded() {
+        let rete = fixture();
+        let dict = rete.dictionary();
+        let resolver = Resolver::new(dict);
+        let shared = Val::Id(dict.node_of_term("<shared>").unwrap() as i64);
+        let pred_only = Val::Id(-(dict.predicate_id("<pred-only>").unwrap() as i64) - 1);
+        let cases = [
+            ("<shared>", shared),
+            ("<pred-only>", pred_only),
+            ("\"computed\"", Val::Str(Rc::from("\"computed\""))),
+        ];
+        for _ in 0..2 {
+            for (term, want) in &cases {
+                assert_eq!(&resolver.canon_term(term), want);
+            }
+        }
+        assert_eq!(resolver.canon.borrow().len(), cases.len());
+        // Room for about one entry: every other lookup starts the memo over.
+        let mut resolver = Resolver::new(dict);
+        resolver.memo_cap = MEMO_ENTRY_OVERHEAD + 16;
+        for _ in 0..3 {
+            for (term, want) in &cases {
+                assert_eq!(&resolver.canon_term(term), want);
+                assert!(resolver.canon_bytes.get() <= resolver.memo_cap);
+            }
+        }
+        assert!(resolver.canon.borrow().len() < cases.len());
     }
 }

@@ -234,6 +234,50 @@ pub(crate) fn begin() {
     });
 }
 
+/// What a thread's diagnostic scope holds, to hand to another thread's.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+pub(crate) struct Taken {
+    entries: Vec<Entry>,
+    misses: Vec<(Builtin, String)>,
+}
+
+/// Empty the calling thread's scope (a worker thread of a query run as
+/// shards, when it ends).
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+pub(crate) fn take() -> Taken {
+    SINK.with(|s| {
+        let mut s = s.borrow_mut();
+        Taken {
+            entries: std::mem::take(&mut s.entries),
+            misses: std::mem::take(&mut s.misses),
+        }
+    })
+}
+
+/// Add another thread's records to the calling thread's scope: the same
+/// `(site, position, kind)` adds its count, as [`record`] does.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+pub(crate) fn absorb(taken: Taken) {
+    SINK.with(|s| {
+        let mut s = s.borrow_mut();
+        for e in taken.entries {
+            match s
+                .entries
+                .iter_mut()
+                .find(|h| h.site == e.site && h.pos == e.pos && h.kind == e.kind)
+            {
+                Some(have) => have.count += e.count,
+                None => s.entries.push(e),
+            }
+        }
+        for m in taken.misses {
+            if !s.misses.contains(&m) {
+                s.misses.push(m);
+            }
+        }
+    });
+}
+
 /// Record one type error. `describe` builds `(sample, detail)` and runs only
 /// for the first occurrence of a `(func, pos, kind)` key.
 #[cold]

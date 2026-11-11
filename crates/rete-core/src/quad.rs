@@ -21,7 +21,7 @@
 //! external in `extbuild`), so their outputs are byte-identical.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::dictionary::Dictionary;
@@ -816,11 +816,38 @@ fn parse_preamble(head: &[u8], base: u64, len: u64, perms: PermSet) -> Result<Pr
     })
 }
 
-/// A decoded directory block, filled on first touch: `(graph id, quad count)`.
-type BlockCell = OnceLock<Arc<[(u32, u64)]>>;
+/// A decoded directory block: `(graph id, quad count)` per graph.
+type DirBlock = Arc<[(u32, u64)]>;
 
-/// A run of decoded directory blocks and the ordinal of the first.
-type BlockWindow = (usize, Vec<Arc<[(u32, u64)]>>);
+/// A decoded directory block, filled on first touch.
+type BlockCell = OnceLock<DirBlock>;
+
+/// The directory blocks decoded most recently, for a file with too many graphs
+/// to keep them all: at most `cap` of them, the oldest dropped first.
+///
+/// It used to be the last read-ahead window alone, which is all a walk in
+/// graph order needs. A join that looks up the graph of each row does not come
+/// in graph order (and on several threads comes from several places at once):
+/// nearly every lookup then read and decoded a block again, 68 of the 70 s of
+/// a ten-million-row OPTIONAL over the nanopublications.
+#[derive(Default)]
+struct RecentBlocks {
+    map: std::collections::HashMap<usize, DirBlock>,
+    order: std::collections::VecDeque<usize>,
+}
+
+impl RecentBlocks {
+    fn put(&mut self, b: usize, block: DirBlock, cap: usize) {
+        if self.map.insert(b, block).is_none() {
+            self.order.push_back(b);
+        }
+        while self.order.len() > cap.max(1) {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+    }
+}
 
 /// A decoded graph-directory block, and the bytes of the extra ranges that were
 /// read in the same batch (none when the block was resident).
@@ -884,9 +911,10 @@ struct QuadCore {
     pre: OnceLock<Preamble>,
     blocks_index: OnceLock<Arc<[BlockRef]>>,
     blocks: OnceLock<Box<[BlockCell]>>,
-    /// The last read-ahead window of directory blocks, for a file with more
-    /// than [`BLOCK_MEMO_MAX_GRAPHS`] graphs: `(first block, blocks)`.
-    window: Mutex<Option<BlockWindow>>,
+    /// The directory blocks decoded most recently, for a file with more than
+    /// [`BLOCK_MEMO_MAX_GRAPHS`] graphs ([`RecentBlocks`]). Read-locked by a
+    /// lookup, so lookups on several threads do not queue.
+    recent: RwLock<RecentBlocks>,
     /// The graph count past which blocks are not all memoised.
     memo_max_graphs: u64,
     dirs: [OnceLock<Arc<[QTile]>>; NUM_SLOTS],
@@ -1272,11 +1300,8 @@ impl QuadCore {
         let pre = self.pre()?.clone();
         let bounded = pre.graph_count > self.memo_max_graphs;
         if bounded {
-            let win = self.window.lock().unwrap();
-            if let Some((start, blocks)) = win.as_ref() {
-                if let Some(v) = b.checked_sub(*start).and_then(|k| blocks.get(k)) {
-                    return Some((v.clone(), Vec::new()));
-                }
+            if let Some(v) = self.recent.read().unwrap().map.get(&b) {
+                return Some((v.clone(), Vec::new()));
             }
         } else if let Some(v) = cells.get(b)?.get() {
             return Some((v.clone(), Vec::new()));
@@ -1313,7 +1338,7 @@ impl QuadCore {
                 }
             }
         };
-        let mut window: Vec<Arc<[(u32, u64)]>> = Vec::new();
+        let mut window: Vec<(usize, DirBlock)> = Vec::new();
         for (i, r) in index.iter().enumerate().take(end).skip(b) {
             if !bounded && cells[i].get().is_some() {
                 continue;
@@ -1321,7 +1346,7 @@ impl QuadCore {
             let lo = (r.range.offset - span_start) as usize;
             let stored = span.get(lo..lo + r.range.len as usize)?;
             match self.decode_block(i, r, stored, pre.graph_count, pre.block_graphs) {
-                Some(v) if bounded => window.push(v),
+                Some(v) if bounded => window.push((i, v)),
                 Some(v) => {
                     let _ = cells[i].set(v);
                 }
@@ -1332,8 +1357,15 @@ impl QuadCore {
             }
         }
         if bounded {
-            let first = window.first().cloned();
-            *self.window.lock().unwrap() = Some((b, window));
+            let first = window.first().map(|(_, v)| v.clone());
+            // As many blocks as a file under the threshold keeps in all, and
+            // never fewer than one read-ahead window.
+            let cap =
+                ((self.memo_max_graphs / pre.block_graphs.max(1)) as usize).max(READ_AHEAD_MAX);
+            let mut recent = self.recent.write().unwrap();
+            for (i, v) in window {
+                recent.put(i, v, cap);
+            }
             return first.map(|v| (v, extra_bytes));
         }
         cells[b].get().cloned().map(|v| (v, extra_bytes))
@@ -1677,6 +1709,26 @@ impl QuadCore {
         self.tile_capped(si, dir, base, ti, usize::MAX)
     }
 
+    /// Graph `g`'s segment of tile `ti` of graph-leading order `si` (already
+    /// in hand as `entry`), through the tile's segment index: built on the
+    /// first lookup, kept and evicted with the tile. See [`segment_of`].
+    fn segment<'e>(
+        &self,
+        si: usize,
+        ti: usize,
+        entry: &'e Arc<CacheEntry>,
+        first_g: u32,
+        g: u32,
+    ) -> Option<Option<(u32, &'e [u8])>> {
+        let (segs, built) = entry.segments(|tile| segment_index(tile, first_g));
+        let segs = segs?;
+        if built {
+            let bytes = std::mem::size_of_val(segs) as u64;
+            self.tiles.charge_extra((si as u8, ti as u32), entry, bytes);
+        }
+        segment_of(entry.body(), segs, g)
+    }
+
     /// [`tile`](Self::tile) whose read-ahead stops before tile `cap` (a scan that
     /// knows where its range ends does not read past it).
     fn tile_capped(
@@ -2015,21 +2067,15 @@ impl ViewState {
                 let mut rows: Vec<Triple> = Vec::new();
                 for &p in phys {
                     let entry = self.core.tile(0, dir, *base, p)?;
-                    let mut ok = true;
-                    walk_segments(entry.body(), dir[p - base].first_g, |sg, first_a, body| {
-                        if sg == self.g {
-                            // A fresh vector per segment: the decoder bounds its row
-                            // count by the segment's bytes.
-                            let mut seg: Vec<Triple> = Vec::new();
-                            ok = decode_segment_body(body, first_a, (false, false), &mut seg)
-                                .is_some();
-                            rows.extend(seg);
-                            return false;
-                        }
-                        sg < self.g
-                    })?;
-                    if !ok {
-                        return None;
+                    let seg = self
+                        .core
+                        .segment(0, p, &entry, dir[p - base].first_g, self.g)?;
+                    if let Some((first_a, body)) = seg {
+                        // A fresh vector per segment: the decoder bounds its row
+                        // count by the segment's bytes.
+                        let mut seg: Vec<Triple> = Vec::new();
+                        decode_segment_body(body, first_a, (false, false), &mut seg)?;
+                        rows.extend(seg);
                     }
                 }
                 Some(Arc::new(rows))
@@ -2044,7 +2090,10 @@ impl ViewState {
                 let (dir, base, phys) = self.slices[si].get()?;
                 let p = *phys.get(ti)?;
                 let entry = self.core.tile(si, dir, *base, p)?;
-                segment_block(entry.body(), dir[p - base].first_g, self.g, ALL_PERMS[si])
+                let seg = self
+                    .core
+                    .segment(si, p, &entry, dir[p - base].first_g, self.g)?;
+                segment_block(seg, ALL_PERMS[si])
             }
             ViewSrc::Synth => {
                 if ti != 0 {
@@ -2263,22 +2312,52 @@ fn walk_segments(
     Some(())
 }
 
-/// Graph `g`'s rows in a decompressed tile as a §6.1 block (an empty block when
-/// the tile holds none of them). `None` on a malformed tile.
-fn segment_block(tile: &[u8], first_g: u32, g: u32, perm: IndexPermutation) -> Option<Vec<u8>> {
+/// Where each segment of a decompressed tile is: the index a lookup of one
+/// graph searches instead of walking the tile's segment headers. A tile of
+/// small graphs holds thousands of them, and a join that looks up one graph
+/// per row walked half a tile of headers for each row. `None` on a malformed
+/// tile. The graph ids ascend (they are stored as unsigned deltas).
+fn segment_index(tile: &[u8], first_g: u32) -> Option<Vec<crate::chunk_cache::TileSeg>> {
+    let mut out = Vec::new();
+    let mut ok = true;
+    let start = tile.as_ptr() as usize;
+    walk_segments(tile, first_g, |g, first_a, body| {
+        let off = u32::try_from(body.as_ptr() as usize - start);
+        let len = u32::try_from(body.len());
+        match (off, len) {
+            (Ok(off), Ok(len)) => out.push((g, first_a, off, len)),
+            _ => ok = false,
+        }
+        ok
+    })?;
+    ok.then_some(out)
+}
+
+/// Graph `g`'s segment of a tile, as `(first a, body)`: the first one, as a
+/// walk of the tile finds it. `Some(None)`: the tile holds none of the graph.
+/// `None`: a malformed tile.
+fn segment_of<'t>(
+    tile: &'t [u8],
+    segs: &[crate::chunk_cache::TileSeg],
+    g: u32,
+) -> Option<Option<(u32, &'t [u8])>> {
+    let i = segs.partition_point(|s| s.0 < g);
+    match segs.get(i) {
+        Some(&(sg, first_a, off, len)) if sg == g => {
+            let (off, len) = (off as usize, len as usize);
+            Some(Some((first_a, tile.get(off..off.checked_add(len)?)?)))
+        }
+        _ => Some(None),
+    }
+}
+
+/// A graph's segment of a tile (`(first a, body)`, or `None` when the tile
+/// holds none of the graph) as a §6.1 block. `None` on a malformed segment.
+fn segment_block(seg: Option<(u32, &[u8])>, perm: IndexPermutation) -> Option<Vec<u8>> {
     let cols = subject_columns(perm);
     let mut rows: Vec<Triple> = Vec::new();
-    let mut ok = true;
-    walk_segments(tile, first_g, |sg, first_a, body| {
-        if sg == g {
-            ok = decode_segment_body(body, first_a, cols, &mut rows).is_some();
-            false
-        } else {
-            sg < g
-        }
-    })?;
-    if !ok {
-        return None;
+    if let Some((first_a, body)) = seg {
+        decode_segment_body(body, first_a, cols, &mut rows)?;
     }
     let mut b = TripleBlockBuilder::new();
     for t in rows {
@@ -2342,7 +2421,7 @@ impl QuadNamed {
                 pre: OnceLock::new(),
                 blocks_index: OnceLock::new(),
                 blocks: OnceLock::new(),
-                window: Mutex::new(None),
+                recent: RwLock::new(RecentBlocks::default()),
                 memo_max_graphs: BLOCK_MEMO_MAX_GRAPHS,
                 dirs: Default::default(),
                 tiles: ChunkCache::unlimited(),
@@ -2751,6 +2830,21 @@ impl QuadScan {
         !self.last
     }
 
+    /// The tiles this scan still has to look at, as `[start, end)` in the
+    /// order's directory.
+    pub(crate) fn tile_range(&self) -> (usize, usize) {
+        (self.next_tile, self.end_tile)
+    }
+
+    /// Keep only the tiles `[lo, hi)` of [`tile_range`](Self::tile_range). A
+    /// row lies in one tile, so scans over disjoint slices that cover the
+    /// range yield every row of the whole scan exactly once, in its order.
+    pub(crate) fn restrict(&mut self, lo: usize, hi: usize) {
+        let lo = lo.clamp(self.next_tile, self.end_tile);
+        self.end_tile = hi.clamp(lo, self.end_tile);
+        self.next_tile = lo;
+    }
+
     fn tile_may_match(&self, t: &QTile) -> bool {
         let (x, y, z, w) = t.syn;
         if self.last {
@@ -2862,6 +2956,10 @@ impl Iterator for QuadScan {
 struct OwnedReader(Arc<[u8]>);
 
 impl RangeReader for OwnedReader {
+    fn is_local(&self) -> bool {
+        true
+    }
+
     fn len(&self) -> u64 {
         self.0.len() as u64
     }

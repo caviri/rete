@@ -93,6 +93,10 @@ impl LocalRangeReader {
 }
 
 impl RangeReader for LocalRangeReader {
+    fn is_local(&self) -> bool {
+        true
+    }
+
     fn len(&self) -> u64 {
         self.len
     }
@@ -135,6 +139,10 @@ pub enum Source {
 }
 
 impl RangeReader for Source {
+    fn is_local(&self) -> bool {
+        matches!(self, Self::Local(_))
+    }
+
     fn len(&self) -> u64 {
         match self {
             Source::Http(r) => r.len(),

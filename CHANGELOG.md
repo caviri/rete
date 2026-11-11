@@ -5,6 +5,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **Grouped queries run on several threads.** A `GROUP BY` or bare aggregate whose driving scan can be cut into slices of its tiles is folded on several threads (native builds with the `parallel` feature: the CLI, the Python and R clients, the desktop app) and merged in scan order, so the rows and their order are the single thread's. It covers a scan of one triple pattern (in a graph, or under `GRAPH ?g` on a quad-index file) under `FILTER`, `BIND`, `UNION` and a per-row `GRAPH ?g` join or `OPTIONAL`; a hash join, `COUNT(DISTINCT …)`, `GROUP_CONCAT(DISTINCT …)`, `EXISTS` and a slice with more than 100,000 groups stay on one thread, and so does every query on a file read over HTTP (one scan batches its reads; `RangeReader::is_local`, new, says which a reader is). `RETE_QUERY_THREADS` (default: the cores, at most 16; `1` turns it off) or `rete_core::query::set_query_threads`. The file format is unchanged. See `docs/sparql.md#threads`.
+
+### Fixed
+
+- **Per-row string work in aggregates.** Seven nanopub explorer queries took 53 to 372 s on a local file and now take 12 to 31 s on one thread and 1.5 to 4.3 s on sixteen, with the same rows (table in `docs/sparql.md#threads`). What was wrong, each on its own: the result of a `BIND` was canonicalized against the dictionary on every row (several term lookups, and chunk reads on a ranged file), now once per distinct value; `REPLACE` compiled its regex on every row; the `regex` crate ran without its DFA and literal optimizations (now the `regex-perf` feature, on by default for native builds; a wasm build is unchanged); a `FILTER` written before the `BIND`s of its group ran after them even when it read none of their variables; a file with more than 2,097,152 graphs kept only one read-ahead window of its graph directory, so a join that looks up each row's graph re-read and re-decoded a directory block for nearly every row; finding a graph in a quad tile walked the tile's segment headers instead of searching an index of them; and every decoded term took the dictionary cache's lock.
+
 ## [0.6.1] - 2026-11-11
 
 A patch release: a graph variable bound by id no longer decodes graph names, and a result handle decodes only the page asked for. The file format is unchanged (0x07, reads 0x05 to 0x07).

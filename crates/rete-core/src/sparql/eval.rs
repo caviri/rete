@@ -228,7 +228,7 @@ fn collect_expr_slots(e: &FExpr, slots: &mut Slots) {
 // those (rare, OPTIONAL/UNION-shaped) rows.
 
 /// Slots bound in **every** row the plan can yield.
-fn certain_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
+pub(super) fn certain_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
     let mut m = vec![false; n];
     mark_certain(ctx, plan, &mut m);
     m
@@ -754,8 +754,19 @@ fn select_rows_on(ctx: &Ctx, sel: &Select, active: &GraphIndex, nf: Option<&[Str
     // guess.
     ctx.exhaustive
         .set(sel.limit.is_none() || sel.group.is_some() || !sel.order.is_empty());
-    let source = eval_plan_iter(ctx, active, nf, &sel.plan);
-    finish_select_rows(ctx, active, sel, source)
+    // A grouped query whose driving scan can be cut into slices is folded on
+    // several threads (`par_agg`); what comes back is the group rows.
+    let grouped = sel
+        .group
+        .as_ref()
+        .and_then(|g| super::par_agg::aggregate_shards(ctx, sel, active, nf, g));
+    match grouped {
+        Some(rows) => finish_select_rows(ctx, active, sel, Box::new(rows.into_iter()), true),
+        None => {
+            let source = eval_plan_iter(ctx, active, nf, &sel.plan);
+            finish_select_rows(ctx, active, sel, source, false)
+        }
+    }
 }
 
 /// Apply a SELECT's solution modifiers â€” aggregation, BIND, HAVING, ORDER BY,
@@ -769,21 +780,24 @@ fn finish_select<'a, 'q>(
     sel: &'q Select,
     source: RowIter<'q>,
 ) -> (Vec<String>, Vec<Binding>) {
-    let raw = finish_select_rows(ctx, active, sel, source);
+    let raw = finish_select_rows(ctx, active, sel, source, false);
     (sel.project.clone(), resolve_rows(ctx, sel, raw))
 }
 
 /// [`finish_select`]'s modifier pipeline, ending at the sliced rows.
+/// `grouped`: `source` is already the group rows (the aggregation ran on
+/// several threads).
 fn finish_select_rows<'a, 'q>(
     ctx: &'q Ctx<'a>,
     active: &'q GraphIndex,
     sel: &'q Select,
     source: RowIter<'q>,
+    grouped: bool,
 ) -> Vec<Row> {
     // Source rows: aggregation is blocking; everything else streams.
     let mut source: RowIter<'q> = match &sel.group {
-        Some(g) => Box::new(aggregate(ctx, source, g).into_iter()),
-        None => source,
+        Some(g) if !grouped => Box::new(aggregate(ctx, source, g).into_iter()),
+        _ => source,
     };
 
     // BIND/aliases add columns per row â€” streaming.
@@ -1308,8 +1322,19 @@ pub(crate) fn eval_plan_iter<'q>(
 ) -> RowIter<'q> {
     // A named graph is visible unless FROM NAMED excludes it.
     let visible = move |name: &str| named_filter.is_none_or(|f| f.iter().any(|g| g == name));
+    // A shard of a grouped query run on several threads (`par_agg`): a
+    // sub-plan that could not be split belongs to shard 0 alone.
+    let node = plan as *const Plan as usize;
+    if ctx.shard.skips(node) {
+        return Box::new(std::iter::empty());
+    }
     match plan {
         Plan::Bgp(patterns) => {
+            if let Some(part) = ctx.shard.part_for(node) {
+                if let Some(rows) = crate::bgp::shard_scan_rows(ctx, index, patterns, part) {
+                    return rows;
+                }
+            }
             // Under a small demand bound, probe the join pattern-by-pattern
             // through the index instead of scanning every pattern once.
             if inlj_hint(ctx).is_some() && patterns.len() >= 2 {
@@ -1447,7 +1472,7 @@ pub(crate) fn eval_plan_iter<'q>(
             // A quad-index file answers a graph-variable pattern with one
             // streaming pass over its tiles, not a view per graph.
             if named_filter.is_none() {
-                if let Some(rows) = graph_var_scan(ctx, var, inner) {
+                if let Some(rows) = graph_var_scan(ctx, var, inner, ctx.shard.part_for(node)) {
                     return rows;
                 }
             }
@@ -1475,7 +1500,12 @@ pub(crate) fn eval_plan_iter<'q>(
 /// `None` when the shape or the file does not allow it (another layout, no
 /// constant to scan on, a graph variable that also occurs inside the pattern):
 /// the caller walks every graph instead. Only for a query without FROM NAMED.
-fn graph_var_scan<'q>(ctx: &'q Ctx<'q>, var: &'q str, inner: &'q Plan) -> Option<RowIter<'q>> {
+fn graph_var_scan<'q>(
+    ctx: &'q Ctx<'q>,
+    var: &'q str,
+    inner: &'q Plan,
+    part: Option<crate::row::ShardPart>,
+) -> Option<RowIter<'q>> {
     let slot = ctx.slots.slot(var)?;
     let Plan::Bgp(patterns) = inner else {
         return None;
@@ -1483,7 +1513,7 @@ fn graph_var_scan<'q>(ctx: &'q Ctx<'q>, var: &'q str, inner: &'q Plan) -> Option
     if patterns.is_empty() {
         return None;
     }
-    if let Some(rows) = crate::bgp::quad_scan_rows(ctx, patterns, slot) {
+    if let Some(rows) = crate::bgp::quad_scan_rows(ctx, patterns, slot, part) {
         return Some(rows);
     }
     if patterns.len() < 2 {
@@ -2312,7 +2342,7 @@ fn predicate_var_covered(
 
 /// Does `e` contain an `EXISTS` anywhere — the one part of an expression that
 /// reads the active graph?
-fn expr_has_exists(e: &FExpr) -> bool {
+pub(super) fn expr_has_exists(e: &FExpr) -> bool {
     match e {
         FExpr::Exists(_) => true,
         FExpr::Var(_) | FExpr::Const(_) | FExpr::Bound(_) => false,

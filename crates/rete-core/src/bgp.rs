@@ -1090,6 +1090,35 @@ fn scan_rows<'q>(
     )
 }
 
+/// A one-pattern BGP as shard `part` of a grouped query run on several
+/// threads ([`crate::row::Shard`]): the rows of [`BgpSolutions::new`] whose
+/// triple lies in that slice of the scan's tiles. `None` when this is not a
+/// single satisfiable pattern (the caller then evaluates the BGP whole, and
+/// the shard is not counted as applied).
+pub(crate) fn shard_scan_rows<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    patterns: &[TriplePattern],
+    part: crate::row::ShardPart,
+) -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
+    let [_] = patterns else {
+        return None;
+    };
+    let lowered = lower(patterns, ctx)?;
+    let t = lowered[0];
+    let dict = ctx.rete.dictionary();
+    let (sid, pid, oid) = (
+        const_subject(&t.0, dict)?,
+        const_predicate(&t.1)?,
+        const_object(&t.2, dict)?,
+    );
+    let cut = |start: usize, end: usize| ctx.shard.applied(part, start, end);
+    let triples = index.scan_iter_cut((sid, pid, oid), &cut);
+    Some(Box::new(
+        canon_ahead(ctx, &t, triples).filter_map(move |triple| triple_row(ctx, &t, triple)),
+    ))
+}
+
 /// `GRAPH ?g { one pattern }` over a quad-index file: every match of the
 /// pattern in any graph as a row that also binds slot `gslot` to the graph,
 /// streamed from one pass over the tiles (no view per graph). `None` when this
@@ -1100,6 +1129,7 @@ pub(crate) fn quad_scan_rows<'q>(
     ctx: &'q Ctx<'q>,
     patterns: &[TriplePattern],
     gslot: usize,
+    part: Option<crate::row::ShardPart>,
 ) -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
     let [p] = patterns else {
         return None;
@@ -1122,7 +1152,14 @@ pub(crate) fn quad_scan_rows<'q>(
     ) else {
         return Some(Box::new(std::iter::empty()));
     };
-    let scan = ctx.rete.named_quad_scan((sid, pid, oid))?;
+    let mut scan = ctx.rete.named_quad_scan((sid, pid, oid))?;
+    // A shard of a grouped query run on several threads: its slice of the
+    // tiles ([`crate::row::Shard`]).
+    if let Some(part) = part {
+        let (start, end) = scan.tile_range();
+        let (lo, hi) = ctx.shard.applied(part, start, end);
+        scan.restrict(lo, hi);
+    }
     Some(Box::new(scan.filter_map(move |(g, triple)| {
         let mut row = triple_row(ctx, &t, triple)?;
         row[gslot] = Some(Val::Id(dict.subject_node(g) as i64));

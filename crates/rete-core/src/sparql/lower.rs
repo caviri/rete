@@ -215,6 +215,48 @@ fn filter_below_optional(expr: FExpr, mut inner: Plan) -> Plan {
     }
 }
 
+/// `FILTER(e)` over `inner`, with every conjunct of `e` that reads none of the
+/// variables a chain of `BIND`s on top of `inner` assigns applied **below**
+/// those BINDs (and from there below an OPTIONAL, [`filter_below_optional`]).
+///
+/// A group's filters scope over the whole group, so `{ ?x :p ?src FILTER(...)
+/// BIND(f(?src) AS ?a) BIND(g(?src) AS ?b) }` is `Filter(e, Extend(Extend(Bgp)))`:
+/// both BINDs ran on every row the filter was about to drop, and each computed
+/// value was looked up in the dictionary. A BIND only adds its variable, so a
+/// conjunct that does not read it accepts the same rows before it as after. A
+/// conjunct that reads one of them, or holds an `EXISTS` (which reads the
+/// whole row), stays on top.
+fn filter_below_bind(expr: FExpr, mut inner: Plan) -> Plan {
+    if !matches!(inner, Plan::Extend(..)) {
+        return filter_below_optional(expr, inner);
+    }
+    let mut assigned = std::collections::BTreeSet::new();
+    let mut base = &mut inner;
+    while let Plan::Extend(v, _, below) = base {
+        assigned.insert(v.clone());
+        base = &mut **below;
+    }
+    let mut conjuncts = Vec::new();
+    split_and(expr, &mut conjuncts);
+    let (mut down, mut up) = (Vec::new(), Vec::new());
+    for c in conjuncts {
+        let mut vars = std::collections::BTreeSet::new();
+        if expr_vars(&c, &mut vars) && vars.is_disjoint(&assigned) {
+            down.push(c);
+        } else {
+            up.push(c);
+        }
+    }
+    if let Some(cond) = and_all(down) {
+        let b = std::mem::replace(base, Plan::Bgp(Vec::new()));
+        *base = filter_below_optional(cond, b);
+    }
+    match and_all(up) {
+        Some(cond) => Plan::Filter(cond, Box::new(inner)),
+        None => inner,
+    }
+}
+
 fn split_and(e: FExpr, out: &mut Vec<FExpr>) {
     match e {
         FExpr::And(a, b) => {
@@ -486,7 +528,7 @@ fn build(mut p: &GraphPattern, sel: &mut Select, mut in_where: bool) -> Result<P
                 sel.having.push(fexpr);
                 Ok(inner_plan)
             } else {
-                Ok(filter_below_optional(fexpr, inner_plan))
+                Ok(filter_below_bind(fexpr, inner_plan))
             }
         }
         // Transparent solution-modifier wrappers: record and descend.
