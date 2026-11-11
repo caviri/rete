@@ -11,7 +11,7 @@ their text (so `<…/Ng8>` sorts before `<…/Ng8130_provenance>`, which byte or
 reverses), then literals, text literals by lexical form. An id then compares as the
 term does, within a section and outside the typed literals, so an `ORDER BY` over a
 variable sorts on ids and decodes only the rows it shows. The reader reads `0x05`,
-`0x06`, `0x07` and `0x08`; **readers up to 0.6.0 cannot read `0x08`**: they refuse it by
+`0x06`, `0x07` and `0x08`; **readers up to 0.6.1 cannot read `0x08`**: they refuse it by
 name (`unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`).
 
 - **Convert, do not rebuild, but it is a re-encode.** Every term gets a new id, so

@@ -552,7 +552,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.6.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.7.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li><details class="nav-section" open><summary class="nav-h">Start here</summary><ul>
         <li><a href="index.html">Overview</a></li>
@@ -626,7 +626,7 @@ their text (so <code>&lt;…/Ng8&gt;</code> sorts before <code>&lt;…/Ng8130_pr
 reverses), then literals, text literals by lexical form. An id then compares as the
 term does, within a section and outside the typed literals, so an <code>ORDER BY</code> over a
 variable sorts on ids and decodes only the rows it shows. The reader reads <code>0x05</code>,
-<code>0x06</code>, <code>0x07</code> and <code>0x08</code>; <strong>readers up to 0.6.0 cannot read <code>0x08</code></strong>: they refuse it by
+<code>0x06</code>, <code>0x07</code> and <code>0x08</code>; <strong>readers up to 0.6.1 cannot read <code>0x08</code></strong>: they refuse it by
 name (<code>unsupported .rete format 0x08; this Rete build reads 0x05..=0x07</code>).</p>
 <ul>
 <li><strong>Convert, do not rebuild, but it is a re-encode.</strong> Every term gets a new id, so

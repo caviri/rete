@@ -699,7 +699,7 @@ domain (`"rete/0x08"`) and the `format_version` a card is stamped with (`8`).
 **Compatibility.** Writers write `0x08` only; the reader reads `0x05`, `0x06`,
 `0x07` and `0x08`. A reader that predates `0x08` refuses the file at the header,
 by name: `unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`
-(0.6.0 says exactly that). There is no backward-compatibility promise before
+(0.6.1 says exactly that). There is no backward-compatibility promise before
 1.0.0, and none is possible here: a `0x07` reader would search the dictionary in
 byte order and miss terms. `rete convert` turns a `0x05`, `0x06` or `0x07` file
 into a `0x08` one. Because every term gets a new id, it is a **re-encode, not a
