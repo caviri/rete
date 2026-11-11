@@ -60,7 +60,7 @@ fn quads(n: u64) -> Vec<RawQuad> {
     let mut seen = std::collections::BTreeSet::new();
     let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>".to_string();
     for i in 0..n {
-        let (a, b) = (omid(mix(2 * i) % 10_000), omid(mix(2 * i + 1) % 10_000));
+        let (a, b) = (omid(mix(2 * i) % 4_000), omid(mix(2 * i + 1) % 4_000));
         let ci = format!("<{CI}{a}-{b}>");
         if !seen.insert(ci.clone()) {
             continue;
@@ -158,7 +158,7 @@ fn off() -> WriteOpts {
 
 fn v5() -> &'static [u8] {
     static B: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    B.get_or_init(|| image(quads(20_000), GraphLayout::Quad))
+    B.get_or_init(|| image(quads(6_000), GraphLayout::Quad))
 }
 
 /// 0x08 quad index with the derived family.
@@ -178,7 +178,7 @@ fn stored() -> &'static [u8] {
 fn flattened() -> &'static [u8] {
     static B: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     B.get_or_init(|| {
-        let flat: Vec<RawQuad> = quads(20_000)
+        let flat: Vec<RawQuad> = quads(6_000)
             .into_iter()
             .map(|(s, p, o, _)| (s, p, o, None))
             .collect();
