@@ -20,6 +20,14 @@ use rete_core::write_opts::{set_write_options, write_options};
 use rete_core::{PermSet, PyramidAlgo, Rete};
 
 const N: usize = 1_500;
+
+/// The thread count is one setting for the process: the tests that change it
+/// run one at a time.
+static THREADS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    THREADS.lock().unwrap_or_else(|e| e.into_inner())
+}
 const XSD_INT: &str = "http://www.w3.org/2001/XMLSchema#integer";
 
 fn iri(s: &str) -> String {
@@ -382,6 +390,7 @@ fn pattern_queries() -> Vec<(&'static str, bool)> {
 
 #[test]
 fn four_threads_answer_as_one_does() {
+    let _threads = one_at_a_time();
     let (quads, things) = (file(), things());
     let parallel = cfg!(feature = "parallel");
     let cases = queries()
@@ -460,11 +469,36 @@ fn four_threads_answer_as_one_does() {
     set_query_threads(0);
 }
 
+/// The first thing several threads do on a freshly opened file is read the
+/// graph directory, all at once. Every one of them must get it: a thread that
+/// found the directory half installed skipped its graph without a word, and a
+/// count came out a few dozen short, now and then.
+#[test]
+fn a_fresh_file_opened_under_several_threads_loses_no_graph() {
+    let _threads = one_at_a_time();
+    if !cfg!(feature = "parallel") {
+        return;
+    }
+    let image = image(GraphLayout::Quad);
+    let q =
+        format!("{P}SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH ?g {{ ?s ?p ?o FILTER(isIRI(?s)) }} }}");
+    set_query_threads(1);
+    let want = rows(&Rete::open(&image).unwrap(), &q);
+    set_query_threads(8);
+    for round in 0..300 {
+        let rete = Rete::open(&image).unwrap();
+        assert_eq!(rows(&rete, &q), want, "round {round}");
+        assert!(!rete.index_incomplete(), "round {round}");
+    }
+    set_query_threads(0);
+}
+
 /// A FILTER written before the BINDs of its group runs below them when it
 /// reads none of their variables. The oracle wraps the BINDs in a sub-select,
 /// which the filter cannot move into.
 #[test]
 fn a_filter_below_the_binds_keeps_the_same_rows() {
+    let _threads = one_at_a_time();
     let rete = file();
     let moved = format!(
         "{P}SELECT ?np ?tail ?host WHERE {{ GRAPH ?h {{ ?np a ex:Nanopublication }} \

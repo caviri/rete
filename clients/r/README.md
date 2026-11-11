@@ -1,15 +1,15 @@
 # rete for R
 
-Query local and remote [`.rete`](https://caviri.github.io/rete/) RDF graph
+Query local and remote [`.rete`](https://caviri.github.io/rete/docs/) RDF graph
 files with SPARQL, getting data frames back. Remote files are read **lazily
 over HTTP range requests** — a selective query against a multi-gigabyte graph
 on plain object storage fetches kilobytes, with no database server anywhere.
 
 The package binds the same Rust engine that powers the
-[rete CLI](https://caviri.github.io/rete/cli.html), the
+[rete CLI](https://caviri.github.io/rete/docs/cli.html), the
 [Python client](https://pypi.org/project/rete-graph/), the
 [JavaScript client](https://www.npmjs.com/package/rete-graph), and the
-[browser playground](https://caviri.github.io/rete/playground.html) — one
+[browser playground](https://caviri.github.io/rete/docs/playground.html) — one
 file format, identical results everywhere.
 
 ## Install
@@ -60,10 +60,10 @@ RDF 1.2 Turtle/TriG (`<<( s p o )>>` triple terms, `<< … >>` reifiers,
 
 ## Documentation
 
-- [R API guide](https://caviri.github.io/rete/r.html) — the full tour
+- [R API guide](https://caviri.github.io/rete/docs/r.html) — the full tour
 - `vignette("rete")` — the same, offline, after install
 - `?rete_open`, `?rete_query`, `?rete_build` — reference pages
-- [Maintainer notes](https://caviri.github.io/rete/clients-dev.html) —
+- [Maintainer notes](https://caviri.github.io/rete/docs/clients-dev.html) —
   building, testing (Docker), and the CRAN/R-universe release path
 
 ## License

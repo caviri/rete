@@ -297,15 +297,25 @@ class Graph:
 
     # -- querying ---------------------------------------------------------
 
-    def query(self, query: str, *, reason: bool = False) -> Union[List[Row], bool, List[Triple]]:
+    def query(
+        self, query: str, *, reason: bool = False, union_default_graph: bool = False
+    ) -> Union[List[Row], bool, List[Triple]]:
         """Run a SPARQL query.
 
         Returns a list of ``{variable: Term}`` rows for SELECT, a ``bool`` for
         ASK, and a list of ``(s, p, o)`` Term triples for CONSTRUCT/DESCRIBE.
         ``reason=True`` turns on OWL 2 QL entailment (computed by query
         rewriting over the file's ontology — no materialization).
+        ``union_default_graph=True`` lets a pattern outside ``GRAPH`` match the
+        default graph and every named graph, a triple stored in several graphs
+        counting once (not standard SPARQL, so off by default; a ``FROM`` in the
+        query still wins). On a file with a quad index it is read in place; on
+        another layout every graph is merged in memory, and
+        :meth:`last_warnings` says so.
         """
-        env = self.query_raw(query, reason=reason)
+        env = self.query_raw(
+            query, reason=reason, union_default_graph=union_default_graph
+        )
         kind = env.get("kind")
         if kind == "select":
             return [
@@ -318,14 +328,18 @@ class Graph:
             return [tuple(Term.parse(t) for t in triple) for triple in env["triples"]]
         raise ValueError(f"unexpected result kind: {kind!r}")
 
-    def query_raw(self, query: str, *, reason: bool = False) -> Dict[str, Any]:
+    def query_raw(
+        self, query: str, *, reason: bool = False, union_default_graph: bool = False
+    ) -> Dict[str, Any]:
         """The engine's raw JSON result envelope, as a dict.
 
         Carries a ``warnings`` list when the query raised type errors (see
         :meth:`last_warnings`).
         """
         self._warnings = []
-        env = json.loads(self._g.query(query, reason=reason))
+        env = json.loads(
+            self._g.query(query, reason=reason, union_default_graph=union_default_graph)
+        )
         self._warnings = env.get("warnings", [])
         return env
 
@@ -343,14 +357,18 @@ class Graph:
         """
         return [dict(w) for w in self._warnings]
 
-    def query_df(self, query: str, *, reason: bool = False):
+    def query_df(
+        self, query: str, *, reason: bool = False, union_default_graph: bool = False
+    ):
         """SELECT results as a pandas DataFrame (needs the ``pandas`` extra).
 
         Terms are converted with :meth:`Term.to_python`.
         """
         import pandas  # deferred: only needed by this method
 
-        env = self.query_raw(query, reason=reason)
+        env = self.query_raw(
+            query, reason=reason, union_default_graph=union_default_graph
+        )
         if env.get("kind") != "select":
             raise ValueError("query_df expects a SELECT query")
         vars_, rows = env["vars"], env["rows"]

@@ -6,7 +6,7 @@ import { runWithRetry } from "./_util.mjs";
 const base = process.env.DEPLOYED_URL || "https://caviri.github.io/rete/";
 const expected = process.env.EXPECTED_SHA || "";
 const target = new URL(
-  "playground.html#dataset=worldcup2026&load=lazy&mode=sparql&ex=0",
+  "docs/playground.html#dataset=worldcup2026&load=lazy&mode=sparql&ex=0",
   base.endsWith("/") ? base : `${base}/`,
 );
 
@@ -18,6 +18,11 @@ const main = async () => {
   page.on("console", (message) => {
     if (message.type() === "error") errs.push(`console: ${message.text().slice(0, 200)}`);
   });
+
+  // The old root URL must still land on the playground, hash kept.
+  const oldUrl = new URL("../playground.html#dataset=worldcup2026&mode=sparql", target);
+  await page.goto(oldUrl.toString(), { waitUntil: "domcontentloaded" });
+  await page.waitForURL((u) => u.pathname.endsWith("/docs/playground.html") && u.hash.startsWith("#dataset=worldcup2026"), { timeout: 30000 });
 
   let build = "";
   // Pages deployment can be followed briefly by a stale CDN response. Retry

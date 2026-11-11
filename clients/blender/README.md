@@ -332,7 +332,7 @@ docker run --rm -v "$PWD":/work -w /work rete-blender-clean sh -c '
 | `geoadmin` | Administrative boundaries — extrude them into terrain |
 
 All at `https://data.graphplaza.com/<key>/<key>.rete`. The full catalogue is in
-the [playground](https://caviri.github.io/rete/playground.html).
+the [playground](https://caviri.github.io/rete/docs/playground.html).
 
 ## Notes and limits
 

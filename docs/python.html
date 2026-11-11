@@ -6,12 +6,12 @@
   <meta name="color-scheme" content="light dark" />
   <title>Python — rete-graph · rete docs</title>
   <meta name="description" content="rete-graph is the Python client for .rete files: native bindings (PyO3) to the same Rust engine behind the CLI and the browser playground." />
-  <link rel="canonical" href="https://caviri.github.io/rete/python.html" />
+  <link rel="canonical" href="https://caviri.github.io/rete/docs/python.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Python — rete-graph · rete docs" />
   <meta property="og:description" content="rete-graph is the Python client for .rete files: native bindings (PyO3) to the same Rust engine behind the CLI and the browser playground." />
-  <meta property="og:url" content="https://caviri.github.io/rete/python.html" />
+  <meta property="og:url" content="https://caviri.github.io/rete/docs/python.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/python.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -728,6 +728,12 @@ g.query(g.examples()[0]["sparql"])          # and they just run
 <code>subPropertyOf</code>, <code>domain</code>/<code>range</code> and friends, computed by <strong>query rewriting</strong>
 over the file's ontology, so it works over lazy remote files without
 materializing anything. See <a href="reasoning.html">Reasoning &amp; coherence</a>.</p>
+<h3 id="union-default-graph">Union default graph</h3>
+<p><code>g.query(q, union_default_graph=True)</code> (also <code>query_raw</code> and <code>query_df</code>) lets a
+pattern outside <code>GRAPH</code> match the default graph and every named graph, a triple
+stored in several graphs counting once. It is not standard SPARQL, so it is off
+by default; a <code>FROM</code> in the query still wins. See
+<a href="sparql.html#union-default-graph">Union default graph</a> for what it costs.</p>
 <h3 id="federation">Federation</h3>
 <p>SPARQL 1.1 <code>SERVICE</code> works out of the box: join a <code>.rete</code> file against any
 public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
@@ -906,6 +912,7 @@ input, <code>RuntimeError</code> for I/O and format problems.</li>
 <tr><td>Lazy local open</td><td>✅</td><td>positional reads, no whole-file load</td></tr>
 <tr><td>Custom reader objects</td><td>✅</td><td><code>open(reader=...)</code> — fsspec/S3</td></tr>
 <tr><td>OWL 2 QL reasoned queries</td><td>✅</td><td><code>query(..., reason=True)</code></td></tr>
+<tr><td>Union default graph</td><td>✅</td><td><code>query(..., union_default_graph=True)</code></td></tr>
 <tr><td><code>SERVICE</code> federation</td><td>✅</td><td>host-injected HTTP client</td></tr>
 <tr><td>Build from RDF text / rdflib objects</td><td>✅</td><td><code>build()</code>, <code>Builder</code></td></tr>
 <tr><td>Dataset Card: embed + read back</td><td>✅</td><td><code>Builder.card()</code>, <code>Graph.card()</code> (ranged on remote)</td></tr>

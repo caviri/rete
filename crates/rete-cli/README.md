@@ -29,13 +29,13 @@ rete sparql-url https://example.net/graph.rete \
 The remote commands use HTTP byte ranges. Serve exact ranges with `206` and
 configure CORS for browser consumers. Exposing `Content-Range` saves an extra
 length probe for ordinary `.rete` files; see the
-[hosting guide](https://caviri.github.io/rete/hosting.html) for fallback behavior.
+[hosting guide](https://caviri.github.io/rete/docs/hosting.html) for fallback behavior.
 
 For source builds, use the repository's Docker Compose/devcontainer toolchain;
 it pins Rust, Clippy, rustfmt, the WASM target, wasm-pack, Python, and uv.
 
-See the [CLI reference](https://caviri.github.io/rete/cli.html), the
-[format compatibility policy](https://caviri.github.io/rete/compatibility.html),
+See the [CLI reference](https://caviri.github.io/rete/docs/cli.html), the
+[format compatibility policy](https://caviri.github.io/rete/docs/compatibility.html),
 and [docs.rs](https://docs.rs/rete-cli).
 
 ## License

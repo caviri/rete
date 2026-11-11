@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "site/**"
+      - "scripts/stage_pages.sh"
       - "tests/gate/checks/check_deployed.mjs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
@@ -26,28 +28,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
-      - name: Stage docs with the exact deployed revision
-        run: |
-          mkdir _site
-          cp -a docs/. _site/
-          EXPECTED_SHA="$(git rev-parse --short=12 HEAD)" python3 - <<'PY'
-          import os
-          from pathlib import Path
-          import re
-
-          page = Path("_site/playground.html")
-          source = page.read_text(encoding="utf-8")
-          source, count = re.subn(
-              r'window\.RETE_BUILD = "[^"]*";',
-              f'window.RETE_BUILD = "{os.environ["EXPECTED_SHA"]}";',
-              source,
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("playground build stamp was not found exactly once")
-          page.write_text(source, encoding="utf-8")
-          PY
-          touch _site/.nojekyll
+      - name: Stage the site (landing at /, docs under /docs/, old URLs kept)
+        run: bash scripts/stage_pages.sh _site
       - uses: actions/configure-pages@v5
       - name: Upload staged site
         uses: actions/upload-pages-artifact@v4
