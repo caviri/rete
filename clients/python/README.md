@@ -60,6 +60,7 @@ g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
 
 g.examples()                                  # SPARQL examples embedded in the file — run as-is
 g.query(q, reason=True)                       # OWL 2 QL entailment (query rewriting)
+g.query(q, union_default_graph=True)       # a pattern outside GRAPH sees every graph, each triple once
 g.query_df("SELECT ...")                      # pandas DataFrame (pip install rete-graph[pandas])
 g.schema()                                    # class/predicate profile
 g.prefix_search("Berl")                       # label autocomplete

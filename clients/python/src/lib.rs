@@ -191,9 +191,16 @@ impl Graph {
     /// Run a SPARQL query (SELECT / ASK / CONSTRUCT / DESCRIBE). Returns the
     /// JSON envelope `{"kind": "select", "vars": [...], "rows": [...]}` etc.;
     /// the Python wrapper parses it into values. `reason=True` turns on OWL 2
-    /// QL entailment by query rewriting.
-    #[pyo3(signature = (query, *, reason=false))]
-    fn query(&self, py: Python<'_>, query: &str, reason: bool) -> PyResult<String> {
+    /// QL entailment by query rewriting; `union_default_graph=True` lets a
+    /// pattern outside `GRAPH` match every graph (see `QueryOpts`).
+    #[pyo3(signature = (query, *, reason=false, union_default_graph=false))]
+    fn query(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        reason: bool,
+        union_default_graph: bool,
+    ) -> PyResult<String> {
         self.fresh_verdict();
         // Evaluation stays on this thread (detach only releases the GIL),
         // which is what the engine's thread-local diagnostics need.
@@ -201,7 +208,7 @@ impl Graph {
             .detach(|| {
                 let opts = QueryOpts {
                     reason,
-                    ..QueryOpts::default()
+                    union_default_graph,
                 };
                 eval_query_with_warnings(&self.rete, query, opts)
             })

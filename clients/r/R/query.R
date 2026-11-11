@@ -13,10 +13,14 @@
 #' @param query A SPARQL query string.
 #' @param reason If `TRUE`, answers include OWL 2 QL entailment, computed by
 #'   query rewriting over the file's ontology (works on remote files too).
+#' @param union_default_graph If `TRUE`, a pattern outside `GRAPH` matches the
+#'   default graph and every named graph, a triple stored in several graphs
+#'   counting once (not standard SPARQL, so off by default; a `FROM` in the
+#'   query still wins). On a file with a quad index it is read in place.
 #' @return A `data.frame`, or a logical scalar for ASK.
 #' @export
-rete_query <- function(graph, query, reason = FALSE) {
-  env <- rete_query_raw(graph, query, reason = reason)
+rete_query <- function(graph, query, reason = FALSE, union_default_graph = FALSE) {
+  env <- rete_query_raw(graph, query, reason = reason, union_default_graph = union_default_graph)
   switch(env$kind,
     ask = env$boolean,
     select = select_to_df(env),
@@ -31,9 +35,9 @@ rete_query <- function(graph, query, reason = FALSE) {
 #' @return The engine's JSON result envelope, parsed to a list. Terms stay in
 #'   their N-Triples token form (`<iri>`, `"literal"^^<datatype>`, `_:bnode`).
 #' @export
-rete_query_raw <- function(graph, query, reason = FALSE) {
+rete_query_raw <- function(graph, query, reason = FALSE, union_default_graph = FALSE) {
   stopifnot(inherits(graph, "rete_graph"), is.character(query), length(query) == 1L)
-  jsonlite::fromJSON(graph$ptr$query(query, isTRUE(reason)), simplifyVector = FALSE)
+  jsonlite::fromJSON(graph$ptr$query(query, isTRUE(reason), isTRUE(union_default_graph)), simplifyVector = FALSE)
 }
 
 select_to_df <- function(env) {
