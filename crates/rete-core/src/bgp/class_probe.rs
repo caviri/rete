@@ -129,7 +129,7 @@ pub(crate) fn class_probe_rows<'q>(
     // The pairs and the route: found once. A grouped query run as shards on
     // several threads ([`crate::row::Shard`]) shares them, and each shard
     // probes its slice of the subjects, in the subjects' order.
-    let route = || -> Option<Option<(Pairs, Vec<u32>)>> {
+    let route = || -> Route {
         // 1. The pairs.
         let scan = quad.scan_pairs((None, Some(pid), Some(class)))?;
         if scan.is_empty() {
@@ -187,6 +187,11 @@ pub(crate) fn class_probe_rows<'q>(
     }))
 }
 
+/// What the probe found for a class: `None` when the walk is taken instead,
+/// `Some(None)` when no subject has the class, else the class's
+/// `(subject, graph)` pairs and its distinct subjects.
+type Route = Option<Option<(Pairs, Vec<u32>)>>;
+
 /// `(subject, graph)` pairs, ascending.
 pub(crate) struct Pairs(Vec<(u32, u32)>);
 
@@ -241,7 +246,7 @@ struct ClassProbe<'q> {
     sslot: usize,
     class: u32,
     /// The class's `(subject, graph)` pairs and its distinct subjects.
-    found: std::sync::Arc<Option<Option<(Pairs, Vec<u32>)>>>,
+    found: std::sync::Arc<Route>,
     /// The next subject to probe, and one past the last (a slice of the
     /// subjects when the query runs as shards).
     cursor: usize,
