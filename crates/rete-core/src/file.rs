@@ -5312,12 +5312,32 @@ impl Rete {
         self.named_graphs.name_owned(&self.dict, i, exhaustive)
     }
 
+    /// The dictionary node that names the quad-index graph at ordinal `i`, as
+    /// a query row binds a graph variable: no term is decoded. `None` for
+    /// another layout (whose graphs are named by strings).
+    pub(crate) fn named_graph_node_demand(&self, i: usize, exhaustive: bool) -> Option<u32> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.node_at(&self.dict, i, exhaustive),
+            _ => None,
+        }
+    }
+
     /// The ordinal of the quad-index graph named `iri`: a dictionary lookup and
     /// a directory binary search. `None` for another file layout, or no such
     /// graph.
     pub(crate) fn named_graph_ordinal(&self, iri: &str) -> Option<usize> {
         match &self.named_graphs {
             NamedGraphsSlot::Quad(q) => q.ordinal_of_iri(&self.dict, iri),
+            _ => None,
+        }
+    }
+
+    /// The ordinal of the quad-index graph named by the dictionary node `node`,
+    /// as a query row holds it: a directory search, no term decoded. `None`
+    /// for another layout, or when the node names no graph.
+    pub(crate) fn named_graph_ordinal_of_node(&self, node: u32) -> Option<usize> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.ordinal_of_node(&self.dict, node),
             _ => None,
         }
     }

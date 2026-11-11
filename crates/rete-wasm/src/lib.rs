@@ -721,6 +721,17 @@ impl Graph {
         query_json_with(&self.rete, query, format, "", reason, union_default)
     }
 
+    /// Run a SELECT to a **result handle**: the rows stay dictionary ids and
+    /// [`QueryRows::page`] decodes a window on demand. See [`QueryRows`].
+    pub fn query_rows(
+        &self,
+        query: &str,
+        reason: bool,
+        union_default: bool,
+    ) -> Result<QueryRows, JsValue> {
+        QueryRows::run(&self.rete, query, reason, union_default, false)
+    }
+
     /// Plan running `query` as chunks split by the values of `var` — see
     /// `rete_core::partition_plan`. JSON `{var, form, keys_query,
     /// keys_from_where, offset, limit, dedupe}`, or an error saying why the
@@ -955,6 +966,88 @@ impl Graph {
 /// one predicate of one graph reads 16 MB where the unfiltered dump of that
 /// graph reads 376 MB. Peak memory is O(faulted dictionary + index), never
 /// O(quads), either way.
+/// A SELECT answered to dictionary ids: the **result handle** of
+/// [`Graph::query_rows`] and [`RemoteGraph::query_rows`].
+///
+/// `query` evaluates a SELECT and decodes every term of every row to JSON; a
+/// page of 25 rows of a 650,000-row result still costs the whole result's
+/// dictionary chunks (181 MB for a class of the nanopub dump). The handle keeps
+/// the rows as ids, with the exact row count, and `page(offset, limit)` decodes
+/// one window, as one batch of chunk reads. What the query itself needs is
+/// decoded as before (the keys of an ORDER BY, the inputs of a FILTER); the
+/// other columns wait for the page. `free()` it when done.
+#[wasm_bindgen]
+pub struct QueryRows {
+    rete: Rc<Rete>,
+    rows: rete_core::SelectRows,
+    remote: bool,
+}
+
+impl QueryRows {
+    fn run(
+        rete: &Rc<Rete>,
+        query: &str,
+        reason: bool,
+        union_default: bool,
+        remote: bool,
+    ) -> Result<QueryRows, JsValue> {
+        let rows = rete_core::eval_select_rows(
+            rete,
+            query,
+            QueryOpts {
+                reason,
+                union_default_graph: union_default,
+            },
+        )
+        .map_err(err)?;
+        Ok(QueryRows {
+            rete: rete.clone(),
+            rows,
+            remote,
+        })
+    }
+}
+
+#[wasm_bindgen]
+impl QueryRows {
+    /// The projected variables, a JSON array (for `SELECT *`, the variables
+    /// some row binds, in name order).
+    pub fn vars(&self) -> String {
+        serde_json::to_string(self.rows.vars()).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// The exact number of rows.
+    pub fn len(&self) -> f64 {
+        self.rows.len() as f64
+    }
+
+    /// Rows `offset..offset + limit` (cut at the end), in the envelope of
+    /// `query(..., "json")`: `{"kind":"select","vars":[…],"rows":[{var:term}]}`
+    /// plus `"offset"` and `"total"`. Calling it again, or for another window,
+    /// reuses the dictionary chunks already read.
+    pub fn page(&self, offset: usize, limit: usize) -> Result<String, JsValue> {
+        if self.remote {
+            self.rete.reset_load_failures();
+        }
+        let page = self.rows.page(&self.rete, offset, limit);
+        if self.remote {
+            incomplete_guard(&self.rete, "query")?;
+        }
+        let start = offset.min(self.rows.len());
+        let out = QueryOutput::Select(self.rows.vars().to_vec(), page);
+        let mut extra = format!(
+            r#","schemaVersion":{JSON_SCHEMA_VERSION},"offset":{start},"total":{}"#,
+            self.rows.len()
+        );
+        // As `query`: a `warnings` member only when there is something to say.
+        if !self.rows.warnings().is_empty() {
+            extra.push_str(r#","warnings":"#);
+            extra.push_str(&rete_core::warnings_json(self.rows.warnings()));
+        }
+        Ok(rete_core::results_envelope_json(&out, &extra))
+    }
+}
+
 #[wasm_bindgen]
 pub struct QuadCursor {
     /// Graph slots not yet streamed; `None` = the default graph.
@@ -1382,6 +1475,20 @@ impl RemoteGraph {
         let s = query_json_with(&self.rete, query, format, "", reason, union_default)?;
         incomplete_guard(&self.rete, "query")?;
         Ok(s)
+    }
+
+    /// See [`Graph::query_rows`]. The query's reads happen here; each
+    /// [`QueryRows::page`] then reads the dictionary chunks of its own terms.
+    pub fn query_rows(
+        &self,
+        query: &str,
+        reason: bool,
+        union_default: bool,
+    ) -> Result<QueryRows, JsValue> {
+        self.rete.reset_load_failures();
+        let rows = QueryRows::run(&self.rete, query, reason, union_default, true)?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(rows)
     }
 
     /// See [`Graph::partition_plan`]. Reads the dictionary entries of the

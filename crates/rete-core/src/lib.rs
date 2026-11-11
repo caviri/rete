@@ -188,10 +188,11 @@ pub mod query {
     };
     pub use crate::sparql::{
         eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
-        eval_query_with_warnings, eval_select_communities, eval_sparql, eval_sparql_reasoned,
-        partition_plan, query_predicates, routed_triple_pattern, summary_query_shape,
-        warnings_json, CommunityPartial, CommunitySelect, PartitionPlan, QueryOpts, QueryOutput,
-        QueryWarning, RoutedTriplePattern, SparqlError, SummaryQueryShape, WarningSeverity,
+        eval_query_with_warnings, eval_select_communities, eval_select_rows, eval_sparql,
+        eval_sparql_reasoned, partition_plan, query_predicates, routed_triple_pattern,
+        summary_query_shape, warnings_json, CommunityPartial, CommunitySelect, PartitionPlan,
+        QueryOpts, QueryOutput, QueryWarning, RoutedTriplePattern, SelectRows, SparqlError,
+        SummaryQueryShape, WarningSeverity,
     };
 }
 
@@ -233,7 +234,7 @@ pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
 #[doc(hidden)]
 pub use block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
 #[doc(hidden)]
-pub use dict::{DictSection, DictSectionBuilder};
+pub use dict::{terms_decoded, DictSection, DictSectionBuilder};
 #[doc(hidden)]
 pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
@@ -298,11 +299,12 @@ pub use shacl::{
 #[doc(hidden)]
 pub use sparql::{
     eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
-    eval_query_with_warnings, eval_select_communities, eval_sparql, eval_sparql_reasoned,
-    parse_select, partition_plan, query_predicates, routed_triple_pattern, summary_query_shape,
-    warnings_json, Agg, CommunityPartial, CommunitySelect, FExpr, FederationPlan, GraphTarget,
-    GroupSpec, Op, PartitionPlan, PathAst, Plan, QueryOpts, QueryOutput, QueryWarning, Rep,
-    RoutedTriplePattern, Select, SparqlError, SummaryQueryShape, WarningSeverity,
+    eval_query_with_warnings, eval_select_communities, eval_select_rows, eval_sparql,
+    eval_sparql_reasoned, parse_select, partition_plan, query_predicates, routed_triple_pattern,
+    summary_query_shape, warnings_json, Agg, CommunityPartial, CommunitySelect, FExpr,
+    FederationPlan, GraphTarget, GroupSpec, Op, PartitionPlan, PathAst, Plan, QueryOpts,
+    QueryOutput, QueryWarning, Rep, RoutedTriplePattern, Select, SelectRows, SparqlError,
+    SummaryQueryShape, WarningSeverity,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use sysmem::{

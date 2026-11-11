@@ -2522,6 +2522,19 @@ impl QuadNamed {
         self.ordinal_of_name(dict, iri)
     }
 
+    /// The dictionary node that names graph `i` (the directory holds its
+    /// subject id): no term is decoded.
+    pub(crate) fn node_at(&self, dict: &Dictionary, i: usize, exhaustive: bool) -> Option<u32> {
+        let (g, _) = self.core.graph_at(i, exhaustive)?;
+        Some(dict.subject_node(g))
+    }
+
+    /// The ordinal of the graph whose name is the dictionary node `node` (the
+    /// directory is keyed by subject id): no term is decoded, no lookup made.
+    pub(crate) fn ordinal_of_node(&self, dict: &Dictionary, node: u32) -> Option<usize> {
+        self.core.ordinal_of_for_view(dict.node_subject_id(node)?)
+    }
+
     /// A streaming scan of every quad matching a triple pattern, over all
     /// graphs: see [`QuadScan`]. `None` when the section is unreadable.
     ///

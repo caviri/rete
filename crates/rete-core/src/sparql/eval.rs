@@ -679,6 +679,47 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     (sel.project.clone(), resolve_rows(&ctx, sel, raw))
 }
 
+/// A SELECT run to the id level: the projected variables, and every solution
+/// row as dictionary ids (and computed strings) with nothing decoded yet.
+/// ORDER BY has decoded its sort keys unless they sort as ids (a plain variable of an order-exact group of a 0x08 file), and nothing else has been decoded.
+/// Decoding is [`crate::sparql::SelectRows::page`].
+pub(super) fn run_select_ids(rete: &Rete, sel: &Select) -> super::SelectRows {
+    let ctx = query_ctx(rete, sel);
+    // No decode-ahead: it exists for a LIMIT-bounded scan, and here nothing is
+    // decoded until a page is asked for.
+    let raw = select_rows(&ctx, sel);
+    // The columns: the projection, or for `SELECT *` every variable some row
+    // binds, in name order (the order of the JSON envelope of `SELECT *`).
+    let (vars, cols): (Vec<String>, Vec<Option<usize>>) = if sel.project.is_empty() {
+        let mut bound = vec![false; ctx.slots.len()];
+        for r in &raw {
+            for (i, v) in r.iter().enumerate() {
+                bound[i] |= v.is_some();
+            }
+        }
+        let mut named: Vec<(String, usize)> = (0..bound.len())
+            .filter(|&i| bound[i])
+            .map(|i| (ctx.slots.name(i).to_string(), i))
+            .collect();
+        named.sort();
+        named.into_iter().map(|(n, i)| (n, Some(i))).unzip()
+    } else {
+        (
+            sel.project.clone(),
+            sel.project.iter().map(|v| ctx.slots.slot(v)).collect(),
+        )
+    };
+    let rows = raw
+        .into_iter()
+        .map(|r| {
+            cols.iter()
+                .map(|c| c.and_then(|i| r[i].clone()))
+                .collect::<Vec<Option<Val>>>()
+        })
+        .collect();
+    super::SelectRows::new(vars, rows)
+}
+
 /// [`run_select`] up to, not including, term resolution: the projected,
 /// sliced rows in `ctx`'s slot space. A subquery lands these in the outer
 /// query directly — dictionary ids stay ids — instead of resolving every
@@ -1546,12 +1587,28 @@ fn rows_in_bound_graph(
     inner: &Plan,
     lcert: &[bool],
 ) -> Vec<Row> {
-    let Some(name) = lrow[slot].as_ref().and_then(|v| ctx.resolver.str_of(v)) else {
+    let Some(bound) = lrow[slot].as_ref() else {
         return Vec::new();
     };
-    if nf.is_some_and(|f| !f.iter().any(|g| g.as_str() == &*name)) {
-        return Vec::new();
-    }
+    // A graph bound as a dictionary id is found by id: the directory is keyed
+    // by it, so the name is never decoded (a join over ten million graphs
+    // decoded ten million names to find the graph each row already named).
+    // FROM NAMED and any other layout need the name.
+    let by_id = match bound {
+        Val::Id(n) if *n >= 0 && nf.is_none() => ctx.rete.named_graph_ordinal_of_node(*n as u32),
+        _ => None,
+    };
+    let name = if by_id.is_some() {
+        None
+    } else {
+        let Some(name) = ctx.resolver.str_of(bound) else {
+            return Vec::new();
+        };
+        if nf.is_some_and(|f| !f.iter().any(|g| g.as_str() == &*name)) {
+            return Vec::new();
+        }
+        Some(name)
+    };
     let run = |gi: &GraphIndex| -> Vec<Row> {
         if let Plan::Bgp(patterns) = inner {
             if !patterns.is_empty() {
@@ -1565,7 +1622,12 @@ fn rows_in_bound_graph(
             .filter_map(|r| merge_rows(lrow, &r))
             .collect()
     };
-    match ctx.rete.named_graph_ordinal(&name) {
+    let ordinal = match (&by_id, &name) {
+        (Some(i), _) => Some(*i),
+        (None, Some(name)) => ctx.rete.named_graph_ordinal(name),
+        (None, None) => None,
+    };
+    match ordinal {
         Some(i) => {
             if let Some(view) = ctx.rete.named_graph_transient(i) {
                 return run(&view);
@@ -1575,7 +1637,7 @@ fn rows_in_bound_graph(
                 None => Vec::new(),
             }
         }
-        None => match ctx.rete.graph_index(&name) {
+        None => match name.as_deref().and_then(|n| ctx.rete.graph_index(n)) {
             Some(gi) => run(gi),
             None => Vec::new(),
         },
@@ -1638,16 +1700,22 @@ fn graph_var_walk<'q>(
     let graphs = ordinals.filter_map(move |i| {
         let exhaustive = may_be_exhaustive && named_filter.is_none() && ctx.exhaustive.get();
         // The name is not kept by the file: a walk over 43 M graphs must not
-        // hold one string per graph it has passed.
+        // hold one string per graph it has passed. Without FROM NAMED the
+        // name is not needed at all: a quad-index graph is a dictionary node,
+        // and that is what the variable binds.
+        if named_filter.is_none() {
+            if let Some(n) = ctx.rete.named_graph_node_demand(i, exhaustive) {
+                return Some((i, Val::Id(i64::from(n)), exhaustive));
+            }
+        }
         let name = ctx.rete.named_graph_name_owned_demand(i, exhaustive)?;
         if !visible(&name) {
             return None;
         }
-        Some((i, name, exhaustive))
+        Some((i, ctx.resolver.canon_term(&name), exhaustive))
     });
     Box::new(graphs.flat_map(
-        move |(i, name, exhaustive)| -> Box<dyn Iterator<Item = Row> + 'q> {
-            let gval = ctx.resolver.canon_term(&name);
+        move |(i, gval, exhaustive)| -> Box<dyn Iterator<Item = Row> + 'q> {
             let bind = move |mut sol: Row| match &sol[slot] {
                 Some(existing) if *existing != gval => None,
                 _ => {

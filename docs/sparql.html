@@ -552,7 +552,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.6.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.6.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li><details class="nav-section" open><summary class="nav-h">Start here</summary><ul>
         <li><a href="index.html">Overview</a></li>
@@ -1311,6 +1311,12 @@ doesn't implement (e.g. <code>&lt;http://ex.org/fn#match&gt;(?o)</code>) fails w
 <li>Complex <code>ORDER BY</code> <strong>key expressions</strong> beyond a bare variable/constant are not
 yet evaluated for ordering.</li>
 </ul>
+<h2 id="graph-names-are-ids">Graph names are ids</h2>
+<p>On a quad-index file a graph variable binds the graph as a dictionary id, and a
+later <code>GRAPH ?g { … }</code> that reuses it finds the graph by that id: no graph name is
+decoded to run the join, the walk or the grouping. Only the names a result
+shows are decoded. A file with a graph per container, and any query with <code>FROM NAMED</code>,
+still compare names.</p>
 <h2 id="examples">Examples</h2>
 <pre><code class="language-sparql"># 2-hop join
 PREFIX ex: &lt;http://ex/&gt;

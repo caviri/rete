@@ -384,6 +384,23 @@ export class Graph {
         }
     }
     /**
+     * Run a SELECT to a **result handle**: the rows stay dictionary ids and
+     * [`QueryRows::page`] decodes a window on demand. See [`QueryRows`].
+     * @param {string} query
+     * @param {boolean} reason
+     * @param {boolean} union_default
+     * @returns {QueryRows}
+     */
+    query_rows(query, reason, union_default) {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.graph_query_rows(this.__wbg_ptr, ptr0, len0, reason, union_default);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return QueryRows.__wrap(ret[0]);
+    }
+    /**
      * See [`query_triples`].
      * @param {string | null} [subject]
      * @param {string | null} [predicate]
@@ -654,45 +671,6 @@ export class Graph {
 }
 if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
 
-/**
- * A **lazy, resumable cursor** over the quads of an open `.rete` — the engine
- * side of `for await (const [s, p, o, g] of graph.dump())` in the JS client.
- *
- * # Why a cursor and not a callback
- *
- * [`Rete::dump_each`] already streams in constant memory, but a Rust callback
- * cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
- * it would have to buffer every quad first, which is exactly the `Vec` that
- * [`Rete::dump`] builds and that OOMs on a large file. This wraps
- * [`Rete::query_batch`] instead, so the scan can be suspended between calls and
- * resumed in place — the whole resume state is one opaque `u64`, never a
- * whole-graph materialization anywhere in the pipeline.
- *
- * # Why batched (and not one call per quad)
- *
- * Each wasm→JS call costs far more than decoding a triple, and every returned
- * `String` becomes a fresh JS string. Pulling one quad per call would make the
- * boundary the bottleneck; pulling *all* of them would reintroduce the `Vec`.
- * So the JS wrapper asks for `DUMP_BATCH` quads at a time and yields them one
- * by one — bounded, amortized, and lazy. Memory is O(batch), not O(graph).
- *
- * # Cost model
- *
- * The dictionary is **not** prefetched whole: each batch faults only the
- * chunks its own terms live in, so taking five quads off the front costs five
- * quads' worth of dictionary rather than all of it. Index tiles fault in as the
- * scan advances and stay resident, and so do dictionary chunks, so an
- * **unfiltered** dump driven to the end still ends up fetching essentially the
- * whole file — that is inherent in exporting a graph.
- *
- * A **filtered** cursor (a bound `s` / `p` / `o`) is a different shape: the
- * scan routes to the one permutation that sorts on the bound prefix and drops
- * every tile whose synopsis proves it cannot match, from the tile directory,
- * *without fetching it*. On `cordis.rete` (801 MB, six named graphs) dumping
- * one predicate of one graph reads 16 MB where the unfiltered dump of that
- * graph reads 376 MB. Peak memory is O(faulted dictionary + index), never
- * O(quads), either way.
- */
 export class QuadCursor {
     static __wrap(ptr) {
         const obj = Object.create(QuadCursor.prototype);
@@ -793,6 +771,127 @@ export class QuadCursor {
     }
 }
 if (Symbol.dispose) QuadCursor.prototype[Symbol.dispose] = QuadCursor.prototype.free;
+
+/**
+ * A **lazy, resumable cursor** over the quads of an open `.rete` — the engine
+ * side of `for await (const [s, p, o, g] of graph.dump())` in the JS client.
+ *
+ * # Why a cursor and not a callback
+ *
+ * [`Rete::dump_each`] already streams in constant memory, but a Rust callback
+ * cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
+ * it would have to buffer every quad first, which is exactly the `Vec` that
+ * [`Rete::dump`] builds and that OOMs on a large file. This wraps
+ * [`Rete::query_batch`] instead, so the scan can be suspended between calls and
+ * resumed in place — the whole resume state is one opaque `u64`, never a
+ * whole-graph materialization anywhere in the pipeline.
+ *
+ * # Why batched (and not one call per quad)
+ *
+ * Each wasm→JS call costs far more than decoding a triple, and every returned
+ * `String` becomes a fresh JS string. Pulling one quad per call would make the
+ * boundary the bottleneck; pulling *all* of them would reintroduce the `Vec`.
+ * So the JS wrapper asks for `DUMP_BATCH` quads at a time and yields them one
+ * by one — bounded, amortized, and lazy. Memory is O(batch), not O(graph).
+ *
+ * # Cost model
+ *
+ * The dictionary is **not** prefetched whole: each batch faults only the
+ * chunks its own terms live in, so taking five quads off the front costs five
+ * quads' worth of dictionary rather than all of it. Index tiles fault in as the
+ * scan advances and stay resident, and so do dictionary chunks, so an
+ * **unfiltered** dump driven to the end still ends up fetching essentially the
+ * whole file — that is inherent in exporting a graph.
+ *
+ * A **filtered** cursor (a bound `s` / `p` / `o`) is a different shape: the
+ * scan routes to the one permutation that sorts on the bound prefix and drops
+ * every tile whose synopsis proves it cannot match, from the tile directory,
+ * *without fetching it*. On `cordis.rete` (801 MB, six named graphs) dumping
+ * one predicate of one graph reads 16 MB where the unfiltered dump of that
+ * graph reads 376 MB. Peak memory is O(faulted dictionary + index), never
+ * O(quads), either way.
+ * A SELECT answered to dictionary ids: the **result handle** of
+ * [`Graph::query_rows`] and [`RemoteGraph::query_rows`].
+ *
+ * `query` evaluates a SELECT and decodes every term of every row to JSON; a
+ * page of 25 rows of a 650,000-row result still costs the whole result's
+ * dictionary chunks (181 MB for a class of the nanopub dump). The handle keeps
+ * the rows as ids, with the exact row count, and `page(offset, limit)` decodes
+ * one window, as one batch of chunk reads. What the query itself needs is
+ * decoded as before (the keys of an ORDER BY, the inputs of a FILTER); the
+ * other columns wait for the page. `free()` it when done.
+ */
+export class QueryRows {
+    static __wrap(ptr) {
+        const obj = Object.create(QueryRows.prototype);
+        obj.__wbg_ptr = ptr;
+        QueryRowsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        QueryRowsFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_queryrows_free(ptr, 0);
+    }
+    /**
+     * The exact number of rows.
+     * @returns {number}
+     */
+    len() {
+        const ret = wasm.queryrows_len(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Rows `offset..offset + limit` (cut at the end), in the envelope of
+     * `query(..., "json")`: `{"kind":"select","vars":[…],"rows":[{var:term}]}`
+     * plus `"offset"` and `"total"`. Calling it again, or for another window,
+     * reuses the dictionary chunks already read.
+     * @param {number} offset
+     * @param {number} limit
+     * @returns {string}
+     */
+    page(offset, limit) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.queryrows_page(this.__wbg_ptr, offset, limit);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * The projected variables, a JSON array (for `SELECT *`, the variables
+     * some row binds, in name order).
+     * @returns {string}
+     */
+    vars() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.queryrows_vars(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) QueryRows.prototype[Symbol.dispose] = QueryRows.prototype.free;
 
 /**
  * A remote `.rete` opened **once over HTTP range** and kept resident in the
@@ -1145,6 +1244,23 @@ export class RemoteGraph {
         } finally {
             wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
         }
+    }
+    /**
+     * See [`Graph::query_rows`]. The query's reads happen here; each
+     * [`QueryRows::page`] then reads the dictionary chunks of its own terms.
+     * @param {string} query
+     * @param {boolean} reason
+     * @param {boolean} union_default
+     * @returns {QueryRows}
+     */
+    query_rows(query, reason, union_default) {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.remotegraph_query_rows(this.__wbg_ptr, ptr0, len0, reason, union_default);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return QueryRows.__wrap(ret[0]);
     }
     /**
      * See [`Graph::quoted_triples_signal`] — from the header the open already
@@ -3030,6 +3146,9 @@ const GraphFinalization = (typeof FinalizationRegistry === 'undefined')
 const QuadCursorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_quadcursor_free(ptr, 1));
+const QueryRowsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_queryrows_free(ptr, 1));
 const RemoteGraphFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_remotegraph_free(ptr, 1));
