@@ -319,3 +319,20 @@ pub fn set_cluster(c: Option<ClusterOpts>) {
         *g = c;
     }
 }
+
+static DERIVE_IRIS: std::sync::Mutex<Vec<crate::derived::Family>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// The derived IRI families the writers look for (`rete build --derive-iris`),
+/// none by default. Process-wide like the other writer settings.
+pub fn derive_iris() -> Vec<crate::derived::Family> {
+    DERIVE_IRIS.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// Set the derived IRI families the writers look for (an empty list turns it
+/// off).
+pub fn set_derive_iris(f: Vec<crate::derived::Family>) {
+    if let Ok(mut g) = DERIVE_IRIS.lock() {
+        *g = f;
+    }
+}

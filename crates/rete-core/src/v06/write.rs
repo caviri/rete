@@ -82,6 +82,9 @@ pub struct WriteOpts {
     /// Cluster the subject-leading permutations by class (`0x07` only); `None`
     /// writes them in subject order, and un-clusters a clustered input.
     pub cluster: Option<crate::write_opts::ClusterOpts>,
+    /// Derived IRI families to look for (`0x08`): the subject-only dictionary
+    /// chunks whose terms all derive from the index lose their bodies.
+    pub derive: Vec<crate::derived::Family>,
     /// Where this writer spills the sort runs of the `0x07` quad orders and of
     /// class clustering; `None` = the system temporary directory. Per writer,
     /// never shared: another writer in the process may delete its own.
@@ -108,6 +111,12 @@ impl WriteOpts {
         }
     }
 
+    /// These options looking for `derive` as derived IRI families.
+    pub fn with_derive(mut self, derive: Vec<crate::derived::Family>) -> Self {
+        self.derive = derive;
+        self
+    }
+
     /// These options with class clustering on (`Some`) or off.
     pub fn with_cluster(mut self, c: Option<crate::write_opts::ClusterOpts>) -> Self {
         self.cluster = c;
@@ -123,6 +132,7 @@ impl Default for WriteOpts {
             leaves: LeafPolicy::default(),
             version: VERSION,
             cluster: crate::write_opts::cluster(),
+            derive: crate::write_opts::derive_iris(),
             spill_dir: None,
         }
     }
@@ -481,6 +491,12 @@ fn build_front(
     }
     f.units
         .push((tag::DICT, encode_dict_root(&droots, version)));
+    if !parts.derived.is_empty() {
+        f.units.push((
+            tag::DERIVED,
+            crate::derived::encode_families(&parts.derived),
+        ));
+    }
     // Index.
     let mut proots = Vec::new();
     for (pi, p) in parts.index.iter().enumerate() {
@@ -841,6 +857,13 @@ pub fn assemble_with<W: Write + Seek>(
             return assemble_with(&derived, &layered, out, opts.clone(), hooks);
         }
     }
+    // `--derive-iris`: drop the subject-only chunks whose terms the index and
+    // the object dictionary rebuild.
+    if opts.version >= VERSION && super::derived::needed(parts, &opts.derive) {
+        if let Some(derived) = super::derived::derive(parts, input, &opts.derive)? {
+            return assemble_with(&derived, input, out, opts.clone(), hooks);
+        }
+    }
     let codec = opts.internal_codec;
     if parts.pyramid_levels > u8::MAX as u16 {
         return Err(FileError::Container(
@@ -1165,6 +1188,11 @@ pub fn assemble_with<W: Write + Seek>(
                 0
             } else {
                 F_CLUSTERED
+            })
+            | (if parts.derived.is_empty() {
+                0
+            } else {
+                F_DERIVED
             }),
         content_hash: [0; 16],
         file_len: data_offset + data_len + FOOTER.len() as u64,

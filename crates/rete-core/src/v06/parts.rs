@@ -127,6 +127,9 @@ pub struct Parts {
     /// writes it as the last data section; a card handed over without it is
     /// split by [`super::annex::split`].
     pub annex: Option<Vec<u8>>,
+    /// Derived IRI families of the subject-only dictionary section (`0x08`):
+    /// their chunks have no stored body (`clen` 0 in `dict[1]`).
+    pub derived: Vec<crate::derived::Family>,
 }
 
 fn read(r: &dyn RangeReader, range: ByteRange) -> Result<Vec<u8>, FileError> {
@@ -526,6 +529,10 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
             max_raw: max_block(kind::DICT_DATA),
             groups: s.groups,
         };
+    }
+    if let Some(unit) = root.unit(tag::DERIVED) {
+        p.derived = crate::derived::decode_families(unit, roots[crate::derived::SECTION].n_chunks)
+            .map_err(|_| FileError::Container("0x08 derived-IRI root is malformed"))?;
     }
     // Index.
     let ileaves = whole(kind::INDEX_LEAVES)?;

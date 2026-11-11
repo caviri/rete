@@ -52,3 +52,14 @@ path = "fuzz_targets/iri.rs"
 test = false
 doc = false
 bench = false
+
+# The derived-IRI root (format 0x08, SPEC.md 5.3) and the template spec: untrusted
+# bytes in the root, untrusted text on the command line. A decoded family must
+# re-encode to the bytes it came from, and a term built from a family must split
+# back into its holes.
+[[bin]]
+name = "derived"
+path = "fuzz_targets/derived.rs"
+test = false
+doc = false
+bench = false

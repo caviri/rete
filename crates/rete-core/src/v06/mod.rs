@@ -26,6 +26,7 @@
 
 pub mod annex;
 pub mod cluster;
+pub mod derived;
 pub mod dictcheck;
 pub(crate) mod neworders;
 pub mod open;
@@ -117,6 +118,13 @@ pub const F_QUAD_GRAPH_MAJOR: u8 = 0b1000;
 /// clustered by class: their tiles are in `(cluster, s, p, o)` order, listed
 /// by the cluster root ([`tag::CLUSTER`]).
 pub const F_CLUSTERED: u8 = 0b1_0000;
+/// Header flag (`0x08`): the subject-only dictionary section has chunks with no
+/// stored body, derived from the index ([`crate::derived`], [`tag::DERIVED`]).
+/// A reader that does not know the flag refuses the file by name.
+pub const F_DERIVED: u8 = 0b10_0000;
+/// Every header flag this build knows.
+pub const F_KNOWN: u8 =
+    F_NAMED | F_QUOTED | F_TEXT_NAMED | F_QUAD_GRAPH_MAJOR | F_CLUSTERED | F_DERIVED;
 /// `ClusterOrder::si` of the quad index's SPOG (its quad slot).
 pub const QUAD_SPOG: usize = crate::quad7::FIRST_LAST_SLOT;
 /// The most classes a clustered permutation has a run for (the rest are run 0).
@@ -215,6 +223,8 @@ pub mod tag {
     pub const TEXT: u8 = 5;
     /// `0x07`: the class clusters of the subject-leading permutations.
     pub const CLUSTER: u8 = 6;
+    /// `0x08`: the derived IRI families of the subject-only dictionary section.
+    pub const DERIVED: u8 = 7;
 }
 
 /// The parsed 128-byte header.
@@ -291,6 +301,16 @@ impl Header06 {
         }
         if u16::from_le_bytes([b[6], b[7]]) as usize != HEADER_LEN {
             return Err(FileError::Container("0x06 header length is not 128"));
+        }
+        if b[5] & !F_KNOWN != 0 {
+            return Err(FileError::Container(
+                "unsupported .rete feature: this Rete build does not know that header flag",
+            ));
+        }
+        if b[5] & F_DERIVED != 0 && b[4] < VERSION {
+            return Err(FileError::Container(
+                "derived IRIs are a format 0x08 feature, this header says an older format",
+            ));
         }
         let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());

@@ -283,6 +283,17 @@ enum Command {
         /// Needs one byte of RAM per subject.
         #[arg(long = "cluster-subjects-by-class")]
         cluster_subjects_by_class: bool,
+        /// Do not store IRIs that the file itself spells out. A TEMPLATE is an
+        /// IRI with holes `{PREDICATE|PREFIX}`: the text of a hole is what
+        /// follows PREFIX in the object of the subject's PREDICATE triple. The
+        /// subject-only dictionary chunks whose every term the template
+        /// rebuilds, byte for byte, lose their bodies (the others are kept); a
+        /// reader rebuilds a term from the index. Ids, order and answers are
+        /// the same. For the OpenCitations Index: `https://w3id.org/oc/index/ci/{http://purl.org/spar/cito/hasCitingEntity|https://w3id.org/oc/meta/br/}-{http://purl.org/spar/cito/hasCitedEntity|https://w3id.org/oc/meta/br/}`.
+        /// Needs the PSO permutation or an unclustered SPO. May be given more
+        /// than once.
+        #[arg(long = "derive-iris", value_name = "TEMPLATE")]
+        derive_iris: Vec<String>,
         /// How many index permutations to store: `6` (default) or `3`.
         ///
         /// `6` stores SPO, POS, OSP, SOP, PSO and OPS. `3` stores only SPO,
@@ -539,6 +550,11 @@ enum Command {
         /// written in subject order again.
         #[arg(long = "cluster-subjects-by-class")]
         cluster_subjects_by_class: bool,
+        /// Derive IRIs from the index instead of storing them (`rete build
+        /// --derive-iris`), in a file that does not have them derived yet. A
+        /// derived input stays derived.
+        #[arg(long = "derive-iris", value_name = "TEMPLATE")]
+        derive_iris: Vec<String>,
         /// Do not build the label index for a file that has only the
         /// pyramid's legacy label block.
         #[arg(long = "no-label-index")]
@@ -1625,6 +1641,16 @@ fn run() -> Result<ExitCode, CliError> {
     }
 }
 
+/// `--derive-iris`: parse the templates and hand them to the writers.
+fn set_derive_iris(specs: &[String]) -> anyhow::Result<()> {
+    let families = specs
+        .iter()
+        .map(|s| rete_core::derived::Family::parse_spec(s).map_err(|e| anyhow::anyhow!("{e}")))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    rete_core::write_opts::set_derive_iris(families);
+    Ok(())
+}
+
 /// The full-text index the `--text-index*` flags ask for (`None` = no index).
 fn text_index_scope(
     enabled: bool,
@@ -1674,6 +1700,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             memory_budget_mb,
             tmp_dir,
             cluster_subjects_by_class,
+            derive_iris,
             permutations,
             named_graphs,
             strict,
@@ -1685,6 +1712,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             rete_core::write_opts::set_cluster(
                 cluster_subjects_by_class.then(rete_core::write_opts::ClusterOpts::default),
             );
+            set_derive_iris(&derive_iris)?;
             let _progress = progress.start("build")?;
             let sections = commands::build::BuildSections {
                 label_index,
@@ -1840,6 +1868,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             quad_clustering,
             tmp_dir,
             cluster_subjects_by_class,
+            derive_iris,
             no_label_index,
             no_card_costs,
             memory_budget_mb,
@@ -1847,6 +1876,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             rete_core::write_opts::set_cluster(
                 cluster_subjects_by_class.then(rete_core::write_opts::ClusterOpts::default),
             );
+            set_derive_iris(&derive_iris)?;
             commands::v06::convert(
                 &input,
                 &output,

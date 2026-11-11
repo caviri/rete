@@ -694,7 +694,9 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
 /// section table — where every part of the file is, and its digest.
 fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> {
     use rete_core::v06::{kind, open};
-    use rete_core::v06::{F_CLUSTERED, F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
+    use rete_core::v06::{
+        F_CLUSTERED, F_DERIVED, F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED,
+    };
     let (h, root) = open::read_front(reader)?;
     let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
     println!("format version: 0x{:02x}", h.version);
@@ -707,6 +709,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         (F_TEXT_NAMED, "text covers named graphs"),
         (F_QUAD_GRAPH_MAJOR, "quad tiles graph-major"),
         (F_CLUSTERED, "subjects clustered by class"),
+        (F_DERIVED, "IRIs derived from the index"),
     ]
     .into_iter()
     .filter(|&(b, _)| h.flags & b != 0)
@@ -738,6 +741,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
             (tag::DICT, "dict"),
             (tag::INDEX, "index"),
             (tag::CLUSTER, "cluster"),
+            (tag::DERIVED, "derived"),
             (tag::QUAD, "quad"),
             (tag::LABELS, "labels"),
             (tag::TEXT, "text"),
@@ -781,8 +785,37 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
     print_leaf_counts(&root, h.version);
     print_term_order(&root, h.version);
     print_clusters(&root);
+    print_derived(&root, h.version);
     print_quad_orders(&h, &root);
     Ok(())
+}
+
+/// The derived IRI families of a file (SPEC.md section 5.3), from the root alone:
+/// each template, and how many of the subject-only dictionary chunks have no
+/// stored body.
+fn print_derived(root: &rete_core::v06::Root06, version: u8) {
+    use rete_core::v06::{decode_dict_root, tag};
+    let Some(unit) = root.unit(tag::DERIVED) else {
+        return;
+    };
+    let Some(dict) = root
+        .unit(tag::DICT)
+        .and_then(|d| decode_dict_root(d, version).ok())
+    else {
+        return;
+    };
+    let total = dict[rete_core::derived::SECTION].n_chunks;
+    let Ok(fams) = rete_core::derived::decode_families(unit, total) else {
+        println!("  derived IRIs : the root is malformed");
+        return;
+    };
+    for f in fams {
+        println!(
+            "  derived IRIs : {} chunk(s) of {total} subject-only chunks, no stored body",
+            f.chunk_count()
+        );
+        println!("    template  {}", f.spec());
+    }
 }
 
 /// The class runs of a clustered file, from the root alone: per permutation,
