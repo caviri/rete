@@ -8,7 +8,7 @@
     "url": "git+https://github.com/caviri/rete.git",
     "directory": "clients/js"
   },
-  "homepage": "https://caviri.github.io/rete/javascript.html",
+  "homepage": "https://caviri.github.io/rete/docs/javascript.html",
   "keywords": ["rdf", "sparql", "graph", "database", "wasm", "linked-data", "range-requests"],
   "type": "module",
   "main": "./dist/index.js",

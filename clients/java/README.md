@@ -129,6 +129,11 @@ nothing but read permission. Either way the open cost is paid once into a
 resident handle whose block cache stays warm across queries — `close()` releases
 it, and the file descriptor with it.
 
+`query(sparql, true)` (and `query(file, sparql, true)` for a byte array) runs the
+query against the **union default graph**: a pattern outside `GRAPH` matches the
+default graph and every named graph, a triple stored in several graphs counting
+once. It is not standard SPARQL, so it is off by default.
+
 Measured in this repo's Java image (`--memory=12g`, `-Xmx8g`, one fresh JVM per
 figure, peak RSS from the kernel's `VmHWM`, compiled engine):
 
@@ -427,7 +432,8 @@ the wasm module (`ffi/src/lib.rs`):
   source; `Rete` calls it once per instance, before anything else.
 - `rete_version()`, `rete_build(text,fmt)`, `rete_build_syntax(text,fmt,syntax)`,
   `rete_info(bytes)`,
-  `rete_query(bytes,query)` — each returns a pointer to a result buffer laid out
+  `rete_query(bytes,query)`, `rete_query_opts(bytes,query,flags)` (flag bit 0: the
+  union default graph) — each returns a pointer to a result buffer laid out
   as `[status: u32 LE][len: u32 LE][payload: len bytes]`. `status == 0` is
   success (`payload` is JSON, or raw `.rete` bytes for `build`); `status == 1`
   is an error (`payload` is a UTF-8 message).

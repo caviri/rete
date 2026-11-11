@@ -190,9 +190,8 @@ One shape to watch: every example query in this tutorial matches the
 **default graph**. If your sources are N-Quads (or rdflib `Dataset`s with
 named graphs), a bare pattern like `{ ?s <urn:knows> ?o }` correctly returns
 nothing for statements living in named graphs — scope it with
-`GRAPH ?g { … }`, or use a surface that offers the opt-in
-[union default graph](sparql.md#union-default-graph) mode (the playground's
-⛁ All graphs toggle; not standard SPARQL, and not available in this client).
+`GRAPH ?g { … }`, or pass `union_default_graph=True` to `query()`, the opt-in
+[union default graph](sparql.md#union-default-graph) mode (not standard SPARQL).
 
 ## 3. The pyramid
 

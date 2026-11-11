@@ -532,6 +532,13 @@ fn active_index<'a>(
                     return gi;
                 }
             }
+            // A quad index with graph-last orders is streamed, never merged.
+            if let Some(u) = rete.union_default_index() {
+                return &*merged.insert(u);
+            }
+            // Any other layout has no order to stream the union in: its
+            // graphs are merged into one index, which reads them all.
+            super::diag::union_materialized();
             &*merged.insert(merge_union_default(rete))
         }
         [] => rete.default_index(),
@@ -598,6 +605,7 @@ pub(super) fn scan_estimate(rete: &Rete, sel: &Select) -> Option<u64> {
         return None;
     };
     let index = match &sel.from[..] {
+        [] if sel.union_default && rete.named_graph_count() > 0 => return None,
         [] => rete.default_index(),
         [g] => rete.graph_index(g)?,
         _ => return None,

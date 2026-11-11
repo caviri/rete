@@ -6,12 +6,12 @@
   <meta name="color-scheme" content="light dark" />
   <title>Python: build a .rete · rete docs</title>
   <meta name="description" content="For one graph built from Python and from the CLI, with the card, the layout and measured build times, see Build a .rete, step by step." />
-  <link rel="canonical" href="https://caviri.github.io/rete/python-build-tutorial.html" />
+  <link rel="canonical" href="https://caviri.github.io/rete/docs/python-build-tutorial.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Python: build a .rete · rete docs" />
   <meta property="og:description" content="For one graph built from Python and from the CLI, with the card, the layout and measured build times, see Build a .rete, step by step." />
-  <meta property="og:url" content="https://caviri.github.io/rete/python-build-tutorial.html" />
+  <meta property="og:url" content="https://caviri.github.io/rete/docs/python-build-tutorial.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/python-build-tutorial.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -774,9 +774,8 @@ the wall time, the phases, the peak RSS and the CPUs, as in the CLI's record.
 <strong>default graph</strong>. If your sources are N-Quads (or rdflib <code>Dataset</code>s with
 named graphs), a bare pattern like <code>{ ?s &lt;urn:knows&gt; ?o }</code> correctly returns
 nothing for statements living in named graphs — scope it with
-<code>GRAPH ?g { … }</code>, or use a surface that offers the opt-in
-<a href="sparql.html#union-default-graph">union default graph</a> mode (the playground's
-⛁ All graphs toggle; not standard SPARQL, and not available in this client).</p>
+<code>GRAPH ?g { … }</code>, or pass <code>union_default_graph=True</code> to <code>query()</code>, the opt-in
+<a href="sparql.html#union-default-graph">union default graph</a> mode (not standard SPARQL).</p>
 <h2 id="3-the-pyramid">3. The pyramid</h2>
 <p>The <a href="semantic-zoom.html">community pyramid</a> is the file's "zoom-out" structure:
 communities summarized level by level, powering the playground's overview,

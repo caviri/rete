@@ -15,7 +15,7 @@ import init, {
   build,
   query as queryBytes,
   card as cardBytes,
-} from "../engine/rete_wasm.js";
+} from "../docs/engine/rete_wasm.js";
 
 const ready = init();
 const sessions = new Map(); // url -> RemoteGraph

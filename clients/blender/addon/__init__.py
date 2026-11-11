@@ -19,7 +19,7 @@ bl_info = {
         "Query .rete knowledge graphs with SPARQL and build scenes from the "
         "results: assets, geometry, inherited properties, time, and physics."
     ),
-    "doc_url": "https://caviri.github.io/rete/blender.html",
+    "doc_url": "https://caviri.github.io/rete/docs/blender.html",
     "tracker_url": "https://github.com/caviri/rete/issues",
     "support": "COMMUNITY",
     "category": "Import-Export",

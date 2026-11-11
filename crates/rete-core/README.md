@@ -46,8 +46,8 @@ Public error and result enums are non-exhaustive; keep a wildcard arm when
 matching them. Hidden root exports and implementation namespaces are used by
 the Rete workspace but are not part of the 1.x SemVer contract.
 
-See the [Rust API guide](https://caviri.github.io/rete/rust-api.html), the
-[format specification](https://caviri.github.io/rete/SPEC.html), and
+See the [Rust API guide](https://caviri.github.io/rete/docs/rust-api.html), the
+[format specification](https://caviri.github.io/rete/docs/SPEC.html), and
 [docs.rs](https://docs.rs/rete-core).
 
 ## License
