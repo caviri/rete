@@ -358,6 +358,26 @@ pub fn elided_runs(fams: &[Family]) -> Vec<(usize, usize)> {
 /// The candidate subjects a lookup looks at, at most, for one term.
 const MAX_CANDIDATES: usize = 1 << 20;
 
+/// Objects decoded within one batch: the citing OMID of a run of citations is
+/// the same object for each of them.
+struct Memo(std::collections::HashMap<u32, Option<std::sync::Arc<str>>>);
+
+impl Memo {
+    fn new() -> Self {
+        Memo(std::collections::HashMap::new())
+    }
+
+    fn object(&mut self, dict: &Dictionary, o: u32) -> Option<std::sync::Arc<str>> {
+        if self.0.len() > 1 << 16 {
+            self.0.clear();
+        }
+        self.0
+            .entry(o)
+            .or_insert_with(|| dict.object_term(o).map(Into::into))
+            .clone()
+    }
+}
+
 /// Rebuilds derived terms for a [`Dictionary`]: reads the inputs of an id from
 /// the index, decodes them in the dictionary and fills the template.
 pub struct DerivedTerms {
@@ -368,6 +388,8 @@ pub struct DerivedTerms {
     preds: OnceLock<Vec<Vec<Option<u32>>>>,
     /// The last term rebuilt: a subject is decoded again for each row it is in.
     last: std::sync::Mutex<Option<(u32, String)>>,
+    /// Signature of the last id list [`Self::prefetch`] warmed.
+    prefetched: std::sync::Mutex<Option<(usize, Option<u32>, Option<u32>, u64)>>,
 }
 
 impl DerivedTerms {
@@ -378,6 +400,7 @@ impl DerivedTerms {
             index: OnceLock::new(),
             preds: OnceLock::new(),
             last: std::sync::Mutex::new(None),
+            prefetched: std::sync::Mutex::new(None),
         }
     }
 
@@ -416,7 +439,7 @@ impl DerivedTerms {
         let index = self.index.get()?;
         let mut out = Vec::with_capacity(self.families[fi].inputs.len());
         // One lookup of the subject's rows (SPO, the tile the prefetch faulted).
-        let rows = index.match_pattern((Some(s), None, None));
+        let rows: Vec<(u32, u32, u32)> = index.scan_iter((Some(s), None, None)).collect();
         for p in self.preds(dict)[fi].iter() {
             let p = (*p)?;
             let mut it = rows.iter().filter(|r| r.1 == p);
@@ -437,23 +460,23 @@ impl DerivedTerms {
                 }
             }
         }
-        let t = self.term_uncached(dict, local)?;
+        let t = self.term_uncached(dict, local, &mut Memo::new())?;
         if let Ok(mut g) = self.last.lock() {
             *g = Some((local, t.clone()));
         }
         Some(t)
     }
 
-    fn term_uncached(&self, dict: &Dictionary, local: u32) -> Option<String> {
+    fn term_uncached(&self, dict: &Dictionary, local: u32, memo: &mut Memo) -> Option<String> {
         let ci = dict.subject_only_chunk(local)?;
         let fi = self.family_of_chunk(ci)?;
         let s = dict.shared_count().checked_add(local)?;
         let objects = self.inputs_of(dict, fi, s)?;
-        let texts: Vec<String> = objects
-            .iter()
-            .map(|&o| dict.object_term(o))
-            .collect::<Option<_>>()?;
-        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let mut texts: Vec<std::sync::Arc<str>> = Vec::with_capacity(objects.len());
+        for &o in &objects {
+            texts.push(memo.object(dict, o)?);
+        }
+        let refs: Vec<&str> = texts.iter().map(|t| &**t).collect();
         self.families[fi].derive(&refs)
     }
 
@@ -465,6 +488,7 @@ impl DerivedTerms {
         ids.dedup();
         self.prefetch(dict, &ids);
         // A subject repeats in every row it is in: rebuild each id once.
+        let mut memo = Memo::new();
         let mut last: Option<(u32, Option<String>)> = None;
         for &(local, slot) in &jobs {
             if out[slot].is_some() {
@@ -473,7 +497,7 @@ impl DerivedTerms {
             let t = match &last {
                 Some((l, t)) if *l == local => t.clone(),
                 _ => {
-                    let t = self.term(dict, local);
+                    let t = self.term_uncached(dict, local, &mut memo);
                     last = Some((local, t.clone()));
                     t
                 }
@@ -492,6 +516,26 @@ impl DerivedTerms {
         if !index.is_remote() {
             return;
         }
+        // The same ids again (a caller prefetches, then decodes through `terms`):
+        // nothing new to read.
+        let mut locals = locals.to_vec();
+        locals.sort_unstable();
+        locals.dedup();
+        let sig = (
+            locals.len(),
+            locals.first().copied(),
+            locals.last().copied(),
+            locals.iter().fold(0u64, |a, &l| {
+                a.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(l as u64)
+            }),
+        );
+        if let Ok(mut g) = self.prefetched.lock() {
+            if *g == Some(sig) {
+                return;
+            }
+            *g = Some(sig);
+        }
+        let locals = &locals[..];
         let mut pats: Vec<Pattern> = Vec::new();
         let mut wanted: Vec<u32> = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
@@ -519,7 +563,7 @@ impl DerivedTerms {
         }
         let mut nodes = Vec::new();
         for pat in &pats {
-            for (_, p, o) in index.match_pattern(*pat) {
+            for (_, p, o) in index.scan_iter(*pat) {
                 if wanted.contains(&p) {
                     nodes.push(dict.object_node(o));
                 }
