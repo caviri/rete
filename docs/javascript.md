@@ -85,6 +85,31 @@ g.contentHash();                // remote graphs: blake3-16 cache key
 await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array); also "nq", "ttl", "trig"
 ```
 
+### Paging a big result: `queryRows()`
+
+`query()` decodes every term of every row before it returns, and a dictionary
+id is a rank, so the terms of a big result are scattered: a page of 25 rows out
+of 650,000 still reads every chunk the other rows touch (181 MB of the nanopub
+dump's dictionary for one class). `queryRows()` runs the SELECT to ids and
+decodes only the window you ask for:
+
+```js
+const rows = g.queryRows(`SELECT ?s ?p ?o WHERE { GRAPH ?g { ?s a <http://example.org/Big> . ?s ?p ?o } }`);
+rows.length;             // the exact row count, no term decoded
+rows.vars;               // ["s", "p", "o"]
+rows.page(0, 25);        // the first page: { s: Term, p: Term, o: Term }[]
+rows.page(25, 25);       // the next, one batch of dictionary reads
+rows.all();              // every row, as query() would return them
+rows.free();
+```
+
+An `ORDER BY` still decodes the keys it sorts on, for every row; the other
+columns wait for the page. `DISTINCT` and `GROUP BY` work on ids. SELECT
+only (ASK, CONSTRUCT and DESCRIBE throw); in the browser the same handle is
+`RemoteGraph.query_rows` / `Graph.query_rows` of the wasm engine, with
+`.vars()`, `.len()` and `.page(offset, limit)` (the page is the JSON envelope
+of `query`, plus `offset` and `total`).
+
 ### Why did a FILTER return nothing? `lastWarnings()`
 
 `CONTAINS(?s, "x")` on an IRI, `STRSTARTS(?year, "15")` on an `xsd:integer`,

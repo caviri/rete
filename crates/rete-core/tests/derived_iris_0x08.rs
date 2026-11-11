@@ -331,3 +331,55 @@ fn a_derived_file_rewrites_to_the_same_bytes() {
     .unwrap();
     assert!(out.into_inner() == derived());
 }
+
+/// The rows of a result handle, `step` at a time: a page is the same slice of
+/// the full result, whether the file holds the names or derives them.
+fn pages_of(rete: &Rete, q: &str, step: usize) -> Vec<String> {
+    let h = rete_core::eval_select_rows(rete, q, rete_core::QueryOpts::default())
+        .unwrap_or_else(|e| panic!("{q}: {e}"));
+    let mut out = Vec::new();
+    while out.len() < h.len() {
+        let page = h.page(rete, out.len(), step);
+        assert!(!page.is_empty());
+        out.extend(page.into_iter().map(|b| format!("{b:?}")));
+    }
+    out
+}
+
+#[test]
+fn a_page_decodes_derived_names_as_the_full_result_does() {
+    let c = "PREFIX cito: <http://purl.org/spar/cito/>";
+    let qs = [
+        "SELECT ?s WHERE { ?s a <http://purl.org/spar/cito/Citation> } ORDER BY ?s".to_string(),
+        "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY DESC(?s) ?p".to_string(),
+        format!("{c} SELECT ?ci ?cited WHERE {{ ?ci cito:hasCitingEntity <{BR}{}> ; cito:hasCitedEntity ?cited }}", omid(7)),
+        "SELECT DISTINCT ?s WHERE { ?s ?p ?o } ORDER BY ?s".to_string(),
+    ];
+    for q in &qs {
+        let want = rows(&resident(plain()), q);
+        let full = |r: &Rete| match eval_query(r, q).unwrap() {
+            QueryOutput::Select(_, rows) => rows
+                .into_iter()
+                .map(|b| format!("{b:?}"))
+                .collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        };
+        for r in [resident(derived()), lazy(derived())] {
+            let all = full(&r);
+            if q.contains("ORDER BY") {
+                assert_eq!(all, want, "{q}");
+            }
+            for step in [1usize, 25, 1000] {
+                let got = pages_of(&r, q, step);
+                assert_eq!(got, all, "{q} paged by {step}");
+            }
+            let h = rete_core::eval_select_rows(&r, q, rete_core::QueryOpts::default()).unwrap();
+            let seven: Vec<String> = h.page(&r, 10, 7).iter().map(|b| format!("{b:?}")).collect();
+            assert_eq!(
+                seven,
+                all.iter().skip(10).take(7).cloned().collect::<Vec<_>>()
+            );
+            assert!(h.page(&r, h.len() + 5, 3).is_empty());
+        }
+    }
+}

@@ -193,6 +193,68 @@ export function init(source = null) {
 // ---------------------------------------------------------------------------
 
 /** A `.rete` graph opened for querying (bytes, or a URL over HTTP Range). */
+/**
+ * A SELECT answered to dictionary ids ({@link Graph#queryRows}). Decodes a
+ * window of rows at a time; keep it as long as you page, then `free()` it (or
+ * let it be collected).
+ */
+export class ResultRows {
+  #h;
+  #vars;
+  #warnings = [];
+
+  constructor(handle) {
+    this.#h = handle;
+    this.#vars = JSON.parse(handle.vars());
+  }
+
+  /**
+   * Diagnostics of the query, as `Graph#lastWarnings()` reports them (the
+   * SPARQL type errors a FILTER silently turned into `false`, a hint for an
+   * empty result). Filled by the first `page()` call.
+   */
+  lastWarnings() {
+    return this.#warnings.map((w) => ({ ...w }));
+  }
+
+  /** The projected variables (for `SELECT *`, those some row binds, by name). */
+  get vars() {
+    return [...this.#vars];
+  }
+
+  /** The exact number of rows. */
+  get length() {
+    return this.#h.len();
+  }
+
+  /**
+   * Rows `offset .. offset + limit` (cut at the end) as `{var: Term}`, in the
+   * order `query()` returns them; an unbound variable is missing from its row.
+   * One call is one batch of dictionary reads for exactly these rows.
+   */
+  page(offset = 0, limit = 100) {
+    const env = JSON.parse(this.#h.page(offset, limit));
+    this.#warnings = env.warnings ?? [];
+    return env.rows.map((row) =>
+      Object.fromEntries(Object.entries(row).map(([k, v]) => [k, Term.parse(v)])),
+    );
+  }
+
+  /** Every row (decodes them all, like `query()`). */
+  all() {
+    return this.page(0, this.length);
+  }
+
+  /** Release the engine's copy of the rows. */
+  free() {
+    this.#h.free();
+  }
+
+  [Symbol.dispose]() {
+    this.free();
+  }
+}
+
 export class Graph {
   #g;
   #remote;
@@ -218,6 +280,23 @@ export class Graph {
     const env = JSON.parse(s);
     this.#warnings = env.warnings ?? [];
     return env;
+  }
+
+  /**
+   * Run a SELECT to a **result handle** ({@link ResultRows}): the rows stay
+   * dictionary ids inside the engine, `rows.length` is the exact row count, and
+   * `rows.page(offset, limit)` decodes one window on demand, as one batch of
+   * dictionary reads. `query()` decodes every term of every row first, so a
+   * page of 25 rows of a 650,000-row result costs the whole result on a remote
+   * file (181 MB of dictionary on the nanopub dump, 0.2 MB through a handle).
+   * `reason` and `unionDefault` are as in `query()`. Throws for ASK, CONSTRUCT
+   * and DESCRIBE.
+   */
+  queryRows(query, { reason = false, unionDefault = false } = {}) {
+    this.#warnings = [];
+    if (typeof this.#g.query_rows !== "function")
+      throw new Error("this engine build has no result handles (query_rows); update the wasm");
+    return new ResultRows(this.#g.query_rows(query, reason, unionDefault));
   }
 
   /**

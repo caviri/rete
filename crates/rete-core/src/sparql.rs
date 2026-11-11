@@ -30,7 +30,9 @@ mod sparql12;
 mod value;
 
 pub use diag::{warnings_json, QueryWarning, WarningSeverity};
-use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
+use eval::{
+    ask_solution, instantiate, raw_solutions, run_select, run_select_communities, run_select_ids,
+};
 pub use fedmerge::FederationPlan;
 use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
@@ -979,6 +981,125 @@ fn eval_partition_inner(
         _ => Err(SparqlError::Unsupported(
             "only SELECT and CONSTRUCT can be split",
         )),
+    }
+}
+
+/// A SELECT answered to the **id level**: the variables and every solution row
+/// as dictionary ids, with no term decoded for output. [`SelectRows::len`] is
+/// the exact row count; [`SelectRows::page`] decodes one window of rows on
+/// demand, as one batch of dictionary chunk reads. Built by
+/// [`eval_select_rows`].
+///
+/// What the query itself needed has been decoded: the keys an `ORDER BY`
+/// sorts on (none, when the file is `0x08` and the key is a plain variable
+/// of an order-exact group: ids sort), the values a `FILTER` or an aggregate reads. Every other column
+/// of every row stays an id until a page asks for it, so a result of 650,000
+/// rows costs the terms of the page shown, not of the result. `DISTINCT` and
+/// `GROUP BY` already work on ids.
+///
+/// The rows are only meaningful against the [`Rete`] that produced them.
+#[derive(Debug, Clone)]
+pub struct SelectRows {
+    vars: Vec<String>,
+    rows: Vec<Vec<Option<crate::row::Val>>>,
+    warnings: Vec<QueryWarning>,
+}
+
+impl SelectRows {
+    pub(crate) fn new(vars: Vec<String>, rows: Vec<Vec<Option<crate::row::Val>>>) -> Self {
+        SelectRows {
+            vars,
+            rows,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// The diagnostics the query raised, as [`eval_query_with_warnings`] reports
+    /// them (the type errors a FILTER absorbed, a case-sensitivity hint for an
+    /// empty result).
+    pub fn warnings(&self) -> &[QueryWarning] {
+        &self.warnings
+    }
+
+    /// The projected variables (for `SELECT *`, every variable some row binds,
+    /// in name order), the keys of every row [`page`](Self::page) returns.
+    pub fn vars(&self) -> &[String] {
+        &self.vars
+    }
+
+    /// How many solution rows the query has.
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Does the query have no solution?
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Rows `offset..offset + limit` (fewer at the end, none past it) decoded
+    /// to term tokens, an unbound variable left out of its row, exactly as
+    /// [`eval_query`] returns them. The dictionary chunks the window needs are
+    /// faulted in one batch first. `rete` must be the file the rows came from.
+    pub fn page(&self, rete: &Rete, offset: usize, limit: usize) -> Vec<Binding> {
+        let start = offset.min(self.rows.len());
+        let end = start.saturating_add(limit).min(self.rows.len());
+        let window = &self.rows[start..end];
+        let resolver = crate::row::Resolver::new(rete.dictionary());
+        resolver.prefetch(window.iter().flat_map(|r| r.iter().flatten()));
+        window
+            .iter()
+            .map(|row| {
+                let mut b = Binding::new();
+                for (v, val) in self.vars.iter().zip(row) {
+                    if let Some(t) = val.as_ref().and_then(|val| resolver.str_once(val)) {
+                        b.insert(v.clone(), t);
+                    }
+                }
+                b
+            })
+            .collect()
+    }
+}
+
+/// Run a SELECT to the id level ([`SelectRows`]): the same solutions as
+/// [`eval_query_with`], but nothing is decoded for output until
+/// [`SelectRows::page`] asks. A query that is not a SELECT is
+/// [`SparqlError::Unsupported`].
+pub fn eval_select_rows(
+    rete: &Rete,
+    query: &str,
+    opts: QueryOpts,
+) -> Result<SelectRows, SparqlError> {
+    diag::begin();
+    let parsed = parse_query(query)?;
+    let out = match parsed {
+        Query::Select {
+            pattern, dataset, ..
+        } => {
+            let sel = maybe_reason(
+                rete,
+                apply_opts(lower_select(&pattern, &dataset)?, opts),
+                opts.reason,
+            );
+            let mut rows = run_select_ids(rete, &sel);
+            // The diagnostics only look at whether the result is empty.
+            let probe = if rows.is_empty() {
+                Vec::new()
+            } else {
+                vec![Binding::new()]
+            };
+            rows.warnings = diag::finish(&QueryOutput::Select(rows.vars.clone(), probe));
+            Ok(rows)
+        }
+        _ => Err(SparqlError::Unsupported(
+            "a result handle is for SELECT queries",
+        )),
+    };
+    // A failed non-SILENT SERVICE call must become an error, as in `eval_query`.
+    match rete.take_service_error() {
+        Some(e) => Err(SparqlError::Service(e)),
+        None => out,
     }
 }
 
