@@ -4163,7 +4163,7 @@ impl NamedGraphsSlot {
 pub struct Rete {
     header: Header,
     dict: Dictionary,
-    index: GraphIndex,
+    index: std::sync::Arc<GraphIndex>,
     index_section_ranges: [ByteRange; NUM_PERMS],
     /// Per-permutation tile directories as absolute file ranges
     /// (`(min_a, max_a, compressed-tile range)`), for provenance. Empty for
@@ -4290,7 +4290,7 @@ impl Rete {
         Ok(Self {
             header,
             dict,
-            index,
+            index: std::sync::Arc::new(index),
             index_section_ranges,
             tile_ranges,
             pyramid,
@@ -4641,7 +4641,7 @@ impl Rete {
     /// Resolve every triple of a graph (`None` = default graph) back to terms.
     pub fn dump(&self, graph: Option<&str>) -> Vec<TermTriple> {
         let index = match graph {
-            None => &self.index,
+            None => &*self.index,
             Some(g) => match self.graph_index(g) {
                 Some(i) => i,
                 None => return Vec::new(),
@@ -4758,7 +4758,7 @@ impl Rete {
         mut f: F,
     ) {
         let index = match graph {
-            None => Some(&self.index),
+            None => Some(&*self.index),
             Some(g) => self.graph_index(g),
         };
         let Some(index) = index else { return };
@@ -4888,7 +4888,7 @@ impl Rete {
         o: Option<&str>,
     ) -> DumpPlan {
         let index = match graph {
-            None => Some(&self.index),
+            None => Some(&*self.index),
             Some(g) => self.graph_index(g),
         };
         let scan = index
@@ -4942,7 +4942,7 @@ impl Rete {
         o: Option<&str>,
     ) -> impl Iterator<Item = TermTriple> + '_ {
         let index = match graph {
-            None => Some(&self.index),
+            None => Some(&*self.index),
             Some(g) => self.graph_index(g),
         };
         index
@@ -4986,7 +4986,7 @@ impl Rete {
         max_quads: usize,
     ) -> (Vec<TermTriple>, u64, bool) {
         let index = match graph {
-            None => &self.index,
+            None => &*self.index,
             // An unknown graph IRI is an empty scan, not an error — same as
             // `query_in_graph` and `dump_batch`.
             Some(g) => match self.graph_index(g) {
@@ -5476,7 +5476,7 @@ impl Rete {
         Ok(Self {
             header,
             dict,
-            index,
+            index: std::sync::Arc::new(index),
             index_section_ranges,
             tile_ranges,
             pyramid,
@@ -5506,7 +5506,8 @@ impl Rete {
         let header = crate::v06::logical_header(&f.h);
         let rc = reader.concurrency();
         let dict = f.dictionary([true; 4])?;
-        let index = f.index(rc)?;
+        let index = std::sync::Arc::new(f.index(rc)?);
+        dict.wire_derived(index.clone());
         let (pyramid, text_index, labels, schema) = v06_slots(&f);
         let named_graphs = match f.quad(rc) {
             Some(q) => NamedGraphsSlot::Quad(q?),
@@ -5688,7 +5689,7 @@ impl Rete {
         let rete = Self {
             header,
             dict,
-            index,
+            index: std::sync::Arc::new(index),
             index_section_ranges,
             tile_ranges,
             pyramid,
@@ -6051,7 +6052,7 @@ impl Rete {
             None => return Vec::new(),
         };
         let index = match graph {
-            None => &self.index,
+            None => &*self.index,
             Some(g) => match self.graph_index(g) {
                 Some(i) => i,
                 None => return Vec::new(),
@@ -6198,6 +6199,13 @@ fn v06_query_ranged<R: RangeReader>(
     use crate::v06::{kind, open::SparseReader, Header06, Root06, HEADER_LEN};
     let len = reader.len();
     let h = Header06::from_bytes(&head)?;
+    if h.flags & crate::v06::F_DERIVED != 0 {
+        // A derived IRI is rebuilt from the index, which this one-request path
+        // does not hold: answering without it would drop rows, so it refuses.
+        return Err(FileError::Container(
+            "this file derives IRIs from its index (format 0x08); a one-pattern ranged query cannot read it, use the lazy reader (`rete sparql-url`)",
+        ));
+    }
     let root_end = (HEADER_LEN as u64 + h.root_len as u64).min(len);
     let root_bytes = if root_end <= head.len() as u64 {
         head[HEADER_LEN..root_end as usize].to_vec()
@@ -6841,19 +6849,30 @@ impl SearchView {
         let first: std::sync::Arc<[u8]> = std::sync::Arc::from(reader.read_at(0, first_len)?);
         let reader = crate::reader::PrefixReader::new(reader, first.clone());
         if crate::v06::open::is_v06(&first) {
+            let rc = reader.concurrency();
             let r: std::sync::Arc<dyn RangeReader + Send + Sync> = std::sync::Arc::new(reader);
             let f = std::sync::Arc::new(crate::v06::open::V06File::open(r, &first)?);
             let header = crate::v06::logical_header(&f.h);
             let (pyramid, text_index, labels, _) = v06_slots(&f);
-            let want = [true, true, false, false];
+            // A derived IRI is rebuilt from the index and the object dictionary,
+            // so a file that has some opens both.
+            let derived = f.h.flags & crate::v06::F_DERIVED != 0;
+            let want = [true, true, derived, derived];
+            let make = move |f: &crate::v06::open::V06File| -> Result<Dictionary, FileError> {
+                let d = f.dictionary(want)?;
+                if derived {
+                    d.wire_derived(std::sync::Arc::new(f.index(rc)?));
+                }
+                Ok(d)
+            };
             let dict = if f.h.has(crate::v06::P_LABELS) {
                 let a = f.clone();
                 SectionSlot::Lazy {
-                    loader: Box::new(move || a.dictionary(want).ok()),
+                    loader: Box::new(move || make(&a).ok()),
                     cell: std::sync::OnceLock::new(),
                 }
             } else {
-                SectionSlot::Resident(Some(f.dictionary(want)?))
+                SectionSlot::Resident(Some(make(&f)?))
             };
             return Ok(Self {
                 header,

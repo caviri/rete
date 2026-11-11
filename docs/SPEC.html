@@ -714,7 +714,7 @@ and the small unit roots.</p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
 <tr><td>4</td><td>1</td><td>format version: <code>0x07</code> (written), or <code>0x06</code> (read, §4.10)</td></tr>
-<tr><td>5</td><td>1</td><td>flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 <code>0x07</code>: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6)</td></tr>
+<tr><td>5</td><td>1</td><td>flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 <code>0x07</code>: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6); bit5 <code>0x08</code>: the subject-only dictionary section has chunks with no stored body, derived from the index (§5.3)</td></tr>
 <tr><td>6</td><td>2</td><td>header length (128)</td></tr>
 <tr><td>8</td><td>16</td><td>content hash (§4.7) — also an ETag-like id</td></tr>
 <tr><td>24</td><td>8</td><td>file length (a client needs no <code>Content-Range</code> and no <code>HEAD</code>)</td></tr>
@@ -792,7 +792,7 @@ except that a <code>0x06</code> file has no kind 7 and no kind 22: a reader refu
 that does.</p>
 <p>The <strong>unit roots</strong> are the first level of every two-level directory, plus the
 small fixed facts that would otherwise cost a read. Tags: <code>1</code> dictionary, <code>2</code>
-index, <code>3</code> quad index, <code>4</code> label index, <code>5</code> text index, <code>6</code> class clusters (<code>0x07</code>, only when header flag bit4 is set). All integers are
+index, <code>3</code> quad index, <code>4</code> label index, <code>5</code> text index, <code>6</code> class clusters (<code>0x07</code>, only when header flag bit4 is set), <code>7</code> derived IRI families (<code>0x08</code>, only when header flag bit5 is set). All integers are
 unsigned LEB128 varints, byte strings are length-prefixed.</p>
 <ul>
 <li><strong>Dictionary</strong> (always four sections, in the order shared, subject-only,
@@ -813,6 +813,10 @@ permutation; <code>6</code>, the quad order number of SPOG), the number of class
 of each of the <em>k</em> + 1 runs, run 0 first (§6.6). The runs partition the
 order's tiles, in order; no leaf of the index unit root (or, for SPOG, of the
 quad unit root) spans two runs.</li>
+<li><strong>Derived IRI families</strong> (<code>0x08</code>, flag bit5): the number of families, and per family:
+the number of holes <em>n</em>, the first literal piece, then per hole its predicate
+IRI, its object-IRI prefix and the literal piece after it, then the number of
+runs and each run's first chunk and chunk count (§5.3).</li>
 <li><strong>Quad index</strong>: graph count, quad count, graphs per directory block (1,024 in
 <code>0x06</code>, 8,192 in <code>0x07</code>), the block index <code>P0</code> (§6.5), the graph directory's
 length, then per order: order number, tile count and per leaf: entry count,
@@ -1255,6 +1259,13 @@ ids; the card, its annex and the build record kept), inside <code>--memory-budge
 with its spill in <code>--tmp-dir</code>. A source with a community pyramid is re-encoded in
 memory. Converting a <code>0x08</code> file again rewrites it under the current leaf policy
 and gives the same bytes.</p>
+<p><strong>Derived IRIs</strong> (§5.3) are an optional part of <code>0x08</code>: a file may drop the
+bodies of subject-only dictionary chunks that its index spells out. The file says
+so in header flag bit5 and root unit <code>7</code>. A reader that knows <code>0x08</code> but not the
+flag refuses the header by name (<code>unsupported .rete feature</code>), because without
+the index it would read empty terms. <code>rete convert</code> carries derived chunks over
+as they are, and <code>rete convert --derive-iris</code> derives them in a file that has
+none.</p>
 <hr />
 <h2 id="5-dictionary">5. Dictionary</h2>
 <img class="img-sq" src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
@@ -1392,6 +1403,62 @@ not search a <code>0x08</code> section bytewise.</p>
 <p>Front coding is not hurt: terms with a shared prefix stay adjacent. The 2018
 nanopub dump's dictionary goes from 995,549,459 to 994,962,742 bytes (-0.06 %), the
 OpenCitations sample's from 26.16 to 26.03 MB (-0.5 %).</p>
+<h3 id="53-derived-iri-families-0x08-optional">5.3 Derived IRI families (<code>0x08</code>, optional)</h3>
+<p>Some IRIs are a function of terms that are in the file anyway. The OpenCitations
+Index names a citation <code>https://w3id.org/oc/index/ci/&lt;citing&gt;-&lt;cited&gt;</code>, and the
+two OMIDs are the objects of the citation's <code>cito:hasCitingEntity</code> and
+<code>cito:hasCitedEntity</code> triples; stored as text those names are 99.7 % of that
+file's dictionary. A <strong>family</strong> says how such an IRI is built, and the file stops
+storing the ones that follow it:</p>
+<ul>
+<li>a <strong>template</strong>: <code>n + 1</code> literal pieces around <code>n</code> holes. The first piece starts
+with <code>&lt;</code> and the last ends with <code>&gt;</code> (a term is its token); the pieces between
+holes are not empty;</li>
+<li><code>n</code> <strong>inputs</strong>, one per hole: a predicate IRI and an object-IRI prefix. The text
+of a hole is what follows the prefix in the object of the subject's triple with
+that predicate, which must be one IRI under the prefix with something after it.</li>
+</ul>
+<p>The OpenCitations Index is <code>https://w3id.org/oc/index/ci/{…/hasCitingEntity|https://w3id.org/oc/meta/br/}-{…/hasCitedEntity|https://w3id.org/oc/meta/br/}</code>
+(<code>rete build --derive-iris TEMPLATE</code>).</p>
+<p><strong>What is kept and what goes.</strong> Only the subject-only section holds derived
+chunks, and only whole chunks. Every id, the section's term count, its group
+counts, its restart interval and its chunk directory (every chunk's first run and
+routing separator) are exactly what they are without derivation: an id is still
+the rank of its term, and <code>ORDER BY</code> on ids is as exact as before (§5.2). What
+goes is the <strong>body</strong> of each chunk whose every term the writer rebuilt from the
+index and the object sections and found equal, byte for byte, and which splits
+back into the same holes. The directory entry of such a chunk has stored length
+<code>0</code>, and the root unit <code>7</code> lists the chunks as runs of the family. A chunk with
+one term that does not derive stays stored, whole. A family whose terms derive in
+no chunk is not written. Nothing outside the subject-only section is derived,
+and the inputs are objects, so a derived term never needs another.</p>
+<p><strong>Decoding an id.</strong> Subject <code>s</code> is the shared count plus the id's section-local
+number. For each input, read the one <code>(s, predicate, ?)</code> row from the index (SPO
+or PSO), decode the object, strip the prefix, and fill the template. A subject
+with no row or more than one for an input does not derive, and the writer has not
+dropped its chunk. Every reader path does this: a batched decode (a result page,
+<code>rete export</code>, a <code>FILTER</code> that reads the term) first reads the tiles of all its
+ids' rows in one batch and the objects' dictionary chunks in another.</p>
+<p><strong>Looking a string up.</strong> The directory routes the string to a chunk as always. If
+that chunk is stored, nothing differs. If it is derived, the string is split
+along the template; each hole's object IRI is looked up in the dictionary; the
+subjects of the first input's <code>(?, predicate, object)</code> rows that lie in the
+chunk's id range are the candidates, and the first one whose other inputs also
+hold is the id. A string that does not fit the template, or names an IRI the file
+does not have, is absent. The writer checked that the split of a derived term is
+the holes it was built from, so this finds every one.</p>
+<p><code>rete verify</code> rebuilds every dropped chunk and checks the terms like any other:
+strictly ascending in the section's order, the routing separators, the group
+counts. <code>rete info</code> lists each family, its template and how many chunks it
+dropped. The one-pattern ranged query (<code>Rete::query_ranged</code>, which reads the
+whole dictionary in one request and holds no index) refuses a file with derived
+chunks by name; every other reader, the browser's among them, reads it.</p>
+<p>The cost moves from the dictionary to the index. A list of the works that cite
+one work reads the citation names from the rows the query reads anyway and no
+longer one dictionary chunk per citation; a lookup of one citation by name reads
+the two OMIDs' chunks and the tiles that hold its rows instead of its own chunk
+(measured on a sample in the pull request that added this, and in
+<code>dev/session-notes/DICT-DERIVED-IRIS.md</code>).</p>
 <hr />
 <h2 id="6-triples--quads">6. Triples / quads</h2>
 <img class="img-sq" src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">

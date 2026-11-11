@@ -113,7 +113,7 @@ and the small unit roots.
 |---|---|---|
 | 0 | 4 | magic `RETE` |
 | 4 | 1 | format version: `0x07` (written), or `0x06` (read, §4.10) |
-| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 `0x07`: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6) |
+| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 `0x07`: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6); bit5 `0x08`: the subject-only dictionary section has chunks with no stored body, derived from the index (§5.3) |
 | 6 | 2 | header length (128) |
 | 8 | 16 | content hash (§4.7) — also an ETag-like id |
 | 24 | 8 | file length (a client needs no `Content-Range` and no `HEAD`) |
@@ -200,7 +200,7 @@ that does.
 
 The **unit roots** are the first level of every two-level directory, plus the
 small fixed facts that would otherwise cost a read. Tags: `1` dictionary, `2`
-index, `3` quad index, `4` label index, `5` text index, `6` class clusters (`0x07`, only when header flag bit4 is set). All integers are
+index, `3` quad index, `4` label index, `5` text index, `6` class clusters (`0x07`, only when header flag bit4 is set), `7` derived IRI families (`0x08`, only when header flag bit5 is set). All integers are
 unsigned LEB128 varints, byte strings are length-prefixed.
 
 - **Dictionary** (always four sections, in the order shared, subject-only,
@@ -221,6 +221,10 @@ unsigned LEB128 varints, byte strings are length-prefixed.
   of each of the *k* + 1 runs, run 0 first (§6.6). The runs partition the
   order's tiles, in order; no leaf of the index unit root (or, for SPOG, of the
   quad unit root) spans two runs.
+- **Derived IRI families** (`0x08`, flag bit5): the number of families, and per family:
+the number of holes *n*, the first literal piece, then per hole its predicate
+IRI, its object-IRI prefix and the literal piece after it, then the number of
+runs and each run's first chunk and chunk count (§5.3).
 - **Quad index**: graph count, quad count, graphs per directory block (1,024 in
   `0x06`, 8,192 in `0x07`), the block index `P0` (§6.5), the graph directory's
   length, then per order: order number, tile count and per leaf: entry count,
@@ -707,6 +711,14 @@ with its spill in `--tmp-dir`. A source with a community pyramid is re-encoded i
 memory. Converting a `0x08` file again rewrites it under the current leaf policy
 and gives the same bytes.
 
+**Derived IRIs** (§5.3) are an optional part of `0x08`: a file may drop the
+bodies of subject-only dictionary chunks that its index spells out. The file says
+so in header flag bit5 and root unit `7`. A reader that knows `0x08` but not the
+flag refuses the header by name (`unsupported .rete feature`), because without
+the index it would read empty terms. `rete convert` carries derived chunks over
+as they are, and `rete convert --derive-iris` derives them in a file that has
+none.
+
 ---
 
 ## 5. Dictionary
@@ -848,6 +860,70 @@ not search a `0x08` section bytewise.
 Front coding is not hurt: terms with a shared prefix stay adjacent. The 2018
 nanopub dump's dictionary goes from 995,549,459 to 994,962,742 bytes (-0.06 %), the
 OpenCitations sample's from 26.16 to 26.03 MB (-0.5 %).
+
+### 5.3 Derived IRI families (`0x08`, optional)
+
+Some IRIs are a function of terms that are in the file anyway. The OpenCitations
+Index names a citation `https://w3id.org/oc/index/ci/<citing>-<cited>`, and the
+two OMIDs are the objects of the citation's `cito:hasCitingEntity` and
+`cito:hasCitedEntity` triples; stored as text those names are 99.7 % of that
+file's dictionary. A **family** says how such an IRI is built, and the file stops
+storing the ones that follow it:
+
+- a **template**: `n + 1` literal pieces around `n` holes. The first piece starts
+  with `<` and the last ends with `>` (a term is its token); the pieces between
+  holes are not empty;
+- `n` **inputs**, one per hole: a predicate IRI and an object-IRI prefix. The text
+  of a hole is what follows the prefix in the object of the subject's triple with
+  that predicate, which must be one IRI under the prefix with something after it.
+
+The OpenCitations Index is `https://w3id.org/oc/index/ci/{…/hasCitingEntity|https://w3id.org/oc/meta/br/}-{…/hasCitedEntity|https://w3id.org/oc/meta/br/}`
+(`rete build --derive-iris TEMPLATE`).
+
+**What is kept and what goes.** Only the subject-only section holds derived
+chunks, and only whole chunks. Every id, the section's term count, its group
+counts, its restart interval and its chunk directory (every chunk's first run and
+routing separator) are exactly what they are without derivation: an id is still
+the rank of its term, and `ORDER BY` on ids is as exact as before (§5.2). What
+goes is the **body** of each chunk whose every term the writer rebuilt from the
+index and the object sections and found equal, byte for byte, and which splits
+back into the same holes. The directory entry of such a chunk has stored length
+`0`, and the root unit `7` lists the chunks as runs of the family. A chunk with
+one term that does not derive stays stored, whole. A family whose terms derive in
+no chunk is not written. Nothing outside the subject-only section is derived,
+and the inputs are objects, so a derived term never needs another.
+
+**Decoding an id.** Subject `s` is the shared count plus the id's section-local
+number. For each input, read the one `(s, predicate, ?)` row from the index (SPO
+or PSO), decode the object, strip the prefix, and fill the template. A subject
+with no row or more than one for an input does not derive, and the writer has not
+dropped its chunk. Every reader path does this: a batched decode (a result page,
+`rete export`, a `FILTER` that reads the term) first reads the tiles of all its
+ids' rows in one batch and the objects' dictionary chunks in another.
+
+**Looking a string up.** The directory routes the string to a chunk as always. If
+that chunk is stored, nothing differs. If it is derived, the string is split
+along the template; each hole's object IRI is looked up in the dictionary; the
+subjects of the first input's `(?, predicate, object)` rows that lie in the
+chunk's id range are the candidates, and the first one whose other inputs also
+hold is the id. A string that does not fit the template, or names an IRI the file
+does not have, is absent. The writer checked that the split of a derived term is
+the holes it was built from, so this finds every one.
+
+`rete verify` rebuilds every dropped chunk and checks the terms like any other:
+strictly ascending in the section's order, the routing separators, the group
+counts. `rete info` lists each family, its template and how many chunks it
+dropped. The one-pattern ranged query (`Rete::query_ranged`, which reads the
+whole dictionary in one request and holds no index) refuses a file with derived
+chunks by name; every other reader, the browser's among them, reads it.
+
+The cost moves from the dictionary to the index. A list of the works that cite
+one work reads the citation names from the rows the query reads anyway and no
+longer one dictionary chunk per citation; a lookup of one citation by name reads
+the two OMIDs' chunks and the tiles that hold its rows instead of its own chunk
+(measured on a sample in the pull request that added this, and in
+`dev/session-notes/DICT-DERIVED-IRIS.md`).
+
 
 ---
 

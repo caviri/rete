@@ -10,9 +10,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::chunk_cache::ChunkCache;
-use crate::dict::{ChunkedSection, DictSectionBuilder, MultiChunkBulkLoader};
+use crate::dict::{ChunkedSection, DictSectionBuilder, Lookup, MultiChunkBulkLoader};
 use crate::term_order::TermOrder;
 use crate::terms::{NodeId, ObjectId, PredicateId, SubjectId};
+use std::sync::Arc;
 
 /// Sort a term slice ascending — in parallel when the `parallel` feature is on.
 /// The front-coded dictionary sections need ascending order; doing it once here
@@ -379,6 +380,9 @@ pub struct Dictionary {
     multi_bulk: Option<MultiChunkBulkLoader>,
     /// The literal object ids ([`Self::literal_objects`]), once found.
     literal_objects: std::sync::OnceLock<LiteralObjects>,
+    /// Rebuilds the terms of the subject-only chunks the file stores no body
+    /// for (a derived IRI family, [`crate::derived`]); `None` when it has none.
+    derived: Option<crate::derived::DerivedTerms>,
 }
 
 /// Which object ids are literals. The literals of a section are one run of
@@ -450,6 +454,7 @@ impl Dictionary {
             has_quoted_triples: false,
             multi_bulk: None,
             literal_objects: std::sync::OnceLock::new(),
+            derived: None,
         }
     }
 
@@ -488,6 +493,85 @@ impl Dictionary {
             only: run(2)?,
         };
         Some(*self.literal_objects.get_or_init(|| found))
+    }
+
+    /// Say which derived IRI families the subject-only section has chunks for
+    /// ([`crate::derived`]). The section must already know its elided chunks.
+    pub(crate) fn with_derived(mut self, families: Vec<crate::derived::Family>) -> Self {
+        if !families.is_empty() {
+            self.derived = Some(crate::derived::DerivedTerms::new(families));
+        }
+        self
+    }
+
+    /// The derived IRI families of this dictionary, if any.
+    pub fn derived_families(&self) -> &[crate::derived::Family] {
+        self.derived.as_ref().map_or(&[], |d| d.families())
+    }
+
+    /// Hand a dictionary with derived families the index it reads their inputs
+    /// from. Until it has one, a derived term does not resolve.
+    pub fn wire_derived(&self, index: Arc<crate::index::GraphIndex>) {
+        if let Some(d) = &self.derived {
+            d.wire(index);
+        }
+    }
+
+    /// The subject-only chunk holding section-local id `local`.
+    pub(crate) fn subject_only_chunk(&self, local: u32) -> Option<usize> {
+        self.sections[1].chunk_of_id(local)
+    }
+
+    /// The term of subject-only id `local`: stored, or rebuilt when its chunk is
+    /// one the file derives.
+    fn subject_only_term(&self, local: u32) -> Option<String> {
+        if let Some(t) = self.sections[1].term(local) {
+            return Some(t);
+        }
+        match &self.derived {
+            Some(d) if self.sections[1].id_is_elided(local) => d.term(self, local),
+            _ => None,
+        }
+    }
+
+    /// After a section's `resolve_into`: fill the jobs of subject-only ids in
+    /// derived chunks, which it left empty.
+    fn fill_derived(&self, jobs: &[(u32, usize)], out: &mut [Option<String>]) {
+        let Some(d) = &self.derived else { return };
+        let todo: Vec<(u32, usize)> = jobs
+            .iter()
+            .copied()
+            .filter(|&(id, slot)| out[slot].is_none() && self.sections[1].id_is_elided(id))
+            .collect();
+        if !todo.is_empty() {
+            d.terms(self, &todo, out);
+        }
+    }
+
+    /// The subject-only ids among unified node ids (those that can be derived).
+    fn derived_locals(&self, nodes: &[NodeId]) -> Vec<u32> {
+        if self.derived.is_none() {
+            return Vec::new();
+        }
+        nodes
+            .iter()
+            .filter_map(|&n| match self.node_section_id(n) {
+                Some((1, local)) => Some(local),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Warm what decoding these subject-only ids in derived chunks reads.
+    fn prefetch_derived(&self, locals: impl IntoIterator<Item = u32>) {
+        let Some(d) = &self.derived else { return };
+        let ids: Vec<u32> = locals
+            .into_iter()
+            .filter(|&l| self.sections[1].id_is_elided(l))
+            .collect();
+        if !ids.is_empty() {
+            d.prefetch(self, &ids);
+        }
     }
 
     /// Attach a cross-section chunk fetcher (see [`MultiChunkBulkLoader`]):
@@ -648,6 +732,7 @@ impl Dictionary {
     /// up to thousands of chunks at once, outside every cache cap. A bounded
     /// export batches it so that transient stays a few MB.
     pub fn prefetch_terms_batched(&self, node_ids: &[u32], predicate_ids: &[u32], batch: usize) {
+        self.prefetch_derived(self.derived_locals(node_ids));
         let mut leaves: [Vec<usize>; 4] = Default::default();
         for &n in node_ids {
             if let Some((si, local)) = self.node_section_id(n) {
@@ -737,7 +822,19 @@ impl Dictionary {
         }
         // Both term lists are walked twice (routing needs the leaves, which are
         // faulted together first), so hold them.
+        self.prefetch_derived(self.derived_locals(node_ids));
         let node_terms: Vec<&'a str> = node_terms.into_iter().collect();
+        // A term of a derived family is looked up through its two inputs: read
+        // theirs in the same batches.
+        let inputs: Vec<String> = match &self.derived {
+            Some(d) => node_terms.iter().flat_map(|t| d.lookup_terms(t)).collect(),
+            None => Vec::new(),
+        };
+        let node_terms: Vec<&str> = node_terms
+            .iter()
+            .copied()
+            .chain(inputs.iter().map(String::as_str))
+            .collect();
         let pred_terms: Vec<&'a str> = pred_terms.into_iter().collect();
         let mut leaves: [Vec<usize>; 4] = Default::default();
         for &term in &node_terms {
@@ -880,6 +977,9 @@ impl Dictionary {
         }
         self.sections[0].resolve_into(&mut shared, &mut out);
         self.sections[own].resolve_into(&mut rest, &mut out);
+        if own == 1 {
+            self.fill_derived(&rest, &mut out);
+        }
         out
     }
 
@@ -937,6 +1037,11 @@ impl Dictionary {
     /// will touch — one coalesced read per section instead of a blocking round
     /// trip per id. Purely a cache warmer (resident sections no-op).
     pub fn prefetch_subject_terms(&self, ids: &[SubjectId]) {
+        self.prefetch_derived(
+            ids.iter()
+                .filter(|&&id| id > self.shared_len)
+                .map(|&id| id - self.shared_len),
+        );
         let mut per_section: [Vec<usize>; 2] = Default::default();
         for &id in ids {
             let (si, local) = if id <= self.shared_len {
@@ -968,6 +1073,7 @@ impl Dictionary {
     /// of row decodes (a FILTER's string ops, the projection) is about to
     /// fault, using [`node_term`](Self::node_term)'s exact routing.
     pub fn prefetch_node_terms(&self, nodes: &[NodeId]) {
+        self.prefetch_derived(self.derived_locals(nodes));
         let su = self.subject_only_count();
         let mut per_section: [Vec<usize>; 3] = Default::default();
         for &node in nodes {
@@ -1038,7 +1144,11 @@ impl Dictionary {
     /// one `term` routes to). It places a decoded term among the ids of another
     /// section without decoding any of them. `None` if that chunk cannot be read.
     pub fn rank_in_section(&self, si: usize, term: &str) -> Option<u32> {
-        self.sections.get(si)?.rank(term)
+        let sec = self.sections.get(si)?;
+        if si == 1 && sec.has_elided() {
+            return sec.rank_via(term, &|id| self.subject_only_term(id));
+        }
+        sec.rank(term)
     }
 
     /// [`Self::order_slot`] for a predicate id: always section 3.
@@ -1094,13 +1204,19 @@ impl Dictionary {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
-        self.sections[1]
-            .id(term)
-            .and_then(|id| self.shared_len.checked_add(id))
+        match self.sections[1].lookup(term) {
+            Lookup::Found(id) => self.shared_len.checked_add(id),
+            Lookup::Absent => None,
+            Lookup::Elided { first, last } => self
+                .derived
+                .as_ref()?
+                .lookup(self, term, first, last)
+                .and_then(|id| self.shared_len.checked_add(id)),
+        }
     }
 
     /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
-    fn object_id_exact(&self, term: &str) -> Option<ObjectId> {
+    pub(crate) fn object_id_exact(&self, term: &str) -> Option<ObjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
@@ -1120,7 +1236,7 @@ impl Dictionary {
         if id <= self.shared_len {
             self.sections[0].term(id)
         } else {
-            self.sections[1].term(id - self.shared_len)
+            self.subject_only_term(id - self.shared_len)
         }
     }
 
@@ -1205,6 +1321,7 @@ impl Dictionary {
         for si in 0..4 {
             self.sections[si].resolve_into(&mut w.jobs[si], &mut w.out);
         }
+        self.fill_derived(&w.jobs[1], &mut w.out);
         for i in 0..ids.len() {
             if let (Some(s), Some(p), Some(o)) =
                 (&w.out[i * 3], &w.out[i * 3 + 1], &w.out[i * 3 + 2])

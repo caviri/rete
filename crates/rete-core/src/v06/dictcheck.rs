@@ -4,9 +4,11 @@
 //! in the order the file's generation names, that a `0x08` root's group counts
 //! are what the terms say, and that every chunk's routing key routes (it lies
 //! above the previous chunk's last term and at or below its own first), which
-//! is what `term -> id` relies on.
+//! is what `term -> id` relies on. The chunks of a derived IRI family that the
+//! file does not store are rebuilt from the index and checked the same way.
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 
 use crate::file::FileError;
 use crate::reader::RangeReader;
@@ -41,12 +43,21 @@ fn walk(body: &[u8], f: &mut dyn FnMut(&[u8])) -> Option<()> {
 /// terms strictly ascending in the generation's order, the root's term count
 /// and (`0x08`) group counts, and every routing key. Returns how many terms it
 /// read and what is wrong (empty when the dictionary is sound). Reads every
-/// dictionary chunk once; memory is one chunk.
+/// dictionary chunk once; memory is one chunk (a batch of them, for the chunks
+/// of a derived family).
 pub fn check_dictionary(input: &dyn RangeReader) -> Result<(u64, Vec<String>), FileError> {
     let parts = super::parts::from_v06(input)?;
     let order = parts.order;
     let mut bad = Vec::new();
     let mut total = 0u64;
+    let mut rebuilt: Option<(super::derived::Walk<'_>, VecDeque<super::derived::Rebuilt>)> =
+        if parts.derived.is_empty() {
+            None
+        } else {
+            let w = super::derived::Walk::new(&parts, input)?;
+            bad.extend(w.problems.iter().cloned());
+            Some((w, VecDeque::new()))
+        };
     for (si, d) in parts.dict.iter().enumerate() {
         let name = NAMES[si];
         let mut prev: Option<Vec<u8>> = None;
@@ -54,19 +65,41 @@ pub fn check_dictionary(input: &dyn RangeReader) -> Result<(u64, Vec<String>), F
         let mut seen = 0u64;
         let mut unsorted = 0u64;
         for (ci, (c, off)) in d.chunks.iter().enumerate() {
-            let stored = input.read_at(*off, c.clen)?;
-            let body = match crate::file::decompress(parts.dict_codec, &stored) {
-                Ok(b) => b,
-                Err(_) => {
-                    bad.push(format!("{name} chunk {ci}: does not decompress"));
-                    continue;
+            // The terms of the chunk: its body decoded, or rebuilt.
+            let mut from_index: Option<Vec<Vec<u8>>> = None;
+            let mut body = Vec::new();
+            match rebuilt.as_mut() {
+                Some((w, queue)) if c.clen == 0 && si == crate::derived::SECTION => {
+                    if queue.front().is_none_or(|q| q.0 < ci) {
+                        queue.clear();
+                        queue.extend(w.batch()?);
+                    }
+                    match queue.pop_front() {
+                        Some((n, Some(t))) if n == ci => from_index = Some(t),
+                        _ => {
+                            bad.push(format!(
+                                "{name} chunk {ci}: its terms do not rebuild from the index"
+                            ));
+                            continue;
+                        }
+                    }
                 }
-            };
+                _ => {
+                    let stored = input.read_at(*off, c.clen)?;
+                    body = match crate::file::decompress(parts.dict_codec, &stored) {
+                        Ok(b) => b,
+                        Err(_) => {
+                            bad.push(format!("{name} chunk {ci}: does not decompress"));
+                            continue;
+                        }
+                    };
+                }
+            }
             let mut first: Option<Vec<u8>> = None;
             let mut last = prev.take().unwrap_or_default();
             let mut have_last = !last.is_empty() || ci > 0;
             let before = last.clone();
-            let ok = walk(&body, &mut |t| {
+            let mut visit = |t: &[u8]| {
                 if first.is_none() {
                     first = Some(t.to_vec());
                 }
@@ -78,7 +111,14 @@ pub fn check_dictionary(input: &dyn RangeReader) -> Result<(u64, Vec<String>), F
                 have_last = true;
                 counts.add(t);
                 seen += 1;
-            });
+            };
+            let ok = match &from_index {
+                Some(terms) => {
+                    terms.iter().for_each(|t| visit(t));
+                    Some(())
+                }
+                None => walk(&body, &mut visit),
+            };
             if ok.is_none() {
                 bad.push(format!("{name} chunk {ci}: malformed front coding"));
                 continue;
