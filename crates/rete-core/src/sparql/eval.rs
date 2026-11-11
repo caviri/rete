@@ -325,7 +325,7 @@ fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
 
 /// Slots bound in **some** row the plan could yield (over-approximation: every
 /// variable the plan mentions).
-fn possible_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
+pub(super) fn possible_bound(ctx: &Ctx, plan: &Plan, n: usize) -> Vec<bool> {
     let mut m = vec![false; n];
     mark_possible(ctx, plan, &mut m);
     m
@@ -1333,6 +1333,12 @@ pub(crate) fn eval_plan_iter<'q>(
             if let Some(part) = ctx.shard.part_for(node) {
                 if let Some(rows) = crate::bgp::shard_bgp_rows(ctx, index, patterns, part) {
                     return rows;
+                }
+                // A pattern that cannot be sliced (too small, or two large
+                // patterns merge-joined) runs whole in shard 0 alone.
+                // (The measuring pass builds nothing for it either.)
+                if ctx.shard.whole_in_first(part) || ctx.shard.measuring() {
+                    return Box::new(std::iter::empty());
                 }
             }
             // Under a small demand bound, probe the join pattern-by-pattern
@@ -3168,6 +3174,10 @@ fn shared_hash_join<'q>(
     optional: bool,
     cond: Option<&'q FExpr>,
 ) -> RowIter<'q> {
+    // The measuring pass only needs the left side's scans.
+    if ctx.shard.measuring() {
+        return eval_plan_iter(ctx, index, nf, l);
+    }
     let table = ctx.shard.shared(node, 0, || {
         let right = eval_plan_in(ctx, index, nf, r);
         JoinTable::build(ctx, index, nf, l, r, right)

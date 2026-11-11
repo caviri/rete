@@ -123,8 +123,8 @@ mod threaded {
         PartialGroups,
     };
     use super::super::eval::{
-        certain_bound, eval_plan_iter, expr_has_exists, path_endpoint_bound, query_ctx,
-        shares_certain_var,
+        certain_bound, eval_plan_iter, expr_has_exists, path_endpoint_bound, possible_bound,
+        query_ctx, shares_certain_var,
     };
     use super::super::{diag, GraphTarget, GroupSpec, Plan, Select};
     use super::query_threads;
@@ -265,16 +265,20 @@ mod threaded {
 
     /// Is `r` joined to `l` by one lookup per left row, whatever the rows,
     /// with nothing built from `r` as a whole? The three cases `join_iter`
-    /// decides before it sees a row: `GRAPH ?g { … }` with `?g` certainly
+    /// decides before it sees a row: `GRAPH ?g { … }` with `?g` possibly
     /// bound on the left, a property path with an endpoint bound on the left,
     /// and a BGP that shares a certainly bound variable and whose cheapest
     /// pattern is a fat scan.
     fn looked_up_per_row(ctx: &Ctx, index: &GraphIndex, l: &Plan, r: &Plan) -> bool {
         let lcert = certain_bound(ctx, l, ctx.slots.len());
         match r {
-            Plan::Graph(GraphTarget::Var(gv), _) => {
-                ctx.slots.slot(gv).is_some_and(|slot| lcert[slot])
-            }
+            // As `join_iter` decides it: possibly bound is enough. A row that
+            // leaves `?g` unbound joins with every graph, and that walk is
+            // then made, once, in the slice the row is in.
+            Plan::Graph(GraphTarget::Var(gv), _) => ctx
+                .slots
+                .slot(gv)
+                .is_some_and(|slot| possible_bound(ctx, l, ctx.slots.len())[slot]),
             Plan::Path(s, _, o) => path_endpoint_bound(ctx, l, s, o),
             Plan::Bgp(patterns) => {
                 !patterns.is_empty()
@@ -398,31 +402,30 @@ mod threaded {
             return None;
         }
 
-        // Dry run: build slice 0's pipeline in this context, pull nothing. It
-        // must reach every split node once; it builds what the slices share
-        // (a join's table, a pattern's prefix); and it tells how long the
-        // longest driving scan is.
+        // Dry runs: build slice 0's pipeline in this context, pull nothing.
+        // The first only measures: it must reach every split node once, and
+        // it tells how long the longest driving scan is. A scan too short to
+        // split ends here, before anything is built for it. The second
+        // builds what the slices share (a join's table).
         ctx.shard.set_plan(
             sp.leaves.clone(),
             sp.only_first.clone(),
             sp.builds.clone(),
             SharedState::new(),
         );
-        ctx.shard.begin(Some((0, SHARDS)));
-        let t0 = std::time::Instant::now();
-        drop(eval_plan_iter(ctx, active, nf, &sel.plan));
-        let (exact, tiles) = (ctx.shard.exact(), ctx.shard.tiles());
+        let dry = |measuring: bool| {
+            ctx.shard.set_measuring(measuring);
+            ctx.shard.begin(Some((0, SHARDS)));
+            drop(eval_plan_iter(ctx, active, nf, &sel.plan));
+            (ctx.shard.exact(), ctx.shard.tiles())
+        };
+        let (mut exact, tiles) = dry(true);
+        if exact && tiles >= 2 && !sp.builds.is_empty() {
+            exact = dry(false).0;
+        }
         let shared = ctx.shard.shared_state();
         ctx.shard.clear();
         let n = SHARDS.min(tiles);
-        if std::env::var_os("RETE_DEBUG_SHARDS").is_some() {
-            eprintln!(
-                "shards: exact={exact} tiles={tiles} leaves={} builds={} dry={:?}",
-                sp.leaves.len(),
-                sp.builds.len(),
-                t0.elapsed()
-            );
-        }
         if !exact || n < 2 {
             return None;
         }
@@ -449,9 +452,6 @@ mod threaded {
         } else {
             fold_rows(ctx, &job)
         };
-        if std::env::var_os("RETE_DEBUG_SHARDS").is_some() {
-            eprintln!("shards: done after {:?}", t0.elapsed());
-        }
         match outcome {
             Outcome::Done(rows) => {
                 super::SHARDED.fetch_add(1, Ordering::Relaxed);

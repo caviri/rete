@@ -1226,6 +1226,16 @@ pub(crate) fn shard_bgp_rows<'q>(
     // The materializing join: the prefix is built once for all shards.
     let (&last_i, prefix_is) = order.split_last()?;
     let last = lowered[last_i];
+    // A last pattern that routes to one tile is a query too small to split:
+    // say so before the prefix is built here, and again by the single thread.
+    let last_pat = (
+        const_subject(&last.0, dict)?,
+        const_predicate(&last.1)?,
+        const_object(&last.2, dict)?,
+    );
+    if index.scan_plan(last_pat).tiles_routed < 2 {
+        return None;
+    }
     let prefix = ctx.shard.shared(node, 0, || {
         let prefix_pats: Vec<TriplePattern> =
             prefix_is.iter().map(|&i| patterns[i].clone()).collect();

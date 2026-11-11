@@ -223,6 +223,9 @@ pub(crate) struct Shard {
     /// basic graph pattern's prefix), by `(plan node, part of it)`. Rows are
     /// `Send + Sync`, so the workers read one copy.
     shared: RefCell<SharedState>,
+    /// Set while the calling thread only measures the split (how long the
+    /// driving scan is): a join builds nothing yet.
+    measuring: std::cell::Cell<bool>,
     /// The named nodes reached in this shard, one entry per time.
     reached: RefCell<Vec<usize>>,
     /// The longest tile range a leaf split, in tiles.
@@ -251,6 +254,18 @@ impl Shard {
         *self.only_first.borrow_mut() = only_first;
         *self.builds.borrow_mut() = builds;
         *self.shared.borrow_mut() = shared;
+    }
+
+    /// Only measure from now on (`true`), or build what the shards share.
+    pub(crate) fn set_measuring(&self, on: bool) {
+        self.measuring.set(on);
+    }
+
+    /// Is this the measuring pass? A join then leaves its table unbuilt: a
+    /// query whose driving scan turns out too short to split must not pay
+    /// for a table the single thread would never build.
+    pub(crate) fn measuring(&self) -> bool {
+        self.measuring.get()
     }
 
     /// What has been built for all shards so far (cheap: a map of `Arc`s).
@@ -307,6 +322,7 @@ impl Shard {
         self.only_first.borrow_mut().clear();
         self.builds.borrow_mut().clear();
         self.shared.borrow_mut().clear();
+        self.measuring.set(false);
         self.begin(None);
     }
 
@@ -327,6 +343,14 @@ impl Shard {
         let n = n.max(1);
         let cut = |k: usize| start + (len as u128 * k as u128 / n as u128) as usize;
         (cut(i), cut(i + 1))
+    }
+
+    /// A leaf that turned out not to be sliceable is evaluated whole by shard
+    /// 0 and yields nothing in the others: `true` when this is another shard.
+    /// Records the visit (the leaf was reached; it split nothing).
+    pub(crate) fn whole_in_first(&self, part: ShardPart) -> bool {
+        self.reached.borrow_mut().push(part.0);
+        part.1 != 0
     }
 
     /// Is plan node `node` one that only shard 0 evaluates, and is this
