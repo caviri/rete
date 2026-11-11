@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **The union default graph is streamed on a quad index, and every surface has the switch.** With the opt-in union default graph on (a pattern outside `GRAPH` matches the default graph and every named graph), a `0x07` quad index no longer builds a merged index of every graph's triples: a pattern is answered from SPOG, POSG or OSPG with the graph column dropped and the repeats of a triple (adjacent, because the graph sorts last) counted once, merged with the file's own default graph. A selective query reads the few tiles it routes to, locally or over HTTP; `COUNT`, `GROUP BY`, joins, `ORDER BY`, `LIMIT`, `DESCRIBE`, `CONSTRUCT` and the multi-threaded aggregation see the same de-duplicated triples as the merge gave. A file without graph-last orders (a container per graph, or an older quad index) still merges, and the query's warnings carry a `materialized-union` hint saying so. The switch is now `rete sparql --union-default-graph` (also `sparql-url` and `federate`), `rete serve --union-default-graph` (server-wide), Python `query(..., union_default_graph=True)`, R `rete_query(..., union_default_graph = TRUE)`, Java `query(sparql, true)`, JavaScript `query(q, { unionDefault: true })` and the MCPB `union_default_graph` option. No file-format change. See `docs/sparql.md#union-default-graph`.
+
 ### Changed
 
 - **The site front page is the landing page; the docs moved to `/docs/`.** `https://caviri.github.io/rete/` now opens the landing page with a live query, and the docs overview is at `/docs/` (`/docs/sparql.html`, and so on). Every old URL still works: old `.html` paths forward to the new place and keep the query string and `#anchor`, and old data, wasm and image paths are still served.

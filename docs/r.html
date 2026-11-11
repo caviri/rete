@@ -696,6 +696,11 @@ remote file typically fetches well under 1% of it.</p>
 <p><code>reason = TRUE</code> answers with OWL 2 QL entailment, computed by query rewriting
 over the ontology embedded in the file — no materialization, so it works on
 remote files too. See <a href="reasoning.html">Reasoning</a>.</p>
+<p><code>union_default_graph = TRUE</code> lets a pattern outside <code>GRAPH</code> match the default graph
+and every named graph, each triple once (not standard SPARQL, so off by default;
+see <a href="sparql.html#union-default-graph">Union default graph</a>):</p>
+<pre><code class="language-r">rete_query(g, query, union_default_graph = TRUE)
+</code></pre>
 <h2 id="explore-a-file-you-did-not-build">Explore a file you did not build</h2>
 <pre><code class="language-r">rete_info(g)            # quads, terms, pyramid levels, named graphs
 rete_card(g)            # the embedded Dataset Card as a list (or NULL)

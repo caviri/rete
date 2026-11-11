@@ -753,7 +753,8 @@ evaluation toggles explicit: <code>reason</code> is the entailment switch, <code
 non-standard <a href="sparql.html#union-default-graph">union default graph</a> mode, where
 a pattern outside <code>GRAPH</code> matches the merge of the default graph and every
 named graph. Both default to off, and plain <code>query</code> never applies either. One
-cost to know: on a <code>RemoteGraph</code>, a union query over a many-graph file may
+cost to know: on a file with a quad index the union is read in place, a few tiles
+for a selective query; on any other layout, a union query on a <code>RemoteGraph</code> may
 fault the index tiles of <strong>every</strong> named graph the merge touches (the
 empty-default + single-named-graph shape stays a zero-copy borrow), so the
 merge is strictly per-query opt-in.</p>

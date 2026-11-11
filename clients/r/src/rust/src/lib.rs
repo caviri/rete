@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use extendr_api::prelude::*;
 use rete_core::{
-    eval_query, eval_query_reasoned, results_envelope_json, schema_classes, schema_summary,
-    BlockCacheReader, CountingReader, RangeReader, Rete, DEFAULT_BLOCK,
+    eval_query_with, results_envelope_json, schema_classes, schema_summary, BlockCacheReader,
+    CountingReader, QueryOpts, RangeReader, Rete, DEFAULT_BLOCK,
 };
 
 use readers::{AnyReader, HttpRangeReader, LocalRangeReader};
@@ -101,13 +101,14 @@ impl RGraph {
     }
 
     /// Run a SPARQL query; returns the JSON result envelope (parsed in R).
-    /// `reason = TRUE` turns on OWL 2 QL entailment by query rewriting.
-    fn query(&self, query: &str, reason: bool) -> String {
-        let out = match if reason {
-            eval_query_reasoned(&self.rete, query)
-        } else {
-            eval_query(&self.rete, query)
-        } {
+    /// `reason = TRUE` turns on OWL 2 QL entailment by query rewriting;
+    /// `union_default = TRUE` lets a pattern outside `GRAPH` match every graph.
+    fn query(&self, query: &str, reason: bool, union_default: bool) -> String {
+        let opts = QueryOpts {
+            reason,
+            union_default_graph: union_default,
+        };
+        let out = match eval_query_with(&self.rete, query, opts) {
             Ok(out) => out,
             Err(e) => fail(e),
         };

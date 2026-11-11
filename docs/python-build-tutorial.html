@@ -774,9 +774,8 @@ the wall time, the phases, the peak RSS and the CPUs, as in the CLI's record.
 <strong>default graph</strong>. If your sources are N-Quads (or rdflib <code>Dataset</code>s with
 named graphs), a bare pattern like <code>{ ?s &lt;urn:knows&gt; ?o }</code> correctly returns
 nothing for statements living in named graphs — scope it with
-<code>GRAPH ?g { … }</code>, or use a surface that offers the opt-in
-<a href="sparql.html#union-default-graph">union default graph</a> mode (the playground's
-⛁ All graphs toggle; not standard SPARQL, and not available in this client).</p>
+<code>GRAPH ?g { … }</code>, or pass <code>union_default_graph=True</code> to <code>query()</code>, the opt-in
+<a href="sparql.html#union-default-graph">union default graph</a> mode (not standard SPARQL).</p>
 <h2 id="3-the-pyramid">3. The pyramid</h2>
 <p>The <a href="semantic-zoom.html">community pyramid</a> is the file's "zoom-out" structure:
 communities summarized level by level, powering the playground's overview,

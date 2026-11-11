@@ -37,7 +37,7 @@ RGraph$from_url <- function(url) .Call(wrap__RGraph__from_url, url)
 
 RGraph$from_bytes <- function(data) .Call(wrap__RGraph__from_bytes, data)
 
-RGraph$query <- function(query, reason) .Call(wrap__RGraph__query, self, query, reason)
+RGraph$query <- function(query, reason, union_default) .Call(wrap__RGraph__query, self, query, reason, union_default)
 
 RGraph$info <- function() .Call(wrap__RGraph__info, self)
 

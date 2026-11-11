@@ -188,6 +188,7 @@ pub(crate) fn sparql(
     query: &str,
     json: bool,
     entail: bool,
+    union_default_graph: bool,
     memory_budget_mb: Option<u64>,
 ) -> anyhow::Result<()> {
     let mut rete = open_local_budget(file, query_budget(memory_budget_mb))?;
@@ -195,7 +196,7 @@ pub(crate) fn sparql(
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let opts = rete_core::QueryOpts {
         reason: entail,
-        ..Default::default()
+        union_default_graph,
     };
     let (result, warnings) = rete_core::eval_query_with_warnings(&rete, query, opts)
         .map_err(|e| anyhow::anyhow!("{e}"))?;

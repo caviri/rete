@@ -182,7 +182,11 @@ public final class Rete implements AutoCloseable {
     private final ExportFunction buildFn;
     private final ExportFunction buildSyntaxFn;
     private final ExportFunction infoFn;
+    /** The {@code flags} bit of the {@code *_opts} query exports that asks for the union default graph. */
+    private static final long QUERY_UNION_DEFAULT = 1L;
+
     private final ExportFunction queryFn;
+    private final ExportFunction queryOptsFn;
     private final ExportFunction scanFn;
     private final ExportFunction graphsFn;
     private final ExportFunction scanInGraphFn;
@@ -191,6 +195,7 @@ public final class Rete implements AutoCloseable {
     private final ExportFunction handleCloseFn;
     private final ExportFunction handleInfoFn;
     private final ExportFunction handleQueryFn;
+    private final ExportFunction handleQueryOptsFn;
     private final ExportFunction handleGraphsFn;
     private final ExportFunction handleScanInGraphFn;
     private final ExportFunction handleScanQuadsFn;
@@ -230,6 +235,7 @@ public final class Rete implements AutoCloseable {
         this.buildSyntaxFn = instance.export("rete_build_syntax");
         this.infoFn = instance.export("rete_info");
         this.queryFn = instance.export("rete_query");
+        this.queryOptsFn = instance.export("rete_query_opts");
         this.scanFn = instance.export("rete_scan");
         this.graphsFn = instance.export("rete_graphs");
         this.scanInGraphFn = instance.export("rete_scan_in_graph");
@@ -238,6 +244,7 @@ public final class Rete implements AutoCloseable {
         this.handleCloseFn = instance.export("rete_handle_close");
         this.handleInfoFn = instance.export("rete_handle_info");
         this.handleQueryFn = instance.export("rete_handle_query");
+        this.handleQueryOptsFn = instance.export("rete_handle_query_opts");
         this.handleGraphsFn = instance.export("rete_handle_graphs");
         this.handleScanInGraphFn = instance.export("rete_handle_scan_in_graph");
         this.handleScanQuadsFn = instance.export("rete_handle_scan_quads");
@@ -541,12 +548,31 @@ public final class Rete implements AutoCloseable {
      *     parse/evaluate
      */
     public String query(byte[] reteFile, String sparql) {
+        return query(reteFile, sparql, false);
+    }
+
+    /**
+     * {@link #query(byte[], String)} against the <b>union default graph</b>: a
+     * pattern outside {@code GRAPH} matches the default graph and every named
+     * graph, a triple stored in several graphs counting once. Not standard
+     * SPARQL, so off by default; a {@code FROM} in the query still wins. On a
+     * file with a quad index the union is read in place.
+     */
+    public String query(byte[] reteFile, String sparql, boolean unionDefaultGraph) {
         byte[] queryBytes = sparql.getBytes(StandardCharsets.UTF_8);
         int bytesPtr = writeInput(reteFile);
         int queryPtr = writeInput(queryBytes);
         try {
             long resultPtr =
-                    queryFn.apply(bytesPtr, reteFile.length, queryPtr, queryBytes.length)[0];
+                    unionDefaultGraph
+                            ? queryOptsFn.apply(
+                                    bytesPtr,
+                                    reteFile.length,
+                                    queryPtr,
+                                    queryBytes.length,
+                                    QUERY_UNION_DEFAULT)[0]
+                            : queryFn.apply(
+                                    bytesPtr, reteFile.length, queryPtr, queryBytes.length)[0];
             return new String(readResult(resultPtr), StandardCharsets.UTF_8);
         } finally {
             free.apply(bytesPtr, reteFile.length);
@@ -761,13 +787,23 @@ public final class Rete implements AutoCloseable {
 
     /** SPARQL over the open {@code .rete} (see {@link #query(byte[], String)}). */
     public String query(String sparql) {
+        return query(sparql, false);
+    }
+
+    /**
+     * SPARQL over the open {@code .rete} against the union default graph (see
+     * {@link #query(byte[], String, boolean)}).
+     */
+    public String query(String sparql, boolean unionDefaultGraph) {
         checkOpen();
         byte[] q = sparql.getBytes(StandardCharsets.UTF_8);
         int qPtr = writeInput(q);
         try {
-            return new String(
-                    readResult(handleQueryFn.apply(handle, qPtr, q.length)[0]),
-                    StandardCharsets.UTF_8);
+            long result =
+                    unionDefaultGraph
+                            ? handleQueryOptsFn.apply(handle, qPtr, q.length, QUERY_UNION_DEFAULT)[0]
+                            : handleQueryFn.apply(handle, qPtr, q.length)[0];
+            return new String(readResult(result), StandardCharsets.UTF_8);
         } finally {
             free.apply(qPtr, q.length);
         }
@@ -1016,6 +1052,11 @@ public final class Rete implements AutoCloseable {
     /** Alias of {@link #query(String)}. */
     public String queryRemote(String sparql) {
         return query(sparql);
+    }
+
+    /** Alias of {@link #query(String, boolean)}. */
+    public String queryRemote(String sparql, boolean unionDefaultGraph) {
+        return query(sparql, unionDefaultGraph);
     }
 
     /** Alias of {@link #graphs()}. */
