@@ -679,6 +679,47 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     (sel.project.clone(), resolve_rows(&ctx, sel, raw))
 }
 
+/// A SELECT run to the id level: the projected variables, and every solution
+/// row as dictionary ids (and computed strings) with nothing decoded yet.
+/// ORDER BY has decoded its sort keys, and nothing else has been decoded.
+/// Decoding is [`crate::sparql::SelectRows::page`].
+pub(super) fn run_select_ids(rete: &Rete, sel: &Select) -> super::SelectRows {
+    let ctx = query_ctx(rete, sel);
+    // No decode-ahead: it exists for a LIMIT-bounded scan, and here nothing is
+    // decoded until a page is asked for.
+    let raw = select_rows(&ctx, sel);
+    // The columns: the projection, or for `SELECT *` every variable some row
+    // binds, in name order (the order of the JSON envelope of `SELECT *`).
+    let (vars, cols): (Vec<String>, Vec<Option<usize>>) = if sel.project.is_empty() {
+        let mut bound = vec![false; ctx.slots.len()];
+        for r in &raw {
+            for (i, v) in r.iter().enumerate() {
+                bound[i] |= v.is_some();
+            }
+        }
+        let mut named: Vec<(String, usize)> = (0..bound.len())
+            .filter(|&i| bound[i])
+            .map(|i| (ctx.slots.name(i).to_string(), i))
+            .collect();
+        named.sort();
+        named.into_iter().map(|(n, i)| (n, Some(i))).unzip()
+    } else {
+        (
+            sel.project.clone(),
+            sel.project.iter().map(|v| ctx.slots.slot(v)).collect(),
+        )
+    };
+    let rows = raw
+        .into_iter()
+        .map(|r| {
+            cols.iter()
+                .map(|c| c.and_then(|i| r[i].clone()))
+                .collect::<Vec<Option<Val>>>()
+        })
+        .collect();
+    super::SelectRows::new(vars, rows)
+}
+
 /// [`run_select`] up to, not including, term resolution: the projected,
 /// sliced rows in `ctx`'s slot space. A subquery lands these in the outer
 /// query directly — dictionary ids stay ids — instead of resolving every

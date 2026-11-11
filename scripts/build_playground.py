@@ -315,6 +315,36 @@ ASYNC_ENV_JS = """
             return __reteCallRaw(function () { return raw(g.__wbg_ptr, ptr0, len0, ptr1, len1); }, true);
           });
         };
+        // The result handle (RemoteGraph.query_rows -> QueryRows): the query runs
+        // raw-driven and the pointer is wrapped ONCE after the rewind, exactly as
+        // reteOpenRemote does; every page is one more raw-driven call (its
+        // dictionary chunks are range reads). QueryRows.vars()/len() read no
+        // file, so the generated wrappers serve them.
+        exports.reteQueryRowsRemote = function (g, query, reasoned, unionDefault) {
+          return __reteSerial(async function () {
+            __reteStack();
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const call = function () { return wasm.remotegraph_query_rows(g.__wbg_ptr, ptr0, len0, reasoned ? 1 : 0, unionDefault ? 1 : 0); };
+            let ret = call();
+            while (wasm.asyncify_get_state() === 1) {
+              wasm.asyncify_stop_unwind();
+              __reteRes = await __retePending;
+              wasm.asyncify_start_rewind(__reteAD);
+              ret = call();
+            }
+            if (ret[2]) throw takeObject(ret[1]);
+            const h = Object.create(QueryRows.prototype);
+            h.__wbg_ptr = ret[0];
+            QueryRowsFinalization.register(h, h.__wbg_ptr, h);
+            return h;
+          });
+        };
+        exports.reteRowsPageRemote = function (h, offset, limit) {
+          return __reteSerial(function () {
+            return __reteCallRaw(function () { return wasm.queryrows_page(h.__wbg_ptr, offset, limit); }, true);
+          });
+        };
         exports.retePrefixSearchRemote = function (g, prefix, limit) {
           return __reteSerial(function () {
             const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
