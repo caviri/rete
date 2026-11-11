@@ -327,6 +327,13 @@ container; `indexSectionRange` is the selected permutation payload inside it.
 Tile provenance reports the physical tile holding each match —
 `{ "available": true, "id": "SPO/3", "range": { … } }`.
 
+What the session keeps is bounded: a remote file is opened with a memory budget
+of 1024 MiB, shared between the block cache, the decoded tiles and the decoded
+dictionary chunks. Past it the least recently used entries are dropped and read
+again when a query touches them, so a long session stays inside the 4 GiB a
+wasm heap can hold. `set_memory_budget_mb(n)`, called before a file is opened,
+changes the budget, and `0` removes it.
+
 ### Minimal example
 
 ```js
