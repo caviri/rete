@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-11
+
+A patch release: a graph variable bound by id no longer decodes graph names, and a result handle decodes only the page asked for. The file format is unchanged (0x07, reads 0x05 to 0x07).
+
 ### Added
 
 - **A result handle: decode only the page shown.** `query` returns every row of a SELECT as JSON, so it decodes every term of every row; a page of 25 rows of a big result still costs the whole result's dictionary chunks (ids are lexical ranks, so a result's terms are scattered: the 653,639 subjects of one nanopub class touch 11,651 of 24,121 shared chunks, 181 MB fetched for a first page that needs 0.04 MB). `rete_core::eval_select_rows(rete, query, opts)` runs a SELECT to an id-level `SelectRows` (exact `len()`, `vars()`, `warnings()`), and `SelectRows::page(rete, offset, limit)` decodes one window, as one batch of dictionary chunk reads. What the query itself needs is decoded as before (an `ORDER BY` sorts on decoded keys, a FILTER reads its inputs); every other column waits for the page. `DISTINCT` and `GROUP BY` already work on ids. The same in the browser engine: `Graph.query_rows(query, reason, union_default)` and `RemoteGraph.query_rows(…)` return a `QueryRows` (`.vars()`, `.len()`, `.page(offset, limit)`, the JSON envelope of `query` plus `offset`, `total` and `warnings`), with the Asyncify exports `reteQueryRowsRemote` and `reteRowsPageRemote`; and in the npm client `graph.queryRows(q)` returning a `ResultRows` (`vars`, `length`, `page(offset, limit)`, `all()`, `free()`). The existing all-rows calls are unchanged. The docs playground's remote Table run uses it: the table never showed more than its first 500 rows, so it now decodes those 500 and counts the rest ("Showing first 500 of N rows"); the other views keep the whole result. See `docs/javascript.md` and `docs/browser.md`.
