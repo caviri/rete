@@ -412,12 +412,25 @@ type ExistsCache = std::collections::HashMap<*const Plan, ExistsEntry>;
 /// EXISTS over a BGP from O(L×R) into O(L+R), like the MINUS anti-join.
 struct ExistsEntry {
     /// The sub-plan's solutions; filled on first need (`loaded`).
-    sols: Vec<crate::row::Row>,
+    sols: std::sync::Arc<Vec<crate::row::Row>>,
     loaded: bool,
-    probe: Option<ExistsProbe>,
+    probe: Option<std::sync::Arc<ExistsProbe>>,
+    /// Where the solutions and their index are kept for every shard of a
+    /// grouped query run on several threads ([`ExistsCell`]).
+    cell: Option<std::sync::Arc<ExistsCell>>,
     /// A fat BGP sub-plan probed per outer row instead of loaded (`None` when
     /// loading it whole is the cheaper plan).
     corr: Option<crate::bgp::CorrelatedProbe>,
+}
+
+/// An EXISTS sub-plan's solutions and their index, made once for all the
+/// shards of a grouped query run on several threads: the first shard whose
+/// row needs them evaluates the sub-plan, the others wait for it and read the
+/// same rows.
+#[derive(Default)]
+pub(crate) struct ExistsCell {
+    sols: std::sync::OnceLock<std::sync::Arc<Vec<crate::row::Row>>>,
+    probe: std::sync::OnceLock<std::sync::Arc<ExistsProbe>>,
 }
 
 /// The semi-join index: solution rows keyed by the slots they share with the
