@@ -187,11 +187,6 @@ h1, h2, h3 { font-family:var(--serif); font-weight:700; letter-spacing:-.01em; l
 .lede code { color:#d9efe7; background:rgba(255,255,255,.08); padding:.1em .35em; border-radius:6px; }
 .ctas { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; }
 .ctas .btn { --h:50px; padding:0 22px; font-size:16px; }
-.hero-facts { list-style:none; padding:0; margin:34px 0 0; display:flex; flex-wrap:wrap; justify-content:center; gap:8px 22px; color:var(--hero-muted); font-size:14.5px; }
-.hero-facts li { display:flex; align-items:center; gap:7px; }
-.hero-facts li::before { content:""; width:6px; height:6px; border-radius:50%; background:#35b299; box-shadow:0 0 10px #35b299; }
-.hero-facts li:last-child::before { background:#e57e5e; box-shadow:0 0 10px #e57e5e; }
-.hero-facts b { color:var(--hero-fg); font-weight:700; }
 .scroll-cue {
   position:absolute; z-index:2; left:50%; bottom:26px; translate:-50% 0;
   width:26px; height:42px; border:2px solid rgba(255,255,255,.35); border-radius:14px;
