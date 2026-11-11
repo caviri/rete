@@ -735,6 +735,10 @@ pub struct ChunkedSection {
     ra_window: AtomicU32,
 }
 
+/// The chunk a caller's last [`ChunkedSection::term_held`] decoded from.
+#[derive(Default)]
+pub struct ChunkHold(Option<(usize, Arc<CacheEntry>)>);
+
 /// Terms decoded from a dictionary section by [`ChunkedSection::term`], process-wide.
 static TERMS_DECODED: AtomicU64 = AtomicU64::new(0);
 
@@ -1084,6 +1088,17 @@ impl ChunkedSection {
     }
 
     pub fn term(&self, id: u32) -> Option<String> {
+        self.term_held(id, &mut ChunkHold::default())
+    }
+
+    /// [`term`](Self::term) for a caller that decodes many ids: `hold` keeps
+    /// the chunk the last id was in, and an id in the same chunk does not go
+    /// back to the shared chunk cache. That cache is one lock for the whole
+    /// dictionary; ids that come out of a scan are mostly neighbours, and a
+    /// query run on several threads took the lock once per term from every
+    /// thread. `hold` must only ever be used with this section. The held chunk
+    /// stays alive (one chunk) even if the cache evicts it meanwhile.
+    pub fn term_held(&self, id: u32, hold: &mut ChunkHold) -> Option<String> {
         if id == ABSENT || id > self.meta.term_count {
             return None;
         }
@@ -1093,7 +1108,14 @@ impl ChunkedSection {
         let run = idx / ri;
         let steps = idx % ri;
         let ci = self.chunk_of_run(run)?;
-        let entry = self.chunk_entry(ci)?;
+        let entry = match &hold.0 {
+            Some((held, entry)) if *held == ci => Arc::clone(entry),
+            _ => {
+                let entry = self.chunk_entry(ci)?;
+                hold.0 = Some((ci, Arc::clone(&entry)));
+                entry
+            }
+        };
         let bytes: &[u8] = entry.body();
         let off = self.run_off_in_chunk(ci, run, &entry, ri)?;
         let mut buf = Vec::new();

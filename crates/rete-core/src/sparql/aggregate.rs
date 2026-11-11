@@ -345,6 +345,24 @@ pub(super) fn aggregate<I>(ctx: &Ctx, rows: I, g: &GroupSpec) -> Vec<Row>
 where
     I: IntoIterator<Item = Row>,
 {
+    let groups = fold_groups(ctx, rows, g, usize::MAX).expect("no group cap");
+    let groups = groups
+        .into_iter()
+        .map(|(key, accs)| (key, accs.into_iter().map(Accum::finalize).collect()));
+    emit_groups(ctx, g, groups)
+}
+
+/// Fold `rows` into their groups' running aggregates. `None` once there are
+/// more than `max_groups` groups (the caller gives up on what it was doing).
+fn fold_groups<I>(
+    ctx: &Ctx,
+    rows: I,
+    g: &GroupSpec,
+    max_groups: usize,
+) -> Option<BTreeMap<Vec<Option<Val>>, Vec<Accum>>>
+where
+    I: IntoIterator<Item = Row>,
+{
     let by_slots: Vec<Option<usize>> = g.by.iter().map(|v| ctx.slots.slot(v)).collect();
     let new_accs = || -> Vec<Accum> { g.aggs.iter().map(|(_, a)| Accum::new(a, ctx)).collect() };
 
@@ -367,23 +385,36 @@ where
         for acc in accs.iter_mut() {
             acc.update(ctx, &r);
         }
+        if groups.len() > max_groups {
+            return None;
+        }
     }
     // A grouped query with no rows still yields one (empty/zero) group.
     if g.by.is_empty() && groups.is_empty() {
         groups.insert(Vec::new(), new_accs());
     }
+    Some(groups)
+}
 
+/// One output row per group: the key in the group-by slots, each aggregate's
+/// final value (`None` = unbound) in its result slot.
+fn emit_groups(
+    ctx: &Ctx,
+    g: &GroupSpec,
+    groups: impl Iterator<Item = (Vec<Option<Val>>, Vec<Option<String>>)>,
+) -> Vec<Row> {
+    let by_slots: Vec<Option<usize>> = g.by.iter().map(|v| ctx.slots.slot(v)).collect();
     let mut out = Vec::new();
-    for (key, accs) in groups {
+    for (key, finals) in groups {
         let mut row = ctx.slots.empty_row();
         for (slot, val) in by_slots.iter().zip(key.into_iter()) {
             if let (Some(i), Some(v)) = (slot, val) {
                 row[*i] = Some(v);
             }
         }
-        for ((res_var, _), acc) in g.aggs.iter().zip(accs.into_iter()) {
+        for ((res_var, _), val) in g.aggs.iter().zip(finals.into_iter()) {
             if let Some(slot) = ctx.slots.slot(res_var) {
-                if let Some(val) = acc.finalize() {
+                if let Some(val) = val {
                     // Canonicalize so the computed value joins/dedups exactly like
                     // an equal dictionary term would.
                     row[slot] = Some(ctx.resolver.canon_term(&val));
@@ -393,6 +424,277 @@ where
         out.push(row);
     }
     out
+}
+
+// --- Partial aggregation -----------------------------------------------------
+//
+// A grouped query run as shards on several threads (`par_agg`) folds each
+// shard into its own groups, in its own context, and the shards' groups are
+// then merged in shard order. Shard order is scan order, so every aggregate
+// sees its group's rows in the order the single-threaded fold does — which is
+// what SAMPLE (the first value), GROUP_CONCAT (the values in order) and the
+// first-of-equals rule of MIN/MAX depend on. SUM and AVG add the shards'
+// sums: for the same shards always the same number, and the same number as
+// the single fold whenever the additions are exact (integers below 2^53).
+
+/// A group-key or aggregate value that can cross threads ([`Val`] holds an
+/// `Rc`).
+pub(super) enum SVal {
+    Id(i64),
+    Str(Box<str>),
+}
+
+/// An aggregate's running state, detached from its context so it can cross
+/// threads and be merged with the same aggregate's state from another shard.
+pub(super) enum Partial {
+    /// `COUNT(*)` and `COUNT(?v)`.
+    Count(u64),
+    Sum {
+        sum: f64,
+        err: bool,
+    },
+    Avg {
+        sum: f64,
+        count: u64,
+        err: bool,
+    },
+    Sample(Option<Box<str>>),
+    Concat {
+        sep: String,
+        parts: Vec<String>,
+        err: bool,
+    },
+    MinMax {
+        want_min: bool,
+        best: Option<Box<str>>,
+        err: bool,
+    },
+}
+
+/// One shard's groups, in key order.
+pub(super) type PartialGroups = Vec<(Vec<Option<SVal>>, Vec<Partial>)>;
+
+/// Can every aggregate of `g` be folded per shard and merged? Not the ones
+/// that keep a set of the values seen: `COUNT(DISTINCT …)` (its set may have
+/// spilled to disk) and `GROUP_CONCAT(DISTINCT …)`.
+pub(super) fn mergeable(g: &GroupSpec) -> bool {
+    g.aggs.iter().all(|(_, a)| match a {
+        Agg::CountStar { .. } => true,
+        Agg::Count(_, distinct) => !distinct,
+        Agg::GroupConcat(_, _, distinct) => !distinct,
+        Agg::Sum(_) | Agg::Avg(_) | Agg::Min(_) | Agg::Max(_) | Agg::Sample(_) => true,
+    })
+}
+
+impl Accum {
+    /// Only for the aggregates [`mergeable`] accepts.
+    fn into_partial(self) -> Partial {
+        match self {
+            Accum::CountStar(n) => Partial::Count(n),
+            Accum::Count { n, .. } => Partial::Count(n),
+            Accum::Sum { sum, err, .. } => Partial::Sum { sum, err },
+            Accum::Avg {
+                sum, count, err, ..
+            } => Partial::Avg { sum, count, err },
+            Accum::Sample { val, .. } => Partial::Sample(val.map(|v| Box::from(&*v))),
+            Accum::GroupConcat {
+                sep, parts, err, ..
+            } => Partial::Concat { sep, parts, err },
+            Accum::MinMax {
+                want_min,
+                best,
+                err,
+                ..
+            } => Partial::MinMax {
+                want_min,
+                best: best.map(|k| Box::from(&*k.token)),
+                err,
+            },
+        }
+    }
+}
+
+impl Partial {
+    /// Fold in `next`, the same aggregate's state over the rows that follow
+    /// this one's.
+    fn merge(&mut self, next: Partial) {
+        match (self, next) {
+            (Partial::Count(a), Partial::Count(b)) => *a += b,
+            (Partial::Sum { sum, err }, Partial::Sum { sum: s, err: e }) => {
+                *sum += s;
+                *err |= e;
+            }
+            (
+                Partial::Avg { sum, count, err },
+                Partial::Avg {
+                    sum: s,
+                    count: c,
+                    err: e,
+                },
+            ) => {
+                *sum += s;
+                *count += c;
+                *err |= e;
+            }
+            (Partial::Sample(a), Partial::Sample(b)) => {
+                if a.is_none() {
+                    *a = b;
+                }
+            }
+            (
+                Partial::Concat { parts, err, .. },
+                Partial::Concat {
+                    parts: p, err: e, ..
+                },
+            ) => {
+                *err |= e;
+                if *err {
+                    parts.clear();
+                } else {
+                    parts.extend(p);
+                }
+            }
+            (
+                Partial::MinMax {
+                    want_min,
+                    best,
+                    err,
+                },
+                Partial::MinMax {
+                    best: b, err: e, ..
+                },
+            ) => {
+                *err |= e;
+                if *err {
+                    *best = None;
+                    return;
+                }
+                let Some(b) = b else { return };
+                let take = match best.as_deref() {
+                    None => true,
+                    Some(cur) => {
+                        let o = OrderKey::new(Rc::from(&*b)).cmp(&OrderKey::new(Rc::from(cur)));
+                        if *want_min {
+                            o == std::cmp::Ordering::Less
+                        } else {
+                            o == std::cmp::Ordering::Greater
+                        }
+                    }
+                };
+                if take {
+                    *best = Some(b);
+                }
+            }
+            // The two sides are the same aggregate of the same query.
+            _ => unreachable!("partial aggregates of different kinds"),
+        }
+    }
+
+    /// As [`Accum::finalize`].
+    fn finalize(self) -> Option<String> {
+        match self {
+            Partial::Count(n) => Some(fmt_num_typed(n as f64)),
+            Partial::Sum { sum, err } => (!err).then(|| fmt_num_typed(sum)),
+            Partial::Avg { sum, count, err } => {
+                if count == 0 {
+                    return Some(fmt_num_typed(0.0));
+                }
+                if err {
+                    return None;
+                }
+                Some(fmt_num_typed(sum / count as f64))
+            }
+            Partial::Sample(val) => val.map(String::from),
+            Partial::Concat { sep, parts, err } => {
+                (!err).then(|| crate::terms::make_literal(&parts.join(&sep), None, None))
+            }
+            Partial::MinMax { best, .. } => best.map(String::from),
+        }
+    }
+}
+
+/// Fold one shard's rows into its groups. `None` when the shard alone has
+/// more than `max_groups` groups.
+pub(super) fn aggregate_partial<I>(
+    ctx: &Ctx,
+    rows: I,
+    g: &GroupSpec,
+    max_groups: usize,
+) -> Option<PartialGroups>
+where
+    I: IntoIterator<Item = Row>,
+{
+    let groups = fold_groups(ctx, rows, g, max_groups)?;
+    Some(
+        groups
+            .into_iter()
+            .map(|(key, accs)| {
+                let key = key
+                    .into_iter()
+                    .map(|v| {
+                        v.map(|v| match v {
+                            Val::Id(i) => SVal::Id(i),
+                            Val::Str(s) => SVal::Str(Box::from(&*s)),
+                        })
+                    })
+                    .collect();
+                (key, accs.into_iter().map(Accum::into_partial).collect())
+            })
+            .collect(),
+    )
+}
+
+/// The shards' groups, merged in shard order.
+#[derive(Default)]
+pub(super) struct Merger {
+    groups: BTreeMap<Vec<Option<Val>>, Vec<Partial>>,
+}
+
+impl Merger {
+    /// Fold in the next shard's groups.
+    pub(super) fn absorb(&mut self, shard: PartialGroups) {
+        for (key, partials) in shard {
+            let key: Vec<Option<Val>> = key
+                .into_iter()
+                .map(|v| {
+                    v.map(|v| match v {
+                        SVal::Id(i) => Val::Id(i),
+                        SVal::Str(s) => Val::Str(Rc::from(&*s)),
+                    })
+                })
+                .collect();
+            match self.groups.entry(key) {
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    e.insert(partials);
+                }
+                std::collections::btree_map::Entry::Occupied(mut e) => {
+                    for (have, next) in e.get_mut().iter_mut().zip(partials) {
+                        have.merge(next);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The query's group rows, as [`aggregate`] returns them.
+    pub(super) fn finish(mut self, ctx: &Ctx, g: &GroupSpec) -> Vec<Row> {
+        // Every shard of an ungrouped aggregate yields the one empty-key group
+        // (zeroes when it had no rows), so the key is here already unless
+        // there was no shard at all.
+        if g.by.is_empty() && self.groups.is_empty() {
+            let zero = g
+                .aggs
+                .iter()
+                .map(|(_, a)| Accum::new(a, ctx).into_partial())
+                .collect();
+            self.groups.insert(Vec::new(), zero);
+        }
+        let groups = self
+            .groups
+            .into_iter()
+            .map(|(key, ps)| (key, ps.into_iter().map(Partial::finalize).collect()));
+        emit_groups(ctx, g, groups)
+    }
 }
 
 #[cfg(test)]

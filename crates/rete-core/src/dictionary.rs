@@ -331,6 +331,11 @@ const PREFETCH_BATCH_CHUNKS: usize = 512;
 /// predicate to read all of it up front ([`Dictionary::prefetch_lookups_with`]).
 const WHOLE_PREDICATE_CHUNKS: usize = 4;
 
+/// The chunk of each section a caller last decoded a term from
+/// ([`Dictionary::node_term_held`]).
+#[derive(Default)]
+pub(crate) struct TermHold([crate::dict::ChunkHold; 4]);
+
 /// A read-only dictionary mapping terms ↔ role-specific IDs.
 ///
 /// Holds the four sections as [`ChunkedSection`]s — local files keep each
@@ -871,6 +876,33 @@ impl Dictionary {
             oid.saturating_sub(1)
                 .saturating_add(self.subject_only_count())
         }
+    }
+
+    /// [`node_term`](Self::node_term) for a caller that decodes many nodes
+    /// (see [`crate::dict::ChunkedSection::term_held`]): `hold` is the
+    /// caller's, one per dictionary.
+    pub(crate) fn node_term_held(&self, node: NodeId, hold: &mut TermHold) -> Option<String> {
+        let su = self.subject_only_count();
+        let id = node.checked_add(1)?;
+        let (si, local) = if node < self.shared_len {
+            (0, id)
+        } else if node < self.shared_len.saturating_add(su) {
+            (1, id - self.shared_len)
+        } else {
+            // An object id past the shared section, as `object_term` splits it.
+            let oid = id - su;
+            if oid <= self.shared_len {
+                (0, oid)
+            } else {
+                (2, oid - self.shared_len)
+            }
+        };
+        self.sections[si].term_held(local, &mut hold.0[si])
+    }
+
+    /// [`predicate_term`](Self::predicate_term), as [`Self::node_term_held`].
+    pub(crate) fn predicate_term_held(&self, id: PredicateId, hold: &mut TermHold) -> Option<String> {
+        self.sections[3].term_held(id, &mut hold.0[3])
     }
 
     /// Resolve a unified node ID back to its term.

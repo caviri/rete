@@ -2447,7 +2447,19 @@ impl GraphIndex {
     /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
     /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
-        self.scan_iter_with(pattern, Self::best_permutation(pattern))
+        self.scan_iter_with(pattern, Self::best_permutation(pattern), None)
+    }
+
+    /// [`scan_iter`](Self::scan_iter) over a slice of the tiles it would
+    /// visit: `cut` is given the routed tile span `[start, end)` and returns
+    /// the part to keep. A triple lies in one tile, so scans over disjoint
+    /// slices covering the span yield every match exactly once.
+    pub(crate) fn scan_iter_cut<'a>(
+        &'a self,
+        pattern: Pattern,
+        cut: &dyn Fn(usize, usize) -> (usize, usize),
+    ) -> impl Iterator<Item = Triple> + 'a {
+        self.scan_iter_with(pattern, Self::best_permutation(pattern), Some(cut))
     }
 
     /// What [`scan_iter`](Self::scan_iter) *would* fetch for `pattern`, computed
@@ -2623,7 +2635,7 @@ impl GraphIndex {
         if self.clusters[perm.section_index()].is_some() && perm.leading_bound(pattern) == 0 {
             return None;
         }
-        Some(self.scan_iter_with(pattern, perm))
+        Some(self.scan_iter_with(pattern, perm, None))
     }
 
     /// Stream `pattern`'s matches using a **specific** permutation `perm`; the
@@ -2633,6 +2645,7 @@ impl GraphIndex {
         &self,
         pattern: Pattern,
         perm: IndexPermutation,
+        cut: Option<&dyn Fn(usize, usize) -> (usize, usize)>,
     ) -> impl Iterator<Item = Triple> + '_ {
         // Route: a bound leading id binary-searches the tile directory to exactly
         // one tile (groups are never split across tiles); an unbound one chains
@@ -2642,6 +2655,14 @@ impl GraphIndex {
         let [pa, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         let (start, end) = self.tile_span(si, pa);
+        let (start, end) = match cut {
+            Some(cut) => {
+                let (lo, hi) = cut(start, end);
+                let lo = lo.clamp(start, end);
+                (lo, hi.clamp(lo, end))
+            }
+            None => (start, end),
+        };
         // Coalesce tile faults, but ramp the prefetch window geometrically as
         // the scan advances rather than fetching the whole span up front: a
         // small `LIMIT` (which stops pulling early) then never faults tiles

@@ -125,6 +125,10 @@ pub(crate) struct Resolver<'a> {
     canon: RefCell<HashMap<Rc<str>, Val>>,
     /// Approximate heap held by `canon`.
     canon_bytes: std::cell::Cell<usize>,
+    /// The dictionary chunk of each section the last term came from: a scan's
+    /// ids are mostly neighbours, and the next one skips the shared chunk
+    /// cache and its lock.
+    hold: RefCell<crate::dictionary::TermHold>,
 }
 
 /// A compiled REGEX matcher: plain (case-folded) substring search for literal
@@ -197,6 +201,99 @@ fn ascii_ci_contains(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
+/// Which slice of the query's driving scan this context evaluates, when a
+/// grouped query runs as shards on several threads (`sparql::par_agg`).
+///
+/// The plan nodes are named by address: the workers share one lowered plan.
+/// `leaves` are the scans that split their tile range by `part`; `only_first`
+/// are sub-plans that cannot be split and so run in shard 0 alone. Every one of
+/// them must be reached exactly once per shard (`hits`): a plan that evaluates
+/// them some other way (a pushdown that rewrites the node) would otherwise
+/// return its rows once per shard.
+#[derive(Default)]
+pub(crate) struct Shard {
+    /// `(index, count)`; `None` is the whole query.
+    part: std::cell::Cell<Option<(usize, usize)>>,
+    leaves: RefCell<Vec<usize>>,
+    only_first: RefCell<Vec<usize>>,
+    hits: std::cell::Cell<u32>,
+    /// The longest tile range a leaf split, in tiles.
+    tiles: std::cell::Cell<usize>,
+    /// Set in a worker's context: nothing below it may fan out again.
+    worker: std::cell::Cell<bool>,
+}
+
+impl Shard {
+    /// Name the plan nodes this context splits on (addresses of plan nodes).
+    pub(crate) fn set_plan(&self, leaves: Vec<usize>, only_first: Vec<usize>) {
+        *self.leaves.borrow_mut() = leaves;
+        *self.only_first.borrow_mut() = only_first;
+        self.worker.set(true);
+    }
+
+    /// Evaluate shard `part` next (`None`: the whole query); resets the count.
+    pub(crate) fn begin(&self, part: Option<(usize, usize)>) {
+        self.part.set(part);
+        self.hits.set(0);
+        self.tiles.set(0);
+    }
+
+    pub(crate) fn is_worker(&self) -> bool {
+        self.worker.get()
+    }
+
+    pub(crate) fn end_worker(&self) {
+        self.worker.set(false);
+        self.begin(None);
+    }
+
+    /// The slice the scan of plan node `node` must keep, when it is a leaf.
+    #[inline]
+    pub(crate) fn part_for(&self, node: usize) -> Option<(usize, usize)> {
+        let part = self.part.get()?;
+        self.leaves.borrow().contains(&node).then_some(part)
+    }
+
+    /// A leaf applied its slice to a range of `tiles` tiles: the bounds of the
+    /// slice within `[start, end)`.
+    pub(crate) fn applied(
+        &self,
+        part: (usize, usize),
+        start: usize,
+        end: usize,
+    ) -> (usize, usize) {
+        self.hits.set(self.hits.get() + 1);
+        let len = end.saturating_sub(start);
+        self.tiles.set(self.tiles.get().max(len));
+        let (i, n) = part;
+        let n = n.max(1);
+        let cut = |k: usize| start + (len as u128 * k as u128 / n as u128) as usize;
+        (cut(i), cut(i + 1))
+    }
+
+    /// Is plan node `node` one that only shard 0 evaluates, and is this
+    /// another shard? Counts the visit.
+    #[inline]
+    pub(crate) fn skips(&self, node: usize) -> bool {
+        let Some((i, _)) = self.part.get() else {
+            return false;
+        };
+        if !self.only_first.borrow().contains(&node) {
+            return false;
+        }
+        self.hits.set(self.hits.get() + 1);
+        i != 0
+    }
+
+    pub(crate) fn hits(&self) -> u32 {
+        self.hits.get()
+    }
+
+    pub(crate) fn tiles(&self) -> usize {
+        self.tiles.get()
+    }
+}
+
 impl<'a> Resolver<'a> {
     pub(crate) fn new(dict: &'a Dictionary) -> Self {
         Resolver {
@@ -211,7 +308,14 @@ impl<'a> Resolver<'a> {
             replacers: RefCell::new(Vec::new()),
             canon: RefCell::new(HashMap::new()),
             canon_bytes: std::cell::Cell::new(0),
+            hold: RefCell::new(Default::default()),
         }
+    }
+
+    /// Lower the byte cap of each memo: a worker of a sharded query gets its
+    /// share, so the workers together hold what one context would.
+    pub(crate) fn set_memo_cap(&mut self, cap: usize) {
+        self.memo_cap = cap;
     }
 
     /// Does `text` match the SPARQL REGEX `pattern` under `flags`? The matcher
@@ -362,12 +466,17 @@ impl<'a> Resolver<'a> {
         if let Some(t) = self.terms.borrow().get(&id) {
             return t.clone();
         }
-        let t: Option<Rc<str>> = if id >= 0 {
-            self.dict
-                .node_term(id as u32)
-                .map(|t| Rc::from(crate::terms::canonical_literal(&t).as_ref()))
-        } else {
-            self.dict.predicate_term((-id - 1) as u32).map(Rc::from)
+        let t: Option<Rc<str>> = {
+            let mut hold = self.hold.borrow_mut();
+            if id >= 0 {
+                self.dict
+                    .node_term_held(id as u32, &mut hold)
+                    .map(|t| Rc::from(crate::terms::canonical_literal(&t).as_ref()))
+            } else {
+                self.dict
+                    .predicate_term_held((-id - 1) as u32, &mut hold)
+                    .map(Rc::from)
+            }
         };
         let add = MEMO_ENTRY_OVERHEAD + t.as_ref().map_or(0, |t| t.len());
         let mut map = self.terms.borrow_mut();
@@ -515,6 +624,9 @@ pub(crate) struct Ctx<'a> {
     /// across the whole scan (`bgp::CanonAhead`), not per run. Never an input
     /// to an answer.
     pub(crate) decode_ahead: std::cell::RefCell<Option<(usize, Vec<bool>)>>,
+    /// The slice of the driving scan this context evaluates ([`Shard`]); the
+    /// whole query unless a grouped query is running as shards.
+    pub(crate) shard: Shard,
 }
 
 impl<'a> Ctx<'a> {
@@ -540,6 +652,7 @@ impl<'a> Ctx<'a> {
             exhaustive: std::cell::Cell::new(false),
             miss_mask: std::cell::Cell::new(0),
             decode_ahead: std::cell::RefCell::new(None),
+            shard: Shard::default(),
         }
     }
 }
