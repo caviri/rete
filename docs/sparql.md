@@ -40,7 +40,10 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 | **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated answering by **query rewriting** — no materialization: `rdfs:subClassOf` / `subPropertyOf` hierarchy + `rdfs:domain` / `range` type inference, computed over the raw data. `rete sparql … --entail`, or the playground **🧠 Reason** toggle. See [below](#reasoning-owl-2-ql). |
 
 **`REGEX` and non-ASCII text.** A pattern without metacharacters is a substring
-test, with full Unicode case folding under the `i` flag, in every build. Any
+test, with full Unicode case folding under the `i` flag, in every build. With no
+flags, `^lit`, `lit$`, `[^/#]*$` (the tail after the last `/` or `#`) and `^.*[/#]`
+(the head up to the last one) also run as plain string searches in `REGEX` and
+in `REPLACE` (with a replacement free of `$` and `\`), with the engine's results. Any
 other pattern goes to a regex engine, and which one depends on the build:
 
 | Build | Engine | `\b` `\w` `\d` and the `i` flag |
