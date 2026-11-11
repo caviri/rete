@@ -106,6 +106,10 @@ impl<R: RangeReader> FrontReader<R> {
 }
 
 impl<R: RangeReader> RangeReader for FrontReader<R> {
+    fn is_local(&self) -> bool {
+        self.inner.is_local()
+    }
+
     fn len(&self) -> u64 {
         self.inner.len()
     }

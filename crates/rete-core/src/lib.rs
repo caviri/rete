@@ -187,10 +187,10 @@ pub mod query {
         eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
         eval_query_with_warnings, eval_select_communities, eval_select_rows, eval_sparql,
         eval_sparql_reasoned, partition_plan, query_predicates, query_threads,
-        routed_triple_pattern, set_query_threads,
-        summary_query_shape, warnings_json, CommunityPartial, CommunitySelect, PartitionPlan,
-        QueryOpts, QueryOutput, QueryWarning, RoutedTriplePattern, SelectRows, SparqlError,
-        SummaryQueryShape, WarningSeverity,
+        routed_triple_pattern, set_query_threads, sharded_queries, summary_query_shape,
+        warnings_json, CommunityPartial, CommunitySelect, PartitionPlan, QueryOpts, QueryOutput,
+        QueryWarning, RoutedTriplePattern, SelectRows, SparqlError, SummaryQueryShape,
+        WarningSeverity,
     };
 }
 

@@ -901,7 +901,11 @@ impl Dictionary {
     }
 
     /// [`predicate_term`](Self::predicate_term), as [`Self::node_term_held`].
-    pub(crate) fn predicate_term_held(&self, id: PredicateId, hold: &mut TermHold) -> Option<String> {
+    pub(crate) fn predicate_term_held(
+        &self,
+        id: PredicateId,
+        hold: &mut TermHold,
+    ) -> Option<String> {
         self.sections[3].term_held(id, &mut hold.0[3])
     }
 

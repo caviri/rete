@@ -207,72 +207,68 @@ fn ascii_ci_contains(haystack: &[u8], needle: &[u8]) -> bool {
 /// The plan nodes are named by address: the workers share one lowered plan.
 /// `leaves` are the scans that split their tile range by `part`; `only_first`
 /// are sub-plans that cannot be split and so run in shard 0 alone. Every one of
-/// them must be reached exactly once per shard (`hits`): a plan that evaluates
-/// them some other way (a pushdown that rewrites the node) would otherwise
-/// return its rows once per shard.
+/// them must be reached exactly once per shard ([`Shard::exact`]): a plan that
+/// evaluates them some other way (a pushdown that rewrites the node) would
+/// otherwise return its rows once per shard.
 #[derive(Default)]
 pub(crate) struct Shard {
     /// `(index, count)`; `None` is the whole query.
     part: std::cell::Cell<Option<(usize, usize)>>,
     leaves: RefCell<Vec<usize>>,
     only_first: RefCell<Vec<usize>>,
-    hits: std::cell::Cell<u32>,
+    /// The named nodes reached in this shard, one entry per time.
+    reached: RefCell<Vec<usize>>,
     /// The longest tile range a leaf split, in tiles.
     tiles: std::cell::Cell<usize>,
-    /// Set in a worker's context: nothing below it may fan out again.
-    worker: std::cell::Cell<bool>,
 }
 
+/// A leaf's slice: `(plan node, shard index, shard count)`.
+pub(crate) type ShardPart = (usize, usize, usize);
+
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 impl Shard {
     /// Name the plan nodes this context splits on (addresses of plan nodes).
     pub(crate) fn set_plan(&self, leaves: Vec<usize>, only_first: Vec<usize>) {
         *self.leaves.borrow_mut() = leaves;
         *self.only_first.borrow_mut() = only_first;
-        self.worker.set(true);
     }
 
-    /// Evaluate shard `part` next (`None`: the whole query); resets the count.
+    /// Evaluate shard `part` next (`None`: the whole query); forgets what the
+    /// last one reached.
     pub(crate) fn begin(&self, part: Option<(usize, usize)>) {
         self.part.set(part);
-        self.hits.set(0);
+        self.reached.borrow_mut().clear();
         self.tiles.set(0);
     }
 
-    pub(crate) fn is_worker(&self) -> bool {
-        self.worker.get()
-    }
-
-    pub(crate) fn end_worker(&self) {
-        self.worker.set(false);
+    /// Back to the whole query, with no plan nodes named.
+    pub(crate) fn clear(&self) {
+        self.leaves.borrow_mut().clear();
+        self.only_first.borrow_mut().clear();
         self.begin(None);
     }
 
     /// The slice the scan of plan node `node` must keep, when it is a leaf.
     #[inline]
-    pub(crate) fn part_for(&self, node: usize) -> Option<(usize, usize)> {
-        let part = self.part.get()?;
-        self.leaves.borrow().contains(&node).then_some(part)
+    pub(crate) fn part_for(&self, node: usize) -> Option<ShardPart> {
+        let (i, n) = self.part.get()?;
+        self.leaves.borrow().contains(&node).then_some((node, i, n))
     }
 
-    /// A leaf applied its slice to a range of `tiles` tiles: the bounds of the
-    /// slice within `[start, end)`.
-    pub(crate) fn applied(
-        &self,
-        part: (usize, usize),
-        start: usize,
-        end: usize,
-    ) -> (usize, usize) {
-        self.hits.set(self.hits.get() + 1);
+    /// A leaf applied its slice to the tile range `[start, end)`: the bounds
+    /// of the slice within it.
+    pub(crate) fn applied(&self, part: ShardPart, start: usize, end: usize) -> (usize, usize) {
+        let (node, i, n) = part;
+        self.reached.borrow_mut().push(node);
         let len = end.saturating_sub(start);
         self.tiles.set(self.tiles.get().max(len));
-        let (i, n) = part;
         let n = n.max(1);
         let cut = |k: usize| start + (len as u128 * k as u128 / n as u128) as usize;
         (cut(i), cut(i + 1))
     }
 
     /// Is plan node `node` one that only shard 0 evaluates, and is this
-    /// another shard? Counts the visit.
+    /// another shard? Records the visit.
     #[inline]
     pub(crate) fn skips(&self, node: usize) -> bool {
         let Some((i, _)) = self.part.get() else {
@@ -281,12 +277,23 @@ impl Shard {
         if !self.only_first.borrow().contains(&node) {
             return false;
         }
-        self.hits.set(self.hits.get() + 1);
+        self.reached.borrow_mut().push(node);
         i != 0
     }
 
-    pub(crate) fn hits(&self) -> u32 {
-        self.hits.get()
+    /// Was every named node reached exactly once in this shard?
+    pub(crate) fn exact(&self) -> bool {
+        let mut want: Vec<usize> = self
+            .leaves
+            .borrow()
+            .iter()
+            .chain(self.only_first.borrow().iter())
+            .copied()
+            .collect();
+        want.sort_unstable();
+        let mut got = self.reached.borrow().clone();
+        got.sort_unstable();
+        want == got
     }
 
     pub(crate) fn tiles(&self) -> usize {
@@ -314,6 +321,7 @@ impl<'a> Resolver<'a> {
 
     /// Lower the byte cap of each memo: a worker of a sharded query gets its
     /// share, so the workers together hold what one context would.
+    #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
     pub(crate) fn set_memo_cap(&mut self, cap: usize) {
         self.memo_cap = cap;
     }
@@ -377,10 +385,7 @@ impl<'a> Resolver<'a> {
         let mut memo = self.replacers.borrow_mut();
         // A query has a handful of REPLACE patterns: a scan by reference beats
         // hashing (and allocating) an owned `(flags, pattern)` key per row.
-        let at = match memo
-            .iter()
-            .position(|(f, p, _)| f == flags && p == pattern)
-        {
+        let at = match memo.iter().position(|(f, p, _)| f == flags && p == pattern) {
             Some(i) => i,
             None => {
                 let on: String = ['i', 'm', 's', 'x']
@@ -865,5 +870,51 @@ mod tests {
             Some("<Aa> bb".to_string())
         );
         assert_eq!(resolver.regex_replace("[", "", "x", "y"), None);
+        // Compiled once for each `(flags, pattern)`, the invalid one included.
+        for _ in 0..3 {
+            assert_eq!(
+                resolver.regex_replace("(a+)", "i", "Aa bb", "<$1>"),
+                Some("<Aa> bb".to_string())
+            );
+            assert_eq!(
+                resolver.regex_replace("(a+)", "", "Aa bb", "<$1>"),
+                Some("A<a> bb".to_string())
+            );
+            assert_eq!(resolver.regex_replace("[", "", "x", "y"), None);
+        }
+        assert_eq!(resolver.replacers.borrow().len(), 3);
+    }
+
+    /// A computed string is looked up in the dictionary once, then answered
+    /// from the memo, with the same value; the memo is bounded like the
+    /// others and a reset changes no answer.
+    #[test]
+    fn canonical_values_are_memoized_and_bounded() {
+        let rete = fixture();
+        let dict = rete.dictionary();
+        let resolver = Resolver::new(dict);
+        let shared = Val::Id(dict.node_of_term("<shared>").unwrap() as i64);
+        let pred_only = Val::Id(-(dict.predicate_id("<pred-only>").unwrap() as i64) - 1);
+        let cases = [
+            ("<shared>", shared),
+            ("<pred-only>", pred_only),
+            ("\"computed\"", Val::Str(Rc::from("\"computed\""))),
+        ];
+        for _ in 0..2 {
+            for (term, want) in &cases {
+                assert_eq!(&resolver.canon_term(term), want);
+            }
+        }
+        assert_eq!(resolver.canon.borrow().len(), cases.len());
+        // Room for about one entry: every other lookup starts the memo over.
+        let mut resolver = Resolver::new(dict);
+        resolver.memo_cap = MEMO_ENTRY_OVERHEAD + 16;
+        for _ in 0..3 {
+            for (term, want) in &cases {
+                assert_eq!(&resolver.canon_term(term), want);
+                assert!(resolver.canon_bytes.get() <= resolver.memo_cap);
+            }
+        }
+        assert!(resolver.canon.borrow().len() < cases.len());
     }
 }

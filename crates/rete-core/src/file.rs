@@ -4174,6 +4174,9 @@ pub struct Rete {
     /// Bytes a query's `COUNT(DISTINCT …)` set may hold before it spills to
     /// disk — see [`Rete::spill_threshold`].
     spill_threshold: std::sync::atomic::AtomicU64,
+    /// The file is read lazily through a reader whose reads are round trips
+    /// (not [`RangeReader::is_local`]): see [`Rete::reads_are_remote`].
+    remote_reads: std::sync::atomic::AtomicBool,
     /// The open `0x06` file (header, root, reader), for a `0x06` open.
     v06: Option<std::sync::Arc<crate::v06::open::V06File>>,
 }
@@ -4282,6 +4285,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            remote_reads: std::sync::atomic::AtomicBool::new(false),
             v06: None,
         })
     }
@@ -5428,6 +5432,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            remote_reads: std::sync::atomic::AtomicBool::new(false),
             v06: None,
         })
     }
@@ -5467,6 +5472,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            remote_reads: std::sync::atomic::AtomicBool::new(false),
             v06: Some(f),
         };
         #[cfg(not(target_arch = "wasm32"))]
@@ -5508,6 +5514,27 @@ impl Rete {
     /// [`crate::v06::FIRST_READ`]; a smaller one keeps a byte-accounting test
     /// of a tiny `0x05` file from reading the whole file up front.
     pub fn open_ranged_lazy_with<R: RangeReader + Send + Sync + 'static>(
+        reader: R,
+        first_read: u64,
+    ) -> Result<Self, FileError> {
+        let remote = !reader.is_local();
+        let rete = Self::open_ranged_lazy_inner(reader, first_read)?;
+        rete.remote_reads
+            .store(remote, std::sync::atomic::Ordering::Relaxed);
+        Ok(rete)
+    }
+
+    /// Does a read of this file cost a round trip? True for a lazy open over a
+    /// reader that is not [`RangeReader::is_local`] (HTTP, a host callback);
+    /// false for a file held in memory or read lazily from a local disk. Only
+    /// a strategy hint: a grouped query is cut into slices for several threads
+    /// when reads are local, and keeps its one scan with its coalesced
+    /// read-ahead when each read is a request.
+    pub fn reads_are_remote(&self) -> bool {
+        self.remote_reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn open_ranged_lazy_inner<R: RangeReader + Send + Sync + 'static>(
         reader: R,
         first_read: u64,
     ) -> Result<Self, FileError> {
@@ -5640,6 +5667,7 @@ impl Rete {
             service_client: None,
             service_error: std::sync::Mutex::new(None),
             spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
+            remote_reads: std::sync::atomic::AtomicBool::new(false),
             v06: None,
         };
         // A lazy open is the path for files too big to read whole, and the

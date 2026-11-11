@@ -1099,7 +1099,7 @@ pub(crate) fn shard_scan_rows<'q>(
     ctx: &'q Ctx<'q>,
     index: &'q GraphIndex,
     patterns: &[TriplePattern],
-    part: (usize, usize),
+    part: crate::row::ShardPart,
 ) -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
     let [_] = patterns else {
         return None;
@@ -1129,7 +1129,7 @@ pub(crate) fn quad_scan_rows<'q>(
     ctx: &'q Ctx<'q>,
     patterns: &[TriplePattern],
     gslot: usize,
-    part: Option<(usize, usize)>,
+    part: Option<crate::row::ShardPart>,
 ) -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
     let [p] = patterns else {
         return None;

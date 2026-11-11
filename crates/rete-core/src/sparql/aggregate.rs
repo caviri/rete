@@ -439,6 +439,7 @@ fn emit_groups(
 
 /// A group-key or aggregate value that can cross threads ([`Val`] holds an
 /// `Rc`).
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(super) enum SVal {
     Id(i64),
     Str(Box<str>),
@@ -446,6 +447,7 @@ pub(super) enum SVal {
 
 /// An aggregate's running state, detached from its context so it can cross
 /// threads and be merged with the same aggregate's state from another shard.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(super) enum Partial {
     /// `COUNT(*)` and `COUNT(?v)`.
     Count(u64),
@@ -472,11 +474,13 @@ pub(super) enum Partial {
 }
 
 /// One shard's groups, in key order.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(super) type PartialGroups = Vec<(Vec<Option<SVal>>, Vec<Partial>)>;
 
 /// Can every aggregate of `g` be folded per shard and merged? Not the ones
 /// that keep a set of the values seen: `COUNT(DISTINCT …)` (its set may have
 /// spilled to disk) and `GROUP_CONCAT(DISTINCT …)`.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(super) fn mergeable(g: &GroupSpec) -> bool {
     g.aggs.iter().all(|(_, a)| match a {
         Agg::CountStar { .. } => true,
@@ -488,6 +492,7 @@ pub(super) fn mergeable(g: &GroupSpec) -> bool {
 
 impl Accum {
     /// Only for the aggregates [`mergeable`] accepts.
+    #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
     fn into_partial(self) -> Partial {
         match self {
             Accum::CountStar(n) => Partial::Count(n),
@@ -514,6 +519,7 @@ impl Accum {
     }
 }
 
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 impl Partial {
     /// Fold in `next`, the same aggregate's state over the rows that follow
     /// this one's.
@@ -615,6 +621,7 @@ impl Partial {
 
 /// Fold one shard's rows into its groups. `None` when the shard alone has
 /// more than `max_groups` groups.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(super) fn aggregate_partial<I>(
     ctx: &Ctx,
     rows: I,
@@ -645,11 +652,13 @@ where
 }
 
 /// The shards' groups, merged in shard order.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 #[derive(Default)]
 pub(super) struct Merger {
     groups: BTreeMap<Vec<Option<Val>>, Vec<Partial>>,
 }
 
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 impl Merger {
     /// Fold in the next shard's groups.
     pub(super) fn absorb(&mut self, shard: PartialGroups) {

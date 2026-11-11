@@ -735,6 +735,53 @@ strings in between. It is still not a cost-based optimizer over the whole
 algebra (only within a basic graph pattern), and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph
 still wins.</p>
+<h3 id="threads">Grouped queries on several threads</h3>
+<p>A <code>GROUP BY</code> (or a bare aggregate) over millions of rows spends its time per
+row: decoding a term, a string function, a lookup in the row's graph. A native
+build runs that on several threads when the scan that drives the pattern can be
+cut into slices of its index tiles: each thread evaluates the same plan over
+one slice at a time and folds its rows into partial aggregates, and the slices
+are merged in scan order. The rows are the ones a single thread returns, in the
+same order.</p>
+<p>It applies when the path from the pattern to its driving scan goes through
+<code>FILTER</code> and <code>BIND</code> (without <code>EXISTS</code>), <code>UNION</code>, and the left side of a join or
+<code>OPTIONAL</code> whose right side is <code>GRAPH ?g { … }</code> with <code>?g</code> already bound (one
+lookup per row). The scan itself is one triple pattern, in a graph or under
+<code>GRAPH ?g</code> on a quad-index file. Everything else runs on one thread as before:
+a join that builds a hash table (each slice would build it again),
+<code>COUNT(DISTINCT …)</code> and <code>GROUP_CONCAT(DISTINCT …)</code>, a slice with more than
+100,000 groups, a query under a memory guard, and any query on a file read
+over the network: there one scan batches its reads into a few requests, and
+slices would turn them into many small ones (a reader says which it is with
+<code>RangeReader::is_local</code>).</p>
+<p><code>SUM</code> and <code>AVG</code> add the slices' sums. The slices are fixed by the file (at most
+64), not by the machine, so the result is the same on any number of threads;
+it is the single thread's result whenever the additions are exact, as they are
+for integers.</p>
+<p>The thread count is the machine's cores, at most 16. <code>RETE_QUERY_THREADS=N</code>
+sets it, <code>1</code> turns it off, and a library caller uses
+<code>rete_core::query::set_query_threads</code>. The browser engine has one thread.</p>
+<p>On the 2018 nanopublication dump (378.7 M quads, 43.2 M graphs, a local file,
+<code>--memory 4g</code>, 16 threads), the same rows each time:</p>
+<table><thead><tr><th>query</th><th>0.6.1</th><th>one thread</th><th>16 threads</th></tr></thead><tbody>
+<tr><td>nanopublications per IRI namespace (<code>REPLACE</code> on 10.8 M IRIs)</td><td>229 s</td><td>16.3 s</td><td>2.1 s</td></tr>
+<tr><td>DisGeNET sources (<code>STRSTARTS</code>, two <code>BIND</code>s, 15.6 M rows)</td><td>372 s</td><td>16.0 s</td><td>1.8 s</td></tr>
+<tr><td>neXtProt annotation kinds (<code>REPLACE</code> with a capture, 4 M rows)</td><td>243 s</td><td>16.7 s</td><td>1.6 s</td></tr>
+<tr><td>most cited PubMed articles (four-branch <code>UNION</code>)</td><td>144 s</td><td>11.6 s</td><td>1.9 s</td></tr>
+<tr><td>nanopublications per host and month</td><td>119 s</td><td>29.0 s</td><td>3.4 s</td></tr>
+<tr><td>evidence grades with their label (<code>OPTIONAL</code> per row, 10.1 M)</td><td>53 s</td><td>30.6 s</td><td>4.3 s</td></tr>
+<tr><td>licence by host (two-branch <code>UNION</code>)</td><td>66 s</td><td>15.5 s</td><td>1.5 s</td></tr>
+</tbody></table>
+<p>The one-thread column is what changed for every build, the browser's included
+(except the regex engine, see below): a <code>BIND</code> result was looked up in the
+dictionary on every row and is now looked up once per distinct value;
+<code>REPLACE</code> compiled its pattern on every row; a <code>FILTER</code> written before the
+<code>BIND</code>s of its group ran after them; the graph directory of a file with more
+than two million graphs kept one read-ahead window, so a lookup of each row's
+graph read and decoded a block again; and finding one graph in a tile walked
+the tile's segment headers. Native builds also turn on the <code>regex</code> crate's
+DFA and literal optimizations (<code>regex-perf</code>, on by default); a wasm build that
+takes <code>unicode-regex</code> alone keeps the smaller engine.</p>
 <h3 id="memory-budget">Memory budget</h3>
 <p>A file opened lazily — every <code>-url</code> command, a local file larger than a
 quarter of the budget, and every client that opens through the ranged reader

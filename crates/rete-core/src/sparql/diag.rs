@@ -235,6 +235,7 @@ pub(crate) fn begin() {
 }
 
 /// What a thread's diagnostic scope holds, to hand to another thread's.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(crate) struct Taken {
     entries: Vec<Entry>,
     misses: Vec<(Builtin, String)>,
@@ -242,6 +243,7 @@ pub(crate) struct Taken {
 
 /// Empty the calling thread's scope (a worker thread of a query run as
 /// shards, when it ends).
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(crate) fn take() -> Taken {
     SINK.with(|s| {
         let mut s = s.borrow_mut();
@@ -254,6 +256,7 @@ pub(crate) fn take() -> Taken {
 
 /// Add another thread's records to the calling thread's scope: the same
 /// `(site, position, kind)` adds its count, as [`record`] does.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(crate) fn absorb(taken: Taken) {
     SINK.with(|s| {
         let mut s = s.borrow_mut();

@@ -487,6 +487,34 @@ mod tests {
         assert_eq!(cache.stats().resident_bytes, one + 100);
     }
 
+    /// An entry this thread took stays in its hands: asked for again it is
+    /// answered without the map, also after the map dropped it, and never for
+    /// another cache that uses the same key.
+    #[test]
+    fn a_thread_keeps_the_entries_it_took_last() {
+        let cache = ChunkCache::new(charge_of(100));
+        let other = ChunkCache::unlimited();
+        cache.insert((0, 1), body(100, 1));
+        let first = cache.get((0, 1)).expect("resident");
+        // The second insert evicts the first from the map.
+        cache.insert((0, 2), body(100, 2));
+        assert!(!cache.contains((0, 1)));
+        let again = cache.get((0, 1)).expect("remembered by this thread");
+        assert!(Arc::ptr_eq(&first, &again));
+        assert!(other.get((0, 1)).is_none(), "another cache, the same key");
+        // Another thread has not taken it, and the map no longer has it.
+        std::thread::scope(|s| {
+            s.spawn(|| assert!(cache.get((0, 1)).is_none()));
+        });
+        // More entries than the thread remembers push the oldest out.
+        let wide = ChunkCache::unlimited();
+        for i in 0..(RECENT_SLOTS as u32 + 1) {
+            wide.insert((1, i), body(8, i as u8));
+            assert!(wide.get((1, i)).is_some());
+        }
+        assert!(cache.get((0, 1)).is_none(), "pushed out by later entries");
+    }
+
     #[test]
     fn footprint_follows_four_classes_per_doubling() {
         assert_eq!(alloc_footprint(1), 16);

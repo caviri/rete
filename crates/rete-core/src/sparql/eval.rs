@@ -1504,7 +1504,7 @@ fn graph_var_scan<'q>(
     ctx: &'q Ctx<'q>,
     var: &'q str,
     inner: &'q Plan,
-    part: Option<(usize, usize)>,
+    part: Option<crate::row::ShardPart>,
 ) -> Option<RowIter<'q>> {
     let slot = ctx.slots.slot(var)?;
     let Plan::Bgp(patterns) = inner else {

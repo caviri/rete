@@ -72,6 +72,7 @@ pub fn check() {
 /// Is a guard armed on the calling thread? A guard stops the thread that
 /// armed it and no other, so a query it watches must not move its work to
 /// other threads.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(crate) fn armed_here() -> bool {
     ARMED_GUARDS.load(Ordering::Relaxed) != 0
         && ARMED.with(|a| a.try_borrow().map(|g| g.is_some()).unwrap_or(true))

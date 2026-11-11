@@ -27,9 +27,8 @@
 //! **Checked, not assumed.** The plan nodes are named by address and every one
 //! of them must be reached exactly once per slice ([`crate::row::Shard`]). A
 //! pushdown that evaluates a node some other way would hand its rows to every
-//! slice; the count is taken on a dry run before any thread starts and again
-//! on every slice, and a mismatch means the query runs on one thread as
-//! before.
+//! slice; this is checked on a dry run before any thread starts and again on
+//! every slice, and a miss means the query runs on one thread as before.
 //!
 //! **Memory.** A slice holding more than [`MAX_SHARD_GROUPS`] groups stops the
 //! attempt (the one fold then runs): a slice's groups wait for the slices
@@ -37,17 +36,28 @@
 //! times over. Workers run at most `2 × workers` slices ahead of the merge.
 //! Each worker's term memos are capped at its share of one context's.
 //!
+//! **Local reads only.** A scan over a remote file reads ahead in a few
+//! growing batches; sixty-four slices would each start small, and the same
+//! bytes would come in many more requests. So a file whose reads are round
+//! trips ([`crate::Rete::reads_are_remote`]) keeps its one scan.
+//!
 //! Native builds with the `parallel` feature only. `RETE_QUERY_THREADS=1` (or
 //! [`set_query_threads`]) turns it off.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::{GroupSpec, Select};
-use crate::index::GraphIndex;
-use crate::row::{Ctx, Row};
-
 /// How many worker threads a grouped query may use; 0 = not set.
 static THREADS: AtomicUsize = AtomicUsize::new(0);
+
+/// Grouped queries answered on several threads so far, process-wide.
+static SHARDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many grouped queries (subqueries included) have been answered on
+/// several threads so far, in this process. A counter for tests and
+/// diagnostics: whether a query took that path is the difference around it.
+pub fn sharded_queries() -> u64 {
+    SHARDED.load(Ordering::Relaxed)
+}
 
 /// The most threads used when nothing says otherwise.
 const DEFAULT_MAX_THREADS: usize = 16;
@@ -89,12 +99,12 @@ fn default_threads() -> usize {
 /// was given up: the caller then aggregates as it always did.
 #[cfg(not(feature = "parallel"))]
 pub(super) fn aggregate_shards<'q>(
-    _ctx: &'q Ctx<'q>,
-    _sel: &'q Select,
-    _active: &'q GraphIndex,
+    _ctx: &'q crate::row::Ctx<'q>,
+    _sel: &'q super::Select,
+    _active: &'q crate::index::GraphIndex,
     _nf: Option<&'q [String]>,
-    _g: &'q GroupSpec,
-) -> Option<Vec<Row>> {
+    _g: &'q super::GroupSpec,
+) -> Option<Vec<crate::row::Row>> {
     None
 }
 
@@ -122,6 +132,11 @@ mod threaded {
 
     /// The most groups one slice may hold: see the module notes on memory.
     const MAX_SHARD_GROUPS: usize = 100_000;
+
+    /// A worker's stack: the main thread's usual 8 MiB, not a spawned
+    /// thread's 2 MiB, since a worker evaluates the same (possibly deeply
+    /// nested) plan the calling thread would.
+    const WORKER_STACK: usize = 8 << 20;
 
     /// The floor of a worker's share of the term memos.
     const MIN_MEMO_CAP: usize = 4 << 20;
@@ -204,6 +219,17 @@ mod threaded {
         certain_bound(ctx, l, ctx.slots.len())[slot]
     }
 
+    /// Runs its closure when dropped by a panic's unwinding.
+    struct OnPanic<F: Fn()>(F);
+
+    impl<F: Fn()> Drop for OnPanic<F> {
+        fn drop(&mut self) {
+            if std::thread::panicking() {
+                (self.0)();
+            }
+        }
+    }
+
     /// Which slice a worker takes next, and how far the merge has come.
     struct Claims {
         next: usize,
@@ -229,6 +255,11 @@ mod threaded {
         if threads < 2 || IN_WORKER.with(Cell::get) || crate::guard::armed_here() {
             return None;
         }
+        // Over a network one scan batches its reads into a few requests; cut
+        // into slices it would make many small ones. Local reads only.
+        if ctx.rete.reads_are_remote() {
+            return None;
+        }
         if !mergeable(g) || g.pre.iter().any(|(_, e)| expr_has_exists(e)) {
             return None;
         }
@@ -236,7 +267,6 @@ mod threaded {
         if !split(ctx, &sel.plan, nf.is_some(), &mut sp) || sp.leaves.is_empty() {
             return None;
         }
-        let expected = (sp.leaves.len() + sp.only_first.len()) as u32;
 
         // Dry run: build slice 0's pipeline in this context, pull nothing. It
         // must reach every split node once, and it tells how many tiles the
@@ -244,10 +274,10 @@ mod threaded {
         ctx.shard.set_plan(sp.leaves.clone(), sp.only_first.clone());
         ctx.shard.begin(Some((0, SHARDS)));
         drop(eval_plan_iter(ctx, active, nf, &sel.plan));
-        let (hits, tiles) = (ctx.shard.hits(), ctx.shard.tiles());
-        ctx.shard.end_worker();
+        let (exact, tiles) = (ctx.shard.exact(), ctx.shard.tiles());
+        ctx.shard.clear();
         let n = SHARDS.min(tiles);
-        if hits != expected || n < 2 {
+        if !exact || n < 2 {
             return None;
         }
         let workers = threads.min(n);
@@ -263,7 +293,9 @@ mod threaded {
         let abort = AtomicBool::new(false);
         let give_up = || {
             abort.store(true, Ordering::Relaxed);
-            claims.lock().unwrap().stop = true;
+            if let Ok(mut c) = claims.lock() {
+                c.stop = true;
+            }
             wake.notify_all();
         };
         let rete = ctx.rete;
@@ -275,7 +307,10 @@ mod threaded {
             for _ in 0..workers {
                 let tx = tx.clone();
                 let (claims, wake, abort, give_up, sp) = (&claims, &wake, &abort, &give_up, &sp);
-                scope.spawn(move || {
+                let worker = move || {
+                    // A worker that panics never sends its slice: the others
+                    // must not wait for the merge to pass it.
+                    let _stop = OnPanic(give_up);
                     IN_WORKER.with(|w| w.set(true));
                     diag::begin();
                     let mut wctx = query_ctx(rete, sel);
@@ -303,12 +338,10 @@ mod threaded {
                         let mut seen = 0u32;
                         let rows = eval_plan_iter(wctx, active, nf, &sel.plan).take_while(|_| {
                             seen = seen.wrapping_add(1);
-                            seen % 4096 != 0 || !abort.load(Ordering::Relaxed)
+                            !seen.is_multiple_of(4096) || !abort.load(Ordering::Relaxed)
                         });
                         let part = aggregate_partial(wctx, rows, g, MAX_SHARD_GROUPS)
-                            .filter(|_| {
-                                wctx.shard.hits() == expected && !abort.load(Ordering::Relaxed)
-                            });
+                            .filter(|_| wctx.shard.exact() && !abort.load(Ordering::Relaxed));
                         let gone = part.is_none();
                         if gone {
                             give_up();
@@ -318,7 +351,17 @@ mod threaded {
                         }
                     }
                     let _ = tx.send(Msg::Diag(diag::take()));
-                });
+                };
+                // A thread that cannot be started is one worker fewer; with
+                // none at all no slice arrives and the single fold runs.
+                if std::thread::Builder::new()
+                    .name("rete-query".into())
+                    .stack_size(WORKER_STACK)
+                    .spawn_scoped(scope, worker)
+                    .is_err()
+                {
+                    break;
+                }
             }
             drop(tx);
 
@@ -355,6 +398,7 @@ mod threaded {
         if failed {
             return None;
         }
+        super::SHARDED.fetch_add(1, Ordering::Relaxed);
         Some(merger.finish(ctx, g))
     }
 }

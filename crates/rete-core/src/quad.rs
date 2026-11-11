@@ -816,8 +816,11 @@ fn parse_preamble(head: &[u8], base: u64, len: u64, perms: PermSet) -> Result<Pr
     })
 }
 
-/// A decoded directory block, filled on first touch: `(graph id, quad count)`.
-type BlockCell = OnceLock<Arc<[(u32, u64)]>>;
+/// A decoded directory block: `(graph id, quad count)` per graph.
+type DirBlock = Arc<[(u32, u64)]>;
+
+/// A decoded directory block, filled on first touch.
+type BlockCell = OnceLock<DirBlock>;
 
 /// The directory blocks decoded most recently, for a file with too many graphs
 /// to keep them all: at most `cap` of them, the oldest dropped first.
@@ -829,12 +832,12 @@ type BlockCell = OnceLock<Arc<[(u32, u64)]>>;
 /// a ten-million-row OPTIONAL over the nanopublications.
 #[derive(Default)]
 struct RecentBlocks {
-    map: std::collections::HashMap<usize, Arc<[(u32, u64)]>>,
+    map: std::collections::HashMap<usize, DirBlock>,
     order: std::collections::VecDeque<usize>,
 }
 
 impl RecentBlocks {
-    fn put(&mut self, b: usize, block: Arc<[(u32, u64)]>, cap: usize) {
+    fn put(&mut self, b: usize, block: DirBlock, cap: usize) {
         if self.map.insert(b, block).is_none() {
             self.order.push_back(b);
         }
@@ -1335,7 +1338,7 @@ impl QuadCore {
                 }
             }
         };
-        let mut window: Vec<(usize, Arc<[(u32, u64)]>)> = Vec::new();
+        let mut window: Vec<(usize, DirBlock)> = Vec::new();
         for (i, r) in index.iter().enumerate().take(end).skip(b) {
             if !bounded && cells[i].get().is_some() {
                 continue;
@@ -1357,8 +1360,8 @@ impl QuadCore {
             let first = window.first().map(|(_, v)| v.clone());
             // As many blocks as a file under the threshold keeps in all, and
             // never fewer than one read-ahead window.
-            let cap = ((self.memo_max_graphs / pre.block_graphs.max(1)) as usize)
-                .max(READ_AHEAD_MAX);
+            let cap =
+                ((self.memo_max_graphs / pre.block_graphs.max(1)) as usize).max(READ_AHEAD_MAX);
             let mut recent = self.recent.write().unwrap();
             for (i, v) in window {
                 recent.put(i, v, cap);
@@ -2953,6 +2956,10 @@ impl Iterator for QuadScan {
 struct OwnedReader(Arc<[u8]>);
 
 impl RangeReader for OwnedReader {
+    fn is_local(&self) -> bool {
+        true
+    }
+
     fn len(&self) -> u64 {
         self.0.len() as u64
     }

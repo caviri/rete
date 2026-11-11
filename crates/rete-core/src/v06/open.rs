@@ -821,6 +821,10 @@ pub struct Prefixed<'a, R: RangeReader + ?Sized> {
 }
 
 impl<R: RangeReader + ?Sized> RangeReader for Prefixed<'_, R> {
+    fn is_local(&self) -> bool {
+        self.r.is_local()
+    }
+
     fn len(&self) -> u64 {
         self.r.len()
     }

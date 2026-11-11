@@ -147,6 +147,61 @@ algebra (only within a basic graph pattern), and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph
 still wins.
 
+### Grouped queries on several threads {#threads}
+
+A `GROUP BY` (or a bare aggregate) over millions of rows spends its time per
+row: decoding a term, a string function, a lookup in the row's graph. A native
+build runs that on several threads when the scan that drives the pattern can be
+cut into slices of its index tiles: each thread evaluates the same plan over
+one slice at a time and folds its rows into partial aggregates, and the slices
+are merged in scan order. The rows are the ones a single thread returns, in the
+same order.
+
+It applies when the path from the pattern to its driving scan goes through
+`FILTER` and `BIND` (without `EXISTS`), `UNION`, and the left side of a join or
+`OPTIONAL` whose right side is `GRAPH ?g { … }` with `?g` already bound (one
+lookup per row). The scan itself is one triple pattern, in a graph or under
+`GRAPH ?g` on a quad-index file. Everything else runs on one thread as before:
+a join that builds a hash table (each slice would build it again),
+`COUNT(DISTINCT …)` and `GROUP_CONCAT(DISTINCT …)`, a slice with more than
+100,000 groups, a query under a memory guard, and any query on a file read
+over the network: there one scan batches its reads into a few requests, and
+slices would turn them into many small ones (a reader says which it is with
+`RangeReader::is_local`).
+
+`SUM` and `AVG` add the slices' sums. The slices are fixed by the file (at most
+64), not by the machine, so the result is the same on any number of threads;
+it is the single thread's result whenever the additions are exact, as they are
+for integers.
+
+The thread count is the machine's cores, at most 16. `RETE_QUERY_THREADS=N`
+sets it, `1` turns it off, and a library caller uses
+`rete_core::query::set_query_threads`. The browser engine has one thread.
+
+On the 2018 nanopublication dump (378.7 M quads, 43.2 M graphs, a local file,
+`--memory 4g`, 16 threads), the same rows each time:
+
+| query | 0.6.1 | one thread | 16 threads |
+|---|---|---|---|
+| nanopublications per IRI namespace (`REPLACE` on 10.8 M IRIs) | 229 s | 16.3 s | 2.1 s |
+| DisGeNET sources (`STRSTARTS`, two `BIND`s, 15.6 M rows) | 372 s | 16.0 s | 1.8 s |
+| neXtProt annotation kinds (`REPLACE` with a capture, 4 M rows) | 243 s | 16.7 s | 1.6 s |
+| most cited PubMed articles (four-branch `UNION`) | 144 s | 11.6 s | 1.9 s |
+| nanopublications per host and month | 119 s | 29.0 s | 3.4 s |
+| evidence grades with their label (`OPTIONAL` per row, 10.1 M) | 53 s | 30.6 s | 4.3 s |
+| licence by host (two-branch `UNION`) | 66 s | 15.5 s | 1.5 s |
+
+The one-thread column is what changed for every build, the browser's included
+(except the regex engine, see below): a `BIND` result was looked up in the
+dictionary on every row and is now looked up once per distinct value;
+`REPLACE` compiled its pattern on every row; a `FILTER` written before the
+`BIND`s of its group ran after them; the graph directory of a file with more
+than two million graphs kept one read-ahead window, so a lookup of each row's
+graph read and decoded a block again; and finding one graph in a tile walked
+the tile's segment headers. Native builds also turn on the `regex` crate's
+DFA and literal optimizations (`regex-perf`, on by default); a wasm build that
+takes `unicode-regex` alone keeps the smaller engine.
+
 ### Memory budget {#memory-budget}
 
 A file opened lazily — every `-url` command, a local file larger than a

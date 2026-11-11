@@ -63,11 +63,24 @@ pub trait RangeReader {
     fn resident_prefix(&self) -> u64 {
         0
     }
+
+    /// Is a read cheap and local: bytes already in memory, or a local file?
+    /// False (the default) for anything where a read is a round trip. Purely
+    /// advisory: an engine may then read from several threads at once, each in
+    /// small pieces, where over a network it keeps one scan and batches its
+    /// reads. A wrapper reports what it wraps.
+    fn is_local(&self) -> bool {
+        false
+    }
 }
 
 /// Sharing a reader (e.g. keeping a counting handle while a lazily-faulting
 /// [`Rete`](crate::Rete) owns another) just delegates.
 impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
+    fn is_local(&self) -> bool {
+        (**self).is_local()
+    }
+
     fn len(&self) -> u64 {
         (**self).len()
     }
@@ -105,6 +118,10 @@ impl<'a> SliceReader<'a> {
 }
 
 impl RangeReader for SliceReader<'_> {
+    fn is_local(&self) -> bool {
+        true
+    }
+
     fn len(&self) -> u64 {
         self.data.len() as u64
     }
@@ -154,6 +171,10 @@ impl<R: RangeReader> CountingReader<R> {
 }
 
 impl<R: RangeReader> RangeReader for CountingReader<R> {
+    fn is_local(&self) -> bool {
+        self.inner.is_local()
+    }
+
     fn len(&self) -> u64 {
         self.inner.len()
     }
@@ -216,6 +237,10 @@ impl<R> OffsetReader<R> {
 }
 
 impl<R: RangeReader> RangeReader for OffsetReader<R> {
+    fn is_local(&self) -> bool {
+        self.inner.is_local()
+    }
+
     fn len(&self) -> u64 {
         self.inner.len().saturating_sub(self.base)
     }
@@ -269,6 +294,10 @@ pub fn detect_polyglot_base(head: &[u8]) -> Option<u64> {
 pub struct BytesReader(pub std::sync::Arc<[u8]>);
 
 impl RangeReader for BytesReader {
+    fn is_local(&self) -> bool {
+        true
+    }
+
     fn len(&self) -> u64 {
         self.0.len() as u64
     }
@@ -333,6 +362,10 @@ impl<R: RangeReader> PrefixReader<R> {
 }
 
 impl<R: RangeReader> RangeReader for PrefixReader<R> {
+    fn is_local(&self) -> bool {
+        self.inner.is_local()
+    }
+
     fn len(&self) -> u64 {
         self.inner.len()
     }
