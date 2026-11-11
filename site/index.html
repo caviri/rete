@@ -15,6 +15,12 @@
     document.documentElement.className += " js";
   })();
   </script>
+  <link rel="canonical" href="https://caviri.github.io/rete/" />
+  <script>
+  // /index.html used to be the docs overview; "/" is the landing page now.
+  if (/\/index\.html$/.test(location.pathname))
+    location.replace("docs/" + location.search + location.hash);
+  </script>
   <link rel="stylesheet" href="landing/landing.css" />
   <link rel="modulepreload" href="landing/app.js" />
 </head>
@@ -63,7 +69,7 @@
     <a href="#support">Support</a>
   </nav>
   <div class="top-actions">
-    <a class="btn btn-ghost btn-sm" href="index.html">Docs</a>
+    <a class="btn btn-ghost btn-sm" href="docs/">Docs</a>
     <a class="icon-btn" href="https://github.com/caviri/rete" aria-label="Source on GitHub">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
     </a>
@@ -92,7 +98,7 @@
       Each SPARQL query reads only the parts of the file it needs, so there is no database to run.</p>
     <div class="ctas reveal">
       <a class="btn btn-primary" href="#try">Run a query <span aria-hidden="true">↓</span></a>
-      <a class="btn btn-glass" href="getting-started.html">Build your first graph</a>
+      <a class="btn btn-glass" href="docs/getting-started.html">Build your first graph</a>
     </div>
     <ul class="hero-facts reveal" aria-label="Examples you can try below">
       <li><b>177 KB</b> jazz network</li>
@@ -213,7 +219,7 @@
             <span class="editor-actions">
               <button class="btn btn-ghost btn-sm" id="resetBtn" type="button">Reset</button>
               <button class="btn btn-ghost btn-sm" id="copyBtn" type="button">Copy</button>
-              <a class="btn btn-ghost btn-sm" id="pgLink" href="playground.html" target="_blank" rel="noopener">Open in Playground ↗</a>
+              <a class="btn btn-ghost btn-sm" id="pgLink" href="docs/playground.html" target="_blank" rel="noopener">Open in Playground ↗</a>
             </span>
           </div>
         </div>
@@ -368,8 +374,8 @@ and tell me who Mary Lou Williams played with.</code></pre>
       </div>
       <div class="code-foot">
         <button class="btn btn-ghost btn-sm" id="copyCode" type="button">Copy</button>
-        <a class="link" href="install.html">Install options →</a>
-        <a class="link" href="clients.html">All clients →</a>
+        <a class="link" href="docs/install.html">Install options →</a>
+        <a class="link" href="docs/clients.html">All clients →</a>
       </div>
     </div>
   </div>
@@ -384,28 +390,28 @@ and tell me who Mary Lou Williams played with.</code></pre>
     </div>
   </div>
   <div class="gallery" id="gallery">
-    <a class="shot reveal" href="playground.html" style="--d:0">
-      <img src="img/playground-explore.png" alt="The Playground exploring a graph" loading="lazy" decoding="async" />
+    <a class="shot reveal" href="docs/playground.html" style="--d:0">
+      <img src="docs/img/playground-explore.png" alt="The Playground exploring a graph" loading="lazy" decoding="async" />
       <span><b>Playground</b> Query, map and chart any catalog graph</span>
     </a>
-    <a class="shot reveal" href="atlas.html" style="--d:1">
-      <img src="img/atlas-1914.png" alt="The Atlas showing world borders in 1914" loading="lazy" decoding="async" />
+    <a class="shot reveal" href="docs/atlas.html" style="--d:1">
+      <img src="docs/img/atlas-1914.png" alt="The Atlas showing world borders in 1914" loading="lazy" decoding="async" />
       <span><b>Atlas</b> Historical borders on a globe</span>
     </a>
-    <a class="shot reveal" href="graph-map.html" style="--d:2">
-      <img src="img/graphmap-3d.png" alt="A graph laid out as a 3D map" loading="lazy" decoding="async" />
+    <a class="shot reveal" href="docs/graph-map.html" style="--d:2">
+      <img src="docs/img/graphmap-3d.png" alt="A graph laid out as a 3D map" loading="lazy" decoding="async" />
       <span><b>Graph map</b> A whole graph as terrain</span>
     </a>
-    <a class="shot reveal" href="plaza-guide.html" style="--d:3">
-      <img src="img/plaza-guide.png" alt="Graph Plaza catalogue" loading="lazy" decoding="async" />
+    <a class="shot reveal" href="docs/plaza-guide.html" style="--d:3">
+      <img src="docs/img/plaza-guide.png" alt="Graph Plaza catalogue" loading="lazy" decoding="async" />
       <span><b>Plaza</b> A catalogue of hosted graphs</span>
     </a>
-    <a class="shot reveal" href="lombardi-guide.html" style="--d:4">
-      <img src="img/lombardi-guide.png" alt="Lombardi-style network drawing" loading="lazy" decoding="async" />
+    <a class="shot reveal" href="docs/lombardi-guide.html" style="--d:4">
+      <img src="docs/img/lombardi-guide.png" alt="Lombardi-style network drawing" loading="lazy" decoding="async" />
       <span><b>Lombardi</b> Networks drawn by hand, by code</span>
     </a>
   </div>
-  <div class="wrap"><p class="more reveal"><a class="link" href="apps.html">All apps and experiments →</a></p></div>
+  <div class="wrap"><p class="more reveal"><a class="link" href="docs/apps.html">All apps and experiments →</a></p></div>
 </section>
 
 <!-- ───────────────────────── Support ───────────────────────── -->
@@ -469,10 +475,10 @@ and tell me who Mary Lou Williams played with.</code></pre>
   <div class="wrap">
     <h2 id="next-title" class="reveal">Where to go next</h2>
     <div class="next-grid">
-      <a class="next-card reveal" href="getting-started.html"><b>Quickstart</b><span>Build a graph and run a first query in a few minutes.</span></a>
-      <a class="next-card reveal" href="install.html"><b>Install</b><span>CLI, Python, JavaScript, R, Java or the Claude extension.</span></a>
-      <a class="next-card reveal" href="playground.html"><b>Playground</b><span>Every catalog graph, with maps, charts and more views.</span></a>
-      <a class="next-card reveal" href="index.html"><b>Documentation</b><span>Guides, reference, format spec and limits.</span></a>
+      <a class="next-card reveal" href="docs/getting-started.html"><b>Quickstart</b><span>Build a graph and run a first query in a few minutes.</span></a>
+      <a class="next-card reveal" href="docs/install.html"><b>Install</b><span>CLI, Python, JavaScript, R, Java or the Claude extension.</span></a>
+      <a class="next-card reveal" href="docs/playground.html"><b>Playground</b><span>Every catalog graph, with maps, charts and more views.</span></a>
+      <a class="next-card reveal" href="docs/"><b>Documentation</b><span>Guides, reference, format spec and limits.</span></a>
     </div>
   </div>
 </section>
@@ -485,7 +491,7 @@ and tell me who Mary Lou Williams played with.</code></pre>
     <span class="foot-links">
       <a href="#support">Support</a>
       <a href="https://github.com/caviri/rete">GitHub</a>
-      <a href="compatibility.html">Limits</a>
+      <a href="docs/compatibility.html">Limits</a>
       <a href="https://github.com/caviri/rete/blob/main/CITATION.cff">Cite</a>
     </span>
   </div>

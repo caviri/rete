@@ -14,7 +14,7 @@ From a repository checkout this is the shared producer for the browser
 packages and tracked pages. See
 [Contributing](https://github.com/caviri/rete/blob/main/CONTRIBUTING.md)
 for worktree source-revision settings. Application authors can usually use
-the [JavaScript package](https://caviri.github.io/rete/javascript.html)
+the [JavaScript package](https://caviri.github.io/rete/docs/javascript.html)
 without building WASM themselves.
 
 ## In-memory graph
@@ -52,8 +52,8 @@ build, `wasm-bindgen-rayon`, and a cross-origin-isolated COOP/COEP server. It is
 not enabled in the default package or playground build. The `asyncify` feature
 is also experimental and produces a separate artifact.
 
-See the [browser API guide](https://caviri.github.io/rete/browser.html), the
-[hosting requirements](https://caviri.github.io/rete/hosting.html), and
+See the [browser API guide](https://caviri.github.io/rete/docs/browser.html), the
+[hosting requirements](https://caviri.github.io/rete/docs/hosting.html), and
 [docs.rs](https://docs.rs/rete-wasm).
 
 ## License
