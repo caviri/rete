@@ -1156,15 +1156,47 @@ pub(crate) fn shard_bgp_rows<'q>(
 
     // The streaming join: the seed pattern's scan is sliced.
     if est[order[0]] > limits().stream_seed {
-        if est[order[1]] > limits().stream_seed
-            && merge_stream(ctx, index, lowered[order[0]], lowered[order[1]]).is_some()
-        {
-            return None;
-        }
         let seed = lowered[order[0]];
-        let mut stream = cut_scan(seed)?;
-        let mut bound = pattern_slots(&seed);
-        for &i in &order[1..] {
+        // Two large patterns that share their subject are merge-joined, both
+        // streams in subject order: the slice is a range of subjects, the
+        // same on both sides, cut where the seed's tiles are.
+        let merged = est[order[1]] > limits().stream_seed
+            && merge_stream(ctx, index, seed, lowered[order[1]], None).is_some();
+        let (mut stream, mut bound, skip) = if merged {
+            let n = part.2.max(1);
+            let pat = (
+                const_subject(&seed.0, dict)?,
+                const_predicate(&seed.1)?,
+                const_object(&seed.2, dict)?,
+            );
+            // By shard count: the measuring pass and the run may differ in it.
+            let cuts = ctx
+                .shard
+                .shared(node, 1_000_000 + n, || index.sorted_cuts(pat, 0, n));
+            let (cuts, tiles) = (*cuts).as_ref()?;
+            let _ = ctx.shard.applied(part, 0, *tiles);
+            let i = part.1;
+            let lo = if i == 0 {
+                0
+            } else {
+                cuts.get(i - 1).copied().unwrap_or(u32::MAX)
+            };
+            let hi = match cuts.get(i) {
+                Some(&c) => u64::from(c),
+                // The last slice, and any past a short list of cuts.
+                None if i >= cuts.len() => u64::MAX,
+                None => 0,
+            };
+            // A slice past the cuts but not the last one holds nothing: the
+            // last slice took everything from the final cut on.
+            let (lo, hi) = if i > cuts.len() { (0, 0) } else { (lo, hi) };
+            let (stream, slots) =
+                merge_stream(ctx, index, seed, lowered[order[1]], Some((lo, hi)))?;
+            (stream, slots, 2)
+        } else {
+            (cut_scan(seed)?, pattern_slots(&seed), 1)
+        };
+        for &i in &order[skip..] {
             let t = lowered[i];
             let slots = pattern_slots(&t);
             let shared: Vec<usize> = slots
@@ -1799,7 +1831,7 @@ impl<'q> BgpSolutions<'q> {
     ) -> Self {
         let (mut stream, mut bound, skip): (Box<dyn Iterator<Item = Row> + 'q>, Vec<usize>, usize) =
             match (est[order[1]] > limits().stream_seed)
-                .then(|| merge_stream(ctx, index, lowered[order[0]], lowered[order[1]]))
+                .then(|| merge_stream(ctx, index, lowered[order[0]], lowered[order[1]], None))
                 .flatten()
             {
                 Some((m, slots)) => (m, slots, 2),
@@ -2025,6 +2057,9 @@ fn merge_stream<'q>(
     index: &'q GraphIndex,
     ta: (SlotTerm, SlotTerm, SlotTerm),
     tb: (SlotTerm, SlotTerm, SlotTerm),
+    // Only the subjects `lo <= s < hi`: a slice of the join, for a shard of a
+    // grouped query run on several threads.
+    between: Option<(u32, u64)>,
 ) -> Option<(Box<dyn Iterator<Item = Row> + 'q>, Vec<usize>)> {
     let sa = pattern_slots(&ta);
     let sb = pattern_slots(&tb);
@@ -2044,7 +2079,10 @@ fn merge_stream<'q>(
         ))
     };
     let side = |t: (SlotTerm, SlotTerm, SlotTerm)| -> Option<KeyedRows<'q>> {
-        let it = index.scan_iter_sorted_on(lower(&t)?, 0)?;
+        let it: Box<dyn Iterator<Item = Triple> + 'q> = match between {
+            Some((lo, hi)) => Box::new(index.scan_iter_sorted_between(lower(&t)?, 0, lo, hi)?),
+            None => Box::new(index.scan_iter_sorted_on(lower(&t)?, 0)?),
+        };
         let keyed: Box<dyn Iterator<Item = (u32, Row)> + 'q> =
             Box::new(it.filter_map(move |tri| triple_row(ctx, &t, tri).map(|r| (tri.0, r))));
         Some(keyed.peekable())

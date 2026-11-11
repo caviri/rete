@@ -154,6 +154,18 @@ impl Tile {
     /// the bound `b`/`c` fall inside the recorded ranges. Conservative: a `false`
     /// is a *proven* miss (the in-tile zone map would reject the same tile), so
     /// skipping the fetch never drops a result.
+    /// The inclusive range of this tile's column `col` (0 = the leading one),
+    /// from the directory: `None` for a non-leading column of a tile without
+    /// a synopsis. It covers every row of the tile, so it may be wider than
+    /// the rows of one leading id.
+    pub(crate) fn column_range(&self, col: usize) -> Option<(u32, u32)> {
+        match col {
+            0 => Some((self.min_a, self.max_a)),
+            1 => self.syn.map(|s| (s.0, s.1)),
+            _ => self.syn.map(|s| (s.2, s.3)),
+        }
+    }
+
     pub(crate) fn syn_admits(&self, pb: Option<u32>, pc: Option<u32>) -> bool {
         match self.syn {
             None => true,
@@ -2447,7 +2459,7 @@ impl GraphIndex {
     /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
     /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
-        self.scan_iter_with(pattern, Self::best_permutation(pattern), None)
+        self.scan_iter_with(pattern, Self::best_permutation(pattern), None, None)
     }
 
     /// [`scan_iter`](Self::scan_iter) over a slice of the tiles it would
@@ -2459,7 +2471,7 @@ impl GraphIndex {
         pattern: Pattern,
         cut: &dyn Fn(usize, usize) -> (usize, usize),
     ) -> impl Iterator<Item = Triple> + 'a {
-        self.scan_iter_with(pattern, Self::best_permutation(pattern), Some(cut))
+        self.scan_iter_with(pattern, Self::best_permutation(pattern), Some(cut), None)
     }
 
     /// What [`scan_iter`](Self::scan_iter) *would* fetch for `pattern`, computed
@@ -2635,7 +2647,73 @@ impl GraphIndex {
         if self.clusters[perm.section_index()].is_some() && perm.leading_bound(pattern) == 0 {
             return None;
         }
-        Some(self.scan_iter_with(pattern, perm, None))
+        Some(self.scan_iter_with(pattern, perm, None, None))
+    }
+
+    /// The permutation [`scan_iter_sorted_on`](Self::scan_iter_sorted_on)
+    /// streams `pattern` from, and where the sort column sits in it (the
+    /// number of bound leading columns).
+    fn sorted_route(&self, pattern: Pattern, sort_col: usize) -> Option<(IndexPermutation, usize)> {
+        let perm = Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?;
+        let lead = perm.leading_bound(pattern);
+        if self.clusters[perm.section_index()].is_some() && lead == 0 {
+            return None;
+        }
+        Some((perm, lead))
+    }
+
+    /// [`scan_iter_sorted_on`](Self::scan_iter_sorted_on), keeping the triples
+    /// whose `sort_col` value `v` has `lo <= v < hi`: a slice of the sorted
+    /// stream, cut by value. Tiles the directory proves outside the range are
+    /// not read. Slices over consecutive ranges yield every triple of the
+    /// whole stream once, in its order.
+    pub(crate) fn scan_iter_sorted_between(
+        &self,
+        pattern: Pattern,
+        sort_col: usize,
+        lo: u32,
+        hi: u64,
+    ) -> Option<impl Iterator<Item = Triple> + '_> {
+        let (perm, lead) = self.sorted_route(pattern, sort_col)?;
+        let key = move |t: &Triple| match sort_col {
+            0 => t.0,
+            1 => t.1,
+            _ => t.2,
+        };
+        Some(
+            self.scan_iter_with(pattern, perm, None, Some((lead, lo, hi)))
+                .filter(move |t| {
+                    let v = key(t);
+                    lo <= v && u64::from(v) < hi
+                }),
+        )
+    }
+
+    /// Values that cut `pattern`'s stream sorted on `sort_col` into `n` slices
+    /// of about as many tiles each (`n - 1` ascending values: slice `i` is
+    /// `cuts[i - 1] <= v < cuts[i]`), and how many tiles the stream routes to.
+    /// From the directory alone. `None` when the stream cannot be sorted on
+    /// the column, or a tile has no range for it.
+    pub(crate) fn sorted_cuts(
+        &self,
+        pattern: Pattern,
+        sort_col: usize,
+        n: usize,
+    ) -> Option<(Vec<u32>, usize)> {
+        let (perm, lead) = self.sorted_route(pattern, sort_col)?;
+        let si = perm.section_index();
+        let (start, end) = self.tile_span(si, perm.order_pattern(pattern)[0]);
+        let tiles = end - start;
+        let mut cuts = Vec::with_capacity(n.saturating_sub(1));
+        for k in 1..n.max(1) {
+            let ti = start + (tiles as u128 * k as u128 / n as u128) as usize;
+            if ti >= end {
+                break;
+            }
+            cuts.push(self.sections[si][ti].column_range(lead)?.0);
+        }
+        cuts.sort_unstable();
+        Some((cuts, tiles))
     }
 
     /// Stream `pattern`'s matches using a **specific** permutation `perm`; the
@@ -2646,6 +2724,9 @@ impl GraphIndex {
         pattern: Pattern,
         perm: IndexPermutation,
         cut: Option<&dyn Fn(usize, usize) -> (usize, usize)>,
+        // `(column, lo, hi)`: skip the tiles whose range of that column the
+        // directory proves outside `lo <= v < hi` (the caller filters rows).
+        between: Option<(usize, u32, u64)>,
     ) -> impl Iterator<Item = Triple> + '_ {
         // Route: a bound leading id binary-searches the tile directory to exactly
         // one tile (groups are never split across tiles); an unbound one chains
@@ -2685,7 +2766,14 @@ impl GraphIndex {
             // A bound leading id routes to a single tile, so this is where it
             // bites; a fully-unbound leading scan leaves `pb`/`pc` unbound, so
             // `syn_admits` keeps every tile, unchanged.
-            .filter(move |&ti| self.sections[si][ti].syn_admits(pb, pc))
+            .filter(move |&ti| {
+                let t = &self.sections[si][ti];
+                t.syn_admits(pb, pc)
+                    && between.is_none_or(|(col, lo, hi)| {
+                        t.column_range(col)
+                            .is_none_or(|(min, max)| max >= lo && u64::from(min) < hi)
+                    })
+            })
             .flat_map(move |ti| {
                 // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
                 // malformed), and zone-prune per tile, then stream the
