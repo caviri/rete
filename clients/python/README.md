@@ -7,7 +7,7 @@ supports `Range` requests and query it in place — the client fetches only the
 byte ranges a query touches, never the whole file.
 
 These are native bindings (PyO3) to the same Rust engine that powers the rete
-CLI and the [browser playground](https://caviri.github.io/rete/playground.html).
+CLI and the [browser playground](https://caviri.github.io/rete/docs/playground.html).
 
 ## Install
 
@@ -60,6 +60,7 @@ g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
 
 g.examples()                                  # SPARQL examples embedded in the file — run as-is
 g.query(q, reason=True)                       # OWL 2 QL entailment (query rewriting)
+g.query(q, union_default_graph=True)       # a pattern outside GRAPH sees every graph, each triple once
 g.query_df("SELECT ...")                      # pandas DataFrame (pip install rete-graph[pandas])
 g.schema()                                    # class/predicate profile
 g.prefix_search("Berl")                       # label autocomplete

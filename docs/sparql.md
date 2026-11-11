@@ -40,7 +40,10 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 | **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated answering by **query rewriting** — no materialization: `rdfs:subClassOf` / `subPropertyOf` hierarchy + `rdfs:domain` / `range` type inference, computed over the raw data. `rete sparql … --entail`, or the playground **🧠 Reason** toggle. See [below](#reasoning-owl-2-ql). |
 
 **`REGEX` and non-ASCII text.** A pattern without metacharacters is a substring
-test, with full Unicode case folding under the `i` flag, in every build. Any
+test, with full Unicode case folding under the `i` flag, in every build. With no
+flags, `^lit`, `lit$`, `[^/#]*$` (the tail after the last `/` or `#`) and `^.*[/#]`
+(the head up to the last one) also run as plain string searches in `REGEX` and
+in `REPLACE` (with a replacement free of `$` and `\`), with the engine's results. Any
 other pattern goes to a regex engine, and which one depends on the build:
 
 | Build | Engine | `\b` `\w` `\d` and the `i` flag |
@@ -382,8 +385,18 @@ Semantics, precisely:
 - `GRAPH <iri>` / `GRAPH ?g` and `FROM NAMED` are completely unaffected: they
   enumerate and scope the named graphs exactly as before.
 
-Where it exists today:
+Where it exists:
 
+- **The command line** — `rete sparql --union-default-graph` (and the same flag
+  on `sparql-url` and `federate`, which applies it to each source), and
+  `rete serve --union-default-graph`, which makes every query the endpoint
+  answers use it, as Oxigraph's server does. See [CLI](cli.md).
+- **The clients** — Python `g.query(q, union_default_graph=True)` (also
+  `query_raw`, `query_df`), R `rete_query(g, q, union_default_graph = TRUE)`,
+  JavaScript `g.query(q, { unionDefault: true })`, Java
+  `rete.query(sparql, true)`, and the MCP / MCPB `sparql_query` and
+  `start_query` tools' `union_default_graph` option (not together with
+  `partition_by`).
 - **The playground** — the ⛁ All graphs toggle beside 🧠 Reason. Flipping it
   is announced, and every result computed under it says so in its meta line,
   so a non-standard answer is never silently presented as a standard one. See
@@ -393,30 +406,36 @@ Where it exists today:
   [WASM & JavaScript API](browser.md)).
 - **Rust** — `eval_query_with(&rete, query, QueryOpts { union_default_graph:
   true, ..QueryOpts::default() })` in `rete-core::sparql`.
-- **Not** on the CLI — `rete sparql` has no union flag — and **not** in
-  `rete serve`'s endpoint. If you need the union semantics there, write it
-  into the query with `GRAPH ?g { … }` (and `UNION` with a default-graph
-  branch when both sides hold data), which works everywhere.
 
 Costs and limits worth knowing before flipping it on:
 
+- **A quad index (`--named-graphs quad`, format `0x07`) is read in place.** A
+  pattern is answered from the order that fits its bound terms (SPOG for a
+  subject, POSG for a predicate or predicate and object, OSPG for an object),
+  with the graph column dropped and the copies of a triple, which sit next to
+  each other, counted once, then merged with the file's own default graph. Nothing
+  is built from the graphs' triples: a selective pattern reads the few tiles it
+  routes to, locally or over HTTP, and a pattern that matches everything reads
+  one order once, in a fixed amount of memory. `COUNT(*)`, `GROUP BY`, joins,
+  `ORDER BY`, `LIMIT`, `DESCRIBE`, `CONSTRUCT` and the multi-threaded
+  aggregation all see the same de-duplicated triples as the merge would give.
+  The price of de-duplicating is that the count of every triple of a many-quad
+  file reads every quad of one order: a union `COUNT(*)` is a pass over the
+  quad section, not an answer from a directory.
 - The common converted-file shape — **empty default graph, exactly one named
-  graph** — stays a zero-copy borrow of that graph's index: no copying, no
-  extra bytes.
-- Any other shape **materializes the merged index** for the query. On a
-  lazily-opened remote file that can mean faulting the index tiles of every
-  named graph the merge touches — a real cost on a many-graph file, and
-  precisely why the mode is opt-in per query rather than a file-level default.
+  graph** — stays a zero-copy borrow of that graph's index.
+- **Any other layout materializes the merged index** for the query: a file with
+  a container per graph, or a quad index written before `0x07`. On a
+  lazily-opened remote file that means faulting the index tiles of every
+  named graph, and a large file may not fit in memory. The answer still
+  carries a `materialized-union` hint saying so (the warnings of the CLI and
+  of the clients). `rete convert` rewrites such a file as a `0x07` quad index.
 - The playground's progressive and community-split strategies answer from
   default-graph structures, so a union run is evaluated on the whole index
   instead (the result line says so) rather than silently answering with
   standard semantics.
-- Federated multi-source runs and live SPARQL endpoints keep standard
-  semantics — the toggle does not reach them (a live endpoint decides its own
-  dataset).
-- Under union, `DESCRIBE`'s per-resource expansion — the triples returned
-  *about* each matched resource — still reads the default graph; the union
-  applies to the pattern matching that selects the resources.
+- A live `SERVICE` endpoint keeps standard semantics: a live endpoint decides
+  its own dataset.
 
 ## Output views & query shapes
 
@@ -879,7 +898,7 @@ Notes:
   (non-ASCII escaped as `\uXXXX`, as a header value must be), and
   `Rete-Warning-Count` the total. Both are left out when there is nothing to
   report. Browsers can read them (`Access-Control-Expose-Headers`). See
-  [`rete serve`](cli.html#rete-serve-file---bind-addr---token-t---journal-path).
+  [`rete serve`](cli.html#rete-serve-file---bind-addr---token-t---journal-path---union-default-graph).
 
 A function rete doesn't know is never silently false. An unknown name
 (`NOSUCHFN(?x)`) is a parse error, and an extension-function IRI that rete

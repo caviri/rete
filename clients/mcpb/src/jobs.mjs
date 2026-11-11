@@ -40,7 +40,7 @@ export class JobManager {
    * `internal` job — a step of a partitioned query (partition.mjs) — is not
    * listed, and is forgotten as soon as it ends.
    */
-  submit({ dataset, key, target, query, reason, op = "query", var: variable, keys, internal = false }) {
+  submit({ dataset, key, target, query, reason, unionDefault, op = "query", var: variable, keys, internal = false }) {
     let settle;
     const settled = new Promise((resolve) => (settle = resolve));
     const job = {
@@ -50,6 +50,7 @@ export class JobManager {
       target,
       query,
       reason,
+      unionDefault,
       op,
       var: variable,
       keys,
@@ -207,6 +208,7 @@ export class JobManager {
       op: job.op,
       query: job.query,
       reason: job.reason,
+      unionDefault: job.unionDefault,
       var: job.var,
       keys: job.keys,
     });

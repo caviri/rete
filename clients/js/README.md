@@ -6,7 +6,7 @@ range-queryable RDF graph file ([rete](https://github.com/caviri/rete)): host
 it on any HTTP server that supports `Range` requests and query it in place —
 the client fetches only the byte ranges a query touches, never the whole
 file. This package wraps the same WebAssembly engine that powers the
-[rete playground](https://caviri.github.io/rete/playground.html).
+[rete playground](https://caviri.github.io/rete/docs/playground.html).
 
 ## Install
 
@@ -68,7 +68,7 @@ is exact and `rows.page(offset, limit)` decodes one window on demand, so the fir
 huge result on a remote file costs its own dictionary chunks, not the result's. Also: `partitionPlan()` + `queryRaw(q, { partition })` (a long query as
 resumable chunks split by one variable), `queryRaw`, `lastWarnings()` (why a FILTER silently dropped rows:
 CONTAINS on an IRI, STRSTARTS on a number, … — see the docs), `query(q, {reason: true})`
-(OWL 2 QL entailment), `prefixSearch`, `textSearch`, `schema`, `graphNames`,
+(OWL 2 QL entailment), `query(q, {unionDefault: true})` (a pattern outside `GRAPH` sees the default graph and every named graph), `prefixSearch`, `textSearch`, `schema`, `graphNames`,
 `info`, `card()` / `examples()` (the file's embedded Dataset Card and its
 example queries), `shacl(shapes)` (SHACL Core validation), `dump()` /
 `nquads()` / `writeNQuads()` / `toNQuads()` (the streaming export below), and
@@ -170,4 +170,4 @@ npm install && npm test
 
 Releases are published to npm by `.github/workflows/js-client-publish.yml`
 on the `v*` tag that releases every rete channel.
-Docs: <https://caviri.github.io/rete/javascript.html>.
+Docs: <https://caviri.github.io/rete/docs/javascript.html>.

@@ -6,12 +6,12 @@
   <meta name="color-scheme" content="light dark" />
   <title>CLI reference · rete docs</title>
   <meta name="description" content="The rete binary (crate rete-cli). Run rete &lt;command&gt; --help for the authoritative flags. Terms are written as canonical N-Triples tokens — &lt;http://ex/Alice&gt; for an IRI, &quot;30&quot; or &quot;30&quot;^^&lt;…#integer&gt; for…" />
-  <link rel="canonical" href="https://caviri.github.io/rete/cli.html" />
+  <link rel="canonical" href="https://caviri.github.io/rete/docs/cli.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="CLI reference · rete docs" />
   <meta property="og:description" content="The rete binary (crate rete-cli). Run rete &lt;command&gt; --help for the authoritative flags. Terms are written as canonical N-Triples tokens — &lt;http://ex/Alice&gt; for an IRI, &quot;30&quot; or &quot;30&quot;^^&lt;…#integer&gt; for…" />
-  <meta property="og:url" content="https://caviri.github.io/rete/cli.html" />
+  <meta property="og:url" content="https://caviri.github.io/rete/docs/cli.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/cli.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -1919,7 +1919,7 @@ range.</p>
 <code>?name</code> is a variable (terms may not contain spaces).</p>
 <pre><code class="language-sh">rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
 </code></pre>
-<h3 id="rete-sparql-file-query----query-file-path---json---entail---memory-budget-mb-n"><code>rete sparql &lt;file&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json] [--entail] [--memory-budget-mb N]</code></h3>
+<h3 id="rete-sparql-file-query----query-file-path---json---entail---union-default-graph---memory-budget-mb-n"><code>rete sparql &lt;file&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json] [--entail] [--union-default-graph] [--memory-budget-mb N]</code></h3>
 <p>Run SPARQL: <code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>. With <code>--json</code>, emit
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
 <p><code>--entail</code> turns on <strong>OWL 2 QL reasoning</strong>: the query is rewritten so the answer
@@ -1943,12 +1943,17 @@ string matching is case-sensitive. See
 0 solution(s)
 warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which makes a FILTER drop the row, even under ! (BIND leaves the variable unbound); e.g. &lt;http://ex.org/map/geneva-1572&gt;. Hint: wrap it in STR() to match the IRI's text.
 </code></pre>
-<p>There is <strong>no union-default-graph flag</strong> here: the opt-in ⛁ All graphs mode —
-a pattern outside <code>GRAPH</code> matching the merge of the default graph and every
-named graph, for files whose data lives entirely in named graphs — exists
-today in the playground and the wasm <code>query_opts</code> API only, not on the CLI and
-not in <code>rete serve</code>. On the CLI, scope the query with <code>GRAPH ?g { … }</code>
-instead. See <a href="sparql.html#union-default-graph">Union default graph</a>.</p>
+<p><code>--union-default-graph</code> turns on the opt-in, non-standard <strong>union default
+graph</strong>: a pattern outside <code>GRAPH</code> matches the default graph and every named
+graph, a triple stored in several graphs counting once; a <code>FROM</code> in the query
+still wins, and <code>GRAPH ?g</code> is unchanged. It is for files whose data lives
+entirely in named graphs, where a plain <code>?s ?p ?o</code> answers nothing. On a file
+with a quad index (<code>--named-graphs quad</code>) the union is read in place, so a
+selective query reads only the tiles it needs; on any other layout every graph
+is merged in memory first, and a <code>materialized-union</code> hint on stderr says so.
+The same flag is on <code>rete sparql-url</code>, <code>rete federate</code> (each source) and
+<code>rete serve</code> (every query the endpoint answers). See
+<a href="sparql.html#union-default-graph">Union default graph</a>.</p>
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
@@ -2018,7 +2023,7 @@ DataCite file (9.53 B triples): <code>GROUP BY ?p</code> over the whole graph we
 out-of-memory kill at 16 GB to 876 s at 1.1 GB peak RSS, and a <code>CONTAINS</code> count
 over every title from 15.1 GB to 4.0 GB (the default budget, filled by the
 title dictionary chunks).</p>
-<h3 id="rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
+<h3 id="rete-serve-file---bind-addr---token-t---journal-path---union-default-graph"><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path] [--union-default-graph]</code></h3>
 <p>Serve one <code>.rete</code> — or a <a href="manifest.html">manifest</a> of segments (<code>.json</code>), whose
 visible fold becomes the served state — as a live <strong>SPARQL 1.1 Protocol
 endpoint — queries and SPARQL Update</strong>. The base file is <strong>never mutated</strong>:
@@ -2043,6 +2048,11 @@ query with nothing to report gets neither header.</li>
 <li>Binds loopback by default. Expose deliberately (<code>--bind 0.0.0.0:7878</code>) and
 set <code>--token</code>: updates then require <code>Authorization: Bearer &lt;t&gt;</code> (reads stay
 open). CORS is enabled, so browsers can query it directly.</li>
+<li><code>--union-default-graph</code> answers every query against the <a href="sparql.html#union-default-graph">union default
+graph</a>, the way Oxigraph's server can be asked
+to: a pattern outside <code>GRAPH</code> matches the default graph and every named
+graph, each triple once. A server-wide switch, off by default; a query's own
+<code>FROM</code> wins.</li>
 <li>Scale: until the first update the endpoint answers <strong>straight from the
 file</strong>, opened like any local command opens it (read whole only when it is a
 small fraction of the free memory, lazily otherwise; see <code>rete sparql</code>'s
@@ -2469,20 +2479,22 @@ permutation payload rather than the whole index container. If a
 bound term is unknown, the index is skipped entirely and the result is empty.</p>
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
-<h3 id="rete-sparql-url-url-query----query-file-path---json---entail---memory-budget-mb-n"><code>rete sparql-url &lt;url&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json] [--entail] [--memory-budget-mb N]</code></h3>
+<h3 id="rete-sparql-url-url-query----query-file-path---json---entail---union-default-graph---memory-budget-mb-n"><code>rete sparql-url &lt;url&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json] [--entail] [--union-default-graph] [--memory-budget-mb N]</code></h3>
 <p>Run a full SPARQL query over HTTP with <strong>lazy tile faulting</strong> (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
 query's scans and probes touch them, so a selective query reads O(touched
 tiles) rather than the whole index. A range failure mid-query is reported as
 an error, never as silently fewer rows. <code>--memory-budget-mb</code> bounds the
-block, dictionary and tile caches exactly as for <code>rete sparql</code>.</p>
+block, dictionary and tile caches exactly as for <code>rete sparql</code>.
+<code>--union-default-graph</code> is as for <code>rete sparql</code>; on a quad-index file it fetches
+only the tiles the query routes to.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 rete sparql-url https://host/data.rete --query-file lookup.rq   # a long query
 </code></pre>
 <h2 id="federation">Federation</h2>
-<h3 id="rete-federate-sources---query-sparql----query-file-path---json---no-route---disjoint"><code>rete federate &lt;sources…&gt; (--query "&lt;SPARQL&gt;" | --query-file &lt;path&gt;) [--json] [--no-route] [--disjoint]</code></h3>
+<h3 id="rete-federate-sources---query-sparql----query-file-path---json---no-route---disjoint---union-default-graph"><code>rete federate &lt;sources…&gt; (--query "&lt;SPARQL&gt;" | --query-file &lt;path&gt;) [--json] [--no-route] [--disjoint] [--union-default-graph]</code></h3>
 <p>Run one SPARQL query across several <code>.rete</code> <strong>sources</strong> — local file paths and/or
 <code>http(s)://</code> URLs, mixed — and merge the results at the <strong>term (string) level</strong>:
 <code>SELECT</code> rows are unioned + deduped, <code>ASK</code> is OR'd across sources, <code>CONSTRUCT</code>
@@ -2498,6 +2510,9 @@ request that fails while a source is read fails the federation instead of
 silently dropping that source's rows. URL sources used to be read eagerly
 (the whole dictionary and index directory first, unbounded): three 55–63 GB
 published files in one federated query ran a 4 GiB container out of memory.</p>
+<p><code>--union-default-graph</code> evaluates the query against each source's <a href="sparql.html#union-default-graph">union default
+graph</a>, as <code>rete sparql --union-default-graph</code>
+does for one file.</p>
 <p>This is <strong>union</strong> federation — correct for sharded data where each file
 independently yields complete rows. It does <strong>not</strong> do cross-file joins. With
 several sources queried, <code>ORDER BY</code>, <code>OFFSET</code> and <code>LIMIT</code> apply to the merged rows

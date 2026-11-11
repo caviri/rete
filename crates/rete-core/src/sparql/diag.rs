@@ -219,6 +219,8 @@ struct Sink {
     /// Constant needles of string predicates that returned `false` on valid
     /// string arguments at least once: `(function, needle)`.
     misses: Vec<(Builtin, String)>,
+    /// The union default graph was built by merging every graph's triples.
+    union_merged: bool,
 }
 
 thread_local! {
@@ -231,6 +233,7 @@ pub(crate) fn begin() {
         let mut s = s.borrow_mut();
         s.entries.clear();
         s.misses.clear();
+        s.union_merged = false;
     });
 }
 
@@ -276,6 +279,15 @@ pub(crate) fn absorb(taken: Taken) {
             }
         }
     });
+}
+
+/// Record that the union default graph was built by merging every graph's
+/// triples into one index: the file has no quad index with graph-last orders
+/// to stream it from, so the query reads every graph.
+#[cold]
+#[inline(never)]
+pub(crate) fn union_materialized() {
+    SINK.with(|s| s.borrow_mut().union_merged = true);
 }
 
 /// Record one type error. `describe` builds `(sample, detail)` and runs only
@@ -857,15 +869,35 @@ fn is_empty_result(out: &QueryOutput) -> bool {
 
 /// Close the scope opened by [`begin`]: turn the sink into warnings for `out`.
 pub(crate) fn finish(out: &QueryOutput) -> Vec<QueryWarning> {
-    let (entries, misses) = SINK.with(|s| {
+    let (entries, misses, merged) = SINK.with(|s| {
         let mut s = s.borrow_mut();
         (
             std::mem::take(&mut s.entries),
             std::mem::take(&mut s.misses),
+            std::mem::take(&mut s.union_merged),
         )
     });
     let errored = !entries.is_empty();
     let mut out_w: Vec<QueryWarning> = entries.into_iter().map(Entry::into_warning).collect();
+    if merged {
+        let hint = "store the file with a quad index (--named-graphs quad) so the union \
+                    is read in place, or name the graphs with FROM"
+            .to_string();
+        out_w.push(QueryWarning {
+            severity: WarningSeverity::Hint,
+            function: "UNION DEFAULT GRAPH".to_string(),
+            argument: 0,
+            kind: "materialized-union".to_string(),
+            count: 0,
+            sample: None,
+            message: format!(
+                "The union default graph was built by merging every graph in memory, \
+                 because this file has no quad index to read it from; a large file may \
+                 not fit. To avoid that, {hint}."
+            ),
+            hint,
+        });
+    }
     // Case-sensitivity hint: only for an empty result, only when no type
     // error offers a better explanation, only for a constant needle that has
     // letters with case, and only when the predicate actually ran on string

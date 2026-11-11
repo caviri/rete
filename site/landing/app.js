@@ -396,7 +396,7 @@ function renderAbout() {
   if (g.facts?.triples) facts.append(h("span", {}, h("b", {}, g.facts.triples), " triples"));
   if (g.size) facts.append(h("span", {}, h("b", {}, g.size), " file"));
   if (g.facts?.license) facts.append(h("span", {}, g.facts.license));
-  if (!g.custom) facts.append(h("a", { href: `d/${g.key}.html` }, "About this graph →"));
+  if (!g.custom) facts.append(h("a", { href: `docs/d/${g.key}.html` }, "About this graph →"));
   if (g.inMemory) {
     facts.append(h("a", { href: "#byo", onclick: (e) => { e.preventDefault(); el.byo.hidden = !el.byo.hidden; } }, "Edit the RDF"));
     if (g.download) facts.append(h("a", { href: g.download, download: "my-graph.rete" }, "Download .rete"));
@@ -1143,8 +1143,8 @@ $("#copyBtn").addEventListener("click", (e) => copy(el.q.value, e.currentTarget)
 function updatePlaygroundLink() {
   const g = state.graph;
   el.pg.href = g && !g.custom
-    ? `playground.html#dataset=${encodeURIComponent(g.key)}&mode=sparql&q=${encodeURIComponent(el.q.value)}`
-    : "playground.html";
+    ? `docs/playground.html#dataset=${encodeURIComponent(g.key)}&mode=sparql&q=${encodeURIComponent(el.q.value)}`
+    : "docs/playground.html";
 }
 async function copy(text, btn) {
   try { await navigator.clipboard.writeText(text); const t = btn.textContent; btn.textContent = "Copied"; setTimeout(() => (btn.textContent = t), 1200); }

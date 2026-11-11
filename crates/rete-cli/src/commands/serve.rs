@@ -55,6 +55,10 @@ type QuadSet = BTreeSet<RawQuad>;
 /// Until the first update there is no quad set: `rete` is the base file
 /// itself, `quads` and `image` are `None`, and `/snapshot.rete` streams the
 /// base file from disk.
+/// `--union-default-graph`: every query sees the union default graph.
+static UNION_DEFAULT_GRAPH: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 struct Store {
     /// `None` while the server still answers from the unmodified base file.
     quads: Option<QuadSet>,
@@ -757,7 +761,9 @@ pub(crate) fn serve(
     bind: &str,
     token: Option<&str>,
     journal: Option<&str>,
+    union_default_graph: bool,
 ) -> anyhow::Result<()> {
+    UNION_DEFAULT_GRAPH.store(union_default_graph, std::sync::atomic::Ordering::Relaxed);
     let journal_path = std::path::PathBuf::from(
         journal
             .map(String::from)
@@ -834,7 +840,15 @@ pub(crate) fn serve(
                 Err(e) => respond(req, 500, "text/plain", format!("{e}\n").into_bytes()),
             },
             Action::Query(q) => match store.ensure_current() {
-                Ok(()) => match eval_query_with_warnings(&store.rete, &q, QueryOpts::default()) {
+                Ok(()) => match eval_query_with_warnings(
+                    &store.rete,
+                    &q,
+                    QueryOpts {
+                        union_default_graph: UNION_DEFAULT_GRAPH
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                        ..Default::default()
+                    },
+                ) {
                     Ok((QueryOutput::Select(vars, rows), warnings)) => {
                         eprintln!("  query: {} row(s){}", rows.len(), warned(&warnings));
                         respond_with(

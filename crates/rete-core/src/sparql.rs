@@ -1197,8 +1197,15 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
             // its WHERE clause matched: the file's default graph, the `FROM`
             // graphs, or (union-default toggle, no FROM) the default graph plus
             // every named graph.
+            // A quad index streams the union: no walk over its graphs.
+            let streamed = if sel.union_default && sel.from.is_empty() {
+                rete.union_default_index()
+            } else {
+                None
+            };
             let mut graphs: Vec<Option<&str>> = Vec::new();
-            if !sel.from.is_empty() {
+            if streamed.is_some() {
+            } else if !sel.from.is_empty() {
                 graphs.extend(sel.from.iter().map(|g| Some(g.as_str())));
             } else {
                 graphs.push(None);
@@ -1208,6 +1215,10 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
             }
             let mut triples = std::collections::BTreeSet::new();
             for r in &resources {
+                if let Some(union) = &streamed {
+                    triples.extend(rete.query_in_index(union, Some(r), None, None));
+                    continue;
+                }
                 for g in &graphs {
                     for t in rete.query_in_graph(*g, Some(r), None, None) {
                         triples.insert(t);

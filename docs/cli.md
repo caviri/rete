@@ -1523,7 +1523,7 @@ Evaluate a Basic Graph Pattern. Patterns are separated by ` . `, terms by spaces
 rete bgp data.rete "?x <http://ex/knows> ?y . ?y <http://ex/knows> ?z"
 ```
 
-### `rete sparql <file> ("<query>" | --query-file <path>) [--json] [--entail] [--memory-budget-mb N]`
+### `rete sparql <file> ("<query>" | --query-file <path>) [--json] [--entail] [--union-default-graph] [--memory-budget-mb N]`
 Run SPARQL: `SELECT` / `ASK` / `CONSTRUCT` / `DESCRIBE`. With `--json`, emit
 standard SPARQL Results JSON (for `SELECT`/`ASK`). See [SPARQL support](sparql.md).
 
@@ -1552,12 +1552,17 @@ $ rete sparql maps.rete 'SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, 
 warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which makes a FILTER drop the row, even under ! (BIND leaves the variable unbound); e.g. <http://ex.org/map/geneva-1572>. Hint: wrap it in STR() to match the IRI's text.
 ```
 
-There is **no union-default-graph flag** here: the opt-in ⛁ All graphs mode —
-a pattern outside `GRAPH` matching the merge of the default graph and every
-named graph, for files whose data lives entirely in named graphs — exists
-today in the playground and the wasm `query_opts` API only, not on the CLI and
-not in `rete serve`. On the CLI, scope the query with `GRAPH ?g { … }`
-instead. See [Union default graph](sparql.md#union-default-graph).
+`--union-default-graph` turns on the opt-in, non-standard **union default
+graph**: a pattern outside `GRAPH` matches the default graph and every named
+graph, a triple stored in several graphs counting once; a `FROM` in the query
+still wins, and `GRAPH ?g` is unchanged. It is for files whose data lives
+entirely in named graphs, where a plain `?s ?p ?o` answers nothing. On a file
+with a quad index (`--named-graphs quad`) the union is read in place, so a
+selective query reads only the tiles it needs; on any other layout every graph
+is merged in memory first, and a `materialized-union` hint on stderr says so.
+The same flag is on `rete sparql-url`, `rete federate` (each source) and
+`rete serve` (every query the endpoint answers). See
+[Union default graph](sparql.md#union-default-graph).
 
 ```sh
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
@@ -1637,7 +1642,7 @@ out-of-memory kill at 16 GB to 876 s at 1.1 GB peak RSS, and a `CONTAINS` count
 over every title from 15.1 GB to 4.0 GB (the default budget, filled by the
 title dictionary chunks).
 
-### `rete serve <file> [--bind addr] [--token t] [--journal path]`
+### `rete serve <file> [--bind addr] [--token t] [--journal path] [--union-default-graph]`
 Serve one `.rete` — or a [manifest](manifest.md) of segments (`.json`), whose
 visible fold becomes the served state — as a live **SPARQL 1.1 Protocol
 endpoint — queries and SPARQL Update**. The base file is **never mutated**:
@@ -1662,6 +1667,11 @@ federate against the endpoint with `SERVICE <http://host:port/sparql>`.
 - Binds loopback by default. Expose deliberately (`--bind 0.0.0.0:7878`) and
   set `--token`: updates then require `Authorization: Bearer <t>` (reads stay
   open). CORS is enabled, so browsers can query it directly.
+- `--union-default-graph` answers every query against the [union default
+  graph](sparql.md#union-default-graph), the way Oxigraph's server can be asked
+  to: a pattern outside `GRAPH` matches the default graph and every named
+  graph, each triple once. A server-wide switch, off by default; a query's own
+  `FROM` wins.
 - Scale: until the first update the endpoint answers **straight from the
   file**, opened like any local command opens it (read whole only when it is a
   small fraction of the free memory, lazily otherwise; see `rete sparql`'s
@@ -2173,7 +2183,7 @@ bound term is unknown, the index is skipped entirely and the result is empty.
 rete query-url https://host/data.rete --object '<http://ex/Dave>'
 ```
 
-### `rete sparql-url <url> ("<query>" | --query-file <path>) [--json] [--entail] [--memory-budget-mb N]`
+### `rete sparql-url <url> ("<query>" | --query-file <path>) [--json] [--entail] [--union-default-graph] [--memory-budget-mb N]`
 Run a full SPARQL query over HTTP with **lazy tile faulting** (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
@@ -2181,6 +2191,8 @@ query's scans and probes touch them, so a selective query reads O(touched
 tiles) rather than the whole index. A range failure mid-query is reported as
 an error, never as silently fewer rows. `--memory-budget-mb` bounds the
 block, dictionary and tile caches exactly as for `rete sparql`.
+`--union-default-graph` is as for `rete sparql`; on a quad-index file it fetches
+only the tiles the query routes to.
 
 ```sh
 rete sparql-url https://host/data.rete \
@@ -2190,7 +2202,7 @@ rete sparql-url https://host/data.rete --query-file lookup.rq   # a long query
 
 ## Federation
 
-### `rete federate <sources…> (--query "<SPARQL>" | --query-file <path>) [--json] [--no-route] [--disjoint]`
+### `rete federate <sources…> (--query "<SPARQL>" | --query-file <path>) [--json] [--no-route] [--disjoint] [--union-default-graph]`
 Run one SPARQL query across several `.rete` **sources** — local file paths and/or
 `http(s)://` URLs, mixed — and merge the results at the **term (string) level**:
 `SELECT` rows are unioned + deduped, `ASK` is OR'd across sources, `CONSTRUCT`
@@ -2207,6 +2219,10 @@ request that fails while a source is read fails the federation instead of
 silently dropping that source's rows. URL sources used to be read eagerly
 (the whole dictionary and index directory first, unbounded): three 55–63 GB
 published files in one federated query ran a 4 GiB container out of memory.
+
+`--union-default-graph` evaluates the query against each source's [union default
+graph](sparql.md#union-default-graph), as `rete sparql --union-default-graph`
+does for one file.
 
 This is **union** federation — correct for sharded data where each file
 independently yields complete rows. It does **not** do cross-file joins. With

@@ -1539,6 +1539,28 @@ pub struct GraphIndex {
     /// Class runs of the subject-leading permutations of a clustered `0x07`
     /// file; `None` for every other permutation.
     clusters: [Option<Arc<ClusterRuns>>; NUM_PERMS],
+    /// Set on an index that reads the union default graph of a quad index
+    /// (see [`crate::union_scan`]): its own sections are empty and every scan
+    /// goes to the overlay.
+    pub(crate) union: Option<Box<crate::union_scan::UnionOverlay>>,
+}
+
+/// One of two iterators of the same items.
+pub(crate) enum Either<A, B> {
+    Plain(A),
+    Union(B),
+}
+
+impl<A: Iterator<Item = Triple>, B: Iterator<Item = Triple>> Iterator for Either<A, B> {
+    type Item = Triple;
+
+    #[inline]
+    fn next(&mut self) -> Option<Triple> {
+        match self {
+            Either::Plain(a) => a.next(),
+            Either::Union(b) => b.next(),
+        }
+    }
 }
 
 impl GraphIndex {
@@ -1564,7 +1586,13 @@ impl GraphIndex {
             cache,
             size_hint: std::sync::atomic::AtomicU64::new(0),
             clusters: Default::default(),
+            union: None,
         }
+    }
+
+    /// An index with no triples, carrying `perms`.
+    pub(crate) fn empty_with(perms: PermSet) -> Self {
+        Self::from_sections(Default::default(), perms)
     }
 
     /// Rebuild from tiled sections: per permutation, `(min_a, max_a, block
@@ -1662,6 +1690,7 @@ impl GraphIndex {
             cache: ChunkCache::unlimited_arc(),
             size_hint: std::sync::atomic::AtomicU64::new(0),
             clusters: Default::default(),
+            union: None,
         }
     }
 
@@ -1688,6 +1717,7 @@ impl GraphIndex {
             cache: ChunkCache::unlimited_arc(),
             size_hint: std::sync::atomic::AtomicU64::new(0),
             clusters: Default::default(),
+            union: None,
         }
     }
 
@@ -1744,6 +1774,9 @@ impl GraphIndex {
 
     /// The reader's concurrent-range fan-out (1 = strictly sequential).
     pub(crate) fn read_concurrency(&self) -> usize {
+        if let Some(u) = &self.union {
+            return u.read_concurrency();
+        }
         self.read_concurrency
     }
 
@@ -1772,6 +1805,9 @@ impl GraphIndex {
     /// probe is a network round-trip, not a memory lookup, so a left-deep scan +
     /// hash join often beats probing a moderately-sized prefix.
     pub fn is_remote(&self) -> bool {
+        if let Some(u) = &self.union {
+            return u.is_remote();
+        }
         self.loader.is_some()
     }
 
@@ -1846,6 +1882,7 @@ impl GraphIndex {
             cache: ChunkCache::unlimited_arc(),
             size_hint: std::sync::atomic::AtomicU64::new(0),
             clusters: Default::default(),
+            union: None,
         }
     }
 
@@ -2266,6 +2303,10 @@ impl GraphIndex {
     /// Total triple count (sum of the SPO tiles' zone counts). For a remote
     /// index this faults in the SPO tiles — prefer the header's quad count.
     pub fn triple_count(&self) -> u32 {
+        if let Some(u) = &self.union {
+            let perm = IndexPermutation::Spo;
+            return u.scan((None, None, None), perm, None).0.count() as u32;
+        }
         self.prefetch_span(0, 0, self.sections[0].len());
         (0..self.sections[0].len())
             .filter_map(|ti| {
@@ -2296,7 +2337,7 @@ impl GraphIndex {
         perm: IndexPermutation,
         f: &mut dyn FnMut(u32, u32, u32),
     ) -> bool {
-        if !self.perms.contains(perm) {
+        if self.union.is_some() || !self.perms.contains(perm) {
             return false;
         }
         let si = perm.section_index();
@@ -2459,7 +2500,15 @@ impl GraphIndex {
     /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
     /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
+<<<<<<< HEAD
         self.scan_iter_with(pattern, Self::best_permutation(pattern), None, None)
+=======
+        self.scan_iter_with(
+            pattern,
+            Self::best_permutation_in(self.perms, pattern),
+            None,
+        )
+>>>>>>> origin/main
     }
 
     /// [`scan_iter`](Self::scan_iter) over a slice of the tiles it would
@@ -2471,7 +2520,15 @@ impl GraphIndex {
         pattern: Pattern,
         cut: &dyn Fn(usize, usize) -> (usize, usize),
     ) -> impl Iterator<Item = Triple> + 'a {
+<<<<<<< HEAD
         self.scan_iter_with(pattern, Self::best_permutation(pattern), Some(cut), None)
+=======
+        self.scan_iter_with(
+            pattern,
+            Self::best_permutation_in(self.perms, pattern),
+            Some(cut),
+        )
+>>>>>>> origin/main
     }
 
     /// What [`scan_iter`](Self::scan_iter) *would* fetch for `pattern`, computed
@@ -2488,6 +2545,9 @@ impl GraphIndex {
     /// a term-resolving dump's real cost usually lives.
     pub fn scan_plan(&self, pattern: Pattern) -> ScanPlan {
         let perm = Self::best_permutation_in(self.perms, pattern);
+        if let Some(u) = &self.union {
+            return u.plan(pattern, perm);
+        }
         let [_, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         let tiles = &self.sections[si];
@@ -2552,6 +2612,14 @@ impl GraphIndex {
     ) -> (Vec<Triple>, u64, bool) {
         let max_rows = max_rows.max(1);
         let perm = Self::best_permutation(pattern);
+        if let Some(u) = &self.union {
+            return u.scan_batch(
+                pattern,
+                cursor,
+                max_rows,
+                Self::best_permutation_in(self.perms, pattern),
+            );
+        }
         let [pa, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         // Same routing as `scan_iter_with`: the tile directory alone decides the
@@ -2642,18 +2710,37 @@ impl GraphIndex {
         sort_col: usize,
     ) -> Option<impl Iterator<Item = Triple> + '_> {
         let perm = Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?;
+        if let Some(u) = &self.union {
+            // Sorted only when both halves of the union are.
+            if !u.scan_is_ordered(pattern, perm) {
+                return None;
+            }
+            return Some(Either::Union(u.scan(pattern, perm, None).0));
+        }
         // A clustered permutation is sorted by subject only within a run: with no
         // bound prefix the stream is not sorted on its leading column.
         if self.clusters[perm.section_index()].is_some() && perm.leading_bound(pattern) == 0 {
             return None;
         }
+<<<<<<< HEAD
         Some(self.scan_iter_with(pattern, perm, None, None))
+=======
+        Some(Either::Plain(self.scan_plain(pattern, perm, None, None)))
+>>>>>>> origin/main
     }
 
     /// The permutation [`scan_iter_sorted_on`](Self::scan_iter_sorted_on)
     /// streams `pattern` from, and where the sort column sits in it (the
     /// number of bound leading columns).
     fn sorted_route(&self, pattern: Pattern, sort_col: usize) -> Option<(IndexPermutation, usize)> {
+<<<<<<< HEAD
+=======
+        // A union view streams two indexes merged: its tiles are not one
+        // list to cut by value. A merge join over it is not sliced.
+        if self.union.is_some() {
+            return None;
+        }
+>>>>>>> origin/main
         let perm = Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?;
         let lead = perm.leading_bound(pattern);
         if self.clusters[perm.section_index()].is_some() && lead == 0 {
@@ -2681,7 +2768,11 @@ impl GraphIndex {
             _ => t.2,
         };
         Some(
+<<<<<<< HEAD
             self.scan_iter_with(pattern, perm, None, Some((lead, lo, hi)))
+=======
+            self.scan_plain(pattern, perm, None, Some((lead, lo, hi)))
+>>>>>>> origin/main
                 .filter(move |t| {
                     let v = key(t);
                     lo <= v && u64::from(v) < hi
@@ -2720,6 +2811,43 @@ impl GraphIndex {
     /// stream is sorted in `perm`'s `(a, b, c)` order. Shared core of `scan_iter`
     /// and `scan_iter_sorted_on`.
     fn scan_iter_with(
+        &self,
+        pattern: Pattern,
+        perm: IndexPermutation,
+        cut: Option<&dyn Fn(usize, usize) -> (usize, usize)>,
+        // `(column, lo, hi)`: skip the tiles whose range of that column the
+        // directory proves outside `lo <= v < hi` (the caller filters rows).
+        between: Option<(usize, u32, u64)>,
+    ) -> impl Iterator<Item = Triple> + '_ {
+        if let Some(u) = &self.union {
+            return Either::Union(u.scan(pattern, perm, cut).0);
+        }
+        Either::Plain(self.scan_plain(pattern, perm, cut, None))
+    }
+
+    /// [`scan_iter_with`](Self::scan_iter_with), for the union overlay.
+    pub(crate) fn scan_iter_in(
+        &self,
+        pattern: Pattern,
+        perm: IndexPermutation,
+        cut: Option<&dyn Fn(usize, usize) -> (usize, usize)>,
+    ) -> impl Iterator<Item = Triple> + '_ {
+        self.scan_iter_with(pattern, perm, cut)
+    }
+
+    /// Does a scan of `pattern` in `perm` come in `perm`'s order? Not when the
+    /// section is clustered and the pattern binds no leading column.
+    pub(crate) fn scan_is_ordered(&self, perm: IndexPermutation, pattern: Pattern) -> bool {
+        match &self.union {
+            Some(u) => u.scan_is_ordered(pattern, perm),
+            None => {
+                !(self.clusters[perm.section_index()].is_some() && perm.leading_bound(pattern) == 0)
+            }
+        }
+    }
+
+    /// [`scan_iter_with`](Self::scan_iter_with) of a plain (not union) index.
+    fn scan_plain(
         &self,
         pattern: Pattern,
         perm: IndexPermutation,
@@ -2837,6 +2965,9 @@ impl GraphIndex {
         covers: impl Fn(u32, u32) -> bool,
         max_read: usize,
     ) -> bool {
+        if self.union.is_some() {
+            return false; // not read off a union
+        }
         // (perm, which synopsis/row column holds the object)
         let (perm, object_is_b) = if self.perms.contains(IndexPermutation::Pos) {
             (IndexPermutation::Pos, true)
@@ -2942,6 +3073,9 @@ impl GraphIndex {
     /// pattern with no bound component estimates `total`; one the synopsis
     /// rules out estimates 0.
     pub(crate) fn estimate_matches(&self, pattern: Pattern, total: u64) -> f64 {
+        if let Some(u) = &self.union {
+            return u.estimate(pattern, total);
+        }
         let mut best = total as f64;
         for perm in self.perms.iter() {
             let [pa, pb, pc] = perm.order_pattern(pattern);

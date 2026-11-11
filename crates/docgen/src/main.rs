@@ -21,6 +21,8 @@ const REPO_URL: &str = "https://github.com/caviri/rete";
 /// `og:image` is silently dropped by every unfurler — so social tags are the one
 /// place the site's own address has to be hard-coded.
 const SITE_BASE: &str = "https://caviri.github.io/rete/";
+/// Where the pages themselves live (the landing page owns the root).
+const DOCS_BASE: &str = "https://caviri.github.io/rete/docs/";
 
 /// Widest aspect ratio (intrinsic width ÷ height) still counted as "square".
 ///
@@ -1000,12 +1002,12 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
 
     let social = format!(
         r#"<meta name="description" content="{desc}" />
-  <link rel="canonical" href="{base}{page}" />
+  <link rel="canonical" href="{docs}{page}" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="{ogtitle}" />
   <meta property="og:description" content="{desc}" />
-  <meta property="og:url" content="{base}{page}" />
+  <meta property="og:url" content="{docs}{page}" />
   <meta property="og:image" content="{base}og/doc/{stem}.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -1016,6 +1018,7 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
   <meta name="twitter:image" content="{base}og/doc/{stem}.png" />
   <meta name="rete:section" content="{section}" />"#,
         base = SITE_BASE,
+        docs = DOCS_BASE,
         page = html_name,
         stem = stem,
         section = attr(section),

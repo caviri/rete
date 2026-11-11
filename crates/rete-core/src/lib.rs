@@ -56,6 +56,7 @@ pub mod hll;
 #[doc(hidden)]
 pub mod index;
 
+mod fastre;
 pub mod ingest;
 pub mod iri;
 pub mod label_index;
@@ -101,6 +102,7 @@ mod text_index_spill;
 pub mod tiling;
 #[doc(hidden)]
 pub mod triples;
+mod union_scan;
 pub mod v06;
 #[doc(hidden)]
 pub mod varint;
