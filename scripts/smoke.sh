@@ -205,6 +205,9 @@ check "quad GRAPH <g>" "Bob"                        -- "$B" sparql "$T/dq.rete" 
 check "quad verify"   "OK|matches"                  -- "$B" verify "$T/dq.rete"
 check "quad export"   "<http://ex/g2>"              -- "$B" export "$T/dq.rete"
 check "quad external = in-memory" "^same$"     -- bash -c "$B build '$T/d.nq' -o '$T/dqr.rete' --no-pyramid --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; $B build '$T/d.nq' -o '$T/dqx.rete' --memory-budget-mb 64 --named-graphs quad --text-index --text-index-graphs all --label-index >/dev/null 2>&1; same_content '$T/dqr.rete' '$T/dqx.rete'"
+check "union default graph off"  "0 solution"       -- "$B" sparql "$T/dq.rete" 'SELECT ?o WHERE { <http://ex/Alice> <http://ex/knows> ?o }'
+check "union default graph"      "Bob"               -- "$B" sparql "$T/dq.rete" --union-default-graph 'SELECT ?o WHERE { <http://ex/Alice> <http://ex/knows> ?o }'
+check "union default graph count" "2"                -- "$B" sparql "$T/dq.rete" --union-default-graph 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
 
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
