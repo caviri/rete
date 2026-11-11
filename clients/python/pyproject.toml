@@ -27,7 +27,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://caviri.github.io/rete/"
 Repository = "https://github.com/caviri/rete"
-Playground = "https://caviri.github.io/rete/playground.html"
+Playground = "https://caviri.github.io/rete/docs/playground.html"
 
 [project.optional-dependencies]
 pandas = ["pandas>=1.5"]

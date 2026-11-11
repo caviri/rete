@@ -2,7 +2,9 @@
 //! `.rete` sources (local paths and/or http(s) URLs), with summary-based routing
 //! and a term-level merge of the per-source results.
 
-use rete_core::{eval_query, query_predicates, FederationPlan, QueryOutput, SummaryView};
+use rete_core::{
+    eval_query_with, query_predicates, FederationPlan, QueryOpts, QueryOutput, SummaryView,
+};
 
 use crate::commands::range_source::{open_local_budget, query_budget};
 use crate::commands::render::print_query_output;
@@ -50,7 +52,11 @@ pub(crate) fn source_predicates(
 /// the budget). Each source gets the HTTP `ServiceClient`, so a federated query
 /// may itself carry `SERVICE` blocks — N `.rete` files and a live SPARQL
 /// endpoint in one query.
-fn eval_source(source: &str, query: &str) -> anyhow::Result<(QueryOutput, Option<(u64, u64)>)> {
+fn eval_source(
+    source: &str,
+    query: &str,
+    union_default_graph: bool,
+) -> anyhow::Result<(QueryOutput, Option<(u64, u64)>)> {
     let budget = query_budget(None);
     let (mut rete, counted) = if is_url(source) {
         let (rete, reader) = open_url_lazy(source, budget)?;
@@ -59,7 +65,11 @@ fn eval_source(source: &str, query: &str) -> anyhow::Result<(QueryOutput, Option
         (open_local_budget(source, budget)?, None)
     };
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
-    let out = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))?;
+    let opts = QueryOpts {
+        union_default_graph,
+        ..Default::default()
+    };
+    let out = eval_query_with(&rete, query, opts).map_err(|e| anyhow::anyhow!("{source}: {e}"))?;
     // A lazy fetch that failed is reported out of band: a partial answer from
     // one source must fail the federation, not quietly contribute fewer rows.
     if rete.index_incomplete() {
@@ -91,6 +101,7 @@ pub(crate) fn federate(
     json: bool,
     route: bool,
     disjoint: bool,
+    union_default_graph: bool,
 ) -> anyhow::Result<()> {
     use std::collections::BTreeSet;
     use std::time::Instant;
@@ -143,7 +154,7 @@ pub(crate) fn federate(
     };
     for source in &queried {
         let start = Instant::now();
-        let (out, fetched) = eval_source(source, &source_query)?;
+        let (out, fetched) = eval_source(source, &source_query, union_default_graph)?;
         let contributed = acc.absorb(out);
         match fetched {
             Some((bytes, requests)) => eprintln!(

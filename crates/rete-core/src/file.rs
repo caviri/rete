@@ -5369,6 +5369,19 @@ impl Rete {
         }
     }
 
+    /// The union default graph as an index that streams it from the quad
+    /// index (see [`crate::union_scan`]): the file's default graph and every
+    /// named graph, each triple once, nothing materialized. `None` when the
+    /// file has no quad index with the three graph-last orders (a per-graph
+    /// layout, or a file written before `0x07`): the caller merges instead.
+    pub(crate) fn union_default_index(&self) -> Option<GraphIndex> {
+        let src = self.quad_named()?.union_src()?;
+        Some(GraphIndex::union_of(
+            std::sync::Arc::clone(&self.index),
+            src,
+        ))
+    }
+
     /// The quad index, when the file has one.
     pub(crate) fn quad_named(&self) -> Option<&crate::quad::QuadNamed> {
         match &self.named_graphs {
@@ -6107,6 +6120,21 @@ impl Rete {
             },
         };
         self.resolve_matches(index.match_pattern(pattern))
+    }
+
+    /// [`query_in_graph`](Self::query_in_graph) over any index of this file,
+    /// such as the streamed union default graph.
+    pub(crate) fn query_in_index(
+        &self,
+        index: &GraphIndex,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Vec<TermTriple> {
+        match self.resolve_query_pattern(s, p, o) {
+            Some(pattern) => self.resolve_matches(index.match_pattern(pattern)),
+            None => Vec::new(),
+        }
     }
 
     /// Resolve matched id-triples to terms, with one coalesced dictionary

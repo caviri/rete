@@ -132,9 +132,9 @@ rete_query(g, query, reason = TRUE)
 
 ## Where to go next
 
-- The [R API guide](https://caviri.github.io/rete/r.html) covers every
+- The [R API guide](https://caviri.github.io/rete/docs/r.html) covers every
   function; `?rete_open` and friends are the reference pages.
-- The [format documentation](https://caviri.github.io/rete/) explains what
+- The [format documentation](https://caviri.github.io/rete/docs/) explains what
   a `.rete` is, how to build big ones with the CLI, and how to host them.
-- The [browser playground](https://caviri.github.io/rete/playground.html)
+- The [browser playground](https://caviri.github.io/rete/docs/playground.html)
   queries the same files with zero install — handy for sharing results.

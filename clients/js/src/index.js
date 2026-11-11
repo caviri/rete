@@ -270,13 +270,18 @@ export class Graph {
    * The engine's raw JSON result envelope. Carries a `warnings` array when the
    * query raised type errors (see {@link Graph#lastWarnings}).
    */
-  queryRaw(query, { reason = false, partition } = {}) {
+  queryRaw(query, { reason = false, unionDefault = false, partition } = {}) {
     this.#warnings = [];
+    if (partition && unionDefault) {
+      throw new Error("unionDefault cannot be combined with partition");
+    }
     const s = partition
       ? this.#g.query_partition(query, "json", reason, partition.var, partition.keys)
-      : reason
-        ? this.#g.query_reasoned(query, "json")
-        : this.#g.query(query, "json");
+      : unionDefault
+        ? this.#g.query_opts(query, "json", reason, true)
+        : reason
+          ? this.#g.query_reasoned(query, "json")
+          : this.#g.query(query, "json");
     const env = JSON.parse(s);
     this.#warnings = env.warnings ?? [];
     return env;

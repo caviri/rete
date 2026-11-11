@@ -3278,6 +3278,44 @@ impl RemoteReader {
     }
 }
 
+/// The default memory budget of a lazily opened file, in MiB.
+const DEFAULT_MEMORY_BUDGET_MB: u32 = 1024;
+
+/// The memory budget of the files opened from now on, in MiB; 0 = no cap.
+static MEMORY_BUDGET_MB: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(DEFAULT_MEMORY_BUDGET_MB);
+
+/// Set the memory budget of every remote (lazily read) file opened from now
+/// on, in MiB. It caps the caches of decoded dictionary chunks, decoded index
+/// tiles and raw file blocks; what is evicted is read again when a query
+/// touches it, so the budget trades speed for memory and never changes an
+/// answer. `0` removes the cap. The default is 1024.
+///
+/// A wasm32 heap ends at 4 GiB and never shrinks. Without a cap a query over
+/// ten million rows of a 2.5 GB file kept 2.3 GB of decoded chunks and tiles,
+/// the next one added 1.7 GB of its own, and the engine trapped
+/// (`unreachable`) at the ceiling. The cap does not cover a query's own
+/// working state (a hash join's build side, `GROUP BY` groups).
+#[wasm_bindgen]
+pub fn set_memory_budget_mb(mb: u32) {
+    MEMORY_BUDGET_MB.store(mb, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The memory budget files are opened with, in MiB (0 = no cap): see
+/// [`set_memory_budget_mb`].
+#[wasm_bindgen]
+pub fn memory_budget_mb() -> u32 {
+    MEMORY_BUDGET_MB.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The budget in bytes, `None` when there is no cap.
+fn memory_budget() -> Option<u64> {
+    match memory_budget_mb() {
+        0 => None,
+        mb => Some(u64::from(mb) << 20),
+    }
+}
+
 fn open_url(url: &str) -> Result<(RemoteReader, Rete), JsValue> {
     // `reader` counts the PHYSICAL fetches; a read-through block cache above it
     // turns the query's scattered range reads into a few aligned block fetches
@@ -3286,13 +3324,20 @@ fn open_url(url: &str) -> Result<(RemoteReader, Rete), JsValue> {
     // `read_many`, so a multi-range host coalesces them further. The block size
     // is auto-tuned from the file size (known at open, no download).
     let reader = RemoteReader::open(url)?;
-    let cached = std::sync::Arc::new(BlockCacheReader::new(
-        reader.counting.clone(),
-        auto_block(reader.len()),
-    ));
+    let budget = memory_budget();
+    let split = rete_core::split_memory_budget(budget.unwrap_or(u64::MAX));
+    let cached = std::sync::Arc::new(
+        BlockCacheReader::new(reader.counting.clone(), auto_block(reader.len()))
+            .with_cache_cap(split.block_cache.min(rete_core::DEFAULT_CACHE_CAP)),
+    );
     // The offset shim sits ABOVE the cache so blocks stay aligned to the
     // resource's absolute offsets (a plain file's base is 0 — a no-op).
     let mut rete = Rete::open_ranged_lazy(OffsetReader::new(cached, reader.base)).map_err(err)?;
+    // The caches of decoded chunks and tiles get their share of the budget.
+    // There is no disk to spill a `COUNT(DISTINCT)` to here: that stays in
+    // memory whatever the budget.
+    rete.set_memory_budget(budget);
+    rete.set_spill_threshold(None);
     // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
     rete.set_service_client(Box::new(XhrServiceClient));
     Ok((reader, rete))

@@ -6,12 +6,12 @@
   <meta name="color-scheme" content="light dark" />
   <title>SPARQL support · rete docs</title>
   <meta name="description" content="The engine lives in rete-core::sparql. Queries are parsed with spargebra and lowered to a small plan algebra (Bgp/Join/Union/Minus/LeftJoin/Filter/Path/Values/ Graph), evaluated in the unified…" />
-  <link rel="canonical" href="https://caviri.github.io/rete/sparql.html" />
+  <link rel="canonical" href="https://caviri.github.io/rete/docs/sparql.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="SPARQL support · rete docs" />
   <meta property="og:description" content="The engine lives in rete-core::sparql. Queries are parsed with spargebra and lowered to a small plan algebra (Bgp/Join/Union/Minus/LeftJoin/Filter/Path/Values/ Graph), evaluated in the unified…" />
-  <meta property="og:url" content="https://caviri.github.io/rete/sparql.html" />
+  <meta property="og:url" content="https://caviri.github.io/rete/docs/sparql.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/sparql.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -650,7 +650,10 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <tr><td><strong>Reasoning (OWL 2 QL)</strong></td><td>Opt-in ontology-mediated answering by <strong>query rewriting</strong> — no materialization: <code>rdfs:subClassOf</code> / <code>subPropertyOf</code> hierarchy + <code>rdfs:domain</code> / <code>range</code> type inference, computed over the raw data. <code>rete sparql … --entail</code>, or the playground <strong>🧠 Reason</strong> toggle. See <a href="#reasoning-owl-2-ql">below</a>.</td></tr>
 </tbody></table>
 <p><strong><code>REGEX</code> and non-ASCII text.</strong> A pattern without metacharacters is a substring
-test, with full Unicode case folding under the <code>i</code> flag, in every build. Any
+test, with full Unicode case folding under the <code>i</code> flag, in every build. With no
+flags, <code>^lit</code>, <code>lit$</code>, <code>[^/#]*$</code> (the tail after the last <code>/</code> or <code>#</code>) and <code>^.*[/#]</code>
+(the head up to the last one) also run as plain string searches in <code>REGEX</code> and
+in <code>REPLACE</code> (with a replacement free of <code>$</code> and <code>\</code>), with the engine's results. Any
 other pattern goes to a regex engine, and which one depends on the build:</p>
 <table><thead><tr><th>Build</th><th>Engine</th><th><code>\b</code> <code>\w</code> <code>\d</code> and the <code>i</code> flag</th></tr></thead><tbody>
 <tr><td>native — the CLI, <code>rete serve</code>, Python, R, the File Explorer</td><td><code>regex</code> (feature <code>unicode-regex</code>, on by default)</td><td>Unicode: <code>REGEX(?name, "\\bsvobodová\\b", "i")</code> finds "Jitka Svobodová" and "SVOBODOVÁ"</td></tr>
@@ -747,23 +750,28 @@ in the same order.</p>
 <li>a basic graph pattern. With one triple pattern its index tiles are sliced.
 With several, the pattern the join streams is sliced, and what the others
 join against (the prefix, a small pattern's hash table) is built once and
-read by every thread;</li>
+read by every thread. Two large patterns that share their subject are
+merge-joined, both in subject order: there the slice is a range of
+subjects, the same on both sides;</li>
 <li>a block under <code>GRAPH ?g</code>: a one-pattern scan, the subjects of a class
 probe, the graphs the block's required pattern is found in, or every graph.</li>
 </ul>
-<p>Above it the pattern may have <code>FILTER</code> and <code>BIND</code> (without <code>EXISTS</code>), <code>UNION</code>
-(a branch that cannot be sliced runs once), and joins and <code>OPTIONAL</code>s. The
-right side of a join is looked up per row where the single thread does that,
-and otherwise built once into the hash table every slice probes; rows are
-shared between threads, so there is one copy of it.</p>
+<p>Above it the pattern may have <code>FILTER</code> and <code>BIND</code>, <code>UNION</code> (a branch that
+cannot be sliced runs once), joins, <code>OPTIONAL</code>s, <code>MINUS</code>, and a sub-select that
+only projects. The right side of a join or a <code>MINUS</code> is looked up per row
+where the single thread does that, and otherwise built once into the table
+every slice probes; the solutions of an <code>EXISTS</code> in a <code>FILTER</code> are evaluated
+once, by the first slice that needs them. Rows are shared between threads, so
+there is one copy of each.</p>
 <p>Aggregates are merged from per-slice partial results when they can be
 (<code>COUNT</code>, <code>SUM</code>, <code>AVG</code>, <code>MIN</code>, <code>MAX</code>, <code>SAMPLE</code>, <code>GROUP_CONCAT</code>). When they keep
 a set of values (<code>COUNT(DISTINCT …)</code>, <code>GROUP_CONCAT(DISTINCT …)</code>) or a slice
 has more than 100,000 groups, the threads do the per-row work and send their
 rows to one fold, which uses the memory the single thread uses.</p>
-<p>Not sliced: a pattern whose path to the scan goes through <code>EXISTS</code>, <code>MINUS</code>, a
-sub-select or <code>VALUES</code>; two large patterns merge-joined on their subject; a
-query under a memory guard.</p>
+<p>Not sliced: a pattern whose path to the scan goes through <code>VALUES</code>, a
+sub-select that aggregates, sorts or slices (it runs on several threads
+itself when it groups), or an <code>EXISTS</code> inside a <code>BIND</code>; a join whose large
+scan is on its right side; a query under a memory guard.</p>
 <p><code>SUM</code> and <code>AVG</code> add the slices' sums. The slices are fixed by the file (at most
 64), not by the machine, so the result is the same on any number of threads;
 it is the single thread's result whenever the additions are exact, as they are
@@ -772,8 +780,8 @@ for integers.</p>
 at most 16 slices of at least 8 tiles each, and a short scan stays one scan
 with its few requests. A join that looks something up per row is not sliced
 there (several threads' lookups read half as many bytes again as one thread's
-in order), nor is a walk of every graph. A reader says whether its reads are
-local with <code>RangeReader::is_local</code>.</p>
+in order), nor is a walk of every graph, nor a pattern with <code>EXISTS</code>. A reader
+says whether its reads are local with <code>RangeReader::is_local</code>.</p>
 <p>The thread count is the machine's cores, at most 16. <code>RETE_QUERY_THREADS=N</code>
 sets it, <code>1</code> turns it off, and a library caller uses
 <code>rete_core::query::set_query_threads</code>. The browser engine has one thread.</p>
@@ -797,6 +805,9 @@ sets it, <code>1</code> turns it off, and a library caller uses
 <tr><td>authors per year, <code>COUNT(DISTINCT ?c)</code> over three patterns</td><td>7.3 s</td><td>1.6 s</td></tr>
 <tr><td>a class, an <code>OPTIONAL</code> looked up per row and one hash-joined</td><td>2.5 s</td><td>0.9 s</td></tr>
 <tr><td>papers per author initial (5.1 M labels, 9.5 M <code>dc:creator</code> lookups)</td><td>179 s</td><td>19 s</td></tr>
+<tr><td>two large patterns merge-joined on their subject, <code>COUNT(DISTINCT)</code></td><td>14.2 s</td><td>2.5 s</td></tr>
+<tr><td>a star <code>MINUS { ?d swrc:pages ?pg }</code> (3.4 M rows, probed per row)</td><td>241 s</td><td>34 s</td></tr>
+<tr><td>a star with <code>FILTER NOT EXISTS { ?d dc:subject ?s }</code></td><td>16.1 s</td><td>2.8 s</td></tr>
 </tbody></table>
 <p>Over a simulated link the pubmed query (32 MB) took 20 s on one thread and
 4.1 s sliced at 60 ms and 40 MB/s, and 34 s and 11.5 s at 120 ms and 4 MB/s,
@@ -808,7 +819,9 @@ dictionary on every row and is now looked up once per distinct value;
 <code>BIND</code>s of its group ran after them; the graph directory of a file with more
 than two million graphs kept one read-ahead window, so a lookup of each row's
 graph read and decoded a block again; finding one graph in a tile walked the
-tile's segment headers; and a block under <code>GRAPH ?g</code> that was not a plain
+tile's segment headers; the cache of decoded chunks and tiles was one lock
+with a recency tree updated on every lookup (it is now split into parts, and
+a lookup writes nothing every thread shares); and a block under <code>GRAPH ?g</code> that was not a plain
 basic graph pattern (one with an <code>OPTIONAL</code> or a <code>FILTER</code> inside) was
 evaluated in every graph of the file instead of the graphs its required
 pattern is found in. Native builds also turn on the <code>regex</code> crate's DFA and
@@ -828,8 +841,10 @@ and an explicit figure overrides both (<code>rete sparql --memory-budget-mb N</c
 client calls <code>set_memory_budget</code>). Least recently used entries
 are evicted and re-read when touched again, so the budget trades speed for
 memory and never changes an answer. The per-query term and number memos are
-capped at 64 MiB each. The browser engine is not capped: its 32-bit heap is
-smaller than the default, and its callers bound their own range budgets.</p>
+capped at 64 MiB each. The browser engine opens a remote file with a budget of
+1024 MiB (<code>set_memory_budget_mb(n)</code>, <code>0</code> for no cap): its heap ends at 4 GiB
+and never shrinks, and without a cap two heavy queries in a row reached the
+end of it. It does not spill <code>COUNT(DISTINCT …)</code>, having no disk.</p>
 <p><code>COUNT(DISTINCT …)</code> is bounded by the same figure: its distinct values are
 kept as a sorted, deduplicated buffer of dictionary ids (8 bytes each), and
 past an eighth of the budget (512 MiB at 4096) the buffer is written to the
@@ -944,8 +959,18 @@ named its dataset explicitly, and that wins.</li>
 <li><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code> and <code>FROM NAMED</code> are completely unaffected: they
 enumerate and scope the named graphs exactly as before.</li>
 </ul>
-<p>Where it exists today:</p>
+<p>Where it exists:</p>
 <ul>
+<li><strong>The command line</strong> — <code>rete sparql --union-default-graph</code> (and the same flag
+on <code>sparql-url</code> and <code>federate</code>, which applies it to each source), and
+<code>rete serve --union-default-graph</code>, which makes every query the endpoint
+answers use it, as Oxigraph's server does. See <a href="cli.html">CLI</a>.</li>
+<li><strong>The clients</strong> — Python <code>g.query(q, union_default_graph=True)</code> (also
+<code>query_raw</code>, <code>query_df</code>), R <code>rete_query(g, q, union_default_graph = TRUE)</code>,
+JavaScript <code>g.query(q, { unionDefault: true })</code>, Java
+<code>rete.query(sparql, true)</code>, and the MCP / MCPB <code>sparql_query</code> and
+<code>start_query</code> tools' <code>union_default_graph</code> option (not together with
+<code>partition_by</code>).</li>
 <li><strong>The playground</strong> — the ⛁ All graphs toggle beside 🧠 Reason. Flipping it
 is announced, and every result computed under it says so in its meta line,
 so a non-standard answer is never silently presented as a standard one. See
@@ -954,30 +979,36 @@ so a non-standard answer is never silently presented as a standard one. See
 and the same method on <code>RemoteGraph</code> (see
 <a href="browser.html">WASM &amp; JavaScript API</a>).</li>
 <li><strong>Rust</strong> — <code>eval_query_with(&amp;rete, query, QueryOpts { union_default_graph: true, ..QueryOpts::default() })</code> in <code>rete-core::sparql</code>.</li>
-<li><strong>Not</strong> on the CLI — <code>rete sparql</code> has no union flag — and <strong>not</strong> in
-<code>rete serve</code>'s endpoint. If you need the union semantics there, write it
-into the query with <code>GRAPH ?g { … }</code> (and <code>UNION</code> with a default-graph
-branch when both sides hold data), which works everywhere.</li>
 </ul>
 <p>Costs and limits worth knowing before flipping it on:</p>
 <ul>
+<li><strong>A quad index (<code>--named-graphs quad</code>, format <code>0x07</code>) is read in place.</strong> A
+pattern is answered from the order that fits its bound terms (SPOG for a
+subject, POSG for a predicate or predicate and object, OSPG for an object),
+with the graph column dropped and the copies of a triple, which sit next to
+each other, counted once, then merged with the file's own default graph. Nothing
+is built from the graphs' triples: a selective pattern reads the few tiles it
+routes to, locally or over HTTP, and a pattern that matches everything reads
+one order once, in a fixed amount of memory. <code>COUNT(*)</code>, <code>GROUP BY</code>, joins,
+<code>ORDER BY</code>, <code>LIMIT</code>, <code>DESCRIBE</code>, <code>CONSTRUCT</code> and the multi-threaded
+aggregation all see the same de-duplicated triples as the merge would give.
+The price of de-duplicating is that the count of every triple of a many-quad
+file reads every quad of one order: a union <code>COUNT(*)</code> is a pass over the
+quad section, not an answer from a directory.</li>
 <li>The common converted-file shape — <strong>empty default graph, exactly one named
-graph</strong> — stays a zero-copy borrow of that graph's index: no copying, no
-extra bytes.</li>
-<li>Any other shape <strong>materializes the merged index</strong> for the query. On a
-lazily-opened remote file that can mean faulting the index tiles of every
-named graph the merge touches — a real cost on a many-graph file, and
-precisely why the mode is opt-in per query rather than a file-level default.</li>
+graph</strong> — stays a zero-copy borrow of that graph's index.</li>
+<li><strong>Any other layout materializes the merged index</strong> for the query: a file with
+a container per graph, or a quad index written before <code>0x07</code>. On a
+lazily-opened remote file that means faulting the index tiles of every
+named graph, and a large file may not fit in memory. The answer still
+carries a <code>materialized-union</code> hint saying so (the warnings of the CLI and
+of the clients). <code>rete convert</code> rewrites such a file as a <code>0x07</code> quad index.</li>
 <li>The playground's progressive and community-split strategies answer from
 default-graph structures, so a union run is evaluated on the whole index
 instead (the result line says so) rather than silently answering with
 standard semantics.</li>
-<li>Federated multi-source runs and live SPARQL endpoints keep standard
-semantics — the toggle does not reach them (a live endpoint decides its own
-dataset).</li>
-<li>Under union, <code>DESCRIBE</code>'s per-resource expansion — the triples returned
-<em>about</em> each matched resource — still reads the default graph; the union
-applies to the pattern matching that selects the resources.</li>
+<li>A live <code>SERVICE</code> endpoint keeps standard semantics: a live endpoint decides
+its own dataset.</li>
 </ul>
 <h2 id="output-views--query-shapes">Output views &amp; query shapes</h2>
 <p>The playground renders one result several ways — Table, Graph, Map, Time,
@@ -1375,7 +1406,7 @@ standard SPARQL result document: <code>Rete-Warnings</code> holds the same JSON 
 (non-ASCII escaped as <code>\uXXXX</code>, as a header value must be), and
 <code>Rete-Warning-Count</code> the total. Both are left out when there is nothing to
 report. Browsers can read them (<code>Access-Control-Expose-Headers</code>). See
-<a href="cli.html#rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve</code></a>.</li>
+<a href="cli.html#rete-serve-file---bind-addr---token-t---journal-path---union-default-graph"><code>rete serve</code></a>.</li>
 </ul>
 <p>A function rete doesn't know is never silently false. An unknown name
 (<code>NOSUCHFN(?x)</code>) is a parse error, and an extension-function IRI that rete

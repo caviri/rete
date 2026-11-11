@@ -26,11 +26,23 @@
 //! is an exact inverse — no hidden capacity to leak.
 
 use rete_core::{
-    eval_query, results_envelope_json, BlockCacheReader, RangeReader, Rete, DEFAULT_BLOCK,
+    eval_query_with, results_envelope_json, BlockCacheReader, QueryOpts, RangeReader, Rete,
+    DEFAULT_BLOCK,
 };
 
 const STATUS_OK: u32 = 0;
 const STATUS_ERR: u32 = 1;
+
+/// `flags` bit of the `*_opts` query exports: the union default graph (a
+/// pattern outside `GRAPH` matches the default graph and every named graph).
+const QUERY_UNION_DEFAULT: u32 = 1;
+
+fn query_opts(flags: u32) -> QueryOpts {
+    QueryOpts {
+        union_default_graph: flags & QUERY_UNION_DEFAULT != 0,
+        ..QueryOpts::default()
+    }
+}
 
 /// A `custom` getrandom backend for `wasm32-unknown-unknown` running in a bare
 /// JVM host (Chicory), which has no `crypto.getRandomValues` and no OS entropy.
@@ -609,6 +621,21 @@ pub unsafe extern "C" fn rete_query(
     query_ptr: *const u8,
     query_len: u32,
 ) -> *mut u8 {
+    rete_query_opts(bytes_ptr, bytes_len, query_ptr, query_len, 0)
+}
+
+/// [`rete_query`] with option `flags` (see [`QUERY_UNION_DEFAULT`]).
+///
+/// # Safety
+/// As [`rete_query`].
+#[no_mangle]
+pub unsafe extern "C" fn rete_query_opts(
+    bytes_ptr: *const u8,
+    bytes_len: u32,
+    query_ptr: *const u8,
+    query_len: u32,
+    flags: u32,
+) -> *mut u8 {
     let bytes = borrow(bytes_ptr, bytes_len);
     let query = match std::str::from_utf8(borrow(query_ptr, query_len)) {
         Ok(q) => q,
@@ -618,7 +645,7 @@ pub unsafe extern "C" fn rete_query(
         Ok(r) => r,
         Err(e) => return pack(STATUS_ERR, e.to_string().as_bytes()),
     };
-    match eval_query(&rete, query) {
+    match eval_query_with(&rete, query, query_opts(flags)) {
         Ok(out) => pack(STATUS_OK, results_envelope_json(&out, "").as_bytes()),
         Err(e) => pack(STATUS_ERR, e.to_string().as_bytes()),
     }
@@ -708,11 +735,25 @@ pub extern "C" fn rete_handle_info(id: u32) -> *mut u8 {
 /// The query pointer/length must describe readable module memory.
 #[no_mangle]
 pub unsafe extern "C" fn rete_handle_query(id: u32, q_ptr: *const u8, q_len: u32) -> *mut u8 {
+    rete_handle_query_opts(id, q_ptr, q_len, 0)
+}
+
+/// [`rete_handle_query`] with option `flags` (see [`QUERY_UNION_DEFAULT`]).
+///
+/// # Safety
+/// As [`rete_handle_query`].
+#[no_mangle]
+pub unsafe extern "C" fn rete_handle_query_opts(
+    id: u32,
+    q_ptr: *const u8,
+    q_len: u32,
+    flags: u32,
+) -> *mut u8 {
     let query = match std::str::from_utf8(borrow(q_ptr, q_len)) {
         Ok(q) => q,
         Err(e) => return pack(STATUS_ERR, format!("query is not utf-8: {e}").as_bytes()),
     };
-    with_handle(id, |rete| match eval_query(rete, query) {
+    with_handle(id, |rete| match eval_query_with(rete, query, query_opts(flags)) {
         Ok(out) => match guard_complete(rete) {
             Ok(()) => pack(STATUS_OK, results_envelope_json(&out, "").as_bytes()),
             Err(e) => pack(STATUS_ERR, e.as_bytes()),

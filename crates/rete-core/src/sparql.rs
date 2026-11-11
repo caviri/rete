@@ -412,12 +412,25 @@ type ExistsCache = std::collections::HashMap<*const Plan, ExistsEntry>;
 /// EXISTS over a BGP from O(L×R) into O(L+R), like the MINUS anti-join.
 struct ExistsEntry {
     /// The sub-plan's solutions; filled on first need (`loaded`).
-    sols: Vec<crate::row::Row>,
+    sols: std::sync::Arc<Vec<crate::row::Row>>,
     loaded: bool,
-    probe: Option<ExistsProbe>,
+    probe: Option<std::sync::Arc<ExistsProbe>>,
+    /// Where the solutions and their index are kept for every shard of a
+    /// grouped query run on several threads ([`ExistsCell`]).
+    cell: Option<std::sync::Arc<ExistsCell>>,
     /// A fat BGP sub-plan probed per outer row instead of loaded (`None` when
     /// loading it whole is the cheaper plan).
     corr: Option<crate::bgp::CorrelatedProbe>,
+}
+
+/// An EXISTS sub-plan's solutions and their index, made once for all the
+/// shards of a grouped query run on several threads: the first shard whose
+/// row needs them evaluates the sub-plan, the others wait for it and read the
+/// same rows.
+#[derive(Default)]
+pub(crate) struct ExistsCell {
+    sols: std::sync::OnceLock<std::sync::Arc<Vec<crate::row::Row>>>,
+    probe: std::sync::OnceLock<std::sync::Arc<ExistsProbe>>,
 }
 
 /// The semi-join index: solution rows keyed by the slots they share with the
@@ -1185,8 +1198,15 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
             // its WHERE clause matched: the file's default graph, the `FROM`
             // graphs, or (union-default toggle, no FROM) the default graph plus
             // every named graph.
+            // A quad index streams the union: no walk over its graphs.
+            let streamed = if sel.union_default && sel.from.is_empty() {
+                rete.union_default_index()
+            } else {
+                None
+            };
             let mut graphs: Vec<Option<&str>> = Vec::new();
-            if !sel.from.is_empty() {
+            if streamed.is_some() {
+            } else if !sel.from.is_empty() {
                 graphs.extend(sel.from.iter().map(|g| Some(g.as_str())));
             } else {
                 graphs.push(None);
@@ -1196,6 +1216,10 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
             }
             let mut triples = std::collections::BTreeSet::new();
             for r in &resources {
+                if let Some(union) = &streamed {
+                    triples.extend(rete.query_in_index(union, Some(r), None, None));
+                    continue;
+                }
                 for g in &graphs {
                     for t in rete.query_in_graph(*g, Some(r), None, None) {
                         triples.insert(t);

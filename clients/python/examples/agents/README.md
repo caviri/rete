@@ -1,7 +1,7 @@
 # Agent frameworks over a `.rete` graph
 
 Runnable companions to the
-[LangChain & Pydantic AI tutorial](https://caviri.github.io/rete/agent-frameworks.html).
+[LangChain & Pydantic AI tutorial](https://caviri.github.io/rete/docs/agent-frameworks.html).
 Each script gives a model five tools over **one** `.rete` file — card, schema,
 examples, entity lookup, SPARQL — and lets it answer questions by querying.
 The file is read by byte range, local or remote, with no server in between.

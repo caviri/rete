@@ -57,7 +57,7 @@
     "@id": "https://orcid.org/0000-0002-8076-2034"
   },
   "relatedLink": [
-    "https://caviri.github.io/rete/playground.html",
+    "https://caviri.github.io/rete/docs/playground.html",
     "https://crates.io/crates/rete-cli",
     "https://pypi.org/project/rete-graph/",
     "https://www.npmjs.com/package/rete-graph"

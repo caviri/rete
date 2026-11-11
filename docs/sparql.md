@@ -40,7 +40,10 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 | **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated answering by **query rewriting** — no materialization: `rdfs:subClassOf` / `subPropertyOf` hierarchy + `rdfs:domain` / `range` type inference, computed over the raw data. `rete sparql … --entail`, or the playground **🧠 Reason** toggle. See [below](#reasoning-owl-2-ql). |
 
 **`REGEX` and non-ASCII text.** A pattern without metacharacters is a substring
-test, with full Unicode case folding under the `i` flag, in every build. Any
+test, with full Unicode case folding under the `i` flag, in every build. With no
+flags, `^lit`, `lit$`, `[^/#]*$` (the tail after the last `/` or `#`) and `^.*[/#]`
+(the head up to the last one) also run as plain string searches in `REGEX` and
+in `REPLACE` (with a replacement free of `$` and `\`), with the engine's results. Any
 other pattern goes to a regex engine, and which one depends on the build:
 
 | Build | Engine | `\b` `\w` `\d` and the `i` flag |
@@ -161,15 +164,19 @@ What can be the driving scan:
 - a basic graph pattern. With one triple pattern its index tiles are sliced.
   With several, the pattern the join streams is sliced, and what the others
   join against (the prefix, a small pattern's hash table) is built once and
-  read by every thread;
+  read by every thread. Two large patterns that share their subject are
+  merge-joined, both in subject order: there the slice is a range of
+  subjects, the same on both sides;
 - a block under `GRAPH ?g`: a one-pattern scan, the subjects of a class
   probe, the graphs the block's required pattern is found in, or every graph.
 
-Above it the pattern may have `FILTER` and `BIND` (without `EXISTS`), `UNION`
-(a branch that cannot be sliced runs once), and joins and `OPTIONAL`s. The
-right side of a join is looked up per row where the single thread does that,
-and otherwise built once into the hash table every slice probes; rows are
-shared between threads, so there is one copy of it.
+Above it the pattern may have `FILTER` and `BIND`, `UNION` (a branch that
+cannot be sliced runs once), joins, `OPTIONAL`s, `MINUS`, and a sub-select that
+only projects. The right side of a join or a `MINUS` is looked up per row
+where the single thread does that, and otherwise built once into the table
+every slice probes; the solutions of an `EXISTS` in a `FILTER` are evaluated
+once, by the first slice that needs them. Rows are shared between threads, so
+there is one copy of each.
 
 Aggregates are merged from per-slice partial results when they can be
 (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`). When they keep
@@ -177,9 +184,10 @@ a set of values (`COUNT(DISTINCT …)`, `GROUP_CONCAT(DISTINCT …)`) or a slice
 has more than 100,000 groups, the threads do the per-row work and send their
 rows to one fold, which uses the memory the single thread uses.
 
-Not sliced: a pattern whose path to the scan goes through `EXISTS`, `MINUS`, a
-sub-select or `VALUES`; two large patterns merge-joined on their subject; a
-query under a memory guard.
+Not sliced: a pattern whose path to the scan goes through `VALUES`, a
+sub-select that aggregates, sorts or slices (it runs on several threads
+itself when it groups), or an `EXISTS` inside a `BIND`; a join whose large
+scan is on its right side; a query under a memory guard.
 
 `SUM` and `AVG` add the slices' sums. The slices are fixed by the file (at most
 64), not by the machine, so the result is the same on any number of threads;
@@ -190,8 +198,8 @@ Over HTTP a slice reads its tiles in one batch, so a remote file is cut into
 at most 16 slices of at least 8 tiles each, and a short scan stays one scan
 with its few requests. A join that looks something up per row is not sliced
 there (several threads' lookups read half as many bytes again as one thread's
-in order), nor is a walk of every graph. A reader says whether its reads are
-local with `RangeReader::is_local`.
+in order), nor is a walk of every graph, nor a pattern with `EXISTS`. A reader
+says whether its reads are local with `RangeReader::is_local`.
 
 The thread count is the machine's cores, at most 16. `RETE_QUERY_THREADS=N`
 sets it, `1` turns it off, and a library caller uses
@@ -221,6 +229,9 @@ And on DBLP (2017, 88 M triples in the default graph, 16 threads):
 | authors per year, `COUNT(DISTINCT ?c)` over three patterns | 7.3 s | 1.6 s |
 | a class, an `OPTIONAL` looked up per row and one hash-joined | 2.5 s | 0.9 s |
 | papers per author initial (5.1 M labels, 9.5 M `dc:creator` lookups) | 179 s | 19 s |
+| two large patterns merge-joined on their subject, `COUNT(DISTINCT)` | 14.2 s | 2.5 s |
+| a star `MINUS { ?d swrc:pages ?pg }` (3.4 M rows, probed per row) | 241 s | 34 s |
+| a star with `FILTER NOT EXISTS { ?d dc:subject ?s }` | 16.1 s | 2.8 s |
 
 Over a simulated link the pubmed query (32 MB) took 20 s on one thread and
 4.1 s sliced at 60 ms and 40 MB/s, and 34 s and 11.5 s at 120 ms and 4 MB/s,
@@ -233,7 +244,9 @@ dictionary on every row and is now looked up once per distinct value;
 `BIND`s of its group ran after them; the graph directory of a file with more
 than two million graphs kept one read-ahead window, so a lookup of each row's
 graph read and decoded a block again; finding one graph in a tile walked the
-tile's segment headers; and a block under `GRAPH ?g` that was not a plain
+tile's segment headers; the cache of decoded chunks and tiles was one lock
+with a recency tree updated on every lookup (it is now split into parts, and
+a lookup writes nothing every thread shares); and a block under `GRAPH ?g` that was not a plain
 basic graph pattern (one with an `OPTIONAL` or a `FILTER` inside) was
 evaluated in every graph of the file instead of the graphs its required
 pattern is found in. Native builds also turn on the `regex` crate's DFA and
@@ -255,8 +268,10 @@ and an explicit figure overrides both (`rete sparql --memory-budget-mb N`; a
 client calls `set_memory_budget`). Least recently used entries
 are evicted and re-read when touched again, so the budget trades speed for
 memory and never changes an answer. The per-query term and number memos are
-capped at 64 MiB each. The browser engine is not capped: its 32-bit heap is
-smaller than the default, and its callers bound their own range budgets.
+capped at 64 MiB each. The browser engine opens a remote file with a budget of
+1024 MiB (`set_memory_budget_mb(n)`, `0` for no cap): its heap ends at 4 GiB
+and never shrinks, and without a cap two heavy queries in a row reached the
+end of it. It does not spill `COUNT(DISTINCT …)`, having no disk.
 
 `COUNT(DISTINCT …)` is bounded by the same figure: its distinct values are
 kept as a sorted, deduplicated buffer of dictionary ids (8 bytes each), and
@@ -370,8 +385,18 @@ Semantics, precisely:
 - `GRAPH <iri>` / `GRAPH ?g` and `FROM NAMED` are completely unaffected: they
   enumerate and scope the named graphs exactly as before.
 
-Where it exists today:
+Where it exists:
 
+- **The command line** — `rete sparql --union-default-graph` (and the same flag
+  on `sparql-url` and `federate`, which applies it to each source), and
+  `rete serve --union-default-graph`, which makes every query the endpoint
+  answers use it, as Oxigraph's server does. See [CLI](cli.md).
+- **The clients** — Python `g.query(q, union_default_graph=True)` (also
+  `query_raw`, `query_df`), R `rete_query(g, q, union_default_graph = TRUE)`,
+  JavaScript `g.query(q, { unionDefault: true })`, Java
+  `rete.query(sparql, true)`, and the MCP / MCPB `sparql_query` and
+  `start_query` tools' `union_default_graph` option (not together with
+  `partition_by`).
 - **The playground** — the ⛁ All graphs toggle beside 🧠 Reason. Flipping it
   is announced, and every result computed under it says so in its meta line,
   so a non-standard answer is never silently presented as a standard one. See
@@ -381,30 +406,36 @@ Where it exists today:
   [WASM & JavaScript API](browser.md)).
 - **Rust** — `eval_query_with(&rete, query, QueryOpts { union_default_graph:
   true, ..QueryOpts::default() })` in `rete-core::sparql`.
-- **Not** on the CLI — `rete sparql` has no union flag — and **not** in
-  `rete serve`'s endpoint. If you need the union semantics there, write it
-  into the query with `GRAPH ?g { … }` (and `UNION` with a default-graph
-  branch when both sides hold data), which works everywhere.
 
 Costs and limits worth knowing before flipping it on:
 
+- **A quad index (`--named-graphs quad`, format `0x07`) is read in place.** A
+  pattern is answered from the order that fits its bound terms (SPOG for a
+  subject, POSG for a predicate or predicate and object, OSPG for an object),
+  with the graph column dropped and the copies of a triple, which sit next to
+  each other, counted once, then merged with the file's own default graph. Nothing
+  is built from the graphs' triples: a selective pattern reads the few tiles it
+  routes to, locally or over HTTP, and a pattern that matches everything reads
+  one order once, in a fixed amount of memory. `COUNT(*)`, `GROUP BY`, joins,
+  `ORDER BY`, `LIMIT`, `DESCRIBE`, `CONSTRUCT` and the multi-threaded
+  aggregation all see the same de-duplicated triples as the merge would give.
+  The price of de-duplicating is that the count of every triple of a many-quad
+  file reads every quad of one order: a union `COUNT(*)` is a pass over the
+  quad section, not an answer from a directory.
 - The common converted-file shape — **empty default graph, exactly one named
-  graph** — stays a zero-copy borrow of that graph's index: no copying, no
-  extra bytes.
-- Any other shape **materializes the merged index** for the query. On a
-  lazily-opened remote file that can mean faulting the index tiles of every
-  named graph the merge touches — a real cost on a many-graph file, and
-  precisely why the mode is opt-in per query rather than a file-level default.
+  graph** — stays a zero-copy borrow of that graph's index.
+- **Any other layout materializes the merged index** for the query: a file with
+  a container per graph, or a quad index written before `0x07`. On a
+  lazily-opened remote file that means faulting the index tiles of every
+  named graph, and a large file may not fit in memory. The answer still
+  carries a `materialized-union` hint saying so (the warnings of the CLI and
+  of the clients). `rete convert` rewrites such a file as a `0x07` quad index.
 - The playground's progressive and community-split strategies answer from
   default-graph structures, so a union run is evaluated on the whole index
   instead (the result line says so) rather than silently answering with
   standard semantics.
-- Federated multi-source runs and live SPARQL endpoints keep standard
-  semantics — the toggle does not reach them (a live endpoint decides its own
-  dataset).
-- Under union, `DESCRIBE`'s per-resource expansion — the triples returned
-  *about* each matched resource — still reads the default graph; the union
-  applies to the pattern matching that selects the resources.
+- A live `SERVICE` endpoint keeps standard semantics: a live endpoint decides
+  its own dataset.
 
 ## Output views & query shapes
 
@@ -867,7 +898,7 @@ Notes:
   (non-ASCII escaped as `\uXXXX`, as a header value must be), and
   `Rete-Warning-Count` the total. Both are left out when there is nothing to
   report. Browsers can read them (`Access-Control-Expose-Headers`). See
-  [`rete serve`](cli.html#rete-serve-file---bind-addr---token-t---journal-path).
+  [`rete serve`](cli.html#rete-serve-file---bind-addr---token-t---journal-path---union-default-graph).
 
 A function rete doesn't know is never silently false. An unknown name
 (`NOSUCHFN(?x)`) is a parse error, and an extension-function IRI that rete

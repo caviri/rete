@@ -140,6 +140,14 @@ Embed your own with `Builder.example()` (rich: title + question + SPARQL) or
 over the file's ontology, so it works over lazy remote files without
 materializing anything. See [Reasoning & coherence](reasoning.md).
 
+### Union default graph
+
+`g.query(q, union_default_graph=True)` (also `query_raw` and `query_df`) lets a
+pattern outside `GRAPH` match the default graph and every named graph, a triple
+stored in several graphs counting once. It is not standard SPARQL, so it is off
+by default; a `FROM` in the query still wins. See
+[Union default graph](sparql.md#union-default-graph) for what it costs.
+
 ### Federation
 
 SPARQL 1.1 `SERVICE` works out of the box: join a `.rete` file against any
@@ -362,6 +370,7 @@ any CORS-enabled host.
 | Lazy local open | ✅ | positional reads, no whole-file load |
 | Custom reader objects | ✅ | `open(reader=...)` — fsspec/S3 |
 | OWL 2 QL reasoned queries | ✅ | `query(..., reason=True)` |
+| Union default graph | ✅ | `query(..., union_default_graph=True)` |
 | `SERVICE` federation | ✅ | host-injected HTTP client |
 | Build from RDF text / rdflib objects | ✅ | `build()`, `Builder` |
 | Dataset Card: embed + read back | ✅ | `Builder.card()`, `Graph.card()` (ranged on remote) |

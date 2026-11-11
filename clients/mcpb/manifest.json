@@ -10,7 +10,7 @@
     "url": "https://github.com/caviri/rete"
   },
   "homepage": "https://caviri.github.io/rete/",
-  "documentation": "https://caviri.github.io/rete/javascript.html",
+  "documentation": "https://caviri.github.io/rete/docs/javascript.html",
   "support": "https://github.com/caviri/rete/issues",
   "icon": "icon.png",
   "server": {

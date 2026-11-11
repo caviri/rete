@@ -20,6 +20,14 @@ use rete_core::write_opts::{set_write_options, write_options};
 use rete_core::{PermSet, PyramidAlgo, Rete};
 
 const N: usize = 1_500;
+
+/// The thread count is one setting for the process: the tests that change it
+/// run one at a time.
+static THREADS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    THREADS.lock().unwrap_or_else(|e| e.into_inner())
+}
 const XSD_INT: &str = "http://www.w3.org/2001/XMLSchema#integer";
 
 fn iri(s: &str) -> String {
@@ -305,11 +313,33 @@ fn queries() -> Vec<(&'static str, bool)> {
             "SELECT (COUNT(*) AS ?n) (COUNT(?k) AS ?ks) WHERE { { GRAPH ?g { ?s ex:score ?v } } UNION              { SELECT ?k WHERE { ?np ex:featured ?k } } }",
             true,
         ),
-        // Not split: EXISTS reads the whole row and keeps its own table.
+        // EXISTS: its solutions are evaluated once, by the first slice that
+        // needs them, and read by the others.
         (
             "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
              FILTER EXISTS { GRAPH ?pv { ?e rdfs:label ?l } } }",
-            false,
+            true,
+        ),
+        (
+            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
+             FILTER(NOT EXISTS { GRAPH ?p2 { ?x ex:source ?s FILTER(STRENDS(STR(?s), \"#3\")) } } \
+             && ?e != <http://ex/grade/4>) } GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
+        // MINUS: the right side is indexed once for all slices.
+        (
+            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
+             MINUS { GRAPH ?p2 { ?x ex:source ?s FILTER(STRENDS(STR(?s), \"#5\")) } } } \
+             GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
+        // A sub-select that only projects: the scan inside it is sliced.
+        (
+            "SELECT ?host (COUNT(*) AS ?n) WHERE { { SELECT ?np ?host WHERE { \
+             GRAPH ?h { ?np a ex:Nanopublication } \
+             BIND(STRBEFORE(STRAFTER(STR(?np), \"//\"), \"/\") AS ?host) } } \
+             FILTER(?host != \"alpha.example\") } GROUP BY ?host ORDER BY ?host",
+            true,
         ),
         // Not split: the default graph's few triples are one tile.
         (
@@ -372,6 +402,23 @@ fn pattern_queries() -> Vec<(&'static str, bool)> {
             "SELECT ?v (COUNT(DISTINCT ?u) AS ?n) WHERE {              ?t a ex:Kind3 ; ex:link ?u . ?u ex:value ?v } GROUP BY ?v ORDER BY ?v",
             true,
         ),
+        // MINUS and NOT EXISTS over patterns of the default graph.
+        (
+            "SELECT ?k (COUNT(*) AS ?n) WHERE { ?t a ?k ; ex:value ?v \
+             MINUS { ?t ex:link ?u . ?u a ex:Kind0 } } GROUP BY ?k ORDER BY ?k",
+            true,
+        ),
+        (
+            "SELECT ?k (COUNT(*) AS ?n) (MAX(?v) AS ?top) WHERE { ?t a ?k ; ex:value ?v \
+             FILTER NOT EXISTS { ?t ex:link ?u . ?u ex:value ?v } } GROUP BY ?k ORDER BY ?k",
+            true,
+        ),
+        // A projecting sub-select around a star, joined to a pattern.
+        (
+            "SELECT ?k (COUNT(*) AS ?n) WHERE { { SELECT ?t ?k WHERE { ?t a ?k ; ex:value ?v \
+             FILTER(?v > 5) } } ?t ex:link ?u } GROUP BY ?k ORDER BY ?k",
+            true,
+        ),
         // A pattern joined to an OPTIONAL pattern and a second block.
         (
             "SELECT ?k (COUNT(*) AS ?n) (COUNT(?w) AS ?ws) WHERE { ?t a ?k              OPTIONAL { ?t ex:link ?u . ?u ex:value ?w FILTER(?w > 6) } } GROUP BY ?k ORDER BY ?k",
@@ -382,6 +429,7 @@ fn pattern_queries() -> Vec<(&'static str, bool)> {
 
 #[test]
 fn four_threads_answer_as_one_does() {
+    let _threads = one_at_a_time();
     let (quads, things) = (file(), things());
     let parallel = cfg!(feature = "parallel");
     let cases = queries()
@@ -460,11 +508,36 @@ fn four_threads_answer_as_one_does() {
     set_query_threads(0);
 }
 
+/// The first thing several threads do on a freshly opened file is read the
+/// graph directory, all at once. Every one of them must get it: a thread that
+/// found the directory half installed skipped its graph without a word, and a
+/// count came out a few dozen short, now and then.
+#[test]
+fn a_fresh_file_opened_under_several_threads_loses_no_graph() {
+    let _threads = one_at_a_time();
+    if !cfg!(feature = "parallel") {
+        return;
+    }
+    let image = image(GraphLayout::Quad);
+    let q =
+        format!("{P}SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH ?g {{ ?s ?p ?o FILTER(isIRI(?s)) }} }}");
+    set_query_threads(1);
+    let want = rows(&Rete::open(&image).unwrap(), &q);
+    set_query_threads(8);
+    for round in 0..300 {
+        let rete = Rete::open(&image).unwrap();
+        assert_eq!(rows(&rete, &q), want, "round {round}");
+        assert!(!rete.index_incomplete(), "round {round}");
+    }
+    set_query_threads(0);
+}
+
 /// A FILTER written before the BINDs of its group runs below them when it
 /// reads none of their variables. The oracle wraps the BINDs in a sub-select,
 /// which the filter cannot move into.
 #[test]
 fn a_filter_below_the_binds_keeps_the_same_rows() {
+    let _threads = one_at_a_time();
     let rete = file();
     let moved = format!(
         "{P}SELECT ?np ?tail ?host WHERE {{ GRAPH ?h {{ ?np a ex:Nanopublication }} \

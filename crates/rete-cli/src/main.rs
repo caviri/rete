@@ -1317,6 +1317,14 @@ enum Command {
         /// the raw data with no materialization (opt-in; off = exact-match).
         #[arg(long)]
         entail: bool,
+        /// Evaluate against the union default graph: a pattern outside `GRAPH`
+        /// matches the file's default graph and every named graph, a triple
+        /// stored in several graphs counts once, and an explicit `FROM` still
+        /// wins (opt-in; off = the standard default graph). On a file with a
+        /// quad index (`--named-graphs quad`) the union is read in place. See
+        /// "Union default graph" in docs/sparql.md.
+        #[arg(long = "union-default-graph")]
+        union_default_graph: bool,
         /// Memory budget in MiB for reading the file (0 = unlimited; default:
         /// half the memory available, 256–4096, or RETE_QUERY_BUDGET_MB):
         /// bounds the dictionary chunk cache, the index tile cache
@@ -1347,6 +1355,12 @@ enum Command {
         /// Journal path override (default: `<file>.changes`).
         #[arg(long)]
         journal: Option<String>,
+        /// Answer every query against the union default graph, as Oxigraph's
+        /// server can: a pattern outside `GRAPH` matches the default graph and
+        /// every named graph, a triple stored in several graphs counts once,
+        /// and an explicit `FROM` still wins. Off = the standard default graph.
+        #[arg(long = "union-default-graph")]
+        union_default_graph: bool,
     },
     /// Run a read-only **Cypher subset** by translating it to SPARQL.
     ///
@@ -1442,6 +1456,10 @@ enum Command {
         /// sources would be counted twice.
         #[arg(long)]
         disjoint: bool,
+        /// Evaluate each source against its union default graph (see
+        /// `sparql --union-default-graph`).
+        #[arg(long = "union-default-graph")]
+        union_default_graph: bool,
     },
     /// Run a SPARQL query over HTTP, range-fetching the file (no full download).
     #[command(
@@ -1467,6 +1485,9 @@ enum Command {
         /// while reading only the bytes the rewritten query touches.
         #[arg(long)]
         entail: bool,
+        /// Evaluate against the union default graph (see `sparql --union-default-graph`).
+        #[arg(long = "union-default-graph")]
+        union_default_graph: bool,
         /// Memory budget in MiB for reading the remote file (0 = unlimited;
         /// default: half the memory available, 256–4096, or
         /// RETE_QUERY_BUDGET_MB): bounds the dictionary chunk cache, the index
@@ -2176,17 +2197,32 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             query_file,
             json,
             entail,
+            union_default_graph,
             memory_budget_mb,
         } => {
             let query = commands::query_text::read(query, query_file.as_deref())?;
-            commands::query::sparql(&file, &query, json, entail, memory_budget_mb)
+            commands::query::sparql(
+                &file,
+                &query,
+                json,
+                entail,
+                union_default_graph,
+                memory_budget_mb,
+            )
         }
         Command::Serve {
             file,
             bind,
             token,
             journal,
-        } => commands::serve::serve(&file, &bind, token.as_deref(), journal.as_deref()),
+            union_default_graph,
+        } => commands::serve::serve(
+            &file,
+            &bind,
+            token.as_deref(),
+            journal.as_deref(),
+            union_default_graph,
+        ),
         Command::Cypher {
             file,
             query,
@@ -2210,10 +2246,18 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             query_file,
             json,
             entail,
+            union_default_graph,
             memory_budget_mb,
         } => {
             let query = commands::query_text::read(query, query_file.as_deref())?;
-            commands::url::sparql_url(&url, &query, json, entail, memory_budget_mb)
+            commands::url::sparql_url(
+                &url,
+                &query,
+                json,
+                entail,
+                union_default_graph,
+                memory_budget_mb,
+            )
         }
         Command::WhyUrl {
             url,
@@ -2229,9 +2273,17 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             json,
             no_route,
             disjoint,
+            union_default_graph,
         } => {
             let query = commands::query_text::read(query, query_file.as_deref())?;
-            commands::federate::federate(&sources, &query, json, !no_route, disjoint)
+            commands::federate::federate(
+                &sources,
+                &query,
+                json,
+                !no_route,
+                disjoint,
+                union_default_graph,
+            )
         }
         Command::Manifest { command } => match command {
             ManifestCommand::Init {

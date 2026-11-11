@@ -162,7 +162,8 @@ evaluation toggles explicit: `reason` is the entailment switch, `union` the
 non-standard [union default graph](sparql.md#union-default-graph) mode, where
 a pattern outside `GRAPH` matches the merge of the default graph and every
 named graph. Both default to off, and plain `query` never applies either. One
-cost to know: on a `RemoteGraph`, a union query over a many-graph file may
+cost to know: on a file with a quad index the union is read in place, a few tiles
+for a selective query; on any other layout, a union query on a `RemoteGraph` may
 fault the index tiles of **every** named graph the merge touches (the
 empty-default + single-named-graph shape stays a zero-copy borrow), so the
 merge is strictly per-query opt-in.
@@ -325,6 +326,13 @@ browser-style camelCase fields: `resultCount`, `matchedPattern`,
 container; `indexSectionRange` is the selected permutation payload inside it.
 Tile provenance reports the physical tile holding each match —
 `{ "available": true, "id": "SPO/3", "range": { … } }`.
+
+What the session keeps is bounded: a remote file is opened with a memory budget
+of 1024 MiB, shared between the block cache, the decoded tiles and the decoded
+dictionary chunks. Past it the least recently used entries are dropped and read
+again when a query touches them, so a long session stays inside the 4 GiB a
+wasm heap can hold. `set_memory_budget_mb(n)`, called before a file is opened,
+changes the budget, and `0` removes it.
 
 ### Minimal example
 
