@@ -267,6 +267,7 @@ pub fn section_id_ordered(
     term: &str,
     order: TermOrder,
 ) -> Option<u32> {
+    let probe = order.probe(term.as_bytes());
     let mut buf = Vec::new();
     // Binary search restart runs by their first (full) term.
     let mut lo = 0usize;
@@ -274,7 +275,7 @@ pub fn section_id_ordered(
     while lo < hi {
         let mid = (lo + hi) / 2;
         run_entry_into(bytes, meta.restart_offsets[mid] as usize, &mut buf)?;
-        if order.cmp(&buf, term.as_bytes()) != std::cmp::Ordering::Greater {
+        if probe.cmp_stored(&buf) != std::cmp::Ordering::Greater {
             lo = mid + 1;
         } else {
             hi = mid;
@@ -293,7 +294,7 @@ pub fn section_id_ordered(
             .saturating_sub(run as u32 * meta.restart_interval),
     );
     for step in 0..run_len {
-        match order.cmp(&buf, term.as_bytes()) {
+        match probe.cmp_stored(&buf) {
             std::cmp::Ordering::Equal => return Some(base_id + step),
             std::cmp::Ordering::Greater => return None,
             std::cmp::Ordering::Less => {}
@@ -600,9 +601,9 @@ impl LeafedChunks {
     }
 
     /// The leaf whose keys route `term`, by first key.
-    pub fn leaf_of_term(&self, order: TermOrder, term: &[u8]) -> Option<usize> {
+    pub fn leaf_of_term(&self, probe: &crate::term_order::Probe) -> Option<usize> {
         self.leaves
-            .partition_point(|l| order.cmp(&l.key, term) != std::cmp::Ordering::Greater)
+            .partition_point(|l| probe.cmp_stored(&l.key) != std::cmp::Ordering::Greater)
             .checked_sub(1)
     }
 
@@ -691,24 +692,24 @@ impl ChunkDir {
     }
 
     /// The chunk whose routing key range holds `term`.
-    fn chunk_for_term(&self, order: TermOrder, term: &[u8]) -> Option<usize> {
+    fn chunk_for_term(&self, probe: &crate::term_order::Probe) -> Option<usize> {
         use std::cmp::Ordering::Greater;
         match self {
             ChunkDir::Full(v) => match v.len() {
                 0 => None,
                 1 => Some(0),
                 _ => v
-                    .partition_point(|c| order.cmp(&c.key, term) != Greater)
+                    .partition_point(|c| probe.cmp_stored(&c.key) != Greater)
                     .checked_sub(1),
             },
             ChunkDir::Leafed(l) => {
                 if l.total == 0 {
                     return None;
                 }
-                let li = l.leaf_of_term(order, term)?;
+                let li = l.leaf_of_term(probe)?;
                 l.ensure_leaves(&[li]);
                 let cell = l.cells[li].get()?;
-                let j = cell.partition_point(|(c, _, _)| order.cmp(&c.key, term) != Greater);
+                let j = cell.partition_point(|(c, _, _)| probe.cmp_stored(&c.key) != Greater);
                 // The leaf's first key routed here, so its first chunk is a
                 // candidate even when its own (equal) key compares <=.
                 Some(l.leaves[li].first + j.saturating_sub(1))
@@ -1556,14 +1557,17 @@ impl ChunkedSection {
     /// on the (resident) chunk directory, without touching a chunk body. `None`
     /// for an empty section, or a term that sorts before the first chunk.
     pub(crate) fn chunk_for_term(&self, term: &str) -> Option<usize> {
-        self.chunks.chunk_for_term(self.order, term.as_bytes())
+        self.chunks
+            .chunk_for_term(&self.order.probe(term.as_bytes()))
     }
 
     /// The leaf directory block that routes `term` to a chunk, without reading
     /// it. `None` on a section whose directory is resident (nothing to fault).
     pub(crate) fn leaf_for_term(&self, term: &str) -> Option<usize> {
         match &self.chunks {
-            ChunkDir::Leafed(l) if l.total > 0 => l.leaf_of_term(self.order, term.as_bytes()),
+            ChunkDir::Leafed(l) if l.total > 0 => {
+                l.leaf_of_term(&self.order.probe(term.as_bytes()))
+            }
             _ => None,
         }
     }
@@ -1618,6 +1622,7 @@ impl ChunkedSection {
         bound: &str,
         term_of: &dyn Fn(u32) -> Option<String>,
     ) -> Option<u32> {
+        let probe = self.order.probe(bound.as_bytes());
         let tc = self.meta.term_count;
         let ri = self.meta.restart_interval as usize;
         if tc == 0 || ri == 0 {
@@ -1638,7 +1643,7 @@ impl ChunkedSection {
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             let term = term_of(u32::try_from(mid).ok()?)?;
-            if self.order.cmp(term.as_bytes(), bound.as_bytes()) == std::cmp::Ordering::Less {
+            if probe.cmp_stored(term.as_bytes()) == std::cmp::Ordering::Less {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -1669,6 +1674,97 @@ impl ChunkedSection {
         found.map_or(Lookup::Absent, |l| l)
     }
 
+    /// Look up a string literal under both of its spellings in one search:
+    /// `lo` is the plain one (`"x"`), `hi` the typed one
+    /// (`"x"^^xsd:string`). Returns `lo`'s id, and `hi`'s when this search
+    /// settled it (`None`: not settled, look `hi` up on its own).
+    ///
+    /// In the SPARQL order the two are neighbours: the same lexical form,
+    /// datatype rank and tag, then the token, and the plain token is a prefix
+    /// of the typed one. So the search for `lo` ends on `hi` or proves it
+    /// absent, unless it ends at the edge of a run. A lookup that missed
+    /// under one spelling used to search every section again for the other;
+    /// a `BIND` of a new string is always such a miss. In the byte order
+    /// other terms sort between the two (`"x"@en`), and nothing is settled.
+    pub(crate) fn lookup_pair(&self, lo: &str, hi: &str) -> (Option<u32>, Option<Option<u32>>) {
+        let settled = if self.order == TermOrder::Sparql {
+            self.lookup_pair_inner(lo, hi)
+        } else {
+            None
+        };
+        settled.unwrap_or_else(|| (self.id(lo), None))
+    }
+
+    /// `None`: the search could not be made this way (an elided chunk, a
+    /// term before its chunk's first, a failed read); the caller looks each
+    /// spelling up on its own.
+    #[allow(clippy::type_complexity)]
+    fn lookup_pair_inner(&self, lo: &str, hi: &str) -> Option<(Option<u32>, Option<Option<u32>>)> {
+        if self.chunks.is_empty() {
+            return None;
+        }
+        let ri = self.meta.restart_interval as usize;
+        let probe = self.order.probe(lo.as_bytes());
+        let ci = self.chunks.chunk_for_term(&probe)?;
+        if self.is_elided(ci) {
+            return None;
+        }
+        let first_run = self.chunks.get(ci)?.first_run;
+        let entry = self.chunk_entry(ci)?;
+        let bytes: &[u8] = entry.body();
+        let run_end = self.run_end_of_chunk(ci, &entry, ri);
+        let mut buf = Vec::new();
+        let (mut a, mut b) = (first_run, run_end);
+        while a < b {
+            let mid = (a + b) / 2;
+            let off = self.run_off_in_chunk(ci, mid, &entry, ri)?;
+            run_entry_into(bytes, off, &mut buf)?;
+            if probe.cmp_stored(&buf) != std::cmp::Ordering::Greater {
+                a = mid + 1;
+            } else {
+                b = mid;
+            }
+        }
+        if a == first_run {
+            // `lo` sorts before the chunk's first term, which may be `hi`.
+            return None;
+        }
+        let run = a - 1;
+        let off = self.run_off_in_chunk(ci, run, &entry, ri)?;
+        let mut pos = run_entry_into(bytes, off, &mut buf)?;
+        let base_id = (run * ri) as u32 + 1;
+        let run_len = self.meta.restart_interval.min(
+            self.meta
+                .term_count
+                .saturating_sub(run as u32 * self.meta.restart_interval),
+        );
+        for step in 0..run_len {
+            let id = base_id + step;
+            match probe.cmp_stored(&buf) {
+                std::cmp::Ordering::Equal => {
+                    // `hi` is the next term of the section, or not in it.
+                    if step + 1 < run_len {
+                        entry_into(bytes, pos, &mut buf)?;
+                        let next = (buf.as_slice() == hi.as_bytes()).then_some(id + 1);
+                        return Some((Some(id), Some(next)));
+                    }
+                    return Some((Some(id), None));
+                }
+                // The first term past `lo`: `hi`, or `hi` is absent too.
+                std::cmp::Ordering::Greater => {
+                    let here = (buf.as_slice() == hi.as_bytes()).then_some(id);
+                    return Some((None, Some(here)));
+                }
+                std::cmp::Ordering::Less => {}
+            }
+            if step + 1 < run_len {
+                pos = entry_into(bytes, pos, &mut buf)?;
+            }
+        }
+        // Past the run's last term: `lo` is absent, `hi` may open the next run.
+        Some((None, None))
+    }
+
     fn lookup_inner(&self, term: &str) -> Option<Lookup> {
         if self.chunks.is_empty() {
             return None;
@@ -1690,7 +1786,9 @@ impl ChunkedSection {
         // gap `key(i) <= term < first(i)`; the run search below then hits its
         // `lo == first_run` branch and answers `None`, which is correct — such
         // a term is strictly between two chunks, i.e. absent.
-        let ci = self.chunk_for_term(term)?;
+        // The term is read once for the whole lookup ([`crate::term_order::Probe`]).
+        let probe = self.order.probe(term.as_bytes());
+        let ci = self.chunks.chunk_for_term(&probe)?;
         let first_run = self.chunks.get(ci)?.first_run;
         if self.is_elided(ci) {
             let (first, last) = self.chunk_ids(ci)?;
@@ -1708,7 +1806,7 @@ impl ChunkedSection {
             let mid = (lo + hi) / 2;
             let off = self.run_off_in_chunk(ci, mid, &entry, ri)?;
             run_entry_into(bytes, off, &mut buf)?;
-            if self.order.cmp(&buf, term.as_bytes()) != std::cmp::Ordering::Greater {
+            if probe.cmp_stored(&buf) != std::cmp::Ordering::Greater {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -1732,7 +1830,7 @@ impl ChunkedSection {
                 .saturating_sub(run as u32 * self.meta.restart_interval),
         );
         for step in 0..run_len {
-            match self.order.cmp(&buf, term.as_bytes()) {
+            match probe.cmp_stored(&buf) {
                 std::cmp::Ordering::Equal => return Some(Lookup::Found(base_id + step)),
                 std::cmp::Ordering::Greater => return None,
                 std::cmp::Ordering::Less => {}

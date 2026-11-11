@@ -1160,6 +1160,68 @@ impl Dictionary {
     /// A string literal also matches its other spelling (`"x"` ↔
     /// `"x"^^xsd:string`, one RDF 1.1 term; see [`Self::subject_id`]).
     pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
+        // A string literal in the SPARQL order: both spellings in one search
+        // of each section.
+        if self.order() == TermOrder::Sparql {
+            if let Some(alias) = crate::terms::string_literal_alias(term) {
+                return self.node_of_string(term, &alias);
+            }
+        }
+        self.node_of_term_each(term)
+    }
+
+    /// [`node_of_term`](Self::node_of_term) for a string literal `term` whose
+    /// other spelling is `alias`: `term` in the shared, subject-only and
+    /// object-only sections, then `alias` in the same order, as two passes
+    /// would find them, with each section searched once where the search for
+    /// one spelling settles the other ([`ChunkedSection::lookup_pair`]).
+    fn node_of_string(&self, term: &str, alias: &str) -> Option<NodeId> {
+        let term_is_plain = term.len() < alias.len();
+        let (lo, hi) = if term_is_plain {
+            (term, alias)
+        } else {
+            (alias, term)
+        };
+        let node = |si: usize, id: u32| -> Option<NodeId> {
+            Some(match si {
+                0 => self.subject_node(id),
+                1 => self.subject_node(self.shared_len.checked_add(id)?),
+                _ => self.object_node(self.shared_len.checked_add(id)?),
+            })
+        };
+        // What each section's search said about the alias (`None`: nothing).
+        let mut aliases: [Option<Option<u32>>; 3] = [None; 3];
+        for (si, slot) in aliases.iter_mut().enumerate() {
+            let (plain, typed) = self.sections[si].lookup_pair(lo, hi);
+            let (mine, other) = if term_is_plain {
+                (Some(plain), typed)
+            } else {
+                (typed, Some(plain))
+            };
+            let mine = match mine {
+                Some(found) => found,
+                None => self.sections[si].id(term),
+            };
+            if let Some(id) = mine {
+                return node(si, id);
+            }
+            *slot = other;
+        }
+        for (si, known) in aliases.into_iter().enumerate() {
+            let found = match known {
+                Some(found) => found,
+                None => self.sections[si].id(alias),
+            };
+            if let Some(id) = found {
+                return node(si, id);
+            }
+        }
+        None
+    }
+
+    /// [`node_of_term`](Self::node_of_term), each spelling looked up on its
+    /// own: the byte order, and every term that is not a string literal.
+    fn node_of_term_each(&self, term: &str) -> Option<NodeId> {
         // Shared, subject-only, object-only: each section once (the subject and
         // the object role both begin with the shared section).
         let exact = |t: &str| {
@@ -1409,6 +1471,77 @@ mod tests {
         b.observe("Alice", "knows", "Bob");
         b.observe("Bob", "knows", "Carol");
         b.build()
+    }
+
+    /// A string literal is found under either spelling, wherever each is
+    /// stored, exactly as two separate lookups find it. The dictionary holds
+    /// plain, typed and both, in every role, with language-tagged and other
+    /// neighbours, and enough of them that pairs fall on run boundaries.
+    #[test]
+    fn a_string_literal_is_found_under_either_spelling_in_one_search() {
+        const XS: &str = "^^<http://www.w3.org/2001/XMLSchema#string>";
+        let mut b = DictionaryBuilder::new();
+        let mut asked: Vec<String> = Vec::new();
+        for i in 0..600u32 {
+            let lex = format!("w{:03}", (i * 7) % 600);
+            let plain = format!("\"{lex}\"");
+            let typed = format!("\"{lex}\"{XS}");
+            // Which spellings are stored, and in which role.
+            let stored: Vec<&String> = match i % 5 {
+                0 => vec![&plain],
+                1 => vec![&typed],
+                2 => vec![&plain, &typed],
+                3 => vec![],
+                _ => vec![&typed, &plain],
+            };
+            for (k, t) in stored.into_iter().enumerate() {
+                match (i / 5 + k as u32) % 3 {
+                    0 => b.observe(t, "<p>", "<o>"),
+                    1 => b.observe("<s>", "<p>", t),
+                    _ => {
+                        b.observe(t, "<p>", "<o>");
+                        b.observe("<s>", "<q>", t);
+                    }
+                }
+            }
+            if i % 4 == 0 {
+                b.observe("<s>", "<p>", &format!("\"{lex}\"@en"));
+            }
+            if i % 9 == 0 {
+                b.observe(
+                    "<s>",
+                    "<p>",
+                    &format!("\"{lex}\"^^<http://www.w3.org/2001/XMLSchema#token>"),
+                );
+            }
+            asked.push(plain);
+            asked.push(typed);
+        }
+        let d = b.build();
+        assert_eq!(d.order(), TermOrder::Sparql);
+        let mut found = 0;
+        for t in &asked {
+            let got = d.node_of_term(t);
+            assert_eq!(got, d.node_of_term_each(t), "{t}");
+            found += usize::from(got.is_some());
+        }
+        // Four in five lexical forms are stored under some spelling.
+        assert_eq!(found, 2 * 480);
+        // A spelling that is stored is found as itself, not as its alias.
+        for t in &asked {
+            if let Some(n) = d.node_of_term(t) {
+                let back = d.node_term(n).unwrap();
+                let other = crate::terms::string_literal_alias(t).unwrap();
+                assert!(back == *t || back == other, "{t} -> {back}");
+                if d.node_of_term_each(t).is_some() && back != *t {
+                    assert_eq!(
+                        d.sections.iter().take(3).find_map(|sec| sec.id(t)),
+                        None,
+                        "{t} is stored, yet its alias was returned"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
