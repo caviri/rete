@@ -238,6 +238,7 @@ fn counting_over_every_graph_keeps_nothing_per_graph() {
         &rete,
         "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o FILTER(isIRI(?s)) } }",
     );
+    assert!(!rete.index_incomplete());
     assert_eq!(n, quads);
     let graphs = rete.named_graph_count();
     assert_eq!(graphs, 3 * N);

@@ -1488,18 +1488,10 @@ pub(crate) fn eval_plan_iter<'q>(
                     return rows;
                 }
             }
-            // A shard of a grouped query run on several threads walks its
-            // slice of the graphs: each graph's rows depend on no other graph.
-            // Not over a network: the whole walk fetches the section in bulk
-            // (it visits every graph), which slices would read piecemeal.
-            if let Some(part) = ctx
-                .shard
-                .part_for(node)
-                .filter(|_| !ctx.rete.reads_are_remote())
-            {
-                let (lo, hi) = ctx.shard.applied_rows(part, ctx.rete.named_graph_count());
-                return graph_var_walk(ctx, named_filter, var, inner, lo..hi, false);
-            }
+            // The walk over every graph runs on one thread. Sliced across the
+            // shards of a grouped query it lost a few dozen rows on CI's
+            // runners now and then (never locally); until that is found, it
+            // stays whole.
             graph_var_walk(
                 ctx,
                 named_filter,
