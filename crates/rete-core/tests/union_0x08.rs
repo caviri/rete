@@ -79,7 +79,7 @@ fn quads(n: u64) -> Vec<RawQuad> {
         }
         let h = mix(i ^ 0xABCD);
         // Overlap: the same triples again in one or two named graphs.
-        if h % 3 == 0 {
+        if h.is_multiple_of(3) {
             for (pp, o) in &triples {
                 out.push((
                     ci.clone(),
@@ -87,7 +87,7 @@ fn quads(n: u64) -> Vec<RawQuad> {
                     o.clone(),
                     Some(format!("<http://ex/g/{:02}>", h % 16)),
                 ));
-                if h % 9 == 0 {
+                if h.is_multiple_of(9) {
                     out.push((
                         ci.clone(),
                         pp.clone(),
@@ -98,7 +98,7 @@ fn quads(n: u64) -> Vec<RawQuad> {
             }
         }
         // A fact only a named graph has about a default-graph subject.
-        if h % 7 == 0 {
+        if h.is_multiple_of(7) {
             out.push((
                 ci.clone(),
                 p("note"),
