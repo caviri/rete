@@ -22,6 +22,7 @@ mod eval;
 mod expr;
 mod fedmerge;
 mod lower;
+mod par_agg;
 mod partition;
 mod path;
 mod prefetch;
@@ -36,6 +37,7 @@ use eval::{
 pub use fedmerge::FederationPlan;
 use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
+pub use par_agg::{query_threads, set_query_threads, sharded_queries};
 pub use partition::PartitionPlan;
 // Re-exported so the sibling modules' `use super::*` can reach the evaluator
 // (expr's FILTER EXISTS evaluates a sub-plan via `eval_plan_in`).

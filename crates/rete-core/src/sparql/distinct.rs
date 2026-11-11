@@ -27,7 +27,7 @@
 use std::collections::{BTreeSet, BinaryHeap};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::row::Val;
 
@@ -35,7 +35,7 @@ use crate::row::Val;
 /// entries more than it did after the last compaction, at the least.
 const MIN_CHUNK: usize = 1 << 20;
 
-/// Bytes charged per kept string on top of its text (set node, `Rc` header).
+/// Bytes charged per kept string on top of its text (set node, `Arc` header).
 const STR_OVERHEAD: u64 = 64;
 
 /// Distinct values seen so far — see the module docs.
@@ -43,7 +43,7 @@ pub(super) struct DistinctSet {
     ids: Vec<i64>,
     /// `ids.len()` after the last compaction (the sorted, unique prefix).
     compacted: usize,
-    strs: BTreeSet<Rc<str>>,
+    strs: BTreeSet<Arc<str>>,
     str_bytes: u64,
     /// Spill once the deduplicated in-memory set exceeds this many bytes.
     threshold: u64,
@@ -217,7 +217,7 @@ impl Run {
     }
 
     /// Write ascending unique strings, each as a varint length and its bytes.
-    fn write_strs(strs: &BTreeSet<Rc<str>>) -> Option<Run> {
+    fn write_strs(strs: &BTreeSet<Arc<str>>) -> Option<Run> {
         let (run, file) = Run::create()?;
         let mut w = BufWriter::with_capacity(1 << 20, file);
         let mut buf = Vec::with_capacity(10);
@@ -301,7 +301,7 @@ mod tests {
             let id = ((x >> 20) % 900_000) as i64 - 1000; // some predicate tags
             vals.push(Val::Id(id));
             if i % 1000 == 0 {
-                vals.push(Val::Str(Rc::from(format!("\"v{}\"", (x >> 40) % 1500))));
+                vals.push(Val::Str(Arc::from(format!("\"v{}\"", (x >> 40) % 1500))));
             }
         }
         // A value repeated far more often than any chunk holds.
@@ -328,7 +328,7 @@ mod tests {
         let mut s = DistinctSet::new(1);
         s.insert(&Val::Id(-5));
         s.insert(&Val::Id(-5));
-        s.insert(&Val::Str(Rc::from("x")));
+        s.insert(&Val::Str(Arc::from("x")));
         assert_eq!(s.count(), 2);
     }
 

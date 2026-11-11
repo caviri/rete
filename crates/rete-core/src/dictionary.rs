@@ -362,6 +362,11 @@ const PREFETCH_BATCH_CHUNKS: usize = 512;
 /// predicate to read all of it up front ([`Dictionary::prefetch_lookups_with`]).
 const WHOLE_PREDICATE_CHUNKS: usize = 4;
 
+/// The chunk of each section a caller last decoded a term from
+/// ([`Dictionary::node_term_held`]).
+#[derive(Default)]
+pub(crate) struct TermHold([crate::dict::ChunkHold; 4]);
+
 /// A read-only dictionary mapping terms ↔ role-specific IDs.
 ///
 /// Holds the four sections as [`ChunkedSection`]s — local files keep each
@@ -1028,6 +1033,46 @@ impl Dictionary {
         }
     }
 
+    /// [`node_term`](Self::node_term) for a caller that decodes many nodes
+    /// (see [`crate::dict::ChunkedSection::term_held`]): `hold` is the
+    /// caller's, one per dictionary.
+    pub(crate) fn node_term_held(&self, node: NodeId, hold: &mut TermHold) -> Option<String> {
+        let su = self.subject_only_count();
+        let id = node.checked_add(1)?;
+        let (si, local) = if node < self.shared_len {
+            (0, id)
+        } else if node < self.shared_len.saturating_add(su) {
+            (1, id - self.shared_len)
+        } else {
+            // An object id past the shared section, as `object_term` splits it.
+            let oid = id - su;
+            if oid <= self.shared_len {
+                (0, oid)
+            } else {
+                (2, oid - self.shared_len)
+            }
+        };
+        if let Some(t) = self.sections[si].term_held(local, &mut hold.0[si]) {
+            return Some(t);
+        }
+        // A subject-only id in a chunk the file derives (`crate::derived`)
+        // stores no text: rebuild it, as `subject_only_term` does for the
+        // unheld path.
+        match &self.derived {
+            Some(d) if si == 1 && self.sections[1].id_is_elided(local) => d.term(self, local),
+            _ => None,
+        }
+    }
+
+    /// [`predicate_term`](Self::predicate_term), as [`Self::node_term_held`].
+    pub(crate) fn predicate_term_held(
+        &self,
+        id: PredicateId,
+        hold: &mut TermHold,
+    ) -> Option<String> {
+        self.sections[3].term_held(id, &mut hold.0[3])
+    }
+
     /// Resolve a unified node ID back to its term.
     pub fn node_term(&self, node: NodeId) -> Option<String> {
         let su = self.subject_only_count();
@@ -1115,10 +1160,14 @@ impl Dictionary {
     /// A string literal also matches its other spelling (`"x"` ↔
     /// `"x"^^xsd:string`, one RDF 1.1 term; see [`Self::subject_id`]).
     pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
+        // Shared, subject-only, object-only: each section once (the subject and
+        // the object role both begin with the shared section).
         let exact = |t: &str| {
-            self.subject_id_exact(t)
-                .map(|sid| self.subject_node(sid))
-                .or_else(|| self.object_id_exact(t).map(|oid| self.object_node(oid)))
+            if let Some(sid) = self.subject_id_exact(t) {
+                return Some(self.subject_node(sid));
+            }
+            let oid = self.shared_len.checked_add(self.sections[2].id(t)?)?;
+            Some(self.object_node(oid))
         };
         exact(term).or_else(|| exact(&crate::terms::string_literal_alias(term)?))
     }

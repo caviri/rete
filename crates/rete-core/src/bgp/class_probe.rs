@@ -81,6 +81,7 @@ pub(crate) fn class_probe_rows<'q>(
     ctx: &'q Ctx<'q>,
     patterns: &[TriplePattern],
     gslot: usize,
+    part: Option<crate::row::ShardPart>,
 ) -> Option<Box<dyn Iterator<Item = Row> + 'q>> {
     let force = forced();
     if force == Some(false) || patterns.len() < 2 {
@@ -125,26 +126,51 @@ pub(crate) fn class_probe_rows<'q>(
     let class = consts
         .iter()
         .find_map(|&(cp, co)| if cp == Some(pid) { co } else { None })?;
-    // 1. The pairs.
-    let scan = quad.scan_pairs((None, Some(pid), Some(class)))?;
-    if scan.is_empty() {
-        return Some(Box::new(std::iter::empty()));
-    }
-    if scan.len() > MAX_PAIRS {
-        return None;
-    }
-    let (subjects, graphs) = scan.subjects_and_graphs();
-    // 2. The route.
-    if force != Some(true) {
-        let (probe, walk) = quad.probe_vs_walk_bytes(&subjects, &graphs, Some(class))?;
-        // The walk also pays a request or two per graph and resolves every graph
-        // name, which the probe does not (measured on the nanopub dump: the same
-        // bytes, 213 s against 103 s), so the probe is taken unless it is
-        // estimated to read half as much again as the walk.
-        if probe.saturating_mul(2) > walk.saturating_mul(3) {
+    // The pairs and the route: found once. A grouped query run as shards on
+    // several threads ([`crate::row::Shard`]) shares them, and each shard
+    // probes its slice of the subjects, in the subjects' order.
+    let route = || -> Route {
+        // 1. The pairs.
+        let scan = quad.scan_pairs((None, Some(pid), Some(class)))?;
+        if scan.is_empty() {
+            return Some(None);
+        }
+        if scan.len() > MAX_PAIRS {
             return None;
         }
-    }
+        let (subjects, graphs) = scan.subjects_and_graphs();
+        // 2. The route.
+        if force != Some(true) {
+            let (probe, walk) = quad.probe_vs_walk_bytes(&subjects, &graphs, Some(class))?;
+            // The walk also pays a request or two per graph and resolves every graph
+            // name, which the probe does not (measured on the nanopub dump: the same
+            // bytes, 213 s against 103 s), so the probe is taken unless it is
+            // estimated to read half as much again as the walk.
+            if probe.saturating_mul(2) > walk.saturating_mul(3) {
+                return None;
+            }
+        }
+        Some(Some((scan, subjects)))
+    };
+    let found = match part {
+        Some(part) => ctx.shard.shared(part.0, 1, route),
+        None => std::sync::Arc::new(route()),
+    };
+    let found = match &*found {
+        None => return None,
+        // No subject has the class. (A shard leaves this to the whole query.)
+        Some(None) if part.is_some() => return None,
+        Some(None) => return Some(Box::new(std::iter::empty())),
+        Some(Some(_)) => found,
+    };
+    let subjects = match &*found {
+        Some(Some((_, subjects))) => subjects.len(),
+        _ => 0,
+    };
+    let (cursor, end) = match part {
+        Some(part) => ctx.shard.applied_rows(part, subjects),
+        None => (0, subjects),
+    };
     Some(Box::new(ClassProbe {
         ctx,
         quad,
@@ -153,13 +179,18 @@ pub(crate) fn class_probe_rows<'q>(
         gslot,
         sslot,
         class,
-        scan,
-        subjects,
-        cursor: 0,
+        found,
+        cursor,
+        end,
         window: FIRST_WINDOW,
         out: std::collections::VecDeque::new(),
     }))
 }
+
+/// What the probe found for a class: `None` when the walk is taken instead,
+/// `Some(None)` when no subject has the class, else the class's
+/// `(subject, graph)` pairs and its distinct subjects.
+type Route = Option<Option<(Pairs, Vec<u32>)>>;
 
 /// `(subject, graph)` pairs, ascending.
 pub(crate) struct Pairs(Vec<(u32, u32)>);
@@ -214,30 +245,44 @@ struct ClassProbe<'q> {
     gslot: usize,
     sslot: usize,
     class: u32,
-    scan: Pairs,
-    subjects: Vec<u32>,
+    /// The class's `(subject, graph)` pairs and its distinct subjects.
+    found: std::sync::Arc<Route>,
+    /// The next subject to probe, and one past the last (a slice of the
+    /// subjects when the query runs as shards).
     cursor: usize,
+    end: usize,
     window: usize,
     out: std::collections::VecDeque<Row>,
 }
 
 impl ClassProbe<'_> {
+    /// The class's pairs and subjects.
+    fn pairs(&self) -> Option<&(Pairs, Vec<u32>)> {
+        match &*self.found {
+            Some(Some(found)) => Some(found),
+            _ => None,
+        }
+    }
+
     /// Probe the next window of subjects into `out`; `false` when there are no
     /// more (or a read failed, which the file records).
     fn fill(&mut self) -> bool {
-        if self.cursor >= self.subjects.len() {
+        if self.cursor >= self.end {
             return false;
         }
         let mut size = self.window;
         if let Some(demand) = self.ctx.limit_hint.get() {
             size = size.min(demand.max(1));
         }
-        let end = (self.cursor + size).min(self.subjects.len());
-        let subjects: Vec<u32> = self.subjects[self.cursor..end].to_vec();
+        let end = (self.cursor + size).min(self.end);
+        let Some((_, all)) = self.pairs() else {
+            return false;
+        };
+        let subjects: Vec<u32> = all[self.cursor..end].to_vec();
         self.cursor = end;
         self.window = (self.window * 4).min(MAX_WINDOW);
         let Some(rows) = self.quad.subject_rows(&subjects, Some(self.class)) else {
-            self.cursor = self.subjects.len();
+            self.cursor = self.end;
             return false;
         };
         let dict = self.ctx.rete.dictionary();
@@ -283,7 +328,11 @@ impl ClassProbe<'_> {
         let dict = self.ctx.rete.dictionary();
         // By graph, then by (p, o).
         rs.sort_unstable_by_key(|r| (r.3, r.1, r.2));
-        let typed = self.scan.graphs_of(s);
+        let found = std::sync::Arc::clone(&self.found);
+        let Some(Some((scan, _))) = &*found else {
+            return;
+        };
+        let typed = scan.graphs_of(s);
         let mut base = self.ctx.slots.empty_row();
         base[self.sslot] = Some(Val::Id(dict.subject_node(s) as i64));
         for &(_, g) in typed {
