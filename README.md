@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <a href="https://caviri.github.io/rete/playground.html"><b>Try it in your browser</b></a> ·
-  <a href="https://caviri.github.io/rete/">Documentation</a> ·
+  <a href="https://caviri.github.io/rete/docs/playground.html"><b>Try it in your browser</b></a> ·
+  <a href="https://caviri.github.io/rete/docs/">Documentation</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -35,9 +35,9 @@ browser through WebAssembly.
 If you know Parquet or PMTiles, it is the same idea applied to RDF graphs.
 
 Each file can also describe itself. Its
-[Dataset Card](https://caviri.github.io/rete/dataset-cards.html) (title,
+[Dataset Card](https://caviri.github.io/rete/docs/dataset-cards.html) (title,
 license, counts, vocabularies, starter queries) and its
-[schema summary](https://caviri.github.io/rete/semantic-zoom.html) are read in
+[schema summary](https://caviri.github.io/rete/docs/semantic-zoom.html) are read in
 a couple of small range requests, without touching the indexes.
 
 ### When it fits
@@ -53,7 +53,7 @@ triplestore such as [Oxigraph](https://github.com/oxigraph/oxigraph), Jena or
 GraphDB. There is no full OWL/RDFS entailment at query time either: rete
 rewrites queries for OWL 2 QL (`--entail`) and can bake RDFS/OWL RL inferences
 into the file at build time (`--materialize`); see
-[reasoning](https://caviri.github.io/rete/reasoning.html).
+[reasoning](https://caviri.github.io/rete/docs/reasoning.html).
 
 ## Install
 
@@ -72,7 +72,7 @@ alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:
 ```
 
 Read the three container pitfalls in
-[Getting started](https://caviri.github.io/rete/getting-started.html#getting-the-cli)
+[Getting started](https://caviri.github.io/rete/docs/getting-started.html#getting-the-cli)
 first: piping needs `-i`, the image runs as root on Linux, and Git Bash on
 Windows rewrites paths.
 
@@ -105,12 +105,12 @@ rete sparql-url https://data.graphplaza.com/opencitations/opencitations.rete \
   'SELECT * WHERE { ?s ?p ?o } LIMIT 3'
 ```
 
-The [CLI reference](https://caviri.github.io/rete/cli.html) covers every
-command, and [hosting](https://caviri.github.io/rete/hosting.html) explains how
+The [CLI reference](https://caviri.github.io/rete/docs/cli.html) covers every
+command, and [hosting](https://caviri.github.io/rete/docs/hosting.html) explains how
 to put your own file online.
 
 To try it without installing anything, open the
-[playground](https://caviri.github.io/rete/playground.html). It runs the same
+[playground](https://caviri.github.io/rete/docs/playground.html). It runs the same
 engine in your browser, on example datasets that range from small graphs
 embedded in the page to remote files with billions of triples.
 
@@ -118,14 +118,14 @@ embedded in the page to remote files with billions of triples.
 
 All of these run the same engine.
 
-- **CLI and Rust**: the `rete-cli` binary, or the [`rete-core`](https://docs.rs/rete-core) crate as a library ([CLI](https://caviri.github.io/rete/cli.html), [Rust API](https://caviri.github.io/rete/rust-api.html)).
-- **Python**: `rete-graph` on PyPI, for CPython and Pyodide (JupyterLite, marimo) ([docs](https://caviri.github.io/rete/python.html)).
-- **JavaScript**: `rete-graph` on npm, for Node and browsers, with TypeScript types ([docs](https://caviri.github.io/rete/javascript.html)).
-- **R**: installed from GitHub with `remotes` (needs Rust); not on CRAN ([docs](https://caviri.github.io/rete/r.html)).
+- **CLI and Rust**: the `rete-cli` binary, or the [`rete-core`](https://docs.rs/rete-core) crate as a library ([CLI](https://caviri.github.io/rete/docs/cli.html), [Rust API](https://caviri.github.io/rete/docs/rust-api.html)).
+- **Python**: `rete-graph` on PyPI, for CPython and Pyodide (JupyterLite, marimo) ([docs](https://caviri.github.io/rete/docs/python.html)).
+- **JavaScript**: `rete-graph` on npm, for Node and browsers, with TypeScript types ([docs](https://caviri.github.io/rete/docs/javascript.html)).
+- **R**: installed from GitHub with `remotes` (needs Rust); not on CRAN ([docs](https://caviri.github.io/rete/docs/r.html)).
 - **Java**: pure JVM with an RDF4J binding, built from [`clients/java`](clients/java/README.md); not on Maven Central yet.
-- **Browser, no install**: the [playground](https://caviri.github.io/rete/playground.html) and a [SPARQL IDE](https://caviri.github.io/rete/yasgui.html) query any `.rete` URL.
-- **Claude Desktop**: download [rete.mcpb](https://github.com/caviri/rete/releases/latest/download/rete.mcpb) and double-click it; the engine runs on your machine ([docs](https://caviri.github.io/rete/agents.html)).
-- **Blender**: an add-on from the [releases page](https://github.com/caviri/rete/releases) that turns query results into 3D scenes ([docs](https://caviri.github.io/rete/blender.html)).
+- **Browser, no install**: the [playground](https://caviri.github.io/rete/docs/playground.html) and a [SPARQL IDE](https://caviri.github.io/rete/docs/yasgui.html) query any `.rete` URL.
+- **Claude Desktop**: download [rete.mcpb](https://github.com/caviri/rete/releases/latest/download/rete.mcpb) and double-click it; the engine runs on your machine ([docs](https://caviri.github.io/rete/docs/agents.html)).
+- **Blender**: an add-on from the [releases page](https://github.com/caviri/rete/releases) that turns query results into 3D scenes ([docs](https://caviri.github.io/rete/docs/blender.html)).
 - **Hosted gateway**: [katospiegel-rete.hf.space](https://katospiegel-rete.hf.space/) serves MCP, a REST API and a SPARQL endpoint for each published dataset.
 
 ## Claude Code plugin
@@ -140,14 +140,14 @@ datasets:
 ```
 
 The same MCP server works in other MCP clients, ChatGPT included; see
-[agentic interfaces](https://caviri.github.io/rete/agents.html).
+[agentic interfaces](https://caviri.github.io/rete/docs/agents.html).
 
 ## How a file is laid out
 
 A 1 KiB header points to every section, so a reader fetches the header and
 then only the sections a query needs. Optional sections a file does not carry
-are not listed. The [format spec](https://caviri.github.io/rete/SPEC.html)
-and [architecture notes](https://caviri.github.io/rete/architecture.html) have
+are not listed. The [format spec](https://caviri.github.io/rete/docs/SPEC.html)
+and [architecture notes](https://caviri.github.io/rete/docs/architecture.html) have
 the details.
 
 <p align="center">
@@ -157,14 +157,14 @@ the details.
 The indexes are built into the file, so opening it needs no parsing or
 indexing, and aggregates stream: counting the 779,399 software records in the
 9.83-billion-triple DataCite file takes 4 s inside a 2 GiB container
-([benchmark](https://caviri.github.io/rete/BENCHMARK.html#billion-triple-scale-bounded-memory-queries-datacite)).
+([benchmark](https://caviri.github.io/rete/docs/BENCHMARK.html#billion-triple-scale-bounded-memory-queries-datacite)).
 
 ## Documentation
 
-- [Quickstart](https://caviri.github.io/rete/getting-started.html): build a small graph and understand its first query.
-- [Build and publish](https://caviri.github.io/rete/build-and-publish.html) or [query and analyze](https://caviri.github.io/rete/query-and-analyze.html): choose a task and follow its guide.
-- [Technical reference](https://caviri.github.io/rete/reference.html): exact commands, APIs, format details and compatibility limits.
-- [Worked examples](https://caviri.github.io/rete/recipes.html) and [apps](https://caviri.github.io/rete/apps.html): complete workflows, notebooks and visual demonstrations.
+- [Quickstart](https://caviri.github.io/rete/docs/getting-started.html): build a small graph and understand its first query.
+- [Build and publish](https://caviri.github.io/rete/docs/build-and-publish.html) or [query and analyze](https://caviri.github.io/rete/docs/query-and-analyze.html): choose a task and follow its guide.
+- [Technical reference](https://caviri.github.io/rete/docs/reference.html): exact commands, APIs, format details and compatibility limits.
+- [Worked examples](https://caviri.github.io/rete/docs/recipes.html) and [apps](https://caviri.github.io/rete/docs/apps.html): complete workflows, notebooks and visual demonstrations.
 
 ## Status
 
@@ -172,7 +172,7 @@ rete is pre-1.0, and both the API and the file format can still change. The
 format (byte `0x05`, stable generation 1) has not changed since it was frozen
 in July 2026, but that is a track record, not a promise: until 1.0.0 a release
 may require you to rebuild files you have published, so keep the RDF you built
-them from. See [compatibility](https://caviri.github.io/rete/compatibility.html).
+them from. See [compatibility](https://caviri.github.io/rete/docs/compatibility.html).
 
 New in 0.4.0 for people who build files: a label index (`--label-index`) and a
 schema section that no longer depend on the pyramid, `--text-index` in
@@ -187,12 +187,12 @@ Known limits:
   the tiles and dictionary chunks it touches, while hash-join build sides,
   `GROUP BY` groups, `DISTINCT` sets and an `ORDER BY` without `LIMIT` are
   held in memory. A small local file is read whole.
-  [Details](https://caviri.github.io/rete/sparql.html#memory-budget).
+  [Details](https://caviri.github.io/rete/docs/sparql.html#memory-budget).
 - `rete federate` unions the results of several files; it does not join
   across them. The playground can split a basic graph pattern across files,
-  with limits. [Details](https://caviri.github.io/rete/federation.html#limitations).
+  with limits. [Details](https://caviri.github.io/rete/docs/federation.html#limitations).
 - The browser engine is single-threaded by default; multi-threading is
-  experimental. [Details](https://caviri.github.io/rete/parallel-browser.html).
+  experimental. [Details](https://caviri.github.io/rete/docs/parallel-browser.html).
 
 ## Develop
 

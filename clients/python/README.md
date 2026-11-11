@@ -7,7 +7,7 @@ supports `Range` requests and query it in place — the client fetches only the
 byte ranges a query touches, never the whole file.
 
 These are native bindings (PyO3) to the same Rust engine that powers the rete
-CLI and the [browser playground](https://caviri.github.io/rete/playground.html).
+CLI and the [browser playground](https://caviri.github.io/rete/docs/playground.html).
 
 ## Install
 
