@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::dictionary::Dictionary;
+use crate::fastre::Fast;
 use crate::file::Rete;
 
 /// The engine behind SPARQL `REGEX` / `REPLACE` and SHACL `sh:pattern`. With
@@ -117,7 +118,7 @@ pub(crate) struct Resolver<'a> {
     regexes: RefCell<HashMap<(String, String), Matcher>>,
     /// `(flags, pattern)` → compiled REPLACE regex (`None`: invalid pattern).
     /// REPLACE in a BIND runs per row, exactly like REGEX in a FILTER.
-    replacers: RefCell<Vec<(String, String, Option<Regex>)>>,
+    replacers: RefCell<Vec<Replacer>>,
     /// Computed term string → its canonical value ([`Self::canon_term`]).
     /// A BIND or an aggregate yields the same few strings over and over (a
     /// namespace, a month, a source name), and canonicalizing one is several
@@ -131,6 +132,10 @@ pub(crate) struct Resolver<'a> {
     hold: RefCell<crate::dictionary::TermHold>,
 }
 
+/// A compiled REPLACE: flags, pattern, the engine's regex (`None`: invalid
+/// pattern) and the plain-string shape of the pattern, if it is one.
+type Replacer = (String, String, Option<Regex>, Option<Fast>);
+
 /// A compiled REGEX matcher: plain (case-folded) substring search for literal
 /// patterns, the regex engine for everything else, `Never` for invalid patterns.
 enum Matcher {
@@ -139,6 +144,8 @@ enum Matcher {
     /// folding, same outcome as `(?i)` for the literal patterns this serves).
     SubstringCi(String),
     Regex(Regex),
+    /// A shape that needs no engine; the engine covers the texts it declines.
+    Fast(Fast, Regex),
     Never,
 }
 
@@ -166,7 +173,10 @@ impl Matcher {
             format!("(?{on})")
         };
         match Regex::new(&format!("{inline}{pattern}")) {
-            Ok(re) => Matcher::Regex(re),
+            Ok(re) => match Fast::parse(pattern, flags) {
+                Some(fast) => Matcher::Fast(fast, re),
+                None => Matcher::Regex(re),
+            },
             Err(_) => Matcher::Never,
         }
     }
@@ -185,6 +195,7 @@ impl Matcher {
                 }
             }
             Matcher::Regex(re) => re.is_match(text),
+            Matcher::Fast(f, re) => f.is_match(text).unwrap_or_else(|| re.is_match(text)),
             Matcher::Never => false,
         }
     }
@@ -472,7 +483,10 @@ impl<'a> Resolver<'a> {
         let mut memo = self.replacers.borrow_mut();
         // A query has a handful of REPLACE patterns: a scan by reference beats
         // hashing (and allocating) an owned `(flags, pattern)` key per row.
-        let at = match memo.iter().position(|(f, p, _)| f == flags && p == pattern) {
+        let at = match memo
+            .iter()
+            .position(|(f, p, _, _)| f == flags && p == pattern)
+        {
             Some(i) => i,
             None => {
                 let on: String = ['i', 'm', 's', 'x']
@@ -485,11 +499,19 @@ impl<'a> Resolver<'a> {
                     format!("(?{on})")
                 };
                 let re = Regex::new(&format!("{inline}{pattern}")).ok();
-                memo.push((flags.to_string(), pattern.to_string(), re));
+                let fast = re.as_ref().and_then(|_| Fast::parse(pattern, flags));
+                memo.push((flags.to_string(), pattern.to_string(), re, fast));
                 memo.len() - 1
             }
         };
         let re = memo[at].2.as_ref()?;
+        if let Some(out) = memo[at]
+            .3
+            .as_ref()
+            .and_then(|f| f.replace(text, replacement))
+        {
+            return Some(out);
+        }
         Some(re.replace_all(text, replacement).into_owned())
     }
 

@@ -11,9 +11,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **`REGEX` and `REPLACE` skip the regex engine for a few simple patterns.** With no flags, `^lit`, `lit$`, `[^SET]*$` and `^.*[SET]` (and a literal in `REPLACE`) run as plain string searches, native and wasm, with the engine's exact results (checked by a differential property test under both engines). Anything else, a flag, or a replacement containing `$` or `\` uses the engine as before.
 - **The site front page is the landing page; the docs moved to `/docs/`.** `https://caviri.github.io/rete/` now opens the landing page with a live query, and the docs overview is at `/docs/` (`/docs/sparql.html`, and so on). Every old URL still works: old `.html` paths forward to the new place and keep the query string and `#anchor`, and old data, wasm and image paths are still served.
-
-
 - **Grouped queries run on several threads.** A `GROUP BY` or bare aggregate whose driving scan can be cut into slices is evaluated on several threads (native builds with the `parallel` feature: the CLI, the Python and R clients, the desktop app), and the rows and their order are the single thread's. The scan is a basic graph pattern of one or several triple patterns, or a block under `GRAPH ?g`; above it `FILTER`, `BIND`, `UNION`, joins and `OPTIONAL`s. What the slices share is built once and read by all of them (a hash join's table, a pattern's prefix): solution rows are now `Send + Sync`. Aggregates are merged from per-slice partials; `COUNT(DISTINCT …)`, `GROUP_CONCAT(DISTINCT …)` and a slice with more than 100,000 groups send their rows to one fold instead. A file read over HTTP is cut into fewer, larger slices that each read their tiles in one batch; a per-row lookup join is not sliced there. `RangeReader::is_local` (new) says which a reader is. `RETE_QUERY_THREADS` (default: the cores, at most 16; `1` turns it off) or `rete_core::query::set_query_threads`. The file format is unchanged. See `docs/sparql.md#threads` for what is covered and the measurements (nanopubs, DBLP, a simulated link).
 
 ### Fixed
