@@ -56,6 +56,7 @@ pub mod hll;
 #[doc(hidden)]
 pub mod index;
 
+mod fastre;
 pub mod ingest;
 pub mod iri;
 pub mod label_index;
