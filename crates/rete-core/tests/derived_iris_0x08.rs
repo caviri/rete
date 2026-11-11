@@ -6,7 +6,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rete_core::derived::Family;
+use rete_core::derived::{DeriveOpts, Family};
 use rete_core::ingest::{assemble_dataset_with_layout, GraphLayout, RawQuad};
 use rete_core::v06::write::{convert_image, WriteOpts};
 use rete_core::v06::{open::read_front, tag, F_DERIVED};
@@ -22,20 +22,32 @@ fn spec() -> String {
     format!("{CI}{{{CITING}|{BR}}}-{{{CITED}|{BR}}}")
 }
 
-fn omid(i: u64) -> String {
-    // Lengths vary (7 to 11 digits), as OMIDs do.
-    let digits = 7 + (i % 5) as usize;
-    format!("06{:0width$}", i * 7919 % 99_991, width = digits - 2)
+fn mix(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
 }
 
-/// 24,000 citations among 2,000 works, and a few IRIs under the same namespace
+fn omid(i: u64) -> String {
+    // Lengths vary (7 to 11 digits), as OMIDs do, and the digits are not a
+    // counter: the stored dictionary is not trivially compressible.
+    let digits = 7 + (i % 5) as usize;
+    format!(
+        "06{:0width$}",
+        mix(i) % 10u64.pow(digits as u32 - 2),
+        width = digits - 2
+    )
+}
+
+/// Up to `n` citations among 20,000 works, and a few IRIs under the same namespace
 /// that are no function of their triples.
-fn dataset() -> Vec<RawQuad> {
+fn dataset(n: u64) -> Vec<RawQuad> {
     let mut q: Vec<RawQuad> = Vec::new();
     let p = |s: &str| format!("<http://purl.org/spar/cito/{s}>");
     let mut seen = std::collections::BTreeSet::new();
-    for i in 0..24_000u64 {
-        let (a, b) = (omid(i * 13 % 2_000), omid((i * 29 + 5) % 2_000));
+    for i in 0..n {
+        let (a, b) = (omid(mix(2 * i) % 20_000), omid(mix(2 * i + 1) % 20_000));
         let ci = format!("<{CI}{a}-{b}>");
         if !seen.insert(ci.clone()) {
             continue;
@@ -83,52 +95,61 @@ fn dataset() -> Vec<RawQuad> {
 
 static BUILD: Mutex<()> = Mutex::new(());
 
-fn v5() -> &'static [u8] {
-    static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    BYTES.get_or_init(|| {
-        let _g = BUILD.lock().unwrap_or_else(|e| e.into_inner());
-        let mut o = write_options();
-        o.tile_budget = 2 * 1024;
-        o.dict_chunk_budget = 4 * 1024;
-        rete_core::write_opts::set_write_options(o);
-        assemble_dataset_with_layout(
-            dataset(),
-            false,
-            false,
-            None,
-            PyramidAlgo::Louvain,
-            PermSet::ALL,
-            GraphLayout::Quad,
-            |_, _| Vec::<u8>::new(),
-        )
-        .0
-    })
+/// A `0x05` image of `quads` with small chunks and tiles.
+fn image(quads: Vec<RawQuad>) -> Vec<u8> {
+    let _g = BUILD.lock().unwrap_or_else(|e| e.into_inner());
+    let mut o = write_options();
+    o.tile_budget = 2 * 1024;
+    o.dict_chunk_budget = 4 * 1024;
+    rete_core::write_opts::set_write_options(o);
+    assemble_dataset_with_layout(
+        quads,
+        false,
+        false,
+        None,
+        PyramidAlgo::Louvain,
+        PermSet::ALL,
+        GraphLayout::Quad,
+        |_, _| Vec::<u8>::new(),
+    )
+    .0
 }
 
-fn derive(spec: &str) -> WriteOpts {
-    WriteOpts {
-        derive: vec![Family::parse_spec(spec).unwrap()],
-        ..WriteOpts::default()
-    }
+fn v5() -> &'static [u8] {
+    static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BYTES.get_or_init(|| image(dataset(60_000)))
+}
+
+/// Detection with whatever size a family removes: for the small shapes.
+fn loose() -> WriteOpts {
+    WriteOpts::default().with_derive(Some(DeriveOpts {
+        min_permille: 0,
+        min_bytes: 1,
+    }))
+}
+
+fn off() -> WriteOpts {
+    WriteOpts::default().with_derive(None)
 }
 
 fn plain() -> &'static [u8] {
     static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    BYTES.get_or_init(|| {
-        convert_image(
-            v5(),
-            WriteOpts {
-                derive: Vec::new(),
-                ..WriteOpts::default()
-            },
-        )
-        .unwrap()
-    })
+    BYTES.get_or_init(|| convert_image(v5(), off()).unwrap())
 }
 
+/// No flag, no template: the defaults of `rete build` and `rete convert`.
 fn derived() -> &'static [u8] {
     static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    BYTES.get_or_init(|| convert_image(v5(), derive(&spec())).unwrap())
+    BYTES.get_or_init(|| convert_image(v5(), WriteOpts::default()).unwrap())
+}
+
+/// The families a file stores, if any.
+fn families(data: &[u8]) -> Vec<Family> {
+    let (_, root) = read_front(&SliceReader::new(data)).unwrap();
+    match root.unit(tag::DERIVED) {
+        Some(unit) => rete_core::derived::decode_families(unit, 1 << 20).unwrap(),
+        None => Vec::new(),
+    }
 }
 
 struct Rec {
@@ -232,11 +253,10 @@ fn battery() -> Vec<String> {
 }
 
 #[test]
-fn the_header_says_so_and_the_file_is_smaller() {
-    let (h, root) = read_front(&SliceReader::new(derived())).unwrap();
-    assert_ne!(h.flags & F_DERIVED, 0);
-    let unit = root.unit(tag::DERIVED).unwrap();
-    let fams = rete_core::derived::decode_families(unit, 1 << 20).unwrap();
+fn it_is_found_with_no_flag_and_the_file_is_smaller() {
+    let (h, _) = read_front(&SliceReader::new(derived())).unwrap();
+    assert_ne!(h.flags & F_DERIVED, 0, "nothing was derived");
+    let fams = families(derived());
     assert_eq!(fams.len(), 1);
     assert_eq!(fams[0].spec(), spec());
     assert!(fams[0].chunk_count() > 3, "{:?}", fams[0].runs);
@@ -305,30 +325,9 @@ fn a_dump_is_the_same() {
 }
 
 #[test]
-fn a_family_the_file_does_not_spell_derives_nothing() {
-    // Inputs swapped: no term is the function of its triples any more.
-    let swapped = format!("{CI}{{{CITED}|{BR}}}-{{{CITING}|{BR}}}");
-    let f = convert_image(v5(), derive(&swapped)).unwrap();
-    let (h, _) = read_front(&SliceReader::new(&f)).unwrap();
-    assert_eq!(h.flags & F_DERIVED, 0);
-    assert!(f == plain());
-    // A predicate the file lacks.
-    let none = format!("{CI}{{http://nope/p|{BR}}}-{{{CITED}|{BR}}}");
-    assert!(convert_image(v5(), derive(&none)).unwrap() == plain());
-}
-
-#[test]
 fn a_derived_file_rewrites_to_the_same_bytes() {
     let mut out = std::io::Cursor::new(Vec::new());
-    rete_core::v06::write::rewrite(
-        &SliceReader::new(derived()),
-        &mut out,
-        WriteOpts {
-            derive: Vec::new(),
-            ..WriteOpts::default()
-        },
-    )
-    .unwrap();
+    rete_core::v06::write::rewrite(&SliceReader::new(derived()), &mut out, off()).unwrap();
     assert!(out.into_inner() == derived());
 }
 
@@ -369,7 +368,7 @@ fn a_page_decodes_derived_names_as_the_full_result_does() {
             if q.contains("ORDER BY") {
                 assert_eq!(all, want, "{q}");
             }
-            for step in [1usize, 25, 1000] {
+            for step in [3_000usize, 50_000] {
                 let got = pages_of(&r, q, step);
                 assert_eq!(got, all, "{q} paged by {step}");
             }
@@ -382,4 +381,184 @@ fn a_page_decodes_derived_names_as_the_full_result_does() {
             assert!(h.page(&r, h.len() + 5, 3).is_empty());
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Detection on other shapes, and what it must not take.
+// ---------------------------------------------------------------------------
+
+const A: &str = "http://ex/hasA";
+const B: &str = "http://ex/hasB";
+
+fn q(s: &str, p: &str, o: &str) -> RawQuad {
+    (s.to_string(), format!("<{p}>"), o.to_string(), None)
+}
+
+/// The statements, resident and lazy, in file order and sorted: the same.
+fn same_rows(a: &[u8], b: &[u8]) {
+    let order = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o";
+    for (x, y) in [(resident(a), resident(b)), (lazy(a), lazy(b))] {
+        let (mut d1, mut d2) = (x.dump(None), y.dump(None));
+        d1.sort();
+        d2.sort();
+        assert_eq!(d1, d2);
+        assert_eq!(rows(&x, order), rows(&y, order));
+        assert_eq!(pages_of(&x, order, 37), pages_of(&y, order, 37));
+    }
+}
+
+/// The record is outside the content hash: a file with and without detection
+/// that found nothing holds the same data.
+fn content_hash(data: &[u8]) -> [u8; 16] {
+    read_front(&SliceReader::new(data)).unwrap().0.content_hash
+}
+
+fn chunks(data: &[u8]) -> usize {
+    let (h, root) = read_front(&SliceReader::new(data)).unwrap();
+    let dict = rete_core::v06::decode_dict_root(root.unit(tag::DICT).unwrap(), h.version).unwrap();
+    dict[rete_core::derived::SECTION].n_chunks
+}
+
+fn decimal(i: u64, width: u32) -> String {
+    format!("{:0w$}", mix(i) % 10u64.pow(width), w = width as usize)
+}
+
+#[test]
+fn random_iris_and_a_shared_prefix_give_no_family() {
+    let mut quads = Vec::new();
+    for i in 0..6_000u64 {
+        // The subject and its objects share a namespace and nothing else.
+        let s = format!("<http://ex/obs/{:016x}>", mix(i));
+        quads.push(q(
+            &s,
+            A,
+            &format!("<http://ex/obs/{:016x}>", mix(i + (1 << 20))),
+        ));
+        quads.push(q(
+            &s,
+            B,
+            &format!("<http://ex/other/{:016x}>", mix(i + (2 << 20))),
+        ));
+        quads.push(q(&s, "http://ex/label", &format!("\"n{i}\"")));
+    }
+    let v5 = image(quads);
+    let auto = convert_image(&v5, loose()).unwrap();
+    let none = convert_image(&v5, off()).unwrap();
+    assert!(families(&auto).is_empty());
+    let (h, _) = read_front(&SliceReader::new(&auto)).unwrap();
+    assert_eq!(h.flags & F_DERIVED, 0);
+    assert_eq!(content_hash(&auto), content_hash(&none));
+    same_rows(&auto, &none);
+}
+
+#[test]
+fn a_family_that_fits_all_but_a_few_stores_the_misfits() {
+    let mut quads = Vec::new();
+    for i in 0..6_000u64 {
+        let (a, b) = (decimal(i, 10), decimal(i + 7, 9));
+        let s = format!("<http://ex/ci/{a}-{b}>");
+        quads.push(q(&s, A, &format!("<http://ex/w/{a}>")));
+        quads.push(q(&s, B, &format!("<http://ex/w/{b}>")));
+    }
+    // Six names the objects do not spell; they sort after every digit.
+    for k in 0..6 {
+        let s = format!("<http://ex/ci/zz-odd-{k}>");
+        quads.push(q(&s, A, "<http://ex/w/1111111111>"));
+        quads.push(q(&s, B, "<http://ex/w/222222222>"));
+    }
+    let v5 = image(quads);
+    let auto = convert_image(&v5, loose()).unwrap();
+    let none = convert_image(&v5, off()).unwrap();
+    let fams = families(&auto);
+    assert_eq!(fams.len(), 1, "no family found");
+    assert_eq!(
+        fams[0].spec(),
+        format!("http://ex/ci/{{{A}|http://ex/w/}}-{{{B}|http://ex/w/}}")
+    );
+    let (derived, all) = (fams[0].chunk_count(), chunks(&auto));
+    assert!(derived >= 1 && derived < all, "{derived} of {all} chunks");
+    same_rows(&auto, &none);
+    // The misfits are still there, as text.
+    for k in 0..6 {
+        let sparql = format!("SELECT ?p ?o WHERE {{ <http://ex/ci/zz-odd-{k}> ?p ?o }}");
+        let want = rows(&resident(&none), &sparql);
+        assert_eq!(want.len(), 2);
+        assert_eq!(rows(&resident(&auto), &sparql), want);
+        assert_eq!(rows(&lazy(&auto), &sparql), want);
+    }
+    let r = SliceReader::new(&auto);
+    assert!(rete_core::v06::check_dictionary(&r).unwrap().1.is_empty());
+}
+
+#[test]
+fn a_predicate_with_two_objects_is_never_a_hole() {
+    let mut quads = Vec::new();
+    for i in 0..6_000u64 {
+        let (a, b) = (decimal(i, 10), decimal(i + 7, 9));
+        let s = format!("<http://ex/m/{a}-{b}>");
+        quads.push(q(&s, A, &format!("<http://ex/w/{a}>")));
+        // `B` has the spelled object and another one.
+        quads.push(q(&s, B, &format!("<http://ex/w/{b}>")));
+        quads.push(q(&s, B, &format!("<http://ex/v/{i}>")));
+    }
+    let v5 = image(quads);
+    let auto = convert_image(&v5, loose()).unwrap();
+    let none = convert_image(&v5, off()).unwrap();
+    for f in families(&auto) {
+        assert!(f.inputs.iter().all(|i| i.predicate != B), "{}", f.spec());
+    }
+    // The name needs `B`'s text, which no single object gives: nothing derives.
+    assert!(families(&auto).is_empty());
+    same_rows(&auto, &none);
+}
+
+#[test]
+fn a_shape_that_is_not_oc_like_is_found_too() {
+    const STATION: &str = "http://ex/hasStation";
+    const DAY: &str = "http://ex/hasDay";
+    let mut quads = Vec::new();
+    for i in 0..9_000u64 {
+        let station = format!("S{}", i % 450);
+        let day = format!("2020-{:02}-{:02}", 1 + i / 450 % 12, 1 + i / 5_400);
+        let s = format!("<http://ex/obs/{station}/{day}>");
+        quads.push(q(&s, STATION, &format!("<http://ex/station/{station}>")));
+        quads.push(q(&s, DAY, &format!("<http://ex/day/{day}>")));
+        quads.push(q(&s, "http://ex/value", &format!("\"{}\"", i % 97)));
+    }
+    let v5 = image(quads);
+    let auto = convert_image(&v5, loose()).unwrap();
+    let none = convert_image(&v5, off()).unwrap();
+    let fams = families(&auto);
+    assert_eq!(fams.len(), 1, "no family found");
+    assert_eq!(
+        fams[0].spec(),
+        format!("http://ex/obs/{{{STATION}|http://ex/station/}}/{{{DAY}|http://ex/day/}}")
+    );
+    assert!(fams[0].chunk_count() >= 1);
+    assert!(auto.len() < none.len());
+    same_rows(&auto, &none);
+    let r = SliceReader::new(&auto);
+    assert!(rete_core::v06::check_dictionary(&r).unwrap().1.is_empty());
+}
+
+#[test]
+fn the_build_record_says_what_was_found() {
+    let rec = br#"{"schema":1,"builder":"test"}"#;
+    let on =
+        rete_core::build_record::finish_in_ram_with(v5().to_vec(), Some(rec), WriteOpts::default())
+            .unwrap();
+    let bytes = rete_core::file::read_build_info(&on).unwrap().unwrap();
+    let text = rete_core::build_record::derive_report_text(&bytes).expect("a report");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["taken"][0]["template"], spec());
+    assert!(v["taken"][0]["bytes_removed"].as_u64().unwrap() > 0);
+    assert!(v["sampled_subjects"].as_u64().unwrap() >= 16);
+    assert!(v["rule"].as_str().unwrap().contains("5.0 %"));
+    let all: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(all["builder"], "test");
+    // Off: no report, no family.
+    let o = rete_core::build_record::finish_in_ram_with(v5().to_vec(), Some(rec), off()).unwrap();
+    let bytes = rete_core::file::read_build_info(&o).unwrap().unwrap();
+    assert!(rete_core::build_record::derive_report_text(&bytes).is_none());
+    assert!(families(&o).is_empty());
 }

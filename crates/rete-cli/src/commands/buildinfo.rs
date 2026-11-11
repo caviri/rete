@@ -97,6 +97,12 @@ pub(crate) struct BuildInfo {
     /// to the new card and were measured by the re-card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recarded: Option<Recarded>,
+    /// What the writer's derived-IRI detection found in the data and why it
+    /// took or left each family (SPEC.md section 5.3); written by the writer
+    /// itself, carried through every later patch of the record. Absent when
+    /// nothing was examined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derive_iris: Option<serde_json::Value>,
     /// Set by `rete convert`: one entry per conversion this file went through
     /// (oldest first). Every other field is the record of the file that was
     /// converted, kept as it was; a file converted without a record has only
@@ -1158,7 +1164,7 @@ pub(crate) fn write_image_with_build_info(
     if rete_core::v06::open::is_v06(image) {
         // 0x06: the record goes into the card region (the image is a small,
         // in-RAM build's; the front is re-laid out, every section copied).
-        let out = rete_core::attach_build_info(image, info)?;
+        let out = attach_record(image, info)?;
         std::fs::write(path, &out)?;
         return Ok(out.len() as u64);
     }
@@ -1170,6 +1176,22 @@ pub(crate) fn write_image_with_build_info(
     out.write_all(&image[plan.tail_start as usize..])?;
     out.flush()?;
     Ok(plan.new_len)
+}
+
+/// `rete_core::attach_build_info`, keeping what the writer's derived-IRI
+/// detection said in the record the image already has: that report belongs to
+/// the file, not to the record being attached.
+pub(crate) fn attach_record(image: &[u8], info: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let carried = rete_core::file::read_build_info(image)
+        .ok()
+        .flatten()
+        .and_then(|old| rete_core::build_record::derive_report_text(&old))
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|r| rete_core::build_record::with_derive_report(info, &r));
+    Ok(rete_core::attach_build_info(
+        image,
+        carried.as_deref().unwrap_or(info),
+    )?)
 }
 
 /// The statement counts of a finished build. `read` is what the parser handed

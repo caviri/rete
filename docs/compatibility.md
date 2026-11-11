@@ -25,14 +25,16 @@ name (`unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`).
 - **The dictionary is about the same size** (the OpenCitations sample's goes from 26.16 to
   26.03 MB), and the file is not larger: its permutations come out a little smaller
   because ids that sort together are now adjacent.
-- **Derived IRIs are optional and refused by name.** `rete build --derive-iris` (or `rete
-  convert --derive-iris`) can drop the stored text of IRIs the file's own triples
-  spell out ([SPEC §5.3](SPEC.md#53-derived-iri-families-0x08-optional)). The file
-  sets header flag bit5, and a reader that does not know the flag refuses it
+- **Derived IRIs are found by the writer and refused by name.** `rete build` and `rete
+  convert` look for IRIs the file's own triples spell out, and when they remove at least
+  5% of the file they drop the stored text
+  ([SPEC §5.3](SPEC.md#53-derived-iri-families-0x08-optional); `--no-derive-iris` turns it
+  off). The file sets header flag bit5, and a reader that does not know the flag refuses it
   (`unsupported .rete feature`); the one-request `Rete::query_ranged` refuses it too, since
   it holds no index. Every other reader (the CLI, `sparql-url`, the browser) reads it.
-  A file is derived only when asked, and the dictionary it holds is then not complete
-  text: tools that read dictionary chunks themselves must go through the reader.
+  Most files are not derived (nothing in them reaches 5%), and the dictionary a derived one
+  holds is not complete text: tools that read dictionary chunks themselves must go through
+  the reader.
 - **No backward compatibility** is promised before 1.0.0; the catalog is converted in
   step with the readers, and the `0x06` and `0x07` readers go once it is.
 - **Publish after the readers**, as for `0x06` and `0x07`: a catalog file is converted

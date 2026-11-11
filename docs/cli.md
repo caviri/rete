@@ -323,28 +323,26 @@ takes 75 s to 80 s and shrinks the file by 1.3% (SPOG by 8%), and a class of
 §6.6 for the rest.
 `rete info` lists the SPOG runs, `rete verify` checks them.
 
-`--derive-iris TEMPLATE` (format `0x08`, off by default, may be repeated) does not
-store IRIs that the file itself spells out
-([SPEC.md §5.3](SPEC.md#53-derived-iri-families-0x08-optional)). A TEMPLATE is an IRI
-with holes written `{PREDICATE|PREFIX}`: the text of a hole is what follows PREFIX in the
-object of the subject's PREDICATE triple. For the OpenCitations Index, whose citations
-are named `…/ci/<citing OMID>-<cited OMID>`:
-
-```
-rete build index.nt -o index.rete --derive-iris \
-  'https://w3id.org/oc/index/ci/{http://purl.org/spar/cito/hasCitingEntity|https://w3id.org/oc/meta/br/}-{http://purl.org/spar/cito/hasCitedEntity|https://w3id.org/oc/meta/br/}'
-```
-
-The writer rebuilds every term of the subject-only dictionary section from the index,
-compares it byte for byte, and drops the stored text of each chunk whose terms all match
-(a chunk with a term that does not match stays as it is). Ids, order and answers are the
-same; a reader rebuilds a term from the index when it needs the text. On a sample of the
-OpenCitations Index the file is 10.5% smaller, and the list of works citing one work
-reads half the bytes; a lookup of one citation by name costs two requests more. It
-needs the PSO permutation (the default) or an unclustered SPO, and the file says so in its
-header: a Rete that does not know the flag refuses it by name. `rete info` lists the
-template and the chunks dropped, `rete verify` rebuilds them. `Rete::query_ranged` (the
-one-request single-pattern query) refuses such a file; `sparql-url` and the rest read it.
+Derived IRIs (format `0x08`, on by default): the builder looks for IRIs the file
+itself spells out, and does not store them
+([SPEC.md §5.3](SPEC.md#53-derived-iri-families-0x08-optional)). A subject IRI that
+is its own objects' texts put together, byte for byte, is one: in the OpenCitations
+Index the citation `…/ci/<citing>-<cited>` is the objects of its `hasCitingEntity`
+and `hasCitedEntity` triples. There is nothing to write and nothing dataset-specific:
+the writer samples the subject-only dictionary section, finds the template and the
+predicates by itself, rebuilds every term of the section from the index and compares it
+byte for byte, and drops the stored text of each chunk whose terms all match (a chunk
+with a term that does not match stays as it is). It takes a family only when the bytes
+it removes are at least 5% of the file (and 256 KiB): a derived name costs a lookup of
+one name two more requests and `rete export` about twice the time, so a small saving is
+not worth it. Ids, order and answers are the same. On a sample of the OpenCitations
+Index the file is 10.5% smaller and the list of works citing one work reads half the
+bytes. It needs the PSO permutation (the default) or an unclustered SPO, and the file
+says so in its header: a Rete that does not know the flag refuses it by name.
+`--no-derive-iris` keeps every IRI as text. `rete info` and the build record
+(`derive_iris`) say what was found and why a family was taken or left; `rete verify`
+rebuilds the dropped chunks. `Rete::query_ranged` (the one-request single-pattern query)
+refuses such a file; `sparql-url` and the rest read it.
 
 `--named-graphs quad` (the default, and since format `0x06` the only layout)
 stores the named graphs of an N-Quads/TriG input in the **quad index**. The
@@ -647,7 +645,7 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--cluster-subjects-by-class] [--derive-iris TEMPLATE] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
+### `rete convert <in.rete> -o <out.rete> [--tmp-dir dir] [--cluster-subjects-by-class] [--no-derive-iris] [--no-label-index] [--no-card-costs] [--memory-budget-mb N]`
 Turn a format `0x05`, `0x06` or `0x07` file into format `0x08`
 ([SPEC §4.11](SPEC.md#411-format-0x08-and-compatibility)) without going back to the
 RDF source. Format `0x08` keeps its dictionary in the SPARQL order
@@ -661,9 +659,10 @@ and the label index, the text index (with its scope), the SCHEMA section and, wi
 card, its annex and the build record are kept. The input may be a path or an http(s)
 URL.
 
-`--derive-iris TEMPLATE` (see `rete build`) drops the stored text of the IRIs the file
-spells out, in a file that does not have them derived yet. A file that already has derived
-chunks keeps them as they are; there is no flag to store them again.
+Derived IRIs are found by `convert` as by `rete build` (on by default; see there):
+the conversion's writer looks for IRIs the file spells out and drops their stored text
+when that is at least 5% of the file. `--no-derive-iris` keeps them as text. A file that
+already has derived chunks keeps them as they are; there is no flag to store them again.
 
 `--memory-budget-mb` (default 2048) is the builder's working-set target and the
 ceiling of the card-cost measurement; the spill (sorted runs, a few bytes per statement

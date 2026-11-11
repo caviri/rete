@@ -82,9 +82,11 @@ pub struct WriteOpts {
     /// Cluster the subject-leading permutations by class (`0x07` only); `None`
     /// writes them in subject order, and un-clusters a clustered input.
     pub cluster: Option<crate::write_opts::ClusterOpts>,
-    /// Derived IRI families to look for (`0x08`): the subject-only dictionary
-    /// chunks whose terms all derive from the index lose their bodies.
-    pub derive: Vec<crate::derived::Family>,
+    /// Find derived IRI families (`0x08`, SPEC.md section 5.3): the writer looks
+    /// for IRIs the index spells out, and drops the subject-only dictionary
+    /// chunks whose terms all derive, when that is worth it. `None` = never.
+    /// On by default.
+    pub derive: Option<crate::derived::DeriveOpts>,
     /// Where this writer spills the sort runs of the `0x07` quad orders and of
     /// class clustering; `None` = the system temporary directory. Per writer,
     /// never shared: another writer in the process may delete its own.
@@ -111,8 +113,8 @@ impl WriteOpts {
         }
     }
 
-    /// These options looking for `derive` as derived IRI families.
-    pub fn with_derive(mut self, derive: Vec<crate::derived::Family>) -> Self {
+    /// These options with derived-IRI detection on (`Some`) or off.
+    pub fn with_derive(mut self, derive: Option<crate::derived::DeriveOpts>) -> Self {
         self.derive = derive;
         self
     }
@@ -132,7 +134,7 @@ impl Default for WriteOpts {
             leaves: LeafPolicy::default(),
             version: VERSION,
             cluster: crate::write_opts::cluster(),
-            derive: crate::write_opts::derive_iris(),
+            derive: Some(crate::derived::DeriveOpts::default()),
             spill_dir: None,
         }
     }
@@ -857,11 +859,15 @@ pub fn assemble_with<W: Write + Seek>(
             return assemble_with(&derived, &layered, out, opts.clone(), hooks);
         }
     }
-    // `--derive-iris`: drop the subject-only chunks whose terms the index and
-    // the object dictionary rebuild.
-    if opts.version >= VERSION && super::derived::needed(parts, &opts.derive) {
-        if let Some(derived) = super::derived::derive(parts, input, &opts.derive)? {
-            return assemble_with(&derived, input, out, opts.clone(), hooks);
+    // Derived IRI families: find the subject-only chunks whose terms the index
+    // and the object dictionary rebuild, and drop their bodies when that is
+    // worth it; either way the build record says what was found. The pass
+    // runs once: the next call has it off.
+    if opts.version >= VERSION {
+        if let (Some(d), true) = (opts.derive, super::derived::needed(parts)) {
+            if let Some(derived) = super::derived::detect_and_derive(parts, input, &d)? {
+                return assemble_with(&derived, input, out, opts.with_derive(None), hooks);
+            }
         }
     }
     let codec = opts.internal_codec;

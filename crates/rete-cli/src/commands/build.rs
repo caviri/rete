@@ -23,6 +23,16 @@ pub(crate) struct BuildSections {
     pub label_index: bool,
     /// Not `--no-schema`.
     pub schema: bool,
+    /// Not `--no-derive-iris`: look for IRIs the file spells out itself.
+    pub derive_iris: bool,
+}
+
+impl BuildSections {
+    /// The writer's derived-IRI detection for these sections.
+    pub(crate) fn derive(self) -> Option<rete_core::derived::DeriveOpts> {
+        self.derive_iris
+            .then(rete_core::derived::DeriveOpts::default)
+    }
 }
 
 impl Default for BuildSections {
@@ -32,6 +42,7 @@ impl Default for BuildSections {
         BuildSections {
             label_index: false,
             schema: true,
+            derive_iris: true,
         }
     }
 }
@@ -758,7 +769,7 @@ pub(crate) fn build(
                 }
             })
             .map_err(|e| ingest_error(None, e))?;
-        let bytes = super::v06::finish(bytes)?;
+        let bytes = super::v06::finish_with(bytes, sections.derive())?;
         let audit = audit.into_inner();
         let len = write_carded(
             output,
@@ -879,7 +890,7 @@ pub(crate) fn build(
             }
             None => rete_core::ingest::DeferredMetadata::none(),
         });
-    let bytes = super::v06::finish(bytes)?;
+    let bytes = super::v06::finish_with(bytes, sections.derive())?;
     let len = write_carded(
         output,
         bytes,
@@ -1223,6 +1234,7 @@ pub(crate) fn build_external_cmd(
             // A parser's buffers are small: the chunks get the whole budget.
             input_memory: 0,
             card_from_image,
+            derive: sections.derive(),
         },
     )
     .map_err(|e| match e {
@@ -1445,6 +1457,7 @@ pub(crate) fn repyramid(
     let sections = BuildSections {
         label_index: label_index || rete.has_label_index(),
         schema: true,
+        derive_iris: true,
     };
     // The decoded graph owns its sections, so the raw file image is done — free
     // it before building so the (large) assembly has the headroom.

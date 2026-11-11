@@ -297,6 +297,15 @@ pub fn to_json(r: &Record, stats: Option<&BuildStats>) -> Vec<u8> {
 /// only. With `RETE_WRITE_FORMAT=5` the image stays `0x05` and the record is
 /// attached the `0x05` way.
 pub fn finish_in_ram(image: Vec<u8>, record: Option<&[u8]>) -> Result<Vec<u8>, FileError> {
+    finish_in_ram_with(image, record, crate::v06::write::WriteOpts::default())
+}
+
+/// [`finish_in_ram`] with the writer's options (derived-IRI detection on or off).
+pub fn finish_in_ram_with(
+    image: Vec<u8>,
+    record: Option<&[u8]>,
+    opts: crate::v06::write::WriteOpts,
+) -> Result<Vec<u8>, FileError> {
     let record = record.filter(|r| !r.is_empty());
     if writes_legacy() {
         return match record {
@@ -317,7 +326,7 @@ pub fn finish_in_ram(image: Vec<u8>, record: Option<&[u8]>) -> Result<Vec<u8>, F
         // quad index, the only layout `0x06` has, and the result finished.
         Err(FileError::Container(m)) if m.contains("kind 5") => {
             let requad = reencode_per_graph(&image)?;
-            return finish_in_ram(requad, record);
+            return finish_in_ram_with(requad, record, opts);
         }
         Err(e) => return Err(e),
     };
@@ -325,12 +334,7 @@ pub fn finish_in_ram(image: Vec<u8>, record: Option<&[u8]>) -> Result<Vec<u8>, F
         parts.build = Some(r.to_vec());
     }
     let mut out = std::io::Cursor::new(Vec::with_capacity(image.len()));
-    crate::v06::write::assemble(
-        &parts,
-        &src,
-        &mut out,
-        crate::v06::write::WriteOpts::default(),
-    )?;
+    crate::v06::write::assemble(&parts, &src, &mut out, opts)?;
     Ok(out.into_inner())
 }
 
@@ -429,5 +433,94 @@ mod tests {
         // Without stats (nothing known) the field stays absent.
         let v: Value = serde_json::from_slice(&to_json(&r, None)).unwrap();
         assert!(v["params"].get("label_index").is_none());
+    }
+}
+
+/// The key under which the writer's derived-IRI detection reports (SPEC.md
+/// section 5.3): what it found in the data, and why it took or left a family.
+pub const DERIVE_REPORT_KEY: &str = "derive_iris";
+
+/// The byte range of `"derive_iris":<value>` (key and value) in a record's JSON
+/// text, if it has the key at its top level.
+fn report_span(text: &str) -> Option<(usize, usize)> {
+    let needle = format!("\"{DERIVE_REPORT_KEY}\":");
+    let at = text.find(&needle)?;
+    // The key must be the record's own: parse the whole and look it up.
+    let doc: serde_json::Value = serde_json::from_str(text).ok()?;
+    doc.get(DERIVE_REPORT_KEY)?;
+    let v0 = at + needle.len();
+    let mut it =
+        serde_json::Deserializer::from_str(&text[v0..]).into_iter::<serde::de::IgnoredAny>();
+    it.next()?.ok()?;
+    Some((at, v0 + it.byte_offset()))
+}
+
+/// The record `rec` (JSON text, possibly space-padded) with `report` under
+/// [`DERIVE_REPORT_KEY`], placed before a trailing `conversions` list (which the
+/// CLI appends to) and replacing an older report. The padding is kept, and the
+/// result is as long as `rec` plus the report: a reservation made from it holds
+/// the report next to a record that is later sealed to at most `rec`'s length.
+/// `None` when `rec` is not a JSON object.
+pub fn with_derive_report(rec: &[u8], report: &serde_json::Value) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(rec).ok()?;
+    let body = text.trim_end_matches(|c: char| c.is_ascii_whitespace() || c == '\0');
+    let pad = &text[body.len()..];
+    let mut body = body.trim_start().to_string();
+    if !body.starts_with('{') || !body.ends_with('}') {
+        return None;
+    }
+    if let Some((a, b)) = report_span(&body) {
+        // Drop the old key with one neighbouring comma.
+        let (mut a, mut b) = (a, b);
+        if body[..a].trim_end().ends_with(',') {
+            a = body[..a].trim_end().len() - 1;
+        } else if body[b..].starts_with(',') {
+            b += 1;
+        }
+        body.replace_range(a..b, "");
+    }
+    let entry = format!("\"{DERIVE_REPORT_KEY}\":{report}");
+    let at = body.rfind(",\"conversions\":[").unwrap_or(body.len() - 1);
+    let head = body[..at].trim_end();
+    let comma = if head.ends_with('{') { "" } else { "," };
+    let out = format!("{head}{comma}{entry}{}{pad}", &body[at..]);
+    Some(out.into_bytes())
+}
+
+/// The text of the report in `rec`, if it has one.
+pub fn derive_report_text(rec: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(rec).ok()?;
+    let body = text.trim_matches(|c: char| c.is_ascii_whitespace() || c == '\0');
+    let (a, b) = report_span(body)?;
+    Some(body[a + DERIVE_REPORT_KEY.len() + 3..b].to_string())
+}
+
+#[cfg(test)]
+mod derive_report_tests {
+    use super::*;
+
+    #[test]
+    fn a_report_is_spliced_once_before_conversions() {
+        let r = serde_json::json!({"taken": [], "n": 3});
+        let rec = br#"{"schema":1,"builder":"x","conversions":[{"command":"c"}]}   "#;
+        let out = with_derive_report(rec, &r).unwrap();
+        let text = String::from_utf8(out.clone()).unwrap();
+        assert!(text.contains(
+            r#""builder":"x","derive_iris":{"n":3,"taken":[]},"conversions":[{"command":"c"}]}"#
+        ));
+        assert!(text.ends_with("}   "));
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok());
+        // Again: replaced, not doubled.
+        let r2 = serde_json::json!({"x": 1});
+        let again = with_derive_report(&out, &r2).unwrap();
+        let t2 = String::from_utf8(again.clone()).unwrap();
+        assert_eq!(t2.matches("derive_iris").count(), 1);
+        assert_eq!(derive_report_text(&again).as_deref(), Some(r#"{"x":1}"#));
+        // A record without a list, and an empty one.
+        let o = with_derive_report(br#"{"schema":1}"#, &r2).unwrap();
+        assert_eq!(o, br#"{"schema":1,"derive_iris":{"x":1}}"#);
+        let o = with_derive_report(b"{}", &r2).unwrap();
+        assert_eq!(o, br#"{"derive_iris":{"x":1}}"#);
+        assert!(with_derive_report(b"not json", &r2).is_none());
     }
 }

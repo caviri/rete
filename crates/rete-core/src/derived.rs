@@ -11,6 +11,9 @@
 //!   hole `k` is what follows the prefix in the object of the subject's triple
 //!   with that predicate.
 //!
+//! Nobody writes a family: the builder finds them in the data (`v06::derived`)
+//! and stores each one's template and inputs in the file.
+//!
 //! The file keeps every id, rank, group count and routing key of the
 //! subject-only section, and drops the **bodies** of the chunks whose every
 //! term the writer checked, byte for byte, against the template. A chunk with
@@ -29,12 +32,44 @@ use crate::index::{GraphIndex, Pattern};
 /// The dictionary section that holds derived chunks: subject-only.
 pub const SECTION: usize = 1;
 
+/// What the writer's detection asks of a family before it takes it
+/// (SPEC.md section 5.3): the bytes it removes must be worth the slower decode.
+/// Not a user setting; the CLI has only an off switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeriveOpts {
+    /// A family is taken when the stored bytes it removes are at least this many
+    /// thousandths of the file (default 50, 5 %): a derived term costs a lookup
+    /// two more requests and `rete export` about twice the time.
+    pub min_permille: u64,
+    /// ... and at least this many bytes (default 256 KiB): under that the whole
+    /// dictionary is a request or two.
+    pub min_bytes: u64,
+}
+
+impl Default for DeriveOpts {
+    fn default() -> Self {
+        DeriveOpts {
+            min_permille: 50,
+            min_bytes: 256 << 10,
+        }
+    }
+}
+
+impl DeriveOpts {
+    /// The bytes a family must remove from a file of `file_len` bytes.
+    pub fn threshold(&self, file_len: u64) -> u64 {
+        (file_len / 1000)
+            .saturating_mul(self.min_permille)
+            .max(self.min_bytes)
+    }
+}
+
 /// Most families a file may carry.
 pub const MAX_FAMILIES: usize = 16;
 /// Most holes in one template.
 pub const MAX_INPUTS: usize = 8;
 
-/// A malformed spec or root.
+/// A malformed family or root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeriveError(pub String);
 
@@ -75,49 +110,9 @@ pub struct Family {
 }
 
 impl Family {
-    /// Parse a template spec: an IRI with holes written `{PREDICATE|PREFIX}`,
-    /// for example
-    /// `https://w3id.org/oc/index/ci/{http://purl.org/spar/cito/hasCitingEntity|https://w3id.org/oc/meta/br/}-{http://purl.org/spar/cito/hasCitedEntity|https://w3id.org/oc/meta/br/}`.
-    pub fn parse_spec(spec: &str) -> Result<Family, DeriveError> {
-        let mut literals = Vec::new();
-        let mut inputs = Vec::new();
-        let mut rest = spec;
-        let mut lit = String::from("<");
-        loop {
-            match rest.find('{') {
-                None => {
-                    if rest.contains('}') {
-                        return err("derive-iris: a `}` without a `{`");
-                    }
-                    lit.push_str(rest);
-                    lit.push('>');
-                    literals.push(lit);
-                    break;
-                }
-                Some(at) => {
-                    lit.push_str(&rest[..at]);
-                    let after = &rest[at + 1..];
-                    let end = after
-                        .find('}')
-                        .ok_or_else(|| DeriveError("derive-iris: a `{` without a `}`".into()))?;
-                    let hole = &after[..end];
-                    let (predicate, prefix) = hole.split_once('|').ok_or_else(|| {
-                        DeriveError(format!(
-                            "derive-iris: the hole `{{{hole}}}` is not {{PREDICATE|PREFIX}}"
-                        ))
-                    })?;
-                    if predicate.is_empty() {
-                        return err("derive-iris: a hole names no predicate");
-                    }
-                    inputs.push(Input {
-                        predicate: predicate.to_string(),
-                        prefix: prefix.to_string(),
-                    });
-                    literals.push(std::mem::take(&mut lit));
-                    rest = &after[end + 1..];
-                }
-            }
-        }
+    /// A family from its literal pieces and inputs (no runs yet). The writer's
+    /// detection builds families this way; there is no user-written template.
+    pub fn new(literals: Vec<String>, inputs: Vec<Input>) -> Result<Family, DeriveError> {
         let f = Family {
             literals,
             inputs,
@@ -127,7 +122,8 @@ impl Family {
         Ok(f)
     }
 
-    /// The spec this family was parsed from (without its runs).
+    /// The template as text, `https://x/{PREDICATE|PREFIX}-{…}`: for `rete info`
+    /// and the build record (without the runs).
     pub fn spec(&self) -> String {
         let mut s = String::new();
         for (k, lit) in self.literals.iter().enumerate() {
@@ -154,23 +150,21 @@ impl Family {
     pub fn check(&self) -> Result<(), DeriveError> {
         let n = self.inputs.len();
         if n == 0 || n > MAX_INPUTS {
-            return err(format!(
-                "derive-iris: a template has 1 to {MAX_INPUTS} holes"
-            ));
+            return err(format!("family: a template has 1 to {MAX_INPUTS} holes"));
         }
         if self.literals.len() != n + 1 {
-            return err("derive-iris: the literals do not fit the holes");
+            return err("family: the literals do not fit the holes");
         }
         if !self.literals[0].starts_with('<') || !self.literals[n].ends_with('>') {
-            return err("derive-iris: a template is an IRI");
+            return err("family: a template is an IRI");
         }
         for (k, l) in self.literals.iter().enumerate() {
             if k > 0 && k < n && l.is_empty() {
-                return err("derive-iris: two holes need a literal between them");
+                return err("family: two holes need a literal between them");
             }
         }
         if self.literals[0].len() < 2 {
-            return err("derive-iris: the template has no IRI text before its first hole");
+            return err("family: the template has no IRI text before its first hole");
         }
         Ok(())
     }
@@ -639,14 +633,37 @@ impl DerivedTerms {
 mod tests {
     use super::*;
 
-    const CI: &str = "https://w3id.org/oc/index/ci/{http://purl.org/spar/cito/hasCitingEntity|https://w3id.org/oc/meta/br/}-{http://purl.org/spar/cito/hasCitedEntity|https://w3id.org/oc/meta/br/}";
+    const CITING: &str = "http://purl.org/spar/cito/hasCitingEntity";
+    const CITED: &str = "http://purl.org/spar/cito/hasCitedEntity";
+    const BR: &str = "https://w3id.org/oc/meta/br/";
+
+    fn input(p: &str, prefix: &str) -> Input {
+        Input {
+            predicate: p.into(),
+            prefix: prefix.into(),
+        }
+    }
+
+    fn ci() -> Family {
+        Family::new(
+            vec![
+                "<https://w3id.org/oc/index/ci/".into(),
+                "-".into(),
+                ">".into(),
+            ],
+            vec![input(CITING, BR), input(CITED, BR)],
+        )
+        .unwrap()
+    }
 
     #[test]
-    fn spec_round_trips() {
-        let f = Family::parse_spec(CI).unwrap();
+    fn a_family_builds_splits_and_derives() {
+        let f = ci();
         assert_eq!(f.inputs.len(), 2);
-        assert_eq!(f.literals, ["<https://w3id.org/oc/index/ci/", "-", ">"]);
-        assert_eq!(f.spec(), CI);
+        assert_eq!(
+            f.spec(),
+            format!("https://w3id.org/oc/index/ci/{{{CITING}|{BR}}}-{{{CITED}|{BR}}}")
+        );
         assert_eq!(
             f.build(&["0601785", "06902211389"]),
             "<https://w3id.org/oc/index/ci/0601785-06902211389>"
@@ -674,17 +691,23 @@ mod tests {
     }
 
     #[test]
-    fn specs_that_cannot_split_are_refused() {
-        assert!(Family::parse_spec("http://x/{a|b}{c|d}").is_err());
-        assert!(Family::parse_spec("http://x/").is_err());
-        assert!(Family::parse_spec("http://x/{a}").is_err());
-        assert!(Family::parse_spec("{a|b}/x").is_err());
-        assert!(Family::parse_spec("http://x/{a|b").is_err());
+    fn families_that_cannot_split_are_refused() {
+        let lit = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // Two holes with nothing between them.
+        assert!(Family::new(
+            lit(&["<http://x/", "", ">"]),
+            vec![input("a", "b"), input("c", "d")]
+        )
+        .is_err());
+        // No hole, no IRI text before the first hole, literals that do not fit.
+        assert!(Family::new(lit(&["<http://x/>"]), vec![]).is_err());
+        assert!(Family::new(lit(&["<", ">"]), vec![input("a", "b")]).is_err());
+        assert!(Family::new(lit(&["<http://x/>"]), vec![input("a", "b")]).is_err());
     }
 
     #[test]
     fn root_round_trips_and_refuses_bad_runs() {
-        let mut f = Family::parse_spec(CI).unwrap();
+        let mut f = ci();
         f.runs = vec![(2, 3), (7, 1)];
         let bytes = encode_families(std::slice::from_ref(&f));
         assert_eq!(decode_families(&bytes, 10).unwrap(), vec![f.clone()]);
