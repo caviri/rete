@@ -45,7 +45,7 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | `dataset_card` | The file's embedded self-description (2 small reads, any size) |
 | `dataset_schema` | Classes and relations with counts, from the baked pyramid |
 | `example_queries` | Runnable SPARQL the dataset ships with |
-| `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL; waits up to 40 s, then answers with a `job_id` while the query keeps running. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
+| `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL, `union_default_graph=true` to match every named graph from a pattern outside `GRAPH`; waits up to 40 s, then answers with a `job_id` while the query keeps running. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
 | `start_query` | The same, without waiting: a `job_id` at once. Both take `partition_by`, which runs a long extraction in resumable chunks |
 | `query_status` | Waits up to 45 s for a job; state, reads, bytes, elapsed; the first rows once done. No `job_id`: every job held |
 | `query_result` | A finished job's rows by cursor (up to 1000 a page), or all of them to a `.csv` / `.tsv` / `.json` / `.jsonl` / `.nt` file in a granted folder (`save_as`; never overwrites) |

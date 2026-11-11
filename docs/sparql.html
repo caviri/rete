@@ -6,12 +6,12 @@
   <meta name="color-scheme" content="light dark" />
   <title>SPARQL support · rete docs</title>
   <meta name="description" content="The engine lives in rete-core::sparql. Queries are parsed with spargebra and lowered to a small plan algebra (Bgp/Join/Union/Minus/LeftJoin/Filter/Path/Values/ Graph), evaluated in the unified…" />
-  <link rel="canonical" href="https://caviri.github.io/rete/sparql.html" />
+  <link rel="canonical" href="https://caviri.github.io/rete/docs/sparql.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="SPARQL support · rete docs" />
   <meta property="og:description" content="The engine lives in rete-core::sparql. Queries are parsed with spargebra and lowered to a small plan algebra (Bgp/Join/Union/Minus/LeftJoin/Filter/Path/Values/ Graph), evaluated in the unified…" />
-  <meta property="og:url" content="https://caviri.github.io/rete/sparql.html" />
+  <meta property="og:url" content="https://caviri.github.io/rete/docs/sparql.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/sparql.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -947,8 +947,18 @@ named its dataset explicitly, and that wins.</li>
 <li><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code> and <code>FROM NAMED</code> are completely unaffected: they
 enumerate and scope the named graphs exactly as before.</li>
 </ul>
-<p>Where it exists today:</p>
+<p>Where it exists:</p>
 <ul>
+<li><strong>The command line</strong> — <code>rete sparql --union-default-graph</code> (and the same flag
+on <code>sparql-url</code> and <code>federate</code>, which applies it to each source), and
+<code>rete serve --union-default-graph</code>, which makes every query the endpoint
+answers use it, as Oxigraph's server does. See <a href="cli.html">CLI</a>.</li>
+<li><strong>The clients</strong> — Python <code>g.query(q, union_default_graph=True)</code> (also
+<code>query_raw</code>, <code>query_df</code>), R <code>rete_query(g, q, union_default_graph = TRUE)</code>,
+JavaScript <code>g.query(q, { unionDefault: true })</code>, Java
+<code>rete.query(sparql, true)</code>, and the MCP / MCPB <code>sparql_query</code> and
+<code>start_query</code> tools' <code>union_default_graph</code> option (not together with
+<code>partition_by</code>).</li>
 <li><strong>The playground</strong> — the ⛁ All graphs toggle beside 🧠 Reason. Flipping it
 is announced, and every result computed under it says so in its meta line,
 so a non-standard answer is never silently presented as a standard one. See
@@ -957,30 +967,36 @@ so a non-standard answer is never silently presented as a standard one. See
 and the same method on <code>RemoteGraph</code> (see
 <a href="browser.html">WASM &amp; JavaScript API</a>).</li>
 <li><strong>Rust</strong> — <code>eval_query_with(&amp;rete, query, QueryOpts { union_default_graph: true, ..QueryOpts::default() })</code> in <code>rete-core::sparql</code>.</li>
-<li><strong>Not</strong> on the CLI — <code>rete sparql</code> has no union flag — and <strong>not</strong> in
-<code>rete serve</code>'s endpoint. If you need the union semantics there, write it
-into the query with <code>GRAPH ?g { … }</code> (and <code>UNION</code> with a default-graph
-branch when both sides hold data), which works everywhere.</li>
 </ul>
 <p>Costs and limits worth knowing before flipping it on:</p>
 <ul>
+<li><strong>A quad index (<code>--named-graphs quad</code>, format <code>0x07</code>) is read in place.</strong> A
+pattern is answered from the order that fits its bound terms (SPOG for a
+subject, POSG for a predicate or predicate and object, OSPG for an object),
+with the graph column dropped and the copies of a triple, which sit next to
+each other, counted once, then merged with the file's own default graph. Nothing
+is built from the graphs' triples: a selective pattern reads the few tiles it
+routes to, locally or over HTTP, and a pattern that matches everything reads
+one order once, in a fixed amount of memory. <code>COUNT(*)</code>, <code>GROUP BY</code>, joins,
+<code>ORDER BY</code>, <code>LIMIT</code>, <code>DESCRIBE</code>, <code>CONSTRUCT</code> and the multi-threaded
+aggregation all see the same de-duplicated triples as the merge would give.
+The price of de-duplicating is that the count of every triple of a many-quad
+file reads every quad of one order: a union <code>COUNT(*)</code> is a pass over the
+quad section, not an answer from a directory.</li>
 <li>The common converted-file shape — <strong>empty default graph, exactly one named
-graph</strong> — stays a zero-copy borrow of that graph's index: no copying, no
-extra bytes.</li>
-<li>Any other shape <strong>materializes the merged index</strong> for the query. On a
-lazily-opened remote file that can mean faulting the index tiles of every
-named graph the merge touches — a real cost on a many-graph file, and
-precisely why the mode is opt-in per query rather than a file-level default.</li>
+graph</strong> — stays a zero-copy borrow of that graph's index.</li>
+<li><strong>Any other layout materializes the merged index</strong> for the query: a file with
+a container per graph, or a quad index written before <code>0x07</code>. On a
+lazily-opened remote file that means faulting the index tiles of every
+named graph, and a large file may not fit in memory. The answer still
+carries a <code>materialized-union</code> hint saying so (the warnings of the CLI and
+of the clients). <code>rete convert</code> rewrites such a file as a <code>0x07</code> quad index.</li>
 <li>The playground's progressive and community-split strategies answer from
 default-graph structures, so a union run is evaluated on the whole index
 instead (the result line says so) rather than silently answering with
 standard semantics.</li>
-<li>Federated multi-source runs and live SPARQL endpoints keep standard
-semantics — the toggle does not reach them (a live endpoint decides its own
-dataset).</li>
-<li>Under union, <code>DESCRIBE</code>'s per-resource expansion — the triples returned
-<em>about</em> each matched resource — still reads the default graph; the union
-applies to the pattern matching that selects the resources.</li>
+<li>A live <code>SERVICE</code> endpoint keeps standard semantics: a live endpoint decides
+its own dataset.</li>
 </ul>
 <h2 id="output-views--query-shapes">Output views &amp; query shapes</h2>
 <p>The playground renders one result several ways — Table, Graph, Map, Time,
@@ -1378,7 +1394,7 @@ standard SPARQL result document: <code>Rete-Warnings</code> holds the same JSON 
 (non-ASCII escaped as <code>\uXXXX</code>, as a header value must be), and
 <code>Rete-Warning-Count</code> the total. Both are left out when there is nothing to
 report. Browsers can read them (<code>Access-Control-Expose-Headers</code>). See
-<a href="cli.html#rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve</code></a>.</li>
+<a href="cli.html#rete-serve-file---bind-addr---token-t---journal-path---union-default-graph"><code>rete serve</code></a>.</li>
 </ul>
 <p>A function rete doesn't know is never silently false. An unknown name
 (<code>NOSUCHFN(?x)</code>) is a parse error, and an extension-function IRI that rete

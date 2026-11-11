@@ -4144,7 +4144,7 @@ impl NamedGraphsSlot {
 pub struct Rete {
     header: Header,
     dict: Dictionary,
-    index: GraphIndex,
+    index: std::sync::Arc<GraphIndex>,
     index_section_ranges: [ByteRange; NUM_PERMS],
     /// Per-permutation tile directories as absolute file ranges
     /// (`(min_a, max_a, compressed-tile range)`), for provenance. Empty for
@@ -4273,7 +4273,7 @@ impl Rete {
         Ok(Self {
             header,
             dict,
-            index,
+            index: std::sync::Arc::new(index),
             index_section_ranges,
             tile_ranges,
             pyramid,
@@ -4742,7 +4742,7 @@ impl Rete {
         mut f: F,
     ) {
         let index = match graph {
-            None => Some(&self.index),
+            None => Some(&*self.index),
             Some(g) => self.graph_index(g),
         };
         let Some(index) = index else { return };
@@ -4872,7 +4872,7 @@ impl Rete {
         o: Option<&str>,
     ) -> DumpPlan {
         let index = match graph {
-            None => Some(&self.index),
+            None => Some(&*self.index),
             Some(g) => self.graph_index(g),
         };
         let scan = index
@@ -4926,7 +4926,7 @@ impl Rete {
         o: Option<&str>,
     ) -> impl Iterator<Item = TermTriple> + '_ {
         let index = match graph {
-            None => Some(&self.index),
+            None => Some(&*self.index),
             Some(g) => self.graph_index(g),
         };
         index
@@ -5290,6 +5290,19 @@ impl Rete {
         }
     }
 
+    /// The union default graph as an index that streams it from the quad
+    /// index (see [`crate::union_scan`]): the file's default graph and every
+    /// named graph, each triple once, nothing materialized. `None` when the
+    /// file has no quad index with the three graph-last orders (a per-graph
+    /// layout, or a file written before `0x07`): the caller merges instead.
+    pub(crate) fn union_default_index(&self) -> Option<GraphIndex> {
+        let src = self.quad_named()?.union_src()?;
+        Some(GraphIndex::union_of(
+            std::sync::Arc::clone(&self.index),
+            src,
+        ))
+    }
+
     /// The quad index, when the file has one.
     pub(crate) fn quad_named(&self) -> Option<&crate::quad::QuadNamed> {
         match &self.named_graphs {
@@ -5420,7 +5433,7 @@ impl Rete {
         Ok(Self {
             header,
             dict,
-            index,
+            index: std::sync::Arc::new(index),
             index_section_ranges,
             tile_ranges,
             pyramid,
@@ -5460,7 +5473,7 @@ impl Rete {
         let rete = Self {
             header,
             dict,
-            index,
+            index: std::sync::Arc::new(index),
             index_section_ranges: [ByteRange::default(); NUM_PERMS],
             tile_ranges: Default::default(),
             pyramid,
@@ -5655,7 +5668,7 @@ impl Rete {
         let rete = Self {
             header,
             dict,
-            index,
+            index: std::sync::Arc::new(index),
             index_section_ranges,
             tile_ranges,
             pyramid,
@@ -6026,6 +6039,21 @@ impl Rete {
             },
         };
         self.resolve_matches(index.match_pattern(pattern))
+    }
+
+    /// [`query_in_graph`](Self::query_in_graph) over any index of this file,
+    /// such as the streamed union default graph.
+    pub(crate) fn query_in_index(
+        &self,
+        index: &GraphIndex,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> Vec<TermTriple> {
+        match self.resolve_query_pattern(s, p, o) {
+            Some(pattern) => self.resolve_matches(index.match_pattern(pattern)),
+            None => Vec::new(),
+        }
     }
 
     /// Resolve matched id-triples to terms, with one coalesced dictionary

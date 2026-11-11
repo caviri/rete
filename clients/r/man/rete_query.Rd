@@ -4,7 +4,7 @@
 \alias{rete_query}
 \title{Run a SPARQL query}
 \usage{
-rete_query(graph, query, reason = FALSE)
+rete_query(graph, query, reason = FALSE, union_default_graph = FALSE)
 }
 \arguments{
 \item{graph}{A \code{rete_graph} from \code{\link[=rete_open]{rete_open()}}.}
@@ -13,6 +13,11 @@ rete_query(graph, query, reason = FALSE)
 
 \item{reason}{If \code{TRUE}, answers include OWL 2 QL entailment, computed by
 query rewriting over the file's ontology (works on remote files too).}
+
+\item{union_default_graph}{If \code{TRUE}, a pattern outside \code{GRAPH} matches the
+default graph and every named graph, a triple stored in several graphs
+counting once (not standard SPARQL, so off by default; a \code{FROM} in the
+query still wins). On a file with a quad index it is read in place.}
 }
 \value{
 A \code{data.frame}, or a logical scalar for ASK.

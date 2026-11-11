@@ -6,12 +6,12 @@
   <meta name="color-scheme" content="light dark" />
   <title>R — rete · rete docs</title>
   <meta name="description" content="rete is the R client for .rete files: native bindings (extendr) to the same Rust engine behind the CLI, the Python client, and the browser playground." />
-  <link rel="canonical" href="https://caviri.github.io/rete/r.html" />
+  <link rel="canonical" href="https://caviri.github.io/rete/docs/r.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="R — rete · rete docs" />
   <meta property="og:description" content="rete is the R client for .rete files: native bindings (extendr) to the same Rust engine behind the CLI, the Python client, and the browser playground." />
-  <meta property="og:url" content="https://caviri.github.io/rete/r.html" />
+  <meta property="og:url" content="https://caviri.github.io/rete/docs/r.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/r.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -696,6 +696,11 @@ remote file typically fetches well under 1% of it.</p>
 <p><code>reason = TRUE</code> answers with OWL 2 QL entailment, computed by query rewriting
 over the ontology embedded in the file — no materialization, so it works on
 remote files too. See <a href="reasoning.html">Reasoning</a>.</p>
+<p><code>union_default_graph = TRUE</code> lets a pattern outside <code>GRAPH</code> match the default graph
+and every named graph, each triple once (not standard SPARQL, so off by default;
+see <a href="sparql.html#union-default-graph">Union default graph</a>):</p>
+<pre><code class="language-r">rete_query(g, query, union_default_graph = TRUE)
+</code></pre>
 <h2 id="explore-a-file-you-did-not-build">Explore a file you did not build</h2>
 <pre><code class="language-r">rete_info(g)            # quads, terms, pyramid levels, named graphs
 rete_card(g)            # the embedded Dataset Card as a list (or NULL)

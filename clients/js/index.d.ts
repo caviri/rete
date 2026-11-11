@@ -28,6 +28,13 @@ export interface QueryOptions {
   /** OWL 2 QL entailment by query rewriting. */
   reason?: boolean;
   /**
+   * Union default graph: a pattern outside `GRAPH` matches the default graph
+   * and every named graph, a triple stored in several graphs counting once.
+   * Not standard SPARQL, so off by default; a `FROM` in the query still wins.
+   * Not available together with `partition`.
+   */
+  unionDefault?: boolean;
+  /**
    * Run one chunk of a split query (see `Graph.partitionPlan`): only the
    * solutions whose `var` is one of `keys` (term tokens as the plan's keys
    * query returned them), without the query's top-level OFFSET/LIMIT.

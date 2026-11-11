@@ -427,7 +427,10 @@ function jobAnswer(job, offset = 0, limit = MAX_ROWS) {
  * resume) running it in chunks; `keysJob` names a finished job whose rows are
  * the values to run for. The graph is resolved (and checked) here first.
  */
-async function submitQuery(name, query, reason, partitionBy, keysJob) {
+async function submitQuery(name, query, reason, partitionBy, keysJob, unionDefault = false) {
+  if (unionDefault && partitionBy !== undefined) {
+    throw new UsageError("union_default_graph cannot be combined with partition_by yet: run it without partition_by (a LIMIT keeps it small) or name the graphs with FROM");
+  }
   if (keysJob !== undefined && partitionBy === undefined) {
     throw new UsageError("keys_job goes with partition_by: the variable its values are for, e.g. \"?work\"");
   }
@@ -438,6 +441,7 @@ async function submitQuery(name, query, reason, partitionBy, keysJob) {
     target: source.openTarget,
     query,
     reason,
+    unionDefault,
   };
   if (partitionBy !== undefined) {
     const variable = partitionBy.trim();
@@ -797,13 +801,18 @@ server.registerTool(
       `show ${MAX_ROWS} rows; next_cursor leads to the rest (query_result pages them or saves ` +
       "them all to a file). Keep a LIMIT while exploring, and COUNT before a large extraction. " +
       "reason=true enables OWL 2 QL entailment (subclass/subproperty/domain/range) where the " +
-      "graph carries an ontology. CONTAINS / STRSTARTS / REGEX need string arguments: use " +
+      "graph carries an ontology. union_default_graph=true lets a pattern outside GRAPH match the default graph and every named graph, each triple once. " +
+      "CONTAINS / STRSTARTS / REGEX need string arguments: use " +
       "STR(?iri) or STR(?number). FILTER type errors (silently false in SPARQL) come back as " +
       "`warnings`. partition_by runs a large extraction in resumable chunks.",
     inputSchema: {
       dataset,
       query: z.string().describe("the SPARQL query"),
       reason: z.boolean().optional().describe("OWL 2 QL entailment by query rewriting (default false)"),
+      union_default_graph: z
+        .boolean()
+        .optional()
+        .describe("a pattern outside GRAPH matches the default graph and every named graph, each triple once (non-standard; default false; not with partition_by)"),
       wait_seconds: z
         .number()
         .min(0)
@@ -815,9 +824,9 @@ server.registerTool(
     },
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
-  guard(async ({ dataset: name, query, reason = false, wait_seconds, partition_by, keys_job }, extra) => {
+  guard(async ({ dataset: name, query, reason = false, union_default_graph = false, wait_seconds, partition_by, keys_job }, extra) => {
     const called = Date.now();
-    const job = await submitQuery(name, query, reason, partition_by, keys_job);
+    const job = await submitQuery(name, query, reason, partition_by, keys_job, union_default_graph);
     await jobs.wait(job, seconds(wait_seconds, WAIT_DEFAULT_S), extra?.signal);
     // The client cancelled THIS call (the user stopped it): stop the query
     // too, so nothing keeps reading for an answer nobody will see — unless
@@ -842,14 +851,18 @@ server.registerTool(
       dataset,
       query: z.string().describe("the SPARQL query"),
       reason: z.boolean().optional().describe("OWL 2 QL entailment by query rewriting (default false)"),
+      union_default_graph: z
+        .boolean()
+        .optional()
+        .describe("a pattern outside GRAPH matches the default graph and every named graph, each triple once (non-standard; default false; not with partition_by)"),
       partition_by: partitionBy,
       keys_job: keysJob,
     },
     annotations: { ...READ_ONLY, idempotentHint: false, openWorldHint: true },
   },
-  guard(async ({ dataset: name, query, reason = false, partition_by, keys_job }) => {
+  guard(async ({ dataset: name, query, reason = false, union_default_graph = false, partition_by, keys_job }) => {
     const called = Date.now();
-    const job = await submitQuery(name, query, reason, partition_by, keys_job);
+    const job = await submitQuery(name, query, reason, partition_by, keys_job, union_default_graph);
     const joined = job.createdAt < called;
     return json({
       ...jobStatus(job),
