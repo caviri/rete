@@ -230,7 +230,7 @@ pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
 #[doc(hidden)]
 pub use block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
 #[doc(hidden)]
-pub use dict::{DictSection, DictSectionBuilder};
+pub use dict::{terms_decoded, DictSection, DictSectionBuilder};
 #[doc(hidden)]
 pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]

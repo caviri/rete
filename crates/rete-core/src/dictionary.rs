@@ -853,6 +853,13 @@ impl Dictionary {
         sid.saturating_sub(1)
     }
 
+    /// The subject-role ID of a unified node ID, when the node is a subject
+    /// (shared or subject-only): the inverse of [`Self::subject_node`]. An
+    /// object-only node has none. No term is decoded.
+    pub fn node_subject_id(&self, node: NodeId) -> Option<SubjectId> {
+        (node < self.shared_len.saturating_add(self.subject_only_count())).then(|| node + 1)
+    }
+
     /// Unified node ID for an object-role ID: shared stay at `oid-1`, object-only
     /// IDs are shifted past the subject-only block.
     pub fn object_node(&self, oid: ObjectId) -> NodeId {

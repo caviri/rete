@@ -389,8 +389,8 @@ fn a_union_over_every_graph_uses_an_all_graphs_index() {
 
 /// On a quad-index file, `GRAPH ?g` through an all-graphs index visits only the
 /// graphs holding a candidate subject: one pass over the graph-leading SPO
-/// tiles, not a view of every graph — and not the name of every graph, which
-/// is what the whole walk reads the dictionary for.
+/// tiles, not a view of every graph. (A walk binds each graph as its id and
+/// reads no graph names either, since the id-bound graph variable.)
 #[test]
 fn graph_var_walk_visits_only_graphs_with_candidates() {
     let idx = scope(TextIndexGraphs::All, &[], &[]);
@@ -423,8 +423,11 @@ fn graph_var_walk_visits_only_graphs_with_candidates() {
     let (whole, walked) = dict_bytes(walk);
     assert_eq!(whole, rows(&plain, walk));
     assert_eq!(whole.len(), 1);
+    // The walk no longer reads the name of every graph: it binds each graph as
+    // its id, so what it reads is the terms its rows decode. The pushdown still
+    // never reads more.
     assert!(
-        pushed * 4 < walked,
+        pushed <= walked,
         "the pushdown read {pushed} dictionary bytes, the whole walk {walked}"
     );
 }

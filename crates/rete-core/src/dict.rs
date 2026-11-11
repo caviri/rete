@@ -735,6 +735,16 @@ pub struct ChunkedSection {
     ra_window: AtomicU32,
 }
 
+/// Terms decoded from a dictionary section by [`ChunkedSection::term`], process-wide.
+static TERMS_DECODED: AtomicU64 = AtomicU64::new(0);
+
+/// How many terms have been decoded from any dictionary so far (every
+/// `term(id)` of a section, one per id, memo hits excluded). A counter for
+/// tests and diagnostics: a query's decode cost is the difference around it.
+pub fn terms_decoded() -> u64 {
+    TERMS_DECODED.load(Ordering::Relaxed)
+}
+
 /// The most chunks one sequential read-ahead fetches (16 × ~64 KiB ≈ 1 MiB).
 pub const READAHEAD_MAX_CHUNKS: u32 = 16;
 
@@ -1077,6 +1087,7 @@ impl ChunkedSection {
         if id == ABSENT || id > self.meta.term_count {
             return None;
         }
+        TERMS_DECODED.fetch_add(1, Ordering::Relaxed);
         let idx = (id - 1) as usize;
         let ri = self.meta.restart_interval as usize;
         let run = idx / ri;
