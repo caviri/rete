@@ -139,6 +139,29 @@ export type NQuadsSink =
   | { getWriter(): { ready: Promise<void>; write(chunk: string): unknown; releaseLock(): void } }
   | ((chunk: string) => unknown);
 
+/**
+ * A SELECT answered to dictionary ids, from {@link Graph.queryRows}. The rows
+ * are decoded a window at a time.
+ */
+export class ResultRows implements Disposable {
+  /** The projected variables (`SELECT *`: those some row binds, by name). */
+  readonly vars: string[];
+  /** The exact number of rows. */
+  readonly length: number;
+  /**
+   * Rows `offset .. offset + limit` (cut at the end), in the order `query()`
+   * returns them. One call reads the dictionary chunks of these rows only.
+   */
+  page(offset?: number, limit?: number): Record<string, Term>[];
+  /** Every row: decodes them all, like `Graph.query`. */
+  all(): Record<string, Term>[];
+  /** Diagnostics of the query, as `Graph.lastWarnings` (set by the first `page`). */
+  lastWarnings(): QueryWarning[];
+  /** Release the engine's copy of the rows. */
+  free(): void;
+  [Symbol.dispose](): void;
+}
+
 export class Graph {
   readonly source: string;
   /** SELECT → Row[]; ASK → boolean; CONSTRUCT/DESCRIBE → Triple[]. */
@@ -150,6 +173,13 @@ export class Graph {
    * when there is nothing to report. Results are never changed by them.
    */
   lastWarnings(): QueryWarning[];
+  /**
+   * Run a SELECT to a result handle: the rows stay ids, `rows.length` is exact,
+   * and `rows.page(offset, limit)` decodes one window on demand. A page of a
+   * big result costs its own dictionary chunks instead of the whole result's.
+   * Throws for ASK, CONSTRUCT and DESCRIBE.
+   */
+  queryRows(query: string, opts?: { reason?: boolean; unionDefault?: boolean }): ResultRows;
   /**
    * Plan running `query` as chunks split by the values of `variable`, or throw
    * saying why that would change the answer (ORDER BY, an aggregate not

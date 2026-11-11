@@ -63,7 +63,9 @@ worker. The host serving the file must send CORS headers and honor `Range`.
 `query()` returns `{var: Term}` rows for SELECT, a boolean for ASK, and
 `[s, p, o]` Term triples for CONSTRUCT/DESCRIBE. A `Term` carries `.kind` /
 `.value` / `.datatype` / `.lang`, plus `.toJS()` (number/boolean/BigInt for
-common XSD types) and `.n3`. Also: `partitionPlan()` + `queryRaw(q, { partition })` (a long query as
+common XSD types) and `.n3`. `queryRows(q)` runs a SELECT to a result handle: `rows.length`
+is exact and `rows.page(offset, limit)` decodes one window on demand, so the first page of a
+huge result on a remote file costs its own dictionary chunks, not the result's. Also: `partitionPlan()` + `queryRaw(q, { partition })` (a long query as
 resumable chunks split by one variable), `queryRaw`, `lastWarnings()` (why a FILTER silently dropped rows:
 CONTAINS on an IRI, STRSTARTS on a number, … — see the docs), `query(q, {reason: true})`
 (OWL 2 QL entailment), `prefixSearch`, `textSearch`, `schema`, `graphNames`,

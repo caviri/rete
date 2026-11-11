@@ -150,6 +150,29 @@
   // as before. The flag is baked into the worker blob at creation
   // (self.__RETE_ASYNC), so flipping it recreates the worker.
   var ASYNC = !!self.__RETE_ASYNC;
+  // The result handle of the last PAGED table run (RemoteGraph.query_rows): the
+  // rows stay dictionary ids in the engine and only the first page is decoded
+  // (the table shows no more), instead of every row of a 650,000-row result.
+  var _rowsH = null;
+  function _plainQuery(g, m) {
+    return ASYNC ? wasm_bindgen.reteQueryRemote(g, m.query, m.format, !!m.reason, !!m.union)
+                 : Promise.resolve(m.union ? g.query_opts(m.query, m.format, !!m.reason, true)
+                                           : (m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format)));
+  }
+  function _pagedQuery(g, m) {
+    var run = ASYNC ? wasm_bindgen.reteQueryRowsRemote(g, m.query, !!m.reason, !!m.union)
+                    : Promise.resolve().then(function () { return g.query_rows(m.query, !!m.reason, !!m.union); });
+    return Promise.resolve(run).then(function (h) {
+      if (_rowsH) { try { _rowsH.free(); } catch (e) { /* ignore */ } }
+      _rowsH = h;
+      return ASYNC ? wasm_bindgen.reteRowsPageRemote(h, 0, m.page) : h.page(0, m.page);
+    }, function (err) {
+      // ASK, CONSTRUCT, DESCRIBE (or an engine without handles): the ordinary path.
+      var msg = String((err && err.message) || err);
+      if (/result handle is for SELECT/.test(msg) || /query_rows is not a function/.test(msg)) return _plainQuery(g, m);
+      throw err;
+    });
+  }
   // NOTE: in async mode a wasm call must NEVER drive the generated wasm-bindgen
   // wrapper through the suspend/rewind loop — the wrapper re-marshals its args
   // and runs its free()-epilogue on every pass, corrupting the asyncify session
@@ -262,9 +285,7 @@
         // wrapper re-marshals/unpacks on every suspend pass and corrupts the
         // asyncify session on big files (the null-function family).
         // m.union = the opt-in union-default-graph toggle → query_opts.
-        return (ASYNC ? wasm_bindgen.reteQueryRemote(g, m.query, m.format, !!m.reason, !!m.union)
-                      : Promise.resolve(m.union ? g.query_opts(m.query, m.format, !!m.reason, true)
-                                                : (m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format)))).then(function (resStr) {
+        return (m.page > 0 ? _pagedQuery(g, m) : _plainQuery(g, m)).then(function (resStr) {
           var res = JSON.parse(resStr);
           var after = JSON.parse(g.stats());
           // Per-query physical traffic is the delta (a cache hit adds ~0); carry
@@ -787,13 +808,13 @@ self.onmessage = function (e) {
     return remoteReady;
   }
 
-  function remoteSparql(url, query, fmt, reason, union) {
+  function remoteSparql(url, query, fmt, reason, union, page) {
     return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
       const id = ++remoteSeq;
       state.remoteQueryStart = Date.now();
       state.liveRemoteFetch = { requests: 0, bytes: 0, at: Date.now() };
       remotePending.set(id, { resolve, reject });
-      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason, union: !!union });
+      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason, union: !!union, page: page || 0 });
     }));
   }
 
@@ -5292,7 +5313,7 @@ self.onmessage = function (e) {
       return;
     }
     const sameStrategy = !c ? false : c.remote ? true : c.strategy === $("strategy").value;
-    const reusable = !!c && c.rowShaped && ROW_VIEWS.has(fmt) &&
+    const reusable = !!c && c.rowShaped && ROW_VIEWS.has(fmt) && !(c.partial && fmt !== "table") &&
       c.q === $("q").value.trim() && c.remote === !!state.remote &&
       c.dataset === state.dataset && sameStrategy &&
       // ⛁ All graphs changes the DATASET a pattern matches — a result computed
@@ -5316,6 +5337,7 @@ self.onmessage = function (e) {
 
   // How many rows a table shows before its "Show more" button, and how many
   // each click reveals.
+  const TABLE_PAGE = 500; // rows a table holds; a remote table run decodes just these
   const TABLE_HEAD_ROWS = 12;
   const TABLE_MORE_STEP = 50;
 
@@ -6816,17 +6838,19 @@ self.onmessage = function (e) {
   // A collapsed table whose columns carry a type-override dropdown.
   function statefulTable(vars, rows, note) {
     const tid = "t" + ++tableSeq;
-    const st = { tid, vars: vars || [], rows: rows || [], types: state.colTypes ? { ...state.colTypes } : {}, cap: 500, note: note || "", labels: state.colLabels || null };
+    const st = { tid, vars: vars || [], rows: rows || [], types: state.colTypes ? { ...state.colTypes } : {}, cap: TABLE_PAGE, note: note || "", labels: state.colLabels || null };
     tableStates.set(tid, st);
     // Bound the registry — only the few visible tables need their data kept.
     while (tableStates.size > 12) tableStates.delete(tableStates.keys().next().value);
     return `<div class="tbl" data-tid="${tid}">${tableInner(st)}</div>`;
   }
 
-  function renderTable(vars, rows) {
+  function renderTable(vars, rows, total) {
     if (!(rows || []).length) return emptyState("rows");
-    const note = (rows || []).length > 500
-      ? `<p class="microcopy">Showing first 500 of ${rows.length} rows.</p>`
+    // `total`: the result's row count when `rows` is only its first page.
+    const n = Math.max((rows || []).length, total || 0);
+    const note = n > TABLE_PAGE
+      ? `<p class="microcopy">Showing first ${TABLE_PAGE} of ${n} rows.</p>`
       : "";
     return statefulTable(vars || [], rows || [], note);
   }
@@ -7747,8 +7771,8 @@ self.onmessage = function (e) {
         $("out").innerHTML = `<div class="note">${name} serializes an <b>RDF graph</b>, but this query is a <b>SELECT</b> — it returns a solution table, not triples. Switch <b>Output</b> back to <b>Table</b>, or use a <b>CONSTRUCT</b> (or <b>DESCRIBE</b>) query to build a graph you can export as ${name}.</div>`;
         return `${(res.rows || []).length} row(s) · ${name} needs CONSTRUCT`;
       }
-      $("out").innerHTML = progressiveBanner(progressive) + renderTable(res.vars || [], res.rows || []);
-      return `${(res.rows || []).length} row(s)`;
+      $("out").innerHTML = progressiveBanner(progressive) + renderTable(res.vars || [], res.rows || [], res.total);
+      return `${Math.max((res.rows || []).length, res.total || 0)} row(s)`;
     }
 
     if (res.format === "ttl" || res.format === "jsonld") {
@@ -8903,7 +8927,10 @@ self.onmessage = function (e) {
       // The syncReader dataset opt-out is applied in runQuery (it must also
       // cover the federated path); surface its note in this run's qmeta.
       if (state.readerNote) { readerNote = state.readerNote; state.readerNote = ""; }
-      const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason, union);
+      // The Table shows TABLE_PAGE rows and no more, so a table run decodes just
+      // those (a SELECT; the worker runs anything else the ordinary way). The
+      // other views derive from every row: they keep the whole result.
+      const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason, union, fmt === "table" ? TABLE_PAGE : 0);
       invokeRemote().catch((e) => {
         const msg = String((e && e.message) || e);
         // Asyncify can also trap on particular valid query shapes in desktop
@@ -8927,7 +8954,10 @@ self.onmessage = function (e) {
         const res = JSON.parse(out.json);
         // Row-shaped unless we fetched a serialization — cache it so an Output
         // switch re-renders rather than re-runs.
-        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset, union };
+        // `partial`: the table's page of a longer result (res.total rows). Another
+        // view needs every row, so it re-runs instead of re-rendering this.
+        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset, union,
+          partial: typeof res.total === "number" && res.total > (res.rows || []).length };
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const dt = performance.now() - t0;
