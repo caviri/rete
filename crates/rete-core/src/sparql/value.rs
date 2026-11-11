@@ -368,12 +368,12 @@ pub(crate) fn order_cmp(a: &str, ca: &Class, b: &str, cb: &Class) -> Ordering {
 /// An ORDER BY / MIN / MAX key, classified once.
 #[derive(Debug, Clone)]
 pub(crate) struct OrderKey {
-    pub(crate) token: std::rc::Rc<str>,
+    pub(crate) token: std::sync::Arc<str>,
     pub(crate) class: Class,
 }
 
 impl OrderKey {
-    pub(crate) fn new(token: std::rc::Rc<str>) -> Self {
+    pub(crate) fn new(token: std::sync::Arc<str>) -> Self {
         let class = classify(&token);
         OrderKey { token, class }
     }
@@ -1302,7 +1302,7 @@ mod tests {
 
     #[test]
     fn order_by_puts_kinds_in_spec_order_and_values_in_value_order() {
-        let key = |t: &str| OrderKey::new(std::rc::Rc::from(t));
+        let key = |t: &str| OrderKey::new(std::sync::Arc::from(t));
         let mut v: Vec<OrderKey> = [
             "\"b\"",
             "<http://z>",
@@ -1406,7 +1406,7 @@ mod tests {
         ];
         let keys: Vec<OrderKey> = terms
             .iter()
-            .map(|t| OrderKey::new(std::rc::Rc::from(t.as_str())))
+            .map(|t| OrderKey::new(std::sync::Arc::from(t.as_str())))
             .collect();
         for a in &keys {
             for b in &keys {

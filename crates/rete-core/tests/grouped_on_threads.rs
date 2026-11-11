@@ -225,16 +225,44 @@ fn queries() -> Vec<(&'static str, bool)> {
              GROUP BY ?n ORDER BY ?n",
             true,
         ),
-        // Not split: a set of the values seen cannot be merged.
+        // A set of the values seen cannot be merged: the workers send rows
+        // to the one fold.
         (
             "SELECT (COUNT(DISTINCT ?e) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } }",
-            false,
+            true,
         ),
-        // Not split: a join that builds its right side.
         (
-            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e } \
-             GRAPH ?a { ?s ex:score ?v } FILTER(?a = ?x) } GROUP BY ?e ORDER BY ?e",
-            false,
+            "SELECT ?e (COUNT(DISTINCT ?x) AS ?n) (GROUP_CONCAT(DISTINCT ?l; SEPARATOR=\",\") AS ?ls)              (SUM(?one) AS ?rows) WHERE { GRAPH ?pv { ?x ex:evidence ?e }              OPTIONAL { GRAPH ?pv { ?e rdfs:label ?l } } BIND(1 AS ?one) } GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
+        // A hash join: the right side is built once and every slice probes it.
+        (
+            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?h { ?np ex:hasAssertion ?a }              GRAPH ?pv { ?a ex:evidence ?e } } GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
+        (
+            "SELECT ?l (COUNT(*) AS ?n) (COUNT(?src) AS ?with) WHERE {              GRAPH ?h { ?np ex:hasAssertion ?a }              OPTIONAL { GRAPH ?pv { ?a ex:source ?src FILTER(STRENDS(STR(?src), \"#3\")) } }              OPTIONAL { GRAPH ?pv2 { ?a ex:evidence ?e . ?e rdfs:label ?l } } }              GROUP BY ?l ORDER BY ?l",
+            true,
+        ),
+        // A join with no shared variable, then a filter across it.
+        (
+            "SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?pv { ?x ex:evidence ?e }              GRAPH ?a { ?s ex:score ?v } FILTER(?a = ?x) } GROUP BY ?e ORDER BY ?e",
+            true,
+        ),
+        // A join against a sub-select that groups.
+        (
+            "SELECT ?n (COUNT(*) AS ?rows) WHERE { GRAPH ?pv { ?x ex:evidence ?e }              { SELECT ?e (COUNT(*) AS ?n) WHERE { GRAPH ?p2 { ?e rdfs:label ?l } } GROUP BY ?e } }              GROUP BY ?n ORDER BY ?n",
+            true,
+        ),
+        // Several patterns under GRAPH ?g: the graphs are sliced.
+        (
+            "SELECT ?v (COUNT(*) AS ?n) (SAMPLE(?o) AS ?any) WHERE {              GRAPH ?a { ?s ex:score ?v ; ex:rel0 ?o } } GROUP BY ?v ORDER BY ?v",
+            true,
+        ),
+        // UNION with a branch that cannot be split (a sub-select): slice 0 runs it.
+        (
+            "SELECT (COUNT(*) AS ?n) (COUNT(?k) AS ?ks) WHERE { { GRAPH ?g { ?s ex:score ?v } } UNION              { SELECT ?k WHERE { ?np ex:featured ?k } } }",
+            true,
         ),
         // Not split: EXISTS reads the whole row and keeps its own table.
         (
@@ -250,19 +278,84 @@ fn queries() -> Vec<(&'static str, bool)> {
     ]
 }
 
+/// A graph of typed things, each with a value and a link to another, in the
+/// default graph, cut into tiles of a few dozen triples.
+fn things() -> Rete {
+    use rete_core::{write_file_v05, DictionaryBuilder, GraphIndexBuilder};
+    let mut t: Vec<(String, String, String)> = Vec::new();
+    for i in 0..N {
+        let thing = iri(&format!("http://ex/thing/{i:05}"));
+        t.push((
+            thing.clone(),
+            iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+            iri(&format!("http://ex/Kind{}", i % 7)),
+        ));
+        t.push((
+            thing.clone(),
+            iri("http://ex/value"),
+            format!("\"{}\"^^<{XSD_INT}>", i % 13),
+        ));
+        t.push((
+            thing,
+            iri("http://ex/link"),
+            iri(&format!("http://ex/thing/{:05}", (i * 31) % N)),
+        ));
+    }
+    let mut db = DictionaryBuilder::new();
+    for (s, p, o) in &t {
+        db.observe(s, p, o);
+    }
+    let dict = db.build();
+    let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+    for (s, p, o) in &t {
+        ib.push(dict.encode(s, p, o).unwrap());
+    }
+    Rete::open(&write_file_v05(&dict, &ib.build(), false, &[], 0)).unwrap()
+}
+
+/// Basic graph patterns of several triple patterns, over [`things`].
+fn pattern_queries() -> Vec<(&'static str, bool)> {
+    vec![
+        // A star: the prefix is built once, the last pattern's scan is sliced.
+        (
+            "SELECT ?k (COUNT(*) AS ?n) (SUM(?v) AS ?sum) WHERE { ?t a ?k ; ex:value ?v }              GROUP BY ?k ORDER BY ?k",
+            true,
+        ),
+        // A star and a hop, a filter, order-sensitive aggregates.
+        (
+            "SELECT ?k ?k2 (COUNT(*) AS ?n) (SAMPLE(?u) AS ?any)              (GROUP_CONCAT(?v; SEPARATOR=\"\") AS ?vs)              WHERE { ?t a ?k ; ex:value ?v ; ex:link ?u . ?u a ?k2 FILTER(?v < 3) }              GROUP BY ?k ?k2 ORDER BY ?k ?k2",
+            true,
+        ),
+        // A constant class, a hop, a distinct count.
+        (
+            "SELECT ?v (COUNT(DISTINCT ?u) AS ?n) WHERE {              ?t a ex:Kind3 ; ex:link ?u . ?u ex:value ?v } GROUP BY ?v ORDER BY ?v",
+            true,
+        ),
+        // A pattern joined to an OPTIONAL pattern and a second block.
+        (
+            "SELECT ?k (COUNT(*) AS ?n) (COUNT(?w) AS ?ws) WHERE { ?t a ?k              OPTIONAL { ?t ex:link ?u . ?u ex:value ?w FILTER(?w > 6) } } GROUP BY ?k ORDER BY ?k",
+            true,
+        ),
+    ]
+}
+
 #[test]
 fn four_threads_answer_as_one_does() {
-    let rete = file();
+    let (quads, things) = (file(), things());
     let parallel = cfg!(feature = "parallel");
-    for (q, split) in queries() {
+    let cases = queries()
+        .into_iter()
+        .map(|c| (&quads, c))
+        .chain(pattern_queries().into_iter().map(|c| (&things, c)));
+    for (rete, (q, split)) in cases {
         let q = format!("{P}{q}");
         set_query_threads(1);
         let before = sharded_queries();
-        let one = rows(&rete, &q);
+        let one = rows(rete, &q);
         assert_eq!(sharded_queries(), before, "one thread never splits: {q}");
         set_query_threads(4);
         let before = sharded_queries();
-        let four = rows(&rete, &q);
+        let four = rows(rete, &q);
         let took = sharded_queries() - before;
         assert_eq!(one, four, "{q}");
         assert!(one.len() > 1, "a result to compare: {q}");

@@ -25,7 +25,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use spargebra::algebra::{
     AggregateExpression, AggregateFunction, Expression, GraphPattern, OrderExpression,
@@ -404,7 +404,7 @@ impl FederationPlan {
                 .map(|r| {
                     self.order
                         .iter()
-                        .map(|(v, _)| r.get(v).map(|t| OrderKey::new(Rc::from(t.as_str()))))
+                        .map(|(v, _)| r.get(v).map(|t| OrderKey::new(Arc::from(t.as_str()))))
                         .collect()
                 })
                 .collect();
@@ -569,7 +569,7 @@ fn fold_values(fold: Fold, vals: &[Option<&str>]) -> Option<String> {
             // A source whose group had no value leaves it unbound: skipped.
             let mut best: Option<OrderKey> = None;
             for v in vals.iter().flatten() {
-                let k = OrderKey::new(Rc::from(*v));
+                let k = OrderKey::new(Arc::from(*v));
                 let take = match &best {
                     None => true,
                     Some(b) => match k.cmp(b) {

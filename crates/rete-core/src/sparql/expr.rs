@@ -17,7 +17,7 @@
 //! projection leaves the variable unbound, ORDER BY sorts it as "no value".
 //! Collapsing it to `false` any earlier made `!CONTAINS(?iri, "x")` true.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use super::value;
 use super::*;
@@ -27,13 +27,13 @@ use crate::row::{Ctx, Row};
 impl FExpr {
     /// Evaluate to a value string against a row (variables resolve, errors
     /// yield `None`).
-    pub(super) fn value(&self, ctx: &Ctx, b: &Row) -> Option<Rc<str>> {
+    pub(super) fn value(&self, ctx: &Ctx, b: &Row) -> Option<Arc<str>> {
         match self {
             FExpr::Var(v) => {
                 let slot = ctx.slots.slot(v)?;
                 b[slot].as_ref().and_then(|val| ctx.resolver.str_of(val))
             }
-            FExpr::Const(c) => Some(Rc::from(c.as_str())),
+            FExpr::Const(c) => Some(Arc::from(c.as_str())),
             FExpr::Arith(op, l, r) => {
                 let (a, _) = arith_operand(*op, 1, l, ctx, b)?;
                 let (c, ct) = arith_operand(*op, 2, r, ctx, b)?;
@@ -47,14 +47,14 @@ impl FExpr {
                     }
                     ArithOp::Div => a / c,
                 };
-                Some(Rc::from(fmt_num_typed(v)))
+                Some(Arc::from(fmt_num_typed(v)))
             }
             // A boolean built-in (isIRI, CONTAINS, REGEX, …) in value position
             // (BIND, a projected expression, a COALESCE or IF argument) is an
             // xsd:boolean (§17.4.2, §17.4.3), or an error. It used to fall
             // through to `func_value`, which has no value for it: unbound.
             FExpr::Func(f, args) if is_boolean_builtin(*f) => {
-                func_bool(*f, args, ctx, b).map(|v| Rc::from(bool_literal(v)))
+                func_bool(*f, args, ctx, b).map(|v| Arc::from(bool_literal(v)))
             }
             FExpr::Func(f, args) => func_value(*f, args, ctx, b),
             // COALESCE: the first argument that evaluates without error.
@@ -74,7 +74,7 @@ impl FExpr {
             | FExpr::And(..)
             | FExpr::Or(..)
             | FExpr::Not(..)
-            | FExpr::Bound(..) => self.ebv3(ctx, b).map(|v| Rc::from(bool_literal(v))),
+            | FExpr::Bound(..) => self.ebv3(ctx, b).map(|v| Arc::from(bool_literal(v))),
             _ => None,
         }
     }
@@ -312,18 +312,18 @@ fn is_boolean_builtin(f: Builtin) -> bool {
 }
 
 /// Evaluate a value-returning built-in (string/numeric); `None` for predicates.
-fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>> {
+fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Arc<str>> {
     let a0 = || args.first().and_then(|e| e.value(ctx, b));
-    let num = |x: f64| -> Option<Rc<str>> { Some(Rc::from(fmt_num_typed(x))) };
+    let num = |x: f64| -> Option<Arc<str>> { Some(Arc::from(fmt_num_typed(x))) };
     // Unescaped lexical value of a term token (the text the SPARQL string
     // functions operate on); `make_literal` re-escapes when building results.
     let lex = |t: &str| crate::terms::lexical(t).into_owned();
     // A plain (simple) literal result.
-    let s = |x: String| -> Option<Rc<str>> { Some(Rc::from(make_literal(&x, None, None))) };
+    let s = |x: String| -> Option<Arc<str>> { Some(Arc::from(make_literal(&x, None, None))) };
     // A string-valued result carrying `lang` (when non-empty), per the SPARQL
     // "string literal" preservation rules for UCASE/LCASE/SUBSTR/STR{BEFORE,AFTER}.
-    let sl = |x: String, lang: Option<&str>| -> Option<Rc<str>> {
-        Some(Rc::from(make_literal(&x, lang, None)))
+    let sl = |x: String, lang: Option<&str>| -> Option<Arc<str>> {
+        Some(Arc::from(make_literal(&x, lang, None)))
     };
     // Argument `i`, reporting it when it is an unbound variable.
     let arg = |i: usize| {
@@ -370,19 +370,19 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // term values. `None` (a type error) when the argument is not a quoted
         // triple, matching the SPARQL-star spec.
         Builtin::Subject => {
-            crate::ingest::quoted_triple_parts(&a0()?).map(|(x, _, _)| Rc::from(x.as_str()))
+            crate::ingest::quoted_triple_parts(&a0()?).map(|(x, _, _)| Arc::from(x.as_str()))
         }
         Builtin::Predicate => {
-            crate::ingest::quoted_triple_parts(&a0()?).map(|(_, x, _)| Rc::from(x.as_str()))
+            crate::ingest::quoted_triple_parts(&a0()?).map(|(_, x, _)| Arc::from(x.as_str()))
         }
         Builtin::Object => {
-            crate::ingest::quoted_triple_parts(&a0()?).map(|(_, _, x)| Rc::from(x.as_str()))
+            crate::ingest::quoted_triple_parts(&a0()?).map(|(_, _, x)| Arc::from(x.as_str()))
         }
         Builtin::TripleTerm => {
             let sub = a0()?;
             let pred = args.get(1).and_then(|e| e.value(ctx, b))?;
             let obj = args.get(2).and_then(|e| e.value(ctx, b))?;
-            Some(Rc::from(format!("<<{sub} {pred} {obj}>>")))
+            Some(Arc::from(format!("<<{sub} {pred} {obj}>>")))
         }
         // STRLEN/UCASE/LCASE/SUBSTR/ENCODE_FOR_URI and the hashes require a STRING
         // literal argument — `string_arg` errors (→ None, a type error) on an IRI,
@@ -486,7 +486,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 diag::bad_constructor_arg(f, 2, &t);
                 return None;
             };
-            Some(Rc::from(make_literal(&v, None, Some(dt))))
+            Some(Arc::from(make_literal(&v, None, Some(dt))))
         }
         Builtin::StrLang => {
             let v = simple_arg(f, &arg(0)?)?;
@@ -499,7 +499,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 diag::bad_arg(f, 2, &arg(1)?);
                 return None;
             }
-            Some(Rc::from(make_literal(&v, Some(&lang), None)))
+            Some(Arc::from(make_literal(&v, Some(&lang), None)))
         }
         // IRI()/URI(): an IRI argument passes through; a string becomes <...>.
         Builtin::Iri => {
@@ -509,7 +509,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             } else {
                 // A string literal only: a blank node (or a number) is an error,
                 // not an IRI spelled from its token.
-                Some(Rc::from(format!("<{}>", lex_string_arg(f, 1, &a)?)))
+                Some(Arc::from(format!("<{}>", lex_string_arg(f, 1, &a)?)))
             }
         }
         Builtin::EncodeForUri => {
@@ -550,7 +550,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // TIMEZONE → an xsd:dayTimeDuration; a value with no timezone errors.
         Builtin::Timezone => {
             let dur = tz_to_duration(&dtm()?.6)?;
-            Some(Rc::from(make_literal(
+            Some(Arc::from(make_literal(
                 &dur,
                 None,
                 Some("http://www.w3.org/2001/XMLSchema#dayTimeDuration"),
@@ -565,14 +565,14 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // RAND() → an xsd:double in [0, 1).
         Builtin::Rand => {
             let r = (random_u64() >> 11) as f64 / (1u64 << 53) as f64;
-            Some(Rc::from(make_literal(
+            Some(Arc::from(make_literal(
                 &format!("{r}"),
                 None,
                 Some("http://www.w3.org/2001/XMLSchema#double"),
             )))
         }
         // UUID() → a urn:uuid: IRI; STRUUID() → the bare UUID as a simple literal.
-        Builtin::Uuid => Some(Rc::from(format!("<urn:uuid:{}>", uuid_v4()))),
+        Builtin::Uuid => Some(Arc::from(format!("<urn:uuid:{}>", uuid_v4()))),
         Builtin::StrUuid => s(uuid_v4()),
         // BNODE(): a fresh blank node; BNODE("str"): a blank node keyed by the
         // string (same string → same node within a result, via a stable hash).
@@ -581,9 +581,9 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 use std::hash::{Hash, Hasher};
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 lex(&v).hash(&mut h);
-                Some(Rc::from(format!("_:b{:016x}", h.finish())))
+                Some(Arc::from(format!("_:b{:016x}", h.finish())))
             }
-            None => Some(Rc::from(format!("_:b{:016x}", random_u64()))),
+            None => Some(Arc::from(format!("_:b{:016x}", random_u64()))),
         },
         // DATATYPE(literal) → the datatype IRI term (`<...>`): the explicit
         // `^^<dt>`, else `rdf:langString` for a language-tagged literal, else
@@ -595,7 +595,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 diag::not_a_literal(f, &a);
                 return None;
             };
-            Some(Rc::from(format!("<{iri}>")))
+            Some(Arc::from(format!("<{iri}>")))
         }
         // LANG(literal) → its language tag as a plain literal (`"en"`), or `""`
         // for a non-language-tagged literal; non-literal → `None`.
@@ -605,7 +605,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 diag::not_a_literal(f, &a);
                 return None;
             };
-            Some(Rc::from(format!("\"{l}\"")))
+            Some(Arc::from(format!("\"{l}\"")))
         }
         // GeoSPARQL relations in value position (e.g. `BIND(geof:sfWithin(..) AS ?x)`)
         // → a typed xsd:boolean; a type error → None (unbound).
@@ -615,7 +615,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         | Builtin::GeoSfDisjoint
         | Builtin::GeoSfEquals => {
             let r = geo_relation(f, &a0()?, &args.get(1)?.value(ctx, b)?)?;
-            Some(Rc::from(bool_literal(r)))
+            Some(Arc::from(bool_literal(r)))
         }
         // geof:distance(g1, g2, unitIRI) → xsd:double.
         Builtin::GeoDistance => {
@@ -625,7 +625,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 &wkt_arg(&args.get(1)?.value(ctx, b)?)?,
                 unit,
             )?;
-            Some(Rc::from(make_literal(
+            Some(Arc::from(make_literal(
                 &fmt_plain(d),
                 None,
                 Some(XSD_DOUBLE),
@@ -634,7 +634,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // geof:envelope(g) → the bounding box as a geo:wktLiteral POLYGON.
         Builtin::GeoEnvelope => {
             let wkt = crate::geo::envelope_wkt(&wkt_arg(&a0()?)?)?;
-            Some(Rc::from(make_literal(
+            Some(Arc::from(make_literal(
                 &wkt,
                 None,
                 Some(crate::geo::GEO_WKT),
@@ -644,13 +644,13 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         Builtin::Geo3Contains | Builtin::Geo3Within | Builtin::Geo3Adjacent => {
             let gap = args.get(2).and_then(|e| e.value(ctx, b));
             let r = geo3_relation(f, &a0()?, &args.get(1)?.value(ctx, b)?, gap)?;
-            Some(Rc::from(bool_literal(r)))
+            Some(Arc::from(bool_literal(r)))
         }
         // geo3:distance3D(g1, g2) → xsd:double (min AABB gap, literal's own unit).
         Builtin::Geo3Distance => {
             let d =
                 crate::geo3::distance(&geo3_arg(&a0()?)?, &geo3_arg(&args.get(1)?.value(ctx, b)?)?);
-            Some(Rc::from(make_literal(
+            Some(Arc::from(make_literal(
                 &fmt_plain(d),
                 None,
                 Some(XSD_DOUBLE),
@@ -707,7 +707,7 @@ fn geo3_arg(token: &str) -> Option<crate::geo3::Aabb> {
 }
 
 /// Evaluate a geo3 relation builtin on two geometry terms (+ optional gap for adjacency).
-fn geo3_relation(f: Builtin, t1: &str, t2: &str, gap: Option<Rc<str>>) -> Option<bool> {
+fn geo3_relation(f: Builtin, t1: &str, t2: &str, gap: Option<Arc<str>>) -> Option<bool> {
     let rel = match f {
         Builtin::Geo3Contains => crate::geo3::Rel3::Contains,
         Builtin::Geo3Within => crate::geo3::Rel3::Within,
@@ -991,7 +991,7 @@ fn parse_xsd_double(s: &str) -> Option<f64> {
 /// against the target's lexical space (an invalid form is a type error →
 /// `None`); numeric/boolean *typed* sources convert by value. The harness
 /// compares numerics by value, so only validity and the numeric value matter.
-fn cast_to(token: &str, target: Builtin) -> Option<Rc<str>> {
+fn cast_to(token: &str, target: Builtin) -> Option<Arc<str>> {
     const NS: &str = "http://www.w3.org/2001/XMLSchema#";
     let dt = datatype_iri(token);
     let is_string_src = dt.as_deref() == Some(XSD_STRING);
@@ -1000,7 +1000,7 @@ fn cast_to(token: &str, target: Builtin) -> Option<Rc<str>> {
     let raw = crate::terms::lexical(token);
     let src = raw.trim();
     let typed = |lex: String, ty: &str| {
-        Some(Rc::from(make_literal(
+        Some(Arc::from(make_literal(
             &lex,
             None,
             Some(&format!("{NS}{ty}")),
@@ -1288,7 +1288,13 @@ fn simple_arg(f: Builtin, token: &str) -> Option<String> {
 /// One operand of `+ - * /` as a number (with its term, for the division-by-
 /// zero sample), reporting an unbound variable or a non-numeric term.
 #[inline]
-fn arith_operand(op: ArithOp, pos: usize, e: &FExpr, ctx: &Ctx, b: &Row) -> Option<(f64, Rc<str>)> {
+fn arith_operand(
+    op: ArithOp,
+    pos: usize,
+    e: &FExpr,
+    ctx: &Ctx,
+    b: &Row,
+) -> Option<(f64, Arc<str>)> {
     let Some(t) = e.value(ctx, b) else {
         missing_operand(diag::Site::arith(op), pos, e);
         return None;
@@ -1387,7 +1393,7 @@ pub(super) enum SortKey {
 }
 
 impl SortKey {
-    pub(super) fn of(v: Option<Rc<str>>) -> Self {
+    pub(super) fn of(v: Option<Arc<str>>) -> Self {
         match v {
             None => SortKey::Unbound,
             Some(s) => SortKey::Bound(value::OrderKey::new(s)),
@@ -1450,7 +1456,7 @@ mod tests {
         slots.add("unset");
         let ctx = Ctx::new(&rete, slots);
         let mut row = ctx.slots.empty_row();
-        row[x] = Some(Val::Str(Rc::from(lit("2", &format!("{XSD}integer")))));
+        row[x] = Some(Val::Str(Arc::from(lit("2", &format!("{XSD}integer")))));
 
         let var = FExpr::Var("x".into());
         assert!(var.value(&ctx, &row).unwrap().contains("2"));
@@ -1546,9 +1552,9 @@ mod tests {
         .unwrap());
 
         let unbound = SortKey::of(None);
-        let one = SortKey::of(Some(Rc::from("1")));
-        let two = SortKey::of(Some(Rc::from("2")));
-        let text = SortKey::of(Some(Rc::from("z")));
+        let one = SortKey::of(Some(Arc::from("1")));
+        let two = SortKey::of(Some(Arc::from("2")));
+        let text = SortKey::of(Some(Arc::from("z")));
         assert_eq!(unbound.cmp(&unbound), std::cmp::Ordering::Equal);
         assert_eq!(unbound.cmp(&one), std::cmp::Ordering::Less);
         assert_eq!(one.cmp(&unbound), std::cmp::Ordering::Greater);
