@@ -5554,7 +5554,7 @@ impl Rete {
         let rete = Self {
             header,
             dict,
-            index: index,
+            index,
             index_section_ranges: [ByteRange::default(); NUM_PERMS],
             tile_ranges: Default::default(),
             pyramid,
