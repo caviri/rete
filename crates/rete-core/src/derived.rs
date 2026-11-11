@@ -366,6 +366,8 @@ pub struct DerivedTerms {
     /// Per family, the predicate id of each input (`None` when the file has no
     /// such predicate, so nothing derives).
     preds: OnceLock<Vec<Vec<Option<u32>>>>,
+    /// The last term rebuilt: a subject is decoded again for each row it is in.
+    last: std::sync::Mutex<Option<(u32, String)>>,
 }
 
 impl DerivedTerms {
@@ -375,6 +377,7 @@ impl DerivedTerms {
             families,
             index: OnceLock::new(),
             preds: OnceLock::new(),
+            last: std::sync::Mutex::new(None),
         }
     }
 
@@ -412,10 +415,13 @@ impl DerivedTerms {
     fn inputs_of(&self, dict: &Dictionary, fi: usize, s: u32) -> Option<Vec<u32>> {
         let index = self.index.get()?;
         let mut out = Vec::with_capacity(self.families[fi].inputs.len());
+        // One lookup of the subject's rows (SPO, the tile the prefetch faulted).
+        let rows = index.match_pattern((Some(s), None, None));
         for p in self.preds(dict)[fi].iter() {
-            let rows = index.match_pattern((Some(s), Some((*p)?), None));
-            match rows.as_slice() {
-                [(_, _, o)] => out.push(*o),
+            let p = (*p)?;
+            let mut it = rows.iter().filter(|r| r.1 == p);
+            match (it.next(), it.next()) {
+                (Some(&(_, _, o)), None) => out.push(o),
                 _ => return None,
             }
         }
@@ -424,6 +430,21 @@ impl DerivedTerms {
 
     /// The term of subject-only id `local`, rebuilt.
     pub fn term(&self, dict: &Dictionary, local: u32) -> Option<String> {
+        if let Ok(g) = self.last.lock() {
+            if let Some((l, t)) = g.as_ref() {
+                if *l == local {
+                    return Some(t.clone());
+                }
+            }
+        }
+        let t = self.term_uncached(dict, local)?;
+        if let Ok(mut g) = self.last.lock() {
+            *g = Some((local, t.clone()));
+        }
+        Some(t)
+    }
+
+    fn term_uncached(&self, dict: &Dictionary, local: u32) -> Option<String> {
         let ci = dict.subject_only_chunk(local)?;
         let fi = self.family_of_chunk(ci)?;
         let s = dict.shared_count().checked_add(local)?;
@@ -438,12 +459,26 @@ impl DerivedTerms {
 
     /// Fill `out[slot]` for each `(local id, slot)` of `jobs` that is derived.
     pub fn terms(&self, dict: &Dictionary, jobs: &[(u32, usize)], out: &mut [Option<String>]) {
-        let ids: Vec<u32> = jobs.iter().map(|j| j.0).collect();
+        let mut jobs = jobs.to_vec();
+        jobs.sort_unstable();
+        let mut ids: Vec<u32> = jobs.iter().map(|j| j.0).collect();
+        ids.dedup();
         self.prefetch(dict, &ids);
-        for &(local, slot) in jobs {
-            if out[slot].is_none() {
-                out[slot] = self.term(dict, local);
+        // A subject repeats in every row it is in: rebuild each id once.
+        let mut last: Option<(u32, Option<String>)> = None;
+        for &(local, slot) in &jobs {
+            if out[slot].is_some() {
+                continue;
             }
+            let t = match &last {
+                Some((l, t)) if *l == local => t.clone(),
+                _ => {
+                    let t = self.term(dict, local);
+                    last = Some((local, t.clone()));
+                    t
+                }
+            };
+            out[slot] = t;
         }
     }
 
@@ -458,6 +493,7 @@ impl DerivedTerms {
             return;
         }
         let mut pats: Vec<Pattern> = Vec::new();
+        let mut wanted: Vec<u32> = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         for &l in locals {
             let Some(ci) = dict.subject_only_chunk(l) else {
@@ -472,18 +508,21 @@ impl DerivedTerms {
             if !seen.insert(s) {
                 continue;
             }
-            for p in self.preds(dict)[fi].iter().flatten() {
-                pats.push((Some(s), Some(*p), None));
-            }
+            pats.push((Some(s), None, None));
+            wanted.extend(self.preds(dict)[fi].iter().flatten());
         }
+        wanted.sort_unstable();
+        wanted.dedup();
         let mut at = 0;
         while at < pats.len() {
             at += index.prefetch_probe_tiles(&pats[at..]).max(1);
         }
         let mut nodes = Vec::new();
         for pat in &pats {
-            for (_, _, o) in index.match_pattern(*pat) {
-                nodes.push(dict.object_node(o));
+            for (_, p, o) in index.match_pattern(*pat) {
+                if wanted.contains(&p) {
+                    nodes.push(dict.object_node(o));
+                }
             }
         }
         nodes.sort_unstable();
