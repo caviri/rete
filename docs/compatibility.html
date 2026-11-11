@@ -670,7 +670,7 @@ in step with the readers, and the <code>0x06</code> reader goes once it is.</li>
 a 128-byte header, a root block and the Dataset Card at the front of the file,
 inside the first 128 KiB a reader fetches, and the data after them. Readers of
 this release read both generations; <strong>readers up to 0.4.2 cannot read <code>0x06</code></strong>.
-They refuse it by name (<code>unsupported .rete format 0x06; this Rete build reads  0x05..=0x05</code>), never misread it.</p>
+They refuse it by name (<code>unsupported .rete format 0x06; this Rete build reads 0x05..=0x05</code>), never misread it.</p>
 <ul>
 <li><strong>Convert, do not rebuild.</strong> <code>rete convert in.rete -o out.rete</code> turns a <code>0x05</code>
 file into <code>0x06</code> from its sections: payload copied, never re-parsed. A file
@@ -755,7 +755,7 @@ touching a payload. Verified by reading a 3-permutation file with an unmodified
 (<code>RETE_LOCAL_LAZY_ABOVE_MB=0</code>) each printed one of the two errors above and
 exited 1. That is what makes <code>--permutations 3</code> safe to ship without a
 format-generation bump. (A <em>current</em> reader accepts the file; it compares the
-section count against the header's mask instead, and says <code>index container  section count does not match the header permutation mask</code> if they disagree.)</p>
+section count against the header's mask instead, and says <code>index container section count does not match the header permutation mask</code> if they disagree.)</p>
 </blockquote>
 <p>That is the good failure — loud, immediate, non-zero exit — and it is the
 opposite of <a href="https://github.com/caviri/rete/issues/124">#124</a>, where a stale
@@ -763,7 +763,7 @@ reader returned 65,384 rows where 508,116 were correct. It is <em>not</em> forwa
 compatibility: a lean file cannot be published to a fleet of older readers and
 be expected to work. Keep the default for anything published, and treat
 <code>--permutations 3</code> as a choice about a specific consumer that you control.</p>
-<p>Which set a file carries is visible without downloading it: <code>rete info</code>, <code>rete  stats</code> and the Dataset Card's <code>signals.permutations</code> all report it, derived from
+<p>Which set a file carries is visible without downloading it: <code>rete info</code>, <code>rete stats</code> and the Dataset Card's <code>signals.permutations</code> all report it, derived from
 the header byte rather than stored — see <a href="dataset-cards.html">dataset-cards.md</a>.</p>
 <h3 id="label_index-and-schema-kinds-8-9-optional-sections-older-readers-skip">LABEL_INDEX and SCHEMA (kinds 8, 9): optional sections older readers skip</h3>
 <p>Since 0.4.0 <code>rete build</code> writes the labels and the schema in sections of their

@@ -1426,7 +1426,7 @@ builds tabulated in
 <a href="BENCHMARK.html#the-merge-join-permutations-cost-vs-benefit">BENCHMARK.md</a>.</li>
 <li><strong>A file with fewer than six permutations is not readable by a Rete that
 predates the mask.</strong> Such a reader passes six to the index container's
-section-count check and gets <code>malformed container: expected 6 permutation  sections</code> (resident) or <code>unexpected container section count</code> (ranged), exit
+section-count check and gets <code>malformed container: expected 6 permutation sections</code> (resident) or <code>unexpected container section count</code> (ranged), exit
 1, on every command that touches the index — a loud refusal, not a wrong
 answer. Its <code>info</code>, <code>verify</code> and <code>card-url</code> still work, because they read
 only the header and the metadata section.</li>
@@ -1598,7 +1598,7 @@ stay correct with it. A predicate-restricted index does not, so it is filed
 under a kind they do not know: they preserve it, never open it, and answer
 <code>CONTAINS</code> by scanning and <code>rete search --contains</code> with "no text index". The
 header maps either kind onto the same text-index offset and length.</p>
-<p>A kind-<code>11</code> section is <code>digest(16) | payload</code>, where <code>digest =  blake3(payload)[..16]</code> and the payload is the kind-<code>6</code> layout above. In generation 1
+<p>A kind-<code>11</code> section is <code>digest(16) | payload</code>, where <code>digest = blake3(payload)[..16]</code> and the payload is the kind-<code>6</code> layout above. In generation 1
 it is outside the content hash (§4.9) and verified by that digest instead, so a
 reader that
 cannot see it still verifies the file; a reader skips the digest to reach the
@@ -1823,7 +1823,7 @@ leading id may run over several tiles. The estimate counts the bytes above; only
 its determinism matters, which is why the in-RAM build, the memory-bounded
 build and <code>convert</code> write the same bytes.</p>
 <p><strong>Directory.</strong> One entry per tile in the leaves of §4.3: the first row's
-<code>(a, b)</code>, the last row's <code>(a, b)</code>, the stored length, the synopsis <code>(min c,  max c, min g, max g)</code>. Leaves follow the small-leaf policy (§9); the root lists
+<code>(a, b)</code>, the last row's <code>(a, b)</code>, the stored length, the synopsis <code>(min c, max c, min g, max g)</code>. Leaves follow the small-leaf policy (§9); the root lists
 each leaf's first and last key, so a lookup on a leading id reads the leaf (or
 the few leaves) whose range holds it.</p>
 <p><strong>Layout is order-major</strong>, in the order GSPO, SPOG, POSG, OSPG, each order's
@@ -2005,7 +2005,7 @@ smaller file). The probe still wins <code>COUNT</code> of its subjects' rows, 37
 requests, 22.1 MB by the walk to 10.0 s, 44 requests, 13.6 MB, on either file; a
 bound subject is 1.3 s, 12 requests on both.</p>
 <p>SPO and SOP measured in the first step (the synthetic OpenAIRE-shaped file, 30.0 M
-triples, nine classes, one of them, Software, 1,800 records): <code>?r a &lt;Software&gt; .  ?r &lt;subject&gt; ?t</code> 16.3 s, 59.0 MB unclustered, 1.13 s, 1.77 MB clustered; a bound
+triples, nine classes, one of them, Software, 1,800 records): <code>?r a &lt;Software&gt; . ?r &lt;subject&gt; ?t</code> 16.3 s, 59.0 MB unclustered, 1.13 s, 1.77 MB clustered; a bound
 subject 0.67 to 0.75 s, 5 to 7 requests unclustered, 0.90 to 0.98 s, 12 to 14
 requests clustered; the OpenCitations sample's default graph: Book (12,957
 records) 2.6 s, 5.3 MB to 1.67 s, 2.0 MB; foaf:Agent (375,709, a common class) 2.9 s
@@ -2142,7 +2142,7 @@ class is a depth-0 root and this degrades to a single flat histogram (= the
 Dataset Card's <code>classes</code>).</li>
 <li><strong><code>level_links</code></strong> — the <strong>lateral</strong> class-relation graph rolled up per level: the
 non-<code>is-a</code> connections <code>(s_class, predicate, o_class, count)</code> between abstract
-classes, so a level is a leveled <em>graph</em> not just a histogram (<code>Person memberOf  Organisation</code> at a fine level becomes <code>Agent memberOf Agent</code> at a coarse one).
+classes, so a level is a leveled <em>graph</em> not just a histogram (<code>Person memberOf Organisation</code> at a fine level becomes <code>Agent memberOf Agent</code> at a coarse one).
 <code>rdf:type</code> and <code>rdfs:subClassOf</code> triples are excluded — they are the hierarchy
 itself, not data relations.</li>
 <li><strong><code>descriptors</code></strong> (Phase 4) — a per-community refinement index: the dominant
