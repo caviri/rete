@@ -640,13 +640,15 @@ Converting a <code>0x08</code> file again gives the same bytes.</li>
 <li><strong>The dictionary is about the same size</strong> (the OpenCitations sample's goes from 26.16 to
 26.03 MB), and the file is not larger: its permutations come out a little smaller
 because ids that sort together are now adjacent.</li>
-<li><strong>Derived IRIs are optional and refused by name.</strong> <code>rete build --derive-iris</code> (or <code>rete convert --derive-iris</code>) can drop the stored text of IRIs the file's own triples
-spell out (<a href="SPEC.html#53-derived-iri-families-0x08-optional">SPEC §5.3</a>). The file
-sets header flag bit5, and a reader that does not know the flag refuses it
+<li><strong>Derived IRIs are found by the writer and refused by name.</strong> <code>rete build</code> and <code>rete convert</code> look for IRIs the file's own triples spell out, and when they remove at least
+5% of the file they drop the stored text
+(<a href="SPEC.html#53-derived-iri-families-0x08-optional">SPEC §5.3</a>; <code>--no-derive-iris</code> turns it
+off). The file sets header flag bit5, and a reader that does not know the flag refuses it
 (<code>unsupported .rete feature</code>); the one-request <code>Rete::query_ranged</code> refuses it too, since
 it holds no index. Every other reader (the CLI, <code>sparql-url</code>, the browser) reads it.
-A file is derived only when asked, and the dictionary it holds is then not complete
-text: tools that read dictionary chunks themselves must go through the reader.</li>
+Most files are not derived (nothing in them reaches 5%), and the dictionary a derived one
+holds is not complete text: tools that read dictionary chunks themselves must go through
+the reader.</li>
 <li><strong>No backward compatibility</strong> is promised before 1.0.0; the catalog is converted in
 step with the readers, and the <code>0x06</code> and <code>0x07</code> readers go once it is.</li>
 <li><strong>Publish after the readers</strong>, as for <code>0x06</code> and <code>0x07</code>: a catalog file is converted

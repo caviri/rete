@@ -487,6 +487,13 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
             } else {
                 checked
             };
+            // The dictionary check rebuilt every dropped chunk and compared it.
+            let checked = match derived_chunks(&reader) {
+                Some((fams, chunks)) if dict_terms > 0 => format!(
+                    "{checked}, and the {chunks} derived-IRI chunks ({fams} families) rebuild byte for byte"
+                ),
+                _ => checked,
+            };
             println!(
                 "OK — {}{checked} (format 0x{:02x})",
                 match section {
@@ -786,6 +793,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
     print_term_order(&root, h.version);
     print_clusters(&root);
     print_derived(&root, h.version);
+    print_derive_report(reader, &h);
     print_quad_orders(&h, &root);
     Ok(())
 }
@@ -815,6 +823,74 @@ fn print_derived(root: &rete_core::v06::Root06, version: u8) {
             f.chunk_count()
         );
         println!("    template  {}", f.spec());
+    }
+}
+
+/// `(families, chunks without a stored body)` of a derived file.
+fn derived_chunks(reader: &LocalRangeReader) -> Option<(usize, usize)> {
+    use rete_core::v06::{decode_dict_root, tag};
+    let (h, root) = rete_core::v06::open::read_front(reader).ok()?;
+    let unit = root.unit(tag::DERIVED)?;
+    let dict = decode_dict_root(root.unit(tag::DICT)?, h.version).ok()?;
+    let fams =
+        rete_core::derived::decode_families(unit, dict[rete_core::derived::SECTION].n_chunks)
+            .ok()?;
+    Some((fams.len(), fams.iter().map(|f| f.chunk_count()).sum()))
+}
+
+/// What the writer's detection of derived IRIs said about this file, from the
+/// build record: each family taken or left, and why.
+fn print_derive_report(reader: &LocalRangeReader, h: &rete_core::v06::Header06) {
+    let r = h.build_range();
+    if r.len == 0 {
+        return;
+    }
+    let Ok(rec) = rete_core::RangeReader::read_at(reader, r.offset, r.len) else {
+        return;
+    };
+    let Some(v) = rete_core::build_record::derive_report_text(&rec)
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    else {
+        return;
+    };
+    let n = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    println!(
+        "  derive-iris  : {} subjects in {} windows sampled; subject-only dictionary {} B of {} B",
+        n("sampled_subjects"),
+        n("sampled_windows"),
+        n("subject_only_dictionary_bytes"),
+        n("file_bytes")
+    );
+    if let Some(rule) = v.get("rule").and_then(|x| x.as_str()) {
+        println!("    rule      {rule}");
+    }
+    for t in v
+        .get("taken")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let s = |k: &str| t.get(k).map(|x| x.to_string()).unwrap_or_default();
+        println!(
+            "    taken     {} - {} of {} chunks, {} B removed ({} % of the file)",
+            s("template").trim_matches('"'),
+            s("chunks"),
+            s("of_chunks"),
+            s("bytes_removed"),
+            s("percent_of_file")
+        );
+    }
+    for t in v
+        .get("rejected")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let g = |k: &str| t.get(k).and_then(|x| x.as_str()).unwrap_or("");
+        match g("template") {
+            "" => println!("    not taken {}", g("why")),
+            tpl => println!("    not taken {tpl} - {}", g("why")),
+        }
     }
 }
 

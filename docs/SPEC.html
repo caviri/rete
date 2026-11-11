@@ -1264,8 +1264,8 @@ bodies of subject-only dictionary chunks that its index spells out. The file say
 so in header flag bit5 and root unit <code>7</code>. A reader that knows <code>0x08</code> but not the
 flag refuses the header by name (<code>unsupported .rete feature</code>), because without
 the index it would read empty terms. <code>rete convert</code> carries derived chunks over
-as they are, and <code>rete convert --derive-iris</code> derives them in a file that has
-none.</p>
+as they are, and <code>rete convert</code> and <code>rete build</code> find derived IRIs by
+themselves (§5.3; <code>--no-derive-iris</code> turns that off).</p>
 <hr />
 <h2 id="5-dictionary">5. Dictionary</h2>
 <img class="img-sq" src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
@@ -1418,8 +1418,50 @@ holes are not empty;</li>
 of a hole is what follows the prefix in the object of the subject's triple with
 that predicate, which must be one IRI under the prefix with something after it.</li>
 </ul>
-<p>The OpenCitations Index is <code>https://w3id.org/oc/index/ci/{…/hasCitingEntity|https://w3id.org/oc/meta/br/}-{…/hasCitedEntity|https://w3id.org/oc/meta/br/}</code>
-(<code>rete build --derive-iris TEMPLATE</code>).</p>
+<p>Nobody writes a family. The writer finds them in the data, in the same pass on
+every dataset, and stores the ones it takes. For the OpenCitations Index it finds
+<code>https://w3id.org/oc/index/ci/{…/hasCitingEntity|https://w3id.org/oc/meta/br/}-{…/hasCitedEntity|https://w3id.org/oc/meta/br/}</code>
+by itself; for any other file it finds what that file spells, or nothing.
+<code>--no-derive-iris</code> turns the pass off.</p>
+<p><strong>Finding families.</strong> The pass reads the subject-only section, the one section
+that can be derived (below), and nothing else of the file's meaning.</p>
+<ol>
+<li><em>Sample.</em> 64 windows of 16 consecutive subject-only ids, spread over the
+whole section by a golden-ratio sequence (deterministic, and any prefix of the
+windows is spread too). The rows of those subjects come from PSO, or from an
+unclustered SPO; with neither, nothing is derived. The sample reads at most
+1,536 index tiles.</li>
+<li><em>Shape of a subject.</em> For a sampled subject, look at the predicates it has
+exactly one object for, and at the objects that are IRIs. The longest suffix
+of such an object's IRI (at least two bytes) that occurs inside the subject's
+own IRI is that predicate's hole; holes may not overlap, the longest wins. A
+hole starts at its first character that is not ASCII punctuation: a separator
+in front of an id belongs to the literal piece and to the prefix. What is left
+of the subject's IRI is the literal pieces, and the part of the object's IRI
+before the hole is the input's prefix. That is the subject's <strong>signature</strong>.
+A predicate with more than one object for the subject is never a candidate,
+and literal objects are not looked at: their lexical form is not their text
+in the file, since the N-Triples escapes of a literal and of an IRI differ,
+and nothing here needs them.</li>
+<li><em>Candidates.</em> A window fits a signature when every subject in it has it. A
+signature's estimate is the section's stored bytes times the share of the
+windows it fits. The (at most four) best signatures whose estimate reaches the
+threshold become candidates.</li>
+<li><em>Verification.</em> A candidate is checked over the whole section, as the next
+paragraph says: every term is rebuilt from the index and the object sections
+and compared byte for byte. A chunk in which one term does not fit stays
+stored, whole. The family is kept only if the chunks that did derive remove at
+least the threshold.</li>
+</ol>
+<p><strong>The decision rule.</strong> A family is taken when the bytes it removes are at least
+5 % of the file and at least 256 KiB, and for no other reason: a derived term
+costs a lookup two requests more and <code>rete export</code> about twice the time (§5.3,
+last paragraph), so a small saving is not worth it. The rule and the numbers are
+the writer's, not a setting; the only switch is <code>--no-derive-iris</code>. Nothing in
+it names a dataset, an IRI or a predicate. The build record (key <code>derive_iris</code>)
+and <code>rete info</code> say what was found: the sample, each family taken with its chunks
+and the bytes it removed, and each candidate left with its reason (an estimate
+under the threshold, a verification that removed too little, no PSO or SPO).</p>
 <p><strong>What is kept and what goes.</strong> Only the subject-only section holds derived
 chunks, and only whole chunks. Every id, the section's term count, its group
 counts, its restart interval and its chunk directory (every chunk's first run and
@@ -1429,8 +1471,8 @@ goes is the <strong>body</strong> of each chunk whose every term the writer rebu
 index and the object sections and found equal, byte for byte, and which splits
 back into the same holes. The directory entry of such a chunk has stored length
 <code>0</code>, and the root unit <code>7</code> lists the chunks as runs of the family. A chunk with
-one term that does not derive stays stored, whole. A family whose terms derive in
-no chunk is not written. Nothing outside the subject-only section is derived,
+one term that does not derive stays stored, whole. A family that is not taken
+is not written. Nothing outside the subject-only section is derived,
 and the inputs are objects, so a derived term never needs another.</p>
 <p><strong>Decoding an id.</strong> Subject <code>s</code> is the shared count plus the id's section-local
 number. For each input, read the one <code>(s, predicate, ?)</code> row from the index (SPO

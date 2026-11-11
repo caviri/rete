@@ -716,8 +716,8 @@ bodies of subject-only dictionary chunks that its index spells out. The file say
 so in header flag bit5 and root unit `7`. A reader that knows `0x08` but not the
 flag refuses the header by name (`unsupported .rete feature`), because without
 the index it would read empty terms. `rete convert` carries derived chunks over
-as they are, and `rete convert --derive-iris` derives them in a file that has
-none.
+as they are, and `rete convert` and `rete build` find derived IRIs by
+themselves (§5.3; `--no-derive-iris` turns that off).
 
 ---
 
@@ -877,8 +877,51 @@ storing the ones that follow it:
   of a hole is what follows the prefix in the object of the subject's triple with
   that predicate, which must be one IRI under the prefix with something after it.
 
-The OpenCitations Index is `https://w3id.org/oc/index/ci/{…/hasCitingEntity|https://w3id.org/oc/meta/br/}-{…/hasCitedEntity|https://w3id.org/oc/meta/br/}`
-(`rete build --derive-iris TEMPLATE`).
+Nobody writes a family. The writer finds them in the data, in the same pass on
+every dataset, and stores the ones it takes. For the OpenCitations Index it finds
+`https://w3id.org/oc/index/ci/{…/hasCitingEntity|https://w3id.org/oc/meta/br/}-{…/hasCitedEntity|https://w3id.org/oc/meta/br/}`
+by itself; for any other file it finds what that file spells, or nothing.
+`--no-derive-iris` turns the pass off.
+
+**Finding families.** The pass reads the subject-only section, the one section
+that can be derived (below), and nothing else of the file's meaning.
+
+1. *Sample.* 64 windows of 16 consecutive subject-only ids, spread over the
+   whole section by a golden-ratio sequence (deterministic, and any prefix of the
+   windows is spread too). The rows of those subjects come from PSO, or from an
+   unclustered SPO; with neither, nothing is derived. The sample reads at most
+   1,536 index tiles.
+2. *Shape of a subject.* For a sampled subject, look at the predicates it has
+   exactly one object for, and at the objects that are IRIs. The longest suffix
+   of such an object's IRI (at least two bytes) that occurs inside the subject's
+   own IRI is that predicate's hole; holes may not overlap, the longest wins. A
+   hole starts at its first character that is not ASCII punctuation: a separator
+   in front of an id belongs to the literal piece and to the prefix. What is left
+   of the subject's IRI is the literal pieces, and the part of the object's IRI
+   before the hole is the input's prefix. That is the subject's **signature**.
+   A predicate with more than one object for the subject is never a candidate,
+   and literal objects are not looked at: their lexical form is not their text
+   in the file, since the N-Triples escapes of a literal and of an IRI differ,
+   and nothing here needs them.
+3. *Candidates.* A window fits a signature when every subject in it has it. A
+   signature's estimate is the section's stored bytes times the share of the
+   windows it fits. The (at most four) best signatures whose estimate reaches the
+   threshold become candidates.
+4. *Verification.* A candidate is checked over the whole section, as the next
+   paragraph says: every term is rebuilt from the index and the object sections
+   and compared byte for byte. A chunk in which one term does not fit stays
+   stored, whole. The family is kept only if the chunks that did derive remove at
+   least the threshold.
+
+**The decision rule.** A family is taken when the bytes it removes are at least
+5 % of the file and at least 256 KiB, and for no other reason: a derived term
+costs a lookup two requests more and `rete export` about twice the time (§5.3,
+last paragraph), so a small saving is not worth it. The rule and the numbers are
+the writer's, not a setting; the only switch is `--no-derive-iris`. Nothing in
+it names a dataset, an IRI or a predicate. The build record (key `derive_iris`)
+and `rete info` say what was found: the sample, each family taken with its chunks
+and the bytes it removed, and each candidate left with its reason (an estimate
+under the threshold, a verification that removed too little, no PSO or SPO).
 
 **What is kept and what goes.** Only the subject-only section holds derived
 chunks, and only whole chunks. Every id, the section's term count, its group
@@ -889,8 +932,8 @@ goes is the **body** of each chunk whose every term the writer rebuilt from the
 index and the object sections and found equal, byte for byte, and which splits
 back into the same holes. The directory entry of such a chunk has stored length
 `0`, and the root unit `7` lists the chunks as runs of the family. A chunk with
-one term that does not derive stays stored, whole. A family whose terms derive in
-no chunk is not written. Nothing outside the subject-only section is derived,
+one term that does not derive stays stored, whole. A family that is not taken
+is not written. Nothing outside the subject-only section is derived,
 and the inputs are objects, so a derived term never needs another.
 
 **Decoding an id.** Subject `s` is the shared count plus the id's section-local

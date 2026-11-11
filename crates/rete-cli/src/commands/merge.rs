@@ -272,6 +272,7 @@ pub(crate) fn merge_cmd(
         sections: crate::commands::build::BuildSections {
             label_index,
             schema: true,
+            derive_iris: true,
         },
         perms,
         graphs,
@@ -392,6 +393,7 @@ pub(crate) fn merge_cmd(
             // The open shard's capped caches, out of the chunk phase's share.
             input_memory: share,
             card_from_image,
+            derive: Some(rete_core::derived::DeriveOpts::default()),
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

@@ -252,6 +252,11 @@ pub struct ExternalBuildOptions {
     /// and the starter queries here, so the card lands in its region of the
     /// one file the build writes.
     pub card_from_image: Option<CardFromImage>,
+    /// Find derived IRI families while writing (SPEC.md section 5.3): `Some`
+    /// (the default) with what a family must remove to be taken, `None` for
+    /// `--no-derive-iris`. The finding is in the writer's assembly pass, over
+    /// the spill, so it holds to `memory_budget` like the rest.
+    pub derive: Option<crate::derived::DeriveOpts>,
 }
 
 /// See [`ExternalBuildOptions::card_from_image`].
@@ -277,6 +282,7 @@ impl Default for ExternalBuildOptions {
             graphs: GraphLayout::Quad,
             input_memory: 0,
             card_from_image: None,
+            derive: Some(crate::derived::DeriveOpts::default()),
         }
     }
 }
@@ -749,6 +755,7 @@ where
             true,
             &partial,
             &tmp.dir,
+            opts.derive,
         )?;
         stats.pyramid_levels = 0;
         note_scratch(&tmp);
@@ -2994,6 +3001,7 @@ fn file_err(e: crate::file::FileError) -> ExtBuildError {
 /// then renamed into place, so a failed build leaves no half file under the
 /// final name. If only the rename fails, the finished file is kept and the
 /// error says where it is.
+#[allow(clippy::too_many_arguments)]
 fn write_v06(
     output: &Path,
     image: &Arc<crate::extbuild_v06::SpillImage>,
@@ -3002,6 +3010,7 @@ fn write_v06(
     consume: bool,
     partial: &PartialFile,
     spill_dir: &Path,
+    derive: Option<crate::derived::DeriveOpts>,
 ) -> Result<(), ExtBuildError> {
     let src = crate::extbuild_v06::SharedImage(image.clone());
     let mut parts = crate::v06::parts::from_v05(&src).map_err(file_err)?;
@@ -3028,7 +3037,9 @@ fn write_v06(
             &parts,
             &src,
             &mut out,
-            crate::v06::write::WriteOpts::default().with_spill_dir(Some(spill_dir.to_path_buf())),
+            crate::v06::write::WriteOpts::default()
+                .with_spill_dir(Some(spill_dir.to_path_buf()))
+                .with_derive(derive),
             &mut crate::v06::write::Hooks {
                 copied: &mut |kind| {
                     if consume {
@@ -3181,6 +3192,7 @@ mod tests {
             consume,
             &partial,
             &std::env::temp_dir(),
+            Some(crate::derived::DeriveOpts::default()),
         )
     }
 
