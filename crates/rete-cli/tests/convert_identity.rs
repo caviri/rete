@@ -65,9 +65,9 @@ fn check(name: &str, extra: &[&str]) {
     build(&src, &old, true, extra);
     build(&src, &new, false, extra);
     assert_eq!(std::fs::read(&old).unwrap()[4], 5, "{name}: legacy build");
-    assert_eq!(std::fs::read(&new).unwrap()[4], 7, "{name}: 0x07 build");
+    assert_eq!(std::fs::read(&new).unwrap()[4], 8, "{name}: 0x08 build");
     assert_eq!(card_version(&old), 5, "{name}: 0x05 card");
-    assert_eq!(card_version(&new), 7, "{name}: 0x07 card");
+    assert_eq!(card_version(&new), 8, "{name}: 0x08 card");
     let o = rete()
         .arg("convert")
         .arg(&old)
@@ -76,7 +76,7 @@ fn check(name: &str, extra: &[&str]) {
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    assert_eq!(card_version(&conv), 7, "{name}: converted card");
+    assert_eq!(card_version(&conv), 8, "{name}: converted card");
     // The record says the file was converted, so the files differ there and
     // nowhere else: compare them without it.
     let plain = |p: &Path| rete_core::attach_build_info(&std::fs::read(p).unwrap(), &[]).unwrap();

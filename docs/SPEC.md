@@ -204,10 +204,12 @@ index, `3` quad index, `4` label index, `5` text index, `6` class clusters (`0x0
 unsigned LEB128 varints, byte strings are length-prefixed.
 
 - **Dictionary** (always four sections, in the order shared, subject-only,
-  object-only, predicates): term count, restart interval, chunk count, the
-  section's offset and length within `dict`, then per leaf: entry count, offset
-  and stored length within `dict-leaves`, the first chunk's first run, its data
-  offset within the section, and its separator key.
+  object-only, predicates): term count, then in `0x08` the five **group counts**
+  (§5.2: blank nodes, IRIs, text literals, typed literals, quoted triples; they
+  add up to the term count), restart interval, chunk count, the section's offset
+  and length within `dict`, then per leaf: entry count, offset and stored length
+  within `dict-leaves`, the first chunk's first run, its data offset within the
+  section, and its separator key (a separator in the section's order, §5.2).
 - **Index** (one per stored permutation): permutation number, tile count, the
   permutation's offset and length within `index`, then per leaf: entry count,
   offset, stored length, the first tile's lowest and the last tile's highest
@@ -380,12 +382,12 @@ to re-tile every permutation instead of copying its tiles.
 ### 4.7 Content hash and verify
 
 ```
-content hash = BLAKE3("rete/0x07" ‖ header[4..8] ‖ header[48..80]
+content hash = BLAKE3("rete/0x08" ‖ header[4..8] ‖ header[48..80]
                       ‖ card length (u32) ‖ card digest
                       ‖ root length (u32) ‖ root digest)[0..16]
 ```
 
-(`"rete/0x06"` for a `0x06` file.) `header[4..8]` is the version, the flags and
+(`"rete/0x07"` and `"rete/0x06"` for a `0x07` and a `0x06` file.) `header[4..8]` is the version, the flags and
 the header length;
 `header[48..80]` the counts, the mask, the codecs, the pyramid levels and the
 presence bits. Through the root digest the hash covers every section digest, so
@@ -665,8 +667,8 @@ Other differences: the version byte, the footer (`07 00 00 00 "RETE"`), the
 hash domain (`"rete/0x07"`) and the `format_version` a card is stamped with
 (`7`).
 
-**Compatibility.** Writers write `0x07` only; the reader reads `0x05`, `0x06` and
-`0x07`. A reader that predates `0x07` refuses the file at the header, by name:
+**Compatibility.** (As of `0x07`; §4.11 is the current one.) Writers wrote `0x07`
+only; the reader read `0x05`, `0x06` and `0x07`. A reader that predates `0x07` refuses the file at the header, by name:
 `unsupported .rete format 0x07; this Rete build reads 0x05..=0x06`. It cannot
 read a `0x07` file as a `0x06` one with an unknown section, because the root's
 label unit no longer holds the root node. There is no backward-compatibility
@@ -678,6 +680,33 @@ sort pass each (external past 100 M quads) and dropping the other graph-leading
 orders; the catalog is converted in step, and the `0x06` reader is removed once
 it is.
 
+### 4.11 Format `0x08` and compatibility
+
+`0x08` is `0x07` with one change: **the dictionary's term order** (§5.2). Every
+other section, leaf and unit root is laid out as in `0x07`, apart from the
+dictionary unit root, which gains the five group counts per section (§4.2), and
+the routing keys of the dictionary's chunks, which are separators in the new
+order. The same code reads `0x06`, `0x07` and `0x08`: the header's version byte
+says which order a file's dictionary is in.
+
+Other differences: the version byte, the footer (`08 00 00 00 "RETE"`), the hash
+domain (`"rete/0x08"`) and the `format_version` a card is stamped with (`8`).
+
+**Compatibility.** Writers write `0x08` only; the reader reads `0x05`, `0x06`,
+`0x07` and `0x08`. A reader that predates `0x08` refuses the file at the header,
+by name: `unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`
+(0.6.0 says exactly that). There is no backward-compatibility promise before
+1.0.0, and none is possible here: a `0x07` reader would search the dictionary in
+byte order and miss terms. `rete convert` turns a `0x05`, `0x06` or `0x07` file
+into a `0x08` one. Because every term gets a new id, it is a **re-encode, not a
+copy**: the statements are walked through the source and written by the
+memory-bounded builder (sorted terms, every permutation, the quad orders, the
+label and text indexes, the schema and the class clusters rebuilt for the new
+ids; the card, its annex and the build record kept), inside `--memory-budget-mb`
+with its spill in `--tmp-dir`. A source with a community pyramid is re-encoded in
+memory. Converting a `0x08` file again rewrites it under the current leaf policy
+and gives the same bytes.
+
 ---
 
 ## 5. Dictionary
@@ -686,9 +715,11 @@ it is.
 
 *Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.*
 
-- Terms are **sorted within each kind** and **front-coded** (store the shared
-  prefix length + the suffix vs. the previous term). Cheap to compress, supports
-  binary search for `string → id`, and prefix-friendly for IRI namespaces.
+- Terms are **sorted within each kind**, in the order of §5.2, and
+  **front-coded** (store the shared prefix length + the suffix vs. the previous
+  term). Cheap to compress, supports binary search for `string → id`, and
+  prefix-friendly for IRI namespaces. Up to `0x07` the order is the bytes of the
+  stored token; from `0x08` it is the SPARQL `ORDER BY` order.
 - IDs are assigned so that **shared terms get the lowest IDs**, then subjects,
   then objects — this lets a triple pattern know a term's role from its ID range.
 
@@ -734,8 +765,9 @@ it is.
 ### 5.1 Section encoding (front-coded, restart-indexed)
 
 Each dictionary *kind* (shared / subjects / objects / predicates / graphs) is one
-**section**. Within a section terms are UTF-8, **sorted ascending**, deduped, and
-assigned **dense 1-based IDs** in that order (ID `0` is reserved as "absent").
+**section**. Within a section terms are UTF-8, **sorted ascending in the section's
+order** (§5.2), deduped, and assigned **dense 1-based IDs** in that order (ID `0`
+is reserved as "absent").
 
 Terms are stored in **runs of `R` entries** (default `R = 16`, the *restart
 interval*). Each run begins at a **restart point** storing the full term; the
@@ -757,6 +789,65 @@ lookups stay within one run after a binary search over restarts:
 
 Restart points are also the natural **chunk/compression boundaries**: a client
 fetches just the run(s) covering the IDs/terms a query touches.
+
+### 5.2 Term order (`0x05`-`0x07` bytes, `0x08` SPARQL)
+
+IDs are lexical ranks, so the order a section uses decides what comparing two
+IDs means. Formats `0x05` to `0x07` sort the **bytes of the stored token**
+(`<iri>`, `_:b`, `"lit"` with its suffix). That is not the order SPARQL's
+`ORDER BY` uses: an IRI's closing `>` is above `-`, `.`, `/` and the digits, so
+`<…/Ng8130_provenance>` sorts before `<…/Ng8>`, which is the case for every
+nanopublication; a closing quote sorts `"a b"` before `"a"`; literals sort
+before IRIs before blank nodes. An `ORDER BY ?s` over a result therefore had to
+decode every key (181 MB of dictionary for the 653 k subjects of one class of the
+2018 nanopub dump) to sort it.
+
+`0x08` sorts each section so that **ID order is the engine's `ORDER BY` order**
+(SPARQL 1.1 §15.1: blank nodes, then IRIs, then literals) wherever that order is
+a function of the term alone. A term belongs to one **group**; groups are
+ordered as listed, and a group sorts as shown:
+
+| group | terms | sorted by |
+|---|---|---|
+| 0 blank | `_:…` | the token's bytes |
+| 1 IRI | `<…>` | the IRI text without `<` and `>`, by code point (= UTF-8 byte order) |
+| 2 text | a simple, `xsd:string` or language-tagged literal | the lexical form with its escapes resolved (code point), then `rdf:dirLangString` < `rdf:langString` < `xsd:string`, then the language tag lower-cased, then the token |
+| 3 typed | any other literal (numbers, booleans, dates, other datatypes) and anything that is no term | the token's bytes |
+| 4 triple | `<< … >>` | the token's bytes |
+
+So `<…/Ng8>` sorts before `<…/Ng8130_provenance>`, `"a"` before `"a b"`, and
+`"a"@en` before `"a"`. The comparison is total (two terms compare equal only if
+they are the same bytes), UTF-8 byte order equals code point order, and the
+empty string sorts first (a chunk directory's first key is empty).
+
+Groups 0, 1, 2 and 4 are **order-exact**: two terms of one section that are in
+them compare as their IDs do. Group 3 is not, because `ORDER BY` puts numbers
+and dates by value, and the dictionary cannot. A reader that sorts by ID
+decodes group 3 and compares across sections (the shared, subject-only and
+object-only sections are three separately sorted lists with their own ID
+ranges); it decodes only what it must. The engine's text order
+(`sparql::value::order_cmp`) and this one are the same function on group 2, and
+a test holds them to it.
+
+The dictionary unit root (§4.2) records, per section, how many terms are in each
+group. They give the ID ranges: IDs `1..=g0+g1` are blank nodes and IRIs,
+`..=+g2` text literals, `..=+g3` typed literals, and the rest quoted triples.
+They replace the old assumption that literals are a prefix of a section: the
+literal object IDs are the run after the IRIs. `rete verify` checks that every
+section is strictly increasing in its order and that the counts are what the
+terms say.
+
+**Chunk routing.** A chunk's directory key is a *separator* `k` with
+`last(prev) < k ≤ first(this)` **in the section's order**. Between two IRIs it
+is the shortest separator of their texts written as an IRI (`<` + text + `>`);
+between two text literals the shortest separator of their lexical forms written
+as a simple literal; at any other boundary the first term itself. A lookup
+routes and searches with the order the file's version names, and a reader must
+not search a `0x08` section bytewise.
+
+Front coding is not hurt: terms with a shared prefix stay adjacent. The 2018
+nanopub dump's dictionary goes from 995,549,459 to 994,962,742 bytes (-0.06 %), the
+OpenCitations sample's from 26.16 to 26.03 MB (-0.5 %).
 
 ---
 

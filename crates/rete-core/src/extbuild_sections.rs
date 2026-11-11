@@ -232,8 +232,10 @@ pub(crate) struct MergeFacts {
     /// Global ids of the label and name predicates, with their slots.
     pub label_preds: Vec<(u32, Slot)>,
     pub n_shared: u32,
-    pub shared_literals: u32,
-    pub objonly_literals: u32,
+    /// Terms of the shared and of the object-only section, by group: where the
+    /// literals are (SPEC.md section 5).
+    pub shared_groups: crate::term_order::GroupCounts,
+    pub objonly_groups: crate::term_order::GroupCounts,
 }
 
 /// A sorted `(subject, class)` file read back as a [`ClassCursor`] source.
@@ -292,8 +294,8 @@ impl ExtSchema {
             disjoint_pid: id(2),
             equivalent_pid: id(3),
             n_shared: f.n_shared,
-            shared_literals: f.shared_literals,
-            objonly_literals: f.objonly_literals,
+            shared_literals: (f.shared_groups.lit_start(), f.shared_groups.lit_end()),
+            objonly_literals: (f.objonly_groups.lit_start(), f.objonly_groups.lit_end()),
         };
         self.acc = Some(SchemaAccumulator::new(ids));
     }

@@ -43,7 +43,7 @@ fn full_extra_n(f: &Path) -> serde_json::Value {
 fn a_big_card_goes_to_the_annex_and_full_brings_it_back() {
     let fx = common::fixture();
     let f = build_with_card(&fx, "a.rete");
-    assert_eq!(std::fs::read(&f).unwrap()[4], 7);
+    assert_eq!(std::fs::read(&f).unwrap()[4], 8);
     verify(&f);
     // Hot: no `extra`, a marker. Full: the field is back and the marker gone.
     let hot = json(rete().arg("card").arg(&f).arg("--json"));
@@ -57,7 +57,7 @@ fn a_big_card_goes_to_the_annex_and_full_brings_it_back() {
     assert!(String::from_utf8_lossy(&text.stdout).contains("card annex"));
     let info = rete().arg("info").arg(&f).output().unwrap();
     let info = String::from_utf8_lossy(&info.stdout).into_owned();
-    assert!(info.contains("format 0x07"), "{info}");
+    assert!(info.contains("format 0x08"), "{info}");
     assert!(info.contains("card-annex"), "{info}");
     assert!(info.contains("root units"), "{info}");
 }
@@ -118,7 +118,7 @@ fn convert_from_0x05_writes_0x07_with_no_annex() {
         .arg("--no-card-costs")
         .assert()
         .success();
-    assert_eq!(std::fs::read(&new).unwrap()[4], 7);
+    assert_eq!(std::fs::read(&new).unwrap()[4], 8);
     verify(&new);
     let info = rete().arg("info").arg(&new).output().unwrap();
     let info = String::from_utf8_lossy(&info.stdout).into_owned();

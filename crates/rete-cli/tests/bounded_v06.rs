@@ -133,7 +133,7 @@ fn three_ways(name: &str, src_name: &str, src: &str, extra: &[&str]) -> Vec<u8> 
         std::fs::read(&ram).unwrap(),
         std::fs::read(&conv).unwrap(),
     );
-    assert_eq!(b[4], 7, "{name}: the bounded build writes 0x07");
+    assert_eq!(b[4], 8, "{name}: the bounded build writes 0x08");
     assert_eq!(std::fs::read(&old).unwrap()[4], 5, "{name}: legacy hook");
     assert_eq!(content_hash(&b), content_hash(&r), "{name}: content hash");
     assert!(
@@ -272,7 +272,7 @@ fn merge_of_parts_equals_the_direct_build_of_the_union() {
             std::fs::read(&direct).unwrap(),
             std::fs::read(&merged).unwrap(),
         );
-        assert_eq!(m[4], 7, "{name}: merge writes 0x07");
+        assert_eq!(m[4], 8, "{name}: merge writes 0x08");
         assert_eq!(content_hash(&d), content_hash(&m), "{name}: content hash");
         assert!(
             plain(&m) == plain(&d),
@@ -624,9 +624,10 @@ fn a_build_of_several_chunks_tiles_and_leaves_equals_the_in_ram_build() {
         "bounded build of {chunks} chunks differs from the in-RAM build"
     );
     // Several leaves in the dictionary directory.
-    let (_, root) = rete_core::v06::open::read_front(&rete_core::SliceReader::new(&x)).unwrap();
+    let (h, root) = rete_core::v06::open::read_front(&rete_core::SliceReader::new(&x)).unwrap();
     let dict =
-        rete_core::v06::decode_dict_root(root.unit(rete_core::v06::tag::DICT).unwrap()).unwrap();
+        rete_core::v06::decode_dict_root(root.unit(rete_core::v06::tag::DICT).unwrap(), h.version)
+            .unwrap();
     assert!(
         dict.iter().any(|d| d.leaves.len() > 1),
         "several dictionary leaves"
@@ -691,7 +692,7 @@ fn a_binding_style_build_equals_rete_build_and_the_conversion_of_its_image() {
             plain(&binding) == plain(&cli),
             "{name}: a binding's build differs from rete build section for section"
         );
-        assert_eq!(binding[4], 7, "{name}: 0x07");
+        assert_eq!(binding[4], 8, "{name}: 0x08");
         assert!(rete_core::verify(&binding).unwrap(), "{name}: verifies");
         assert_eq!(
             content_hash(&binding),
@@ -760,7 +761,7 @@ fn every_cli_writer_leaves_a_record_without_a_card() {
         ("repyramid", &pyr, "repyramid"),
     ] {
         let bytes = std::fs::read(file).unwrap();
-        assert_eq!(bytes[4], 7, "{name}: 0x07");
+        assert_eq!(bytes[4], 8, "{name}: 0x08");
         let r = rete_core::read_build_info(&bytes)
             .unwrap()
             .unwrap_or_else(|| panic!("{name}: no build record"));

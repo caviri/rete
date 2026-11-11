@@ -11,13 +11,13 @@ use libfuzzer_sys::fuzz_target;
 use rete_core::{eval_sparql, schema_classes, schema_summary, RangeReader, Rete};
 
 
-/// A `0x06` or `0x07` input (byte 4 is 6 or 7) gets the two fields a mutation would almost
+/// A `0x06`, `0x07` or `0x08` input (byte 4 is 6, 7 or 8) gets the two fields a mutation would almost
 /// always break, re-derived: the file length (bytes 24..32) and the root digest
 /// (bytes 112..128, over the root that follows the 128-byte header). Without
 /// this the open refuses at the header and the root, section-table and
 /// unit-root parsing are never reached.
 fn fix_v06(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if data.len() < 128 || (data[4] != 6 && data[4] != 7) {
+    if data.len() < 128 || !(6..=8).contains(&data[4]) {
         return std::borrow::Cow::Borrowed(data);
     }
     let mut v = data.to_vec();
@@ -59,6 +59,15 @@ fuzz_target!(|data: &[u8]| {
         // section of its own) and the card annex.
         let _ = rete.prefix_search("a", 5);
         let _ = rete_core::read_card_full_ranged(&rete_core::SliceReader::new(data));
+        // 0x08: the dictionary in the SPARQL order. A lookup routes by the
+        // order's separators, the literal ranges come from the root's group
+        // counts, an ORDER BY sorts by id, and `verify` re-checks the order.
+        let dict = rete.dictionary();
+        let _ = dict.literal_objects();
+        let _ = dict.order_slot(0);
+        let _ = dict.node_of_term("<http://example.org/a>");
+        let _ = eval_sparql(&rete, "SELECT ?s WHERE { ?s ?p ?o } ORDER BY ?s LIMIT 5");
+        let _ = rete_core::v06::check_dictionary(&rete_core::SliceReader::new(data));
         // The quad orders of 0x07 (SPOG, POSG, OSPG): a graph variable with a
         // bound subject, predicate or object seeks them, and the deep check
         // decodes every tile.

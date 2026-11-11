@@ -92,6 +92,7 @@ pub mod sparql;
 /// from it (native targets only).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod sysmem;
+pub mod term_order;
 #[doc(hidden)]
 pub mod terms;
 #[doc(hidden)]

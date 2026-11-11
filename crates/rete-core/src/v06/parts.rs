@@ -7,6 +7,7 @@ use super::{ChunkEnt, QTileEnt, TileEnt, TokenEnt};
 use crate::file::{ByteRange, FileError};
 use crate::header::Header;
 use crate::reader::RangeReader;
+use crate::term_order::{GroupCounts, TermOrder};
 
 /// A dictionary section: its metadata and chunks (with their input offsets).
 #[derive(Debug, Clone, Default)]
@@ -19,6 +20,8 @@ pub struct DictPart {
     pub chunks: Vec<(ChunkEnt, u64)>,
     /// The largest chunk, decompressed.
     pub max_raw: u64,
+    /// Terms per group ([`TermOrder::Sparql`] sections; all zero otherwise).
+    pub groups: GroupCounts,
 }
 
 /// One permutation's tiles (with their input offsets).
@@ -103,6 +106,10 @@ pub struct Parts {
     pub schema: Option<Vec<u8>>,
     /// The four dictionary sections (shared, subject-only, object-only, predicates).
     pub dict: [DictPart; 4],
+    /// How the terms of those sections are ordered. A `0x08` file needs
+    /// [`TermOrder::Sparql`], an older one [`TermOrder::Bytewise`]; the
+    /// assembler refuses any other pairing.
+    pub order: TermOrder,
     /// The stored permutations, in section-index order.
     pub index: Vec<PermPart>,
     /// The quad index.
@@ -129,8 +136,9 @@ fn read(r: &dyn RangeReader, range: ByteRange) -> Result<Vec<u8>, FileError> {
     Ok(r.read_at(range.offset, range.len)?)
 }
 
-/// Decode a front-coded chunk body to its first and last terms.
-fn first_last(body: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+/// Decode a front-coded chunk body to its first and last terms, counting the
+/// terms of each group on the way.
+fn first_last(body: &[u8], counts: &mut GroupCounts) -> Option<(Vec<u8>, Vec<u8>)> {
     let mut pos = 0usize;
     let mut buf: Vec<u8> = Vec::new();
     let mut first = None;
@@ -149,6 +157,7 @@ fn first_last(body: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
         if first.is_none() {
             first = Some(buf.clone());
         }
+        counts.add(&buf);
         pos = end;
     }
     Some((first?, buf))
@@ -156,9 +165,15 @@ fn first_last(body: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// Read and decompress the chunks of a dictionary section in batches, and
 /// re-derive every routing key as the shortest separator (SPEC.md §6.2).
-fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Result<u64, FileError> {
+fn rekey(
+    r: &dyn RangeReader,
+    codec: u8,
+    chunks: &mut [(ChunkEnt, u64)],
+    order: TermOrder,
+) -> Result<(u64, GroupCounts), FileError> {
     const BATCH: u64 = 8 << 20;
     let mut max_raw = 0u64;
+    let mut counts = GroupCounts::default();
     let mut prev_last: Option<Vec<u8>> = None;
     let mut i = 0usize;
     while i < chunks.len() {
@@ -178,17 +193,17 @@ fn rekey(r: &dyn RangeReader, codec: u8, chunks: &mut [(ChunkEnt, u64)]) -> Resu
                 .ok_or(FileError::Container("dictionary chunk overruns"))?;
             let body = crate::file::decompress(codec, stored)?;
             max_raw = max_raw.max(body.len() as u64);
-            let (first, last) =
-                first_last(&body).ok_or(FileError::Container("malformed dictionary chunk"))?;
+            let (first, last) = first_last(&body, &mut counts)
+                .ok_or(FileError::Container("malformed dictionary chunk"))?;
             c.0.key = match &prev_last {
                 None => Vec::new(),
-                Some(pl) => crate::dict::shortest_separator(pl, &first),
+                Some(pl) => order.separator(pl, &first),
             };
             prev_last = Some(last);
         }
         i = j;
     }
-    Ok(max_raw)
+    Ok((max_raw, counts))
 }
 
 /// The [`LabelPart`] of a `0x05` LABEL_INDEX section at `offset..+length`
@@ -256,6 +271,7 @@ pub fn from_v05(r: &dyn RangeReader) -> Result<Parts, FileError> {
         pyramid_levels: h.pyramid_levels,
         named: h.has_quads(),
         quoted: h.flags & crate::header::FLAG_HAS_QUOTED_TRIPLES != 0,
+        order: h.term_order(),
         ..Default::default()
     };
     if h.metadata_len > 0 {
@@ -311,12 +327,17 @@ pub fn from_v05(r: &dyn RangeReader) -> Result<Parts, FileError> {
                 )
             })
             .collect();
-        let max_raw = rekey(r, h.dict_codec, &mut chunks)?;
+        let (max_raw, groups) = rekey(r, h.dict_codec, &mut chunks, p.order)?;
         p.dict[si] = DictPart {
             term_count: meta.term_count,
             restart_interval: meta.restart_interval,
             chunks,
             max_raw,
+            groups: if p.order == TermOrder::Sparql {
+                groups
+            } else {
+                GroupCounts::default()
+            },
         };
     }
     // Index: one tiled section per stored permutation (plus a quad seal).
@@ -463,6 +484,7 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
         pyramid_levels: h.pyramid_levels,
         named: h.flags & F_NAMED != 0,
         quoted: h.flags & F_QUOTED != 0,
+        order: super::term_order(h.version),
         ..Default::default()
     };
     let (card, build) = read_card_build(r, &h)?;
@@ -483,6 +505,7 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
     let roots = decode_dict_root(
         root.unit(tag::DICT)
             .ok_or(FileError::Container("0x06 file has no dictionary"))?,
+        h.version,
     )?;
     let dleaves = whole(kind::DICT_LEAVES)?;
     let dbase = range(kind::DICT_DATA)?.map_or(0, |a| a.offset);
@@ -501,6 +524,7 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
             restart_interval: s.restart_interval,
             chunks,
             max_raw: max_block(kind::DICT_DATA),
+            groups: s.groups,
         };
     }
     // Index.
@@ -537,7 +561,7 @@ pub fn from_v06(r: &dyn RangeReader) -> Result<Parts, FileError> {
                     &leaf(&qleaves, kind::QUAD_LEAVES, l)?,
                     l.n,
                     *toff,
-                    h.version == VERSION,
+                    super::has_v07(h.version),
                 )? {
                     e.off += qbase;
                     tiles.push(e);

@@ -48,7 +48,7 @@ PRESENCE_NAMES = {
     P_PYRAMID: "PyramidMeta",
     P_QUAD: "QuadIndex",
 }
-SUPPORTED_FORMATS = (5, 6)
+SUPPORTED_FORMATS = (5, 6, 7, 8)
 
 SECTION_NAMES = {
     1: "Metadata",
@@ -93,7 +93,7 @@ def parse_header06(body: bytes) -> dict | None:
     """Decode the 0x06 header from the first 128 bytes: presence bits and the
     card range (root_len at 32, card_off at 80, card_len at 84; the card
     region starts right after the root)."""
-    if len(body) < HEADER06_LEN or body[:4] != b"RETE" or body[4] != 6:
+    if len(body) < HEADER06_LEN or body[:4] != b"RETE" or body[4] not in (6, 7, 8):
         return None
     if struct.unpack_from("<H", body, 6)[0] != HEADER06_LEN:
         return None
@@ -161,11 +161,11 @@ def validate_probe(
         errors.append("header magic is not RETE")
     format_version = body[4] if len(body) > 4 else None
     if format_version not in SUPPORTED_FORMATS:
-        errors.append(f"expected stable format byte 5 or 6, got {format_version}")
+        errors.append(f"expected stable format byte 5 to 8, got {format_version}")
     content_hash = body[8:24].hex() if len(body) >= 24 else None
     has_text_index = False
     card = None
-    if format_version == 6:
+    if format_version in (6, 7, 8):
         header = parse_header06(body)
         if header is None:
             errors.append("malformed 0x06 header")

@@ -1561,14 +1561,14 @@ fn finish(
         .map(|(l, _)| l.clone());
     let base_iri = derive_base_iri(&subject_ns);
     let mut time_ranked: Vec<(String, u64)> = time_obj_hits.into_iter().collect();
-    time_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    time_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| term_cmp(&a.0, &b.0)));
     // Cap through the shared helper so an over-long list also flips `truncated`.
     let time_predicates = cap(
         time_ranked.iter().map(|(p, _)| p.to_string()).collect(),
         &mut truncated,
     );
     let mut num_ranked: Vec<(String, u64)> = num_obj_hits.into_iter().collect();
-    num_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    num_ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| term_cmp(&a.0, &b.0)));
     let numeric_predicates = cap(
         num_ranked.iter().map(|(p, _)| p.to_string()).collect(),
         &mut truncated,
@@ -1681,8 +1681,16 @@ fn cap<T>(mut v: Vec<T>, truncated: &mut bool) -> Vec<T> {
 /// Sort an owned-`String`-keyed count map descending by count, then by term.
 fn sort_desc_owned(counts: BTreeMap<String, u64>) -> Vec<(String, u64)> {
     let mut v: Vec<(String, u64)> = counts.into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| term_cmp(&a.0, &b.0)));
     v
+}
+
+/// The order ties are broken in: the dictionary order of a `0x08` file
+/// (`TermOrder::Sparql`), so the card a build derives from its strings is the
+/// one a re-card derives from the file's ids (whose ties break by id, which in
+/// that order is term order).
+fn term_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    crate::term_order::TermOrder::Sparql.cmp_str(a, b)
 }
 
 /// Sort the class-link quotient deterministically: descending by count, then by
@@ -1700,9 +1708,9 @@ fn sort_links(rows: BTreeMap<(String, String, String), u64>) -> Vec<ClassLink> {
     v.sort_by(|a, b| {
         b.count
             .cmp(&a.count)
-            .then_with(|| a.s_class.cmp(&b.s_class))
-            .then_with(|| a.predicate.cmp(&b.predicate))
-            .then_with(|| a.o_class.cmp(&b.o_class))
+            .then_with(|| term_cmp(&a.s_class, &b.s_class))
+            .then_with(|| term_cmp(&a.predicate, &b.predicate))
+            .then_with(|| term_cmp(&a.o_class, &b.o_class))
     });
     v
 }
@@ -2302,7 +2310,7 @@ fn top_terms(
         .zip(names)
         .filter_map(|(&(_, n), t)| t.map(|t| (t, n)))
         .collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| term_cmp(&a.0, &b.0)));
     v.truncate(CARD_TOP_N);
     (v, offered > CARD_TOP_N as u64)
 }
@@ -2415,13 +2423,39 @@ pub fn derive_card_streaming(
     let subject_term = |id: u32| dict.subject_term(id);
     let s_end = subjects_end.min(u32::MAX as u64) as u32;
     let o_end = objects_end.min(u32::MAX as u64) as u32;
-    let literal_ranges = [
-        id_range(1, shared, "\"", "#", &object_term),
-        id_range(shared + 1, o_end, "\"", "#", &object_term),
-    ];
+    // A byte-ordered dictionary has literals, then quoted triples, then IRIs
+    // and blank nodes; a SPARQL-ordered one (`0x08`) has blank nodes, IRIs,
+    // literals, quoted triples. Either way each kind is one run, and the SPARQL
+    // order records where the runs are (the group counts).
+    let sparql_order = dict.order() == crate::term_order::TermOrder::Sparql;
+    let groups = |si: usize| {
+        dict.section_groups(si)
+            .ok_or_else(|| "the dictionary's term groups are unreadable".to_string())
+    };
+    let literal_ranges = if sparql_order {
+        let (sh, ob) = (groups(0)?, groups(2)?);
+        [
+            (sh.lit_start() + 1, sh.lit_end() + 1),
+            (shared + ob.lit_start() + 1, shared + ob.lit_end() + 1),
+        ]
+    } else {
+        [
+            id_range(1, shared, "\"", "#", &object_term),
+            id_range(shared + 1, o_end, "\"", "#", &object_term),
+        ]
+    };
     let is_literal = |o: u32| in_any(o, &literal_ranges);
     let quoted = header.has_quoted_triples();
-    let (quoted_subjects, quoted_objects) = if quoted {
+    let (quoted_subjects, quoted_objects) = if quoted && sparql_order {
+        let (sh, su, ob) = (groups(0)?, groups(1)?, groups(2)?);
+        let run = |base: u32, g: &crate::term_order::GroupCounts| {
+            (base + g.lit_end() + 1, base + g.total() as u32 + 1)
+        };
+        (
+            vec![run(0, &sh), run(shared, &su)],
+            vec![run(0, &sh), run(shared, &ob)],
+        )
+    } else if quoted {
         (
             vec![
                 id_range(1, shared, "<<", "<=", &subject_term),

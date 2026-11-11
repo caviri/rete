@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Compatibility and limits · rete docs</title>
-  <meta name="description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB), an optional card annex…" />
+  <meta name="description" content="Every writer now writes format byte 0x08 (SPEC §4.11): 0x07 with the dictionary's terms in the SPARQL order instead of byte order (SPEC §5.2): blank nodes, then IRIs by their text (so &lt;…/Ng8&gt; sorts…" />
   <link rel="canonical" href="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Compatibility and limits · rete docs" />
-  <meta property="og:description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB), an optional card annex…" />
+  <meta property="og:description" content="Every writer now writes format byte 0x08 (SPEC §4.11): 0x07 with the dictionary's terms in the SPARQL order instead of byte order (SPEC §5.2): blank nodes, then IRIs by their text (so &lt;…/Ng8&gt; sorts…" />
   <meta property="og:url" content="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Compatibility and limits · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Compatibility and limits · rete docs" />
-  <meta name="twitter:description" content="Every writer now writes format byte 0x07 (SPEC §4.10): 0x06 plus the label index's root node in a cold section of its own (the root of a big file shrinks by its 37 to 47 KB), an optional card annex…" />
+  <meta name="twitter:description" content="Every writer now writes format byte 0x08 (SPEC §4.11): 0x07 with the dictionary's terms in the SPARQL order instead of byte order (SPEC §5.2): blank nodes, then IRIs by their text (so &lt;…/Ng8&gt; sorts…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta name="rete:section" content="Reference" />
   <script>
@@ -618,6 +618,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 
 <h1 id="compatibility-validation--interop">Compatibility, validation &amp; interop</h1>
 <h2 id="stable-rete-file-compatibility">Stable <code>.rete</code> file compatibility</h2>
+<h3 id="format-0x08-generation-2-the-dictionary-order">Format <code>0x08</code> (generation 2, the dictionary order)</h3>
+<p>Every writer now writes format byte <code>0x08</code> (<a href="SPEC.html#411-format-0x08-and-compatibility">SPEC §4.11</a>):
+<code>0x07</code> with the dictionary's terms in the <strong>SPARQL order</strong> instead of byte order
+(<a href="SPEC.html#52-term-order-0x05-0x07-bytes-0x08-sparql">SPEC §5.2</a>): blank nodes, then IRIs by
+their text (so <code>&lt;…/Ng8&gt;</code> sorts before <code>&lt;…/Ng8130_provenance&gt;</code>, which byte order
+reverses), then literals, text literals by lexical form. An id then compares as the
+term does, within a section and outside the typed literals, so an <code>ORDER BY</code> over a
+variable sorts on ids and decodes only the rows it shows. The reader reads <code>0x05</code>,
+<code>0x06</code>, <code>0x07</code> and <code>0x08</code>; <strong>readers up to 0.6.0 cannot read <code>0x08</code></strong>: they refuse it by
+name (<code>unsupported .rete format 0x08; this Rete build reads 0x05..=0x07</code>).</p>
+<ul>
+<li><strong>Convert, do not rebuild, but it is a re-encode.</strong> Every term gets a new id, so
+<code>rete convert in.rete -o out.rete</code> no longer copies the payload of a <code>0x05</code>, <code>0x06</code>
+or <code>0x07</code> file: it walks the statements and writes them again through the
+memory-bounded builder (dictionary sorted, every index, the quad orders, the label and
+text indexes, the schema and the class clusters rebuilt for the new ids; the card, its
+annex and the build record kept). It runs inside <code>--memory-budget-mb</code> (default 2048) and
+spills into <code>--tmp-dir</code>; a source with a community pyramid is re-encoded in memory.
+Converting a <code>0x08</code> file again gives the same bytes.</li>
+<li><strong>The dictionary is about the same size</strong> (the OpenCitations sample's goes from 26.16 to
+26.03 MB), and the file is not larger: its permutations come out a little smaller
+because ids that sort together are now adjacent.</li>
+<li><strong>No backward compatibility</strong> is promised before 1.0.0; the catalog is converted in
+step with the readers, and the <code>0x06</code> and <code>0x07</code> readers go once it is.</li>
+<li><strong>Publish after the readers</strong>, as for <code>0x06</code> and <code>0x07</code>: a catalog file is converted
+only when every engine that reads it (the CLI, the clients, the browser engines, the
+MCPB bundle) is on this release.</li>
+</ul>
 <h3 id="format-0x07-generation-2-second-step">Format <code>0x07</code> (generation 2, second step)</h3>
 <p>Every writer now writes format byte <code>0x07</code> (<a href="SPEC.html#410-format-0x07-and-compatibility">SPEC §4.10</a>):
 <code>0x06</code> plus the label index's root node in a cold section of its own (the root

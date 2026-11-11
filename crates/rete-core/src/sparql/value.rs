@@ -1444,4 +1444,66 @@ mod tests {
         assert_eq!(xsd_double("."), None);
         assert_eq!(xsd_double(" 1"), None);
     }
+
+    /// The 0x08 dictionary order (`term_order`) is the engine's ORDER BY order
+    /// wherever a section's ids are used in its place: for every pair of terms
+    /// in an order-exact group, `TermOrder::Sparql.cmp` and `order_cmp` agree.
+    /// This is the contract `ORDER BY` over ids relies on (SPEC.md section 5.2).
+    #[test]
+    fn the_dictionary_order_is_the_order_by_order_on_exact_groups() {
+        use crate::term_order::{group, TermOrder, G_TYPED};
+        let mut terms: Vec<String> = vec![
+            "<http://ex/Ng8>".into(),
+            "<http://ex/Ng8130_provenance>".into(),
+            "<http://ex/Ng8->".into(),
+            "<http://ex/Ng8/x>".into(),
+            "<http://ex/Ng80>".into(),
+            "<http://ex/\u{e9}>".into(),
+            "<http://ex/z>".into(),
+            "<http://ex/\u{1f600}>".into(),
+            "<http://ex/\u{ffff}>".into(),
+            "<>".into(),
+            "_:a".into(),
+            "_:b".into(),
+            "_:a1".into(),
+            "\"a\"".into(),
+            "\"a b\"".into(),
+            "\"a!\"".into(),
+            "\"a\\\"b\"".into(),
+            "\"a#\"".into(),
+            "\"a\\nb\"".into(),
+            "\"a\\u00e9\"".into(),
+            "\"a\u{e9}\"".into(),
+            "\"B\"".into(),
+            "\"\"".into(),
+            "\"\"@en".into(),
+            "\"x\"@en".into(),
+            "\"x\"@EN".into(),
+            "\"x\"@en-GB".into(),
+            "\"x\"@en--ltr".into(),
+            "\"x\"@fr".into(),
+            "\"x\"".into(),
+            "\"x\"^^<http://www.w3.org/2001/XMLSchema#string>".into(),
+            "\"\u{e9}\"@fr".into(),
+            "<< <http://a> <http://b> <http://c> >>".into(),
+            "<<_:a <http://p> \"o\">>".into(),
+        ];
+        // some typed ones: not exact, but they must not break the comparison
+        terms.push(lit("5", "integer"));
+        terms.push(lit("abc", "integer"));
+        terms.push("\"custom\"^^<http://ex/dt>".into());
+        let mut compared = 0;
+        for a in &terms {
+            for b in &terms {
+                if group(a.as_bytes()) == G_TYPED || group(b.as_bytes()) == G_TYPED {
+                    continue;
+                }
+                let want = order_cmp(a, &classify(a), b, &classify(b));
+                let got = TermOrder::Sparql.cmp_str(a, b);
+                assert_eq!(got, want, "{a} vs {b}");
+                compared += 1;
+            }
+        }
+        assert!(compared > 800);
+    }
 }
