@@ -2500,15 +2500,11 @@ impl GraphIndex {
     /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
     /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
-<<<<<<< HEAD
-        self.scan_iter_with(pattern, Self::best_permutation(pattern), None, None)
-=======
         self.scan_iter_with(
             pattern,
             Self::best_permutation_in(self.perms, pattern),
             None,
         )
->>>>>>> origin/main
     }
 
     /// [`scan_iter`](Self::scan_iter) over a slice of the tiles it would
@@ -2520,15 +2516,11 @@ impl GraphIndex {
         pattern: Pattern,
         cut: &dyn Fn(usize, usize) -> (usize, usize),
     ) -> impl Iterator<Item = Triple> + 'a {
-<<<<<<< HEAD
-        self.scan_iter_with(pattern, Self::best_permutation(pattern), Some(cut), None)
-=======
         self.scan_iter_with(
             pattern,
             Self::best_permutation_in(self.perms, pattern),
             Some(cut),
         )
->>>>>>> origin/main
     }
 
     /// What [`scan_iter`](Self::scan_iter) *would* fetch for `pattern`, computed
@@ -2722,25 +2714,18 @@ impl GraphIndex {
         if self.clusters[perm.section_index()].is_some() && perm.leading_bound(pattern) == 0 {
             return None;
         }
-<<<<<<< HEAD
-        Some(self.scan_iter_with(pattern, perm, None, None))
-=======
         Some(Either::Plain(self.scan_plain(pattern, perm, None, None)))
->>>>>>> origin/main
     }
 
     /// The permutation [`scan_iter_sorted_on`](Self::scan_iter_sorted_on)
     /// streams `pattern` from, and where the sort column sits in it (the
     /// number of bound leading columns).
     fn sorted_route(&self, pattern: Pattern, sort_col: usize) -> Option<(IndexPermutation, usize)> {
-<<<<<<< HEAD
-=======
         // A union view streams two indexes merged: its tiles are not one
         // list to cut by value. A merge join over it is not sliced.
         if self.union.is_some() {
             return None;
         }
->>>>>>> origin/main
         let perm = Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?;
         let lead = perm.leading_bound(pattern);
         if self.clusters[perm.section_index()].is_some() && lead == 0 {
@@ -2768,11 +2753,7 @@ impl GraphIndex {
             _ => t.2,
         };
         Some(
-<<<<<<< HEAD
-            self.scan_iter_with(pattern, perm, None, Some((lead, lo, hi)))
-=======
             self.scan_plain(pattern, perm, None, Some((lead, lo, hi)))
->>>>>>> origin/main
                 .filter(move |t| {
                     let v = key(t);
                     lo <= v && u64::from(v) < hi
@@ -2815,9 +2796,6 @@ impl GraphIndex {
         pattern: Pattern,
         perm: IndexPermutation,
         cut: Option<&dyn Fn(usize, usize) -> (usize, usize)>,
-        // `(column, lo, hi)`: skip the tiles whose range of that column the
-        // directory proves outside `lo <= v < hi` (the caller filters rows).
-        between: Option<(usize, u32, u64)>,
     ) -> impl Iterator<Item = Triple> + '_ {
         if let Some(u) = &self.union {
             return Either::Union(u.scan(pattern, perm, cut).0);
