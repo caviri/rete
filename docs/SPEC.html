@@ -1389,9 +1389,9 @@ between two text literals the shortest separator of their lexical forms written
 as a simple literal; at any other boundary the first term itself. A lookup
 routes and searches with the order the file's version names, and a reader must
 not search a <code>0x08</code> section bytewise.</p>
-<p>Front coding is not hurt: terms with a shared prefix stay adjacent. On the 2018
-nanopub dump and the OpenCitations sample the dictionary's size changes by about
-0 % (see the CHANGELOG for the figures).</p>
+<p>Front coding is not hurt: terms with a shared prefix stay adjacent. The 2018
+nanopub dump's dictionary goes from 995,549,459 to 994,962,742 bytes (-0.06 %), the
+OpenCitations sample's from 26.16 to 26.03 MB (-0.5 %).</p>
 <hr />
 <h2 id="6-triples--quads">6. Triples / quads</h2>
 <img class="img-sq" src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">

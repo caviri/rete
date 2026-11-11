@@ -845,9 +845,9 @@ as a simple literal; at any other boundary the first term itself. A lookup
 routes and searches with the order the file's version names, and a reader must
 not search a `0x08` section bytewise.
 
-Front coding is not hurt: terms with a shared prefix stay adjacent. On the 2018
-nanopub dump and the OpenCitations sample the dictionary's size changes by about
-0 % (see the CHANGELOG for the figures).
+Front coding is not hurt: terms with a shared prefix stay adjacent. The 2018
+nanopub dump's dictionary goes from 995,549,459 to 994,962,742 bytes (-0.06 %), the
+OpenCitations sample's from 26.16 to 26.03 MB (-0.5 %).
 
 ---
 
