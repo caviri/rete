@@ -2063,6 +2063,17 @@ let wasm_bindgen = (function(exports) {
     exports.info = info;
 
     /**
+     * The memory budget files are opened with, in MiB (0 = no cap): see
+     * [`set_memory_budget_mb`].
+     * @returns {number}
+     */
+    function memory_budget_mb() {
+        const ret = wasm.memory_budget_mb();
+        return ret >>> 0;
+    }
+    exports.memory_budget_mb = memory_budget_mb;
+
+    /**
      * Prefix-search the label index of an embedded `.rete` image: the subjects whose
      * label starts with `prefix` (case-insensitive), as `[{"label":…,"subject":…}]`,
      * capped at `limit`. Answers from the LABEL_INDEX section, else from an older
@@ -2618,6 +2629,25 @@ let wasm_bindgen = (function(exports) {
         }
     }
     exports.schema_url = schema_url;
+
+    /**
+     * Set the memory budget of every remote (lazily read) file opened from now
+     * on, in MiB. It caps the caches of decoded dictionary chunks, decoded index
+     * tiles and raw file blocks; what is evicted is read again when a query
+     * touches it, so the budget trades speed for memory and never changes an
+     * answer. `0` removes the cap. The default is 1024.
+     *
+     * A wasm32 heap ends at 4 GiB and never shrinks. Without a cap a query over
+     * ten million rows of a 2.5 GB file kept 2.3 GB of decoded chunks and tiles,
+     * the next one added 1.7 GB of its own, and the engine trapped
+     * (`unreachable`) at the ceiling. The cap does not cover a query's own
+     * working state (a hash join's build side, `GROUP BY` groups).
+     * @param {number} mb
+     */
+    function set_memory_budget_mb(mb) {
+        wasm.set_memory_budget_mb(mb);
+    }
+    exports.set_memory_budget_mb = set_memory_budget_mb;
 
     /**
      * Validate a `.rete` graph against SHACL Core shapes written in Turtle.

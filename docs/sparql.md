@@ -268,8 +268,10 @@ and an explicit figure overrides both (`rete sparql --memory-budget-mb N`; a
 client calls `set_memory_budget`). Least recently used entries
 are evicted and re-read when touched again, so the budget trades speed for
 memory and never changes an answer. The per-query term and number memos are
-capped at 64 MiB each. The browser engine is not capped: its 32-bit heap is
-smaller than the default, and its callers bound their own range budgets.
+capped at 64 MiB each. The browser engine opens a remote file with a budget of
+1024 MiB (`set_memory_budget_mb(n)`, `0` for no cap): its heap ends at 4 GiB
+and never shrinks, and without a cap two heavy queries in a row reached the
+end of it. It does not spill `COUNT(DISTINCT …)`, having no disk.
 
 `COUNT(DISTINCT …)` is bounded by the same figure: its distinct values are
 kept as a sorted, deduplicated buffer of dictionary ids (8 bytes each), and
