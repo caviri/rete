@@ -1182,10 +1182,12 @@ impl QuadCore {
         }
         if let Some(v) = &self.v06 {
             let n = v.blocks.len();
-            let _ = self.blocks_index.set(Arc::from(v.blocks.clone()));
+            // The cells first: a thread that finds the index set takes the
+            // cells for granted (see below).
             let _ = self
                 .blocks
                 .set((0..n).map(|_| OnceLock::new()).collect::<Vec<_>>().into());
+            let _ = self.blocks_index.set(Arc::from(v.blocks.clone()));
             return self.blocks_index.get();
         }
         let pre = self.pre()?.clone();
@@ -1229,10 +1231,16 @@ impl QuadCore {
         match parsed {
             Some(v) => {
                 let n = v.len();
-                let _ = self.blocks_index.set(Arc::from(v));
+                // The cells before the index. Every reader asks for the index
+                // and then for the cells; with the index set first, a second
+                // thread arriving between the two found no cells, took that
+                // for a failed read without recording one, and skipped its
+                // graph: a count over every graph came out a few dozen short
+                // once in a while on several threads.
                 let _ = self
                     .blocks
                     .set((0..n).map(|_| OnceLock::new()).collect::<Vec<_>>().into());
+                let _ = self.blocks_index.set(Arc::from(v));
                 self.blocks_index.get()
             }
             None => {
