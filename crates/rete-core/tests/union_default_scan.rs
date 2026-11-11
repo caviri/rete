@@ -42,7 +42,6 @@ fn assemble(quads: Vec<RawQuad>, layout: GraphLayout, tile_budget: usize) -> Vec
     let mut o = write_options();
     o.tile_budget = tile_budget;
     set_write_options(o);
-    std::env::set_var("RETE_WRITE_FORMAT", "5");
     let bytes = assemble_dataset_with_layout(
         quads,
         false,
@@ -54,7 +53,6 @@ fn assemble(quads: Vec<RawQuad>, layout: GraphLayout, tile_budget: usize) -> Vec
         |_, _| Vec::<u8>::new(),
     )
     .0;
-    std::env::remove_var("RETE_WRITE_FORMAT");
     bytes
 }
 
