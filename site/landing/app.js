@@ -314,7 +314,13 @@ class Engine {
     if (this.w) return this.ready;
     this.epoch++;
     this.w = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
-    this.ready = new Promise((res) => { this._boot = res; });
+    // The worker posts "boot" once its module has loaded. A worker that cannot
+    // load (its engine import fails, or the browser has no module workers)
+    // only fires `error`, so the wait has to end there too; otherwise the page
+    // says "Loading the engine…" for ever.
+    this.ready = new Promise((res, rej) => { this._boot = res; this._bootFail = rej; });
+    const timer = setTimeout(() => this.fail(new Error("The engine did not start. Reload the page; if it keeps happening, this browser may not run module workers.")), 30000);
+    this.ready.then(() => clearTimeout(timer), () => clearTimeout(timer));
     this.w.onmessage = (e) => {
       const m = e.data;
       if (m.type === "boot") return this._boot();
@@ -324,10 +330,11 @@ class Engine {
       this.pending.delete(m.id);
       m.ok ? p.res(m.value) : p.rej(new Error(m.error));
     };
-    this.w.onerror = (e) => { this.fail(new Error(e.message || "the engine stopped")); };
+    this.w.onerror = (e) => { this.fail(new Error(e.message || "The engine could not start.")); };
     return this.ready;
   }
   fail(err) {
+    if (this._bootFail) { this._bootFail(err); this._bootFail = null; }
     for (const p of this.pending.values()) p.rej(err);
     this.pending.clear();
     if (this.w) this.w.terminate();
