@@ -675,6 +675,7 @@ strictly sequential, set <code>globalThis.reteReadMany = null</code> before the 
 (<code>"iri" | "literal" | "bnode" | "triple"</code>), <code>.value</code>, <code>.datatype</code>, <code>.lang</code>,
 plus <code>.toJS()</code> (number/boolean/BigInt for the common XSD types) and <code>.n3</code>.</p>
 <pre><code class="language-js">g.query(q, { reason: true });   // OWL 2 QL entailment by query rewriting
+g.query(q, { unionDefault: true }); // a pattern outside GRAPH sees every graph, each triple once
 g.queryRaw(q);                  // the engine's raw JSON envelope
 g.prefixSearch("Berl");         // label autocomplete → [{label, subject}]
 g.textSearch("volcano");        // full-text (files built with --text-index)
@@ -770,6 +771,7 @@ which-level-when table live on the dedicated page:
 <tr><td>SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE</td><td>✅</td><td><code>query()</code></td></tr>
 <tr><td>Lazy remote open (HTTP Range)</td><td>✅</td><td>Node + browser workers</td></tr>
 <tr><td>OWL 2 QL reasoned queries</td><td>✅</td><td><code>query(q, {reason: true})</code></td></tr>
+<tr><td>Union default graph</td><td>✅</td><td><code>query(q, {unionDefault: true})</code></td></tr>
 <tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td>clean IRIs everywhere</td></tr>
 <tr><td>Build from RDF text</td><td>✅</td><td><code>build()</code> — uncompressed, like the playground</td></tr>
 <tr><td>Script-tag single-file build</td><td>✅</td><td><code>dist/rete-graph(.min).js</code>, global <code>rete</code></td></tr>

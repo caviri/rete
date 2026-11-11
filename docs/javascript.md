@@ -76,6 +76,7 @@ plus `.toJS()` (number/boolean/BigInt for the common XSD types) and `.n3`.
 
 ```js
 g.query(q, { reason: true });   // OWL 2 QL entailment by query rewriting
+g.query(q, { unionDefault: true }); // a pattern outside GRAPH sees every graph, each triple once
 g.queryRaw(q);                  // the engine's raw JSON envelope
 g.prefixSearch("Berl");         // label autocomplete → [{label, subject}]
 g.textSearch("volcano");        // full-text (files built with --text-index)
@@ -198,6 +199,7 @@ which-level-when table live on the dedicated page:
 | SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE | ✅ | `query()` |
 | Lazy remote open (HTTP Range) | ✅ | Node + browser workers |
 | OWL 2 QL reasoned queries | ✅ | `query(q, {reason: true})` |
+| Union default graph | ✅ | `query(q, {unionDefault: true})` |
 | Schema profile, prefix & text search | ✅ | clean IRIs everywhere |
 | Build from RDF text | ✅ | `build()` — uncompressed, like the playground |
 | Script-tag single-file build | ✅ | `dist/rete-graph(.min).js`, global `rete` |

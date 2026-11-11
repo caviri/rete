@@ -96,6 +96,14 @@ rete_query(g, query, reason = TRUE)
 over the ontology embedded in the file — no materialization, so it works on
 remote files too. See [Reasoning](reasoning.md).
 
+`union_default_graph = TRUE` lets a pattern outside `GRAPH` match the default graph
+and every named graph, each triple once (not standard SPARQL, so off by default;
+see [Union default graph](sparql.md#union-default-graph)):
+
+```r
+rete_query(g, query, union_default_graph = TRUE)
+```
+
 ## Explore a file you did not build
 
 ```r
