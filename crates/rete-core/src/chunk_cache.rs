@@ -25,14 +25,16 @@
 //!
 //! ## Thread-safety
 //!
-//! The cache is `Send + Sync`: a `Mutex` guards the map and the recency order,
+//! The cache is `Send + Sync`: the map is split into parts, each behind a
+//! `RwLock` (a lookup reads one part and stamps the entry's recency
+//! atomically, so lookups neither queue nor share a line they write),
 //! and the body decode happens **off-lock** (the caller decodes, then inserts).
 //! `Dictionary`/`GraphIndex` are shared across query threads, so this is
-//! required; wasm is single-threaded, where the `Mutex` is simply uncontended.
+//! required; wasm is single-threaded, where the lock is simply uncontended.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// One flat key space over both consumers: the high byte is the section /
 /// permutation, the low is the chunk / tile index within it. Two `ChunkCache`
@@ -178,35 +180,54 @@ pub struct CacheStats {
 
 struct Slot {
     entry: Arc<CacheEntry>,
-    /// Recency stamp; also this slot's key into `order`.
-    seq: u64,
+    /// Recency stamp: the cache's clock when the entry was last taken.
+    /// Atomic, so a lookup stamps it under its part's *read* lock.
+    seq: AtomicU64,
     charge: u64,
 }
 
+/// How many independently locked parts the map is split into.
+const PARTS: usize = 64;
+
+/// One part of the map, with its own lock and its own counters: threads
+/// looking up different entries seldom touch the same part.
 #[derive(Default)]
-struct CacheInner {
-    map: HashMap<CacheKey, Slot>,
-    /// Recency order: `seq -> key`, ascending, so the least-recently-used entry
-    /// is `order`'s first key. An `O(log n)` LRU with no `unsafe`.
-    order: BTreeMap<u64, CacheKey>,
-    next_seq: u64,
-    resident_bytes: u64,
+struct Part {
+    map: RwLock<HashMap<CacheKey, Slot>>,
+    hits: AtomicU64,
+    misses: AtomicU64,
 }
 
-/// A `Mutex<LRU>` of decompressed chunk/tile bodies, byte-capped on the
+/// An LRU of decompressed chunk/tile bodies, byte-capped on the
 /// decompressed bytes actually held. See the module docs.
+///
+/// A lookup writes nothing every thread shares: it read-locks one of
+/// 64 parts of the map (`PARTS`), stamps the entry with the clock (which it only
+/// reads; inserts advance it) and counts the hit on that part. Under one
+/// lock, or one sequence counter bumped per lookup, sixteen threads decoding
+/// scattered terms spent more time passing that cache line around than
+/// decoding: a query was slower on sixteen threads than on eight.
 pub struct ChunkCache {
     /// This cache's number, unique in the process: what a thread's
     /// [`RECENT`] entries are keyed by (an address could be reused).
     id: u64,
-    inner: Mutex<CacheInner>,
+    parts: Box<[Part]>,
+    /// The decompressed bytes held, over all parts.
+    resident: AtomicU64,
+    /// Advanced by every insert; an entry's recency is the clock when it was
+    /// last taken, so entries taken between two inserts are equally recent.
+    clock: AtomicU64,
+    /// One eviction at a time.
+    evicting: std::sync::Mutex<()>,
     cap: AtomicU64,
-    hits: AtomicU64,
-    misses: AtomicU64,
     decoded_chunks: AtomicU64,
     decoded_bytes: AtomicU64,
     evictions: AtomicU64,
 }
+
+/// Up to this many entries an eviction stops exactly at the cap; a larger
+/// cache evicts a little further ([`ChunkCache::evict_to_cap`]).
+const EXACT_EVICTION_ENTRIES: usize = 64;
 
 /// How many entries a thread remembers ([`RECENT`]).
 const RECENT_SLOTS: usize = 4;
@@ -255,14 +276,22 @@ impl ChunkCache {
     pub fn new(cap: u64) -> Self {
         ChunkCache {
             id: NEXT_CACHE_ID.fetch_add(1, Ordering::Relaxed),
-            inner: Mutex::new(CacheInner::default()),
+            parts: (0..PARTS).map(|_| Part::default()).collect(),
+            resident: AtomicU64::new(0),
+            clock: AtomicU64::new(0),
+            evicting: std::sync::Mutex::new(()),
             cap: AtomicU64::new(cap),
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
             decoded_chunks: AtomicU64::new(0),
             decoded_bytes: AtomicU64::new(0),
             evictions: AtomicU64::new(0),
         }
+    }
+
+    /// The part of the map `key` lives in.
+    fn part(&self, key: CacheKey) -> &Part {
+        // Consecutive chunks of one section land in different parts.
+        let h = (key.1 as usize).wrapping_mul(0x9E37_79B1) ^ ((key.0 as usize) << 7);
+        &self.parts[(h >> 8) % PARTS]
     }
 
     /// An **unlimited** cache — nothing is ever evicted. This is the phase-0
@@ -281,8 +310,7 @@ impl ChunkCache {
     /// Change the byte cap and immediately evict down to it (phase ≥ 2).
     pub fn set_cap(&self, cap: u64) {
         self.cap.store(cap, Ordering::Relaxed);
-        let mut inner = self.inner.lock().unwrap();
-        self.evict_to_cap(&mut inner);
+        self.evict_to_cap();
     }
 
     /// The current byte cap.
@@ -316,31 +344,31 @@ impl ChunkCache {
         found
     }
 
-    /// [`get`](Self::get) from the shared map, under its lock.
+    /// [`get`](Self::get) from the shared map, under its part's read lock.
     fn get_shared(&self, key: CacheKey) -> Option<Arc<CacheEntry>> {
-        let mut inner = self.inner.lock().unwrap();
-        let seq = inner.next_seq;
-        if let Some(slot) = inner.map.get_mut(&key) {
-            let old = slot.seq;
-            slot.seq = seq;
-            let entry = Arc::clone(&slot.entry);
-            inner.order.remove(&old);
-            inner.order.insert(seq, key);
-            inner.next_seq += 1;
-            drop(inner);
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            Some(entry)
-        } else {
-            drop(inner);
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            None
-        }
+        let part = self.part(key);
+        let found = {
+            let map = part.map.read().unwrap();
+            map.get(&key).map(|slot| {
+                // Newer than every insert so far, as recent as the next one.
+                let now = self.clock.load(Ordering::Relaxed) + 1;
+                if slot.seq.load(Ordering::Relaxed) != now {
+                    slot.seq.store(now, Ordering::Relaxed);
+                }
+                Arc::clone(&slot.entry)
+            })
+        };
+        match &found {
+            Some(_) => part.hits.fetch_add(1, Ordering::Relaxed),
+            None => part.misses.fetch_add(1, Ordering::Relaxed),
+        };
+        found
     }
 
     /// Is `key` currently resident? (No recency bump, no hit/miss accounting —
     /// used by the batch prefetchers to decide what still needs faulting.)
     pub fn contains(&self, key: CacheKey) -> bool {
-        self.inner.lock().unwrap().map.contains_key(&key)
+        self.part(key).map.read().unwrap().contains_key(&key)
     }
 
     /// Insert `body` under `key` (or, if a racing thread inserted first, keep
@@ -351,38 +379,34 @@ impl ChunkCache {
         self.decoded_chunks.fetch_add(1, Ordering::Relaxed);
         self.decoded_bytes
             .fetch_add(body.len() as u64, Ordering::Relaxed);
-        let mut inner = self.inner.lock().unwrap();
-        let seq = inner.next_seq;
-        // Lost the race: someone already stored this key. Keep the existing
-        // entry (so all callers observe one body per key) and bump its recency.
-        if let Some(slot) = inner.map.get_mut(&key) {
-            let old = slot.seq;
-            slot.seq = seq;
-            let entry = Arc::clone(&slot.entry);
-            inner.order.remove(&old);
-            inner.order.insert(seq, key);
-            inner.next_seq += 1;
-            return entry;
-        }
-        let entry = Arc::new(CacheEntry {
-            body,
-            runs: OnceLock::new(),
-            dir: OnceLock::new(),
-            segs: OnceLock::new(),
-        });
-        let charge = entry.charge();
-        inner.next_seq += 1;
-        inner.map.insert(
-            key,
-            Slot {
-                entry: Arc::clone(&entry),
-                seq,
-                charge,
-            },
-        );
-        inner.order.insert(seq, key);
-        inner.resident_bytes += charge;
-        self.evict_to_cap(&mut inner);
+        let seq = self.clock.fetch_add(1, Ordering::Relaxed) + 1;
+        let entry = {
+            let mut map = self.part(key).map.write().unwrap();
+            // Lost the race: someone already stored this key. Keep the existing
+            // entry (so all callers observe one body per key) and bump its recency.
+            if let Some(slot) = map.get(&key) {
+                slot.seq.store(seq, Ordering::Relaxed);
+                return Arc::clone(&slot.entry);
+            }
+            let entry = Arc::new(CacheEntry {
+                body,
+                runs: OnceLock::new(),
+                dir: OnceLock::new(),
+                segs: OnceLock::new(),
+            });
+            let charge = entry.charge();
+            map.insert(
+                key,
+                Slot {
+                    entry: Arc::clone(&entry),
+                    seq: AtomicU64::new(seq),
+                    charge,
+                },
+            );
+            self.resident.fetch_add(charge, Ordering::Relaxed);
+            entry
+        };
+        self.evict_to_cap();
         entry
     }
 
@@ -391,16 +415,18 @@ impl ChunkCache {
     /// to the cap. A no-op if the slot no longer holds `entry` (it was evicted,
     /// or replaced): that state then dies with the last handle to it.
     pub fn charge_extra(&self, key: CacheKey, entry: &Arc<CacheEntry>, extra: u64) {
-        let mut inner = self.inner.lock().unwrap();
-        let Some(slot) = inner.map.get_mut(&key) else {
-            return;
-        };
-        if !Arc::ptr_eq(&slot.entry, entry) {
-            return;
+        {
+            let mut map = self.part(key).map.write().unwrap();
+            let Some(slot) = map.get_mut(&key) else {
+                return;
+            };
+            if !Arc::ptr_eq(&slot.entry, entry) {
+                return;
+            }
+            slot.charge += extra;
+            self.resident.fetch_add(extra, Ordering::Relaxed);
         }
-        slot.charge += extra;
-        inner.resident_bytes += extra;
-        self.evict_to_cap(&mut inner);
+        self.evict_to_cap();
     }
 
     /// Get `key`, or fault it in through `fetch` (called **off-lock**) and cache
@@ -420,33 +446,64 @@ impl ChunkCache {
 
     /// Evict least-recently-used entries until the resident total is within the
     /// cap. A no-op while the cap is [`u64::MAX`] (phase 0).
-    fn evict_to_cap(&self, inner: &mut CacheInner) {
+    ///
+    /// No recency order is kept between evictions (a lookup only stamps its
+    /// entry), so an eviction reads every part's stamps and sorts them. A
+    /// large cache then drops a thirty-second of its cap at once, so that a
+    /// run of inserts at the cap does not sort for each one; a small one (the
+    /// caps tests set) evicts exactly down to the cap.
+    fn evict_to_cap(&self) {
         let cap = self.cap.load(Ordering::Relaxed);
-        while inner.resident_bytes > cap {
-            let Some((&seq, &key)) = inner.order.iter().next() else {
+        if self.resident.load(Ordering::Relaxed) <= cap {
+            return;
+        }
+        let _one = self.evicting.lock().unwrap();
+        if self.resident.load(Ordering::Relaxed) <= cap {
+            return;
+        }
+        let mut by_age: Vec<(u64, CacheKey)> = Vec::new();
+        for part in self.parts.iter() {
+            let map = part.map.read().unwrap();
+            by_age.extend(
+                map.iter()
+                    .map(|(k, slot)| (slot.seq.load(Ordering::Relaxed), *k)),
+            );
+        }
+        let target = if by_age.len() > EXACT_EVICTION_ENTRIES {
+            cap - cap / 32
+        } else {
+            cap
+        };
+        by_age.sort_unstable();
+        for (_, key) in by_age {
+            if self.resident.load(Ordering::Relaxed) <= target {
                 break;
-            };
-            inner.order.remove(&seq);
-            if let Some(slot) = inner.map.remove(&key) {
-                inner.resident_bytes -= slot.charge;
+            }
+            if let Some(slot) = self.part(key).map.write().unwrap().remove(&key) {
+                self.resident.fetch_sub(slot.charge, Ordering::Relaxed);
                 // The `Arc` inside `slot` drops here; any clone already handed
                 // out keeps the bytes alive (the handout invariant).
+                self.evictions.fetch_add(1, Ordering::Relaxed);
             }
-            self.evictions.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// A snapshot of the observability counters.
     pub fn stats(&self) -> CacheStats {
-        let inner = self.inner.lock().unwrap();
+        let (mut hits, mut misses, mut entries) = (0u64, 0u64, 0u64);
+        for part in self.parts.iter() {
+            hits += part.hits.load(Ordering::Relaxed);
+            misses += part.misses.load(Ordering::Relaxed);
+            entries += part.map.read().unwrap().len() as u64;
+        }
         CacheStats {
-            hits: self.hits.load(Ordering::Relaxed),
-            misses: self.misses.load(Ordering::Relaxed),
+            hits,
+            misses,
             decoded_chunks: self.decoded_chunks.load(Ordering::Relaxed),
             decoded_bytes: self.decoded_bytes.load(Ordering::Relaxed),
             evictions: self.evictions.load(Ordering::Relaxed),
-            resident_bytes: inner.resident_bytes,
-            entries: inner.map.len() as u64,
+            resident_bytes: self.resident.load(Ordering::Relaxed),
+            entries,
         }
     }
 }

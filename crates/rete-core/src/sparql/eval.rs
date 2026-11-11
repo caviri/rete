@@ -474,6 +474,22 @@ fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     raw
 }
 
+/// Is `sub` a sub-select that only projects (and renames): no aggregate,
+/// DISTINCT, ORDER BY, slice or dataset clause, so its solutions are its
+/// pattern's, row for row, and a slice of the pattern is a slice of it?
+pub(super) fn only_projects(sub: &Select) -> bool {
+    sub.group.is_none()
+        && !sub.distinct
+        && sub.order.is_empty()
+        && sub.having.is_empty()
+        && sub.limit.is_none()
+        && sub.offset == 0
+        && sub.from.is_empty()
+        && sub.from_named.is_none()
+        && !sub.union_default
+        && sub.extends.iter().all(|(_, e)| !expr_has_exists(e))
+}
+
 /// Apply BIND/alias assignments to one row (columns only â€” never drops rows).
 fn apply_extends_row(ctx: &Ctx, row: &mut Row, extends: &[(String, FExpr)]) {
     for (var, expr) in extends.iter().rev() {
@@ -1381,7 +1397,25 @@ pub(crate) fn eval_plan_iter<'q>(
         // held every subject IRI as a string to do that.
         Plan::Subquery(sub) => {
             let sub_ctx = query_ctx(ctx.rete, sub);
-            let raw = select_rows_on(&sub_ctx, sub, index, named_filter);
+            // A shard of a grouped query run on several threads: a sub-select
+            // that only projects may hold the driving scan, so its context
+            // evaluates the same shard and reports what it reached. The
+            // measuring pass builds the pipeline and pulls nothing.
+            let sliced = ctx.shard.active() && only_projects(sub);
+            if sliced {
+                sub_ctx.shard.adopt(&ctx.shard);
+            }
+            let raw = if ctx.shard.active() && ctx.shard.measuring() {
+                if sliced {
+                    drop(eval_plan_iter(&sub_ctx, index, named_filter, &sub.plan));
+                }
+                Vec::new()
+            } else {
+                select_rows_on(&sub_ctx, sub, index, named_filter)
+            };
+            if sliced {
+                sub_ctx.shard.give_back(&ctx.shard);
+            }
             let map: Vec<(usize, usize)> = if sub.project.is_empty() {
                 (0..sub_ctx.slots.len())
                     .filter_map(|i| Some((i, ctx.slots.slot(sub_ctx.slots.name(i))?)))
@@ -1457,7 +1491,12 @@ pub(crate) fn eval_plan_iter<'q>(
                 r,
             )),
         ),
-        Plan::Minus(l, r) => minus_iter(ctx, index, named_filter, l, r),
+        Plan::Minus(l, r) => {
+            if ctx.shard.builds(node) {
+                return shared_minus(ctx, index, named_filter, node, l, r);
+            }
+            minus_iter(ctx, index, named_filter, l, r)
+        }
         Plan::DistinctUnion { vars, sources } => {
             super::distinct_union::iter(ctx, index, vars, sources)
         }
@@ -2759,6 +2798,30 @@ impl MinusRight {
             None => self.right.iter().any(|rb| minus_compatible(lb, rb)),
         }
     }
+}
+
+/// `l MINUS r` in a shard of a grouped query run on several threads: the
+/// anti-join of [`minus_iter`], its right side materialized and indexed once
+/// for all shards ([`shared_hash_join`] is the same for a join).
+fn shared_minus<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    nf: Option<&'q [String]>,
+    node: usize,
+    l: &'q Plan,
+    r: &'q Plan,
+) -> RowIter<'q> {
+    let left = eval_plan_iter(ctx, index, nf, l);
+    if ctx.shard.measuring() {
+        return left;
+    }
+    let right = ctx.shard.shared(node, 0, || {
+        MinusRight::build(ctx, l, eval_plan_in(ctx, index, nf, r))
+    });
+    if right.is_none() {
+        return left;
+    }
+    Box::new(left.filter(move |lb| (*right).as_ref().is_none_or(|m| !m.eliminates(lb))))
 }
 
 /// `MINUS` as a streaming anti-join: the right side is materialized and indexed
