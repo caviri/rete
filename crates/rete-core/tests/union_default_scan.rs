@@ -42,7 +42,7 @@ fn assemble(quads: Vec<RawQuad>, layout: GraphLayout, tile_budget: usize) -> Vec
     let mut o = write_options();
     o.tile_budget = tile_budget;
     set_write_options(o);
-    let bytes = assemble_dataset_with_layout(
+    assemble_dataset_with_layout(
         quads,
         false,
         false,
@@ -52,8 +52,7 @@ fn assemble(quads: Vec<RawQuad>, layout: GraphLayout, tile_budget: usize) -> Vec
         layout,
         |_, _| Vec::<u8>::new(),
     )
-    .0;
-    bytes
+    .0
 }
 
 /// The quads as a `0x07` quad-index image (graph-last orders).
