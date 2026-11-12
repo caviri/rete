@@ -49,6 +49,14 @@ oxttl12 = { package = "oxttl", version = "0.2", features = ["rdf-12"] }
 # code that `oxttl12` was not already pulling in.
 oxrdf12 = { package = "oxrdf", version = "0.3", features = ["rdf-12"] }
 oxrdfxml = "0.1"
+# JSON-LD 1.1 reader (`rete build` of `.jsonld`, and of YAML-LD through
+# `yaml_serde`). It builds on `oxrdf` 0.3 -- the same line `oxrdf12` names above --
+# so the quads it hands back are rendered the way the RDF 1.2 Turtle reader's are.
+oxjsonld = { version = "0.2", features = ["rdf-12"] }
+# YAML 1.2 -> serde values, for YAML-LD's basic profile: the YAML document is
+# turned into JSON and read as JSON-LD. The YAML organisation's continuation of
+# serde_yaml, which is archived.
+yaml_serde = "0.10"
 spargebra = { version = "0.3", features = ["rdf-star"] }
 serde_json = "1"
 # Range reads from S3/GCS/HTTP and content hashing / compression.

@@ -439,6 +439,8 @@ pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static s
             "ttl" => "ttl",
             "trig" => "trig",
             "jelly" => "jelly",
+            "jsonld" => "jsonld",
+            "yamlld" => "yamlld",
             "rdfxml" | "rdf" | "owl" | "xml" => "rdfxml",
             _ => "nt",
         };
@@ -457,6 +459,12 @@ pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static s
     } else if p.ends_with(".jelly") {
         // Jelly has no magic number, so only the extension (or `--format jelly`) says so.
         "jelly"
+    } else if p.ends_with(".jsonld") {
+        // `.json` is left alone (too many files are JSON); `--format jsonld` says so.
+        "jsonld"
+    } else if p.ends_with(".yamlld") {
+        // Likewise `.yaml` / `.yml`: pass `--format yamlld`.
+        "yamlld"
     } else if p.ends_with(".rdf") || p.ends_with(".owl") || p.ends_with(".rdfxml") {
         // RDF/XML — the common OWL serialization (an `rdf:RDF` root). `.xml` is left
         // to default to N-Triples since it's ambiguous; pass `--format rdfxml` for it.
@@ -503,6 +511,12 @@ fn ingest_error(input: Option<&str>, e: ingest::IngestError) -> anyhow::Error {
     let where_ = input.map(|i| format!("{i}: ")).unwrap_or_default();
     match e {
         ingest::IngestError::InvalidIri { .. } => anyhow::anyhow!("{where_}{e}\n{STRICT_HINT}"),
+        ingest::IngestError::JsonLdRemoteContext(ref iri) => {
+            anyhow::anyhow!(
+                "{where_}{e}\n{}",
+                super::jsonld_ctx::remote_context_hint(iri)
+            )
+        }
         _ => anyhow::anyhow!("{where_}{e}"),
     }
 }
@@ -524,6 +538,7 @@ fn parse_inputs(
     audit: &mut ingest::IriAudit,
     surface: ingest::QuotedTripleSurface,
     taps: &[buildinfo::InputTap],
+    file_plans: Option<&[super::build_folder::FilePlan]>,
 ) -> anyhow::Result<Vec<ingest::RawQuad>> {
     let mut quads: Vec<ingest::RawQuad> = Vec::new();
     for (i, input) in inputs.iter().enumerate() {
@@ -534,7 +549,17 @@ fn parse_inputs(
         // (~64 B/line) to avoid Vec doublings; for a compressed input that hint is
         // the *compressed* length, which under-shoots harmlessly. stdin and the
         // structured syntaxes take the text path below.
-        let parsed = if fmt == "jelly" || (input != "-" && (fmt == "nt" || fmt == "nq")) {
+        let parsed = if matches!(fmt, "jsonld" | "yamlld") {
+            // Read whole, with remote contexts only from `--context` / `--fetch-contexts`.
+            let text = read_input(input, tap)?;
+            ingest::parse_jsonld_audited(
+                &text,
+                fmt == "yamlld",
+                &super::jsonld_ctx::options(),
+                Some(audit),
+            )
+            .map_err(|e| ingest_error(Some(input), e))?
+        } else if fmt == "jelly" || (input != "-" && (fmt == "nt" || fmt == "nq")) {
             let cap = std::fs::metadata(input)
                 .map(|m| (m.len() / 64) as usize)
                 .unwrap_or(0);
@@ -560,6 +585,15 @@ fn parse_inputs(
                 },
             )?
         };
+        // This file's plan: its graph, if files are graphs, and its blank
+        // nodes kept apart from the other files'.
+        let parsed = match file_plans.and_then(|p| p.get(i)) {
+            Some(plan) => parsed
+                .into_iter()
+                .map(|q| super::build_folder::place(q, plan))
+                .collect(),
+            None => parsed,
+        };
         // Move the first input's vec in; only pay an extend-copy when merging more.
         if quads.is_empty() {
             quads = parsed;
@@ -580,7 +614,7 @@ pub(crate) fn validate(
     surface: ingest::QuotedTripleSurface,
 ) -> anyhow::Result<()> {
     let mut audit = iri_audit(strict);
-    let quads = parse_inputs(inputs, format, &mut audit, surface, &[])?;
+    let quads = parse_inputs(inputs, format, &mut audit, surface, &[], None)?;
     let named: std::collections::BTreeSet<&String> =
         quads.iter().filter_map(|(_, _, _, g)| g.as_ref()).collect();
     let in_default = quads.iter().filter(|(_, _, _, g)| g.is_none()).count();
@@ -619,6 +653,7 @@ pub(crate) fn build(
     strict: bool,
     surface: ingest::QuotedTripleSurface,
     sections: BuildSections,
+    file_plans: Option<&[super::build_folder::FilePlan]>,
 ) -> anyhow::Result<()> {
     let text_index = text_index.into_text_index();
     // Format 0x06 stores named graphs in the quad index only.
@@ -729,6 +764,10 @@ pub(crate) fn build(
                             live::set_stat(Stat::Statements, read.get());
                         }
                     }
+                    let q = match file_plans.and_then(|p| p.get(i)) {
+                        Some(plan) => super::build_folder::place(q, plan),
+                        None => q,
+                    };
                     if collapse_graphs {
                         visit((q.0, q.1, q.2, None))
                     } else {
@@ -803,7 +842,7 @@ pub(crate) fn build(
         Unit::Bytes,
     );
     let mut audit = iri_audit(strict);
-    let mut quads = parse_inputs(inputs, format, &mut audit, surface, &rec.taps)?;
+    let mut quads = parse_inputs(inputs, format, &mut audit, surface, &rec.taps, file_plans)?;
     let read = quads.len() as u64;
     live::set_stat(Stat::Statements, read);
     // 1a. `--collapse-graphs`: drop the graph term so everything lands in the
@@ -1061,6 +1100,7 @@ pub(crate) fn build_external_cmd(
     surface: ingest::QuotedTripleSurface,
     type_predicate: Option<&str>,
     sections: BuildSections,
+    file_plans: Option<&[super::build_folder::FilePlan]>,
 ) -> anyhow::Result<()> {
     if materialize || reason {
         anyhow::bail!(
@@ -1101,7 +1141,7 @@ pub(crate) fn build_external_cmd(
     {
         anyhow::bail!(
             "--memory-budget-mb streams N-Triples/N-Quads/Turtle/TriG/Jelly only \
-             ({bad} is {fmt}); convert RDF/XML inputs to .ttl or .nt first"
+             ({bad} is {fmt}); convert RDF/XML, JSON-LD and YAML-LD inputs to .ttl or .nt first"
         );
     }
 
@@ -1142,9 +1182,10 @@ pub(crate) fn build_external_cmd(
     let out_path = std::path::Path::new(output).to_path_buf();
     // Named graphs come from N-Quads and TriG unless they are folded away.
     let named = !collapse_graphs
-        && inputs_fmt
-            .iter()
-            .any(|(_, f)| matches!(*f, "nq" | "trig" | "jelly"));
+        && (file_plans.is_some_and(|p| p.iter().any(|f| f.graph.is_some()))
+            || inputs_fmt
+                .iter()
+                .any(|(_, f)| matches!(*f, "nq" | "trig" | "jelly")));
     progress::plan(external_plan(
         progress::Kind::Bounded,
         false,
@@ -1188,6 +1229,10 @@ pub(crate) fn build_external_cmd(
                         if read.get() & 0xFFF == 0 {
                             live::set_stat(Stat::Statements, read.get());
                         }
+                        let q = match file_plans.and_then(|p| p.get(i)) {
+                            Some(plan) => super::build_folder::place(q, plan),
+                            None => q,
+                        };
                         let q = if collapse_graphs {
                             (q.0, q.1, q.2, None)
                         } else {
@@ -1591,6 +1636,7 @@ mod tests {
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
+            None,
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1784,6 +1830,7 @@ mod tests {
                 false,
                 ingest::QuotedTripleSurface::default(),
                 BuildSections::default(),
+                None,
             )
             .unwrap();
             std::fs::read(out).unwrap()
@@ -1880,6 +1927,7 @@ mod tests {
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
+            None,
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1932,6 +1980,7 @@ mod tests {
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
+            None,
         )
         .unwrap();
 
@@ -1959,6 +2008,7 @@ mod tests {
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
+            None,
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();
@@ -2033,6 +2083,7 @@ mod tests {
                 false,
                 ingest::QuotedTripleSurface::default(),
                 BuildSections::default(),
+                None,
             )
             .unwrap();
             build_external_cmd(
@@ -2056,6 +2107,7 @@ mod tests {
                 ingest::QuotedTripleSurface::default(),
                 None,
                 BuildSections::default(),
+                None,
             )
             .unwrap();
             let ram_bytes = std::fs::read(&ram).unwrap();

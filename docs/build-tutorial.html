@@ -1110,8 +1110,8 @@ does not, and neither does the memory-bounded build.</p>
 <p><code>rete build</code> turns text into a file in a few steps. The phase names are the
 ones in the build record.</p>
 <ol>
-<li><strong>Parse.</strong> The input is read as N-Triples, N-Quads, Turtle, TriG, RDF/XML or
-Jelly, optionally gzipped. For N-Triples, N-Quads and Jelly files the in-RAM build reads
+<li><strong>Parse.</strong> The input is read as N-Triples, N-Quads, Turtle, TriG, RDF/XML,
+Jelly, JSON-LD or YAML-LD, optionally gzipped. For N-Triples, N-Quads and Jelly files the in-RAM build reads
 the input twice: pass 1 (<code>parse+dictionary</code>) collects the distinct terms,
 pass 2 (<code>parse+encode</code>) reads it again and replaces every term by its id,
 so the parsed text is never held in memory. Turtle, TriG and stdin take a

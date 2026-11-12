@@ -95,32 +95,67 @@ enum Command {
     },
     /// Build a `.rete` file from one or more RDF inputs (merged into one file).
     ///
-    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`/`.jelly`, plus
+    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`/`.jelly`/`.jsonld`/`.yamlld`, plus
     /// `.rdf`/`.owl`/`.rdfxml` (RDF/XML — how most OWL ontologies ship). Any input
     /// may be **gzipped** (`.ttl.gz`, `.trig.gz`, …) — compression is detected from
     /// the bytes and decompressed while streaming, so a dump never has to be
     /// expanded to disk first. Use `-` to read stdin (defaults to N-Triples).
     /// `--format` overrides detection for all inputs.
     /// Example: `cat *.nt | rete build - -o out.rete`.
+    ///
+    /// An input that is a **directory** is read recursively (files in path order,
+    /// hidden names and files with no RDF extension skipped) and each file becomes
+    /// a named graph named after it: `<urn:rete:file:sub/name>`. Quads that name a
+    /// graph keep it. `--merge-files` puts them all in the default graph instead.
+    /// Example: `rete build data/ -o out.rete`.
     Build {
-        /// Input files (or `-` for stdin); multiple are merged.
+        /// Input files, directories, or `-` for stdin; multiple are merged.
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly |
+        /// jsonld | yamlld. `.json`, `.yaml` and `.yml` are not detected by extension.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly", "jsonld", "yamlld"])]
         format: Option<String>,
+        /// Answer a remote JSON-LD / YAML-LD `@context` from a local file:
+        /// `--context https://schema.org/=schema.jsonld`. Repeatable. A build
+        /// fetches nothing unless `--fetch-contexts` is also given.
+        #[arg(long = "context", value_name = "IRI=FILE")]
+        contexts: Vec<String>,
+        /// Fetch remote JSON-LD / YAML-LD contexts over HTTP(S) when no
+        /// `--context` covers them. Off by default, so a build stays offline and
+        /// repeatable.
+        #[arg(long = "fetch-contexts")]
+        fetch_contexts: bool,
         /// Fold every named graph into the **default graph**, dropping the graph
         /// term. Dumps that put all their data inside named graphs — TriG
         /// exports like SemOpenAlex, most Wikibase and GraphDB dumps — otherwise
         /// answer `?s ?p ?o` with nothing and build an empty pyramid, because in
         /// SPARQL the default graph is not the union of the named ones. It is
-        /// also what makes such an input eligible for `--memory-budget-mb`,
-        /// which writes default-graph files only.
+        /// also a way to read a directory as one graph (it implies
+        /// `--merge-files`).
         #[arg(long = "collapse-graphs")]
         collapse_graphs: bool,
+        /// Read a directory's files as if they had been listed one by one: no
+        /// graph per file, triples go to the default graph.
+        #[arg(long = "merge-files", conflicts_with = "graph_per_file")]
+        merge_files: bool,
+        /// Put the triples of each input file in a named graph named after the
+        /// file (the path as given, extension removed, percent-encoded). This is
+        /// what a directory input does by default. Not with `-` (stdin).
+        #[arg(long = "graph-per-file", conflicts_with = "collapse_graphs")]
+        graph_per_file: bool,
+        /// Start of the graph IRI of each file (default `urn:rete:file:`).
+        #[arg(long = "graph-base", value_name = "IRI")]
+        graph_base: Option<String>,
+        /// Treat the blank node labels of all inputs as one namespace: `_:b0`
+        /// in two files is one node. For a document cut into several files
+        /// (a chunked N-Triples dump). Without it each file's labels are its
+        /// own, as RDF says, and `_:b0` of two files are two nodes.
+        #[arg(long = "shared-blank-nodes")]
+        shared_blank_nodes: bool,
         /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
         /// over the default graph (subClassOf/subPropertyOf/domain/range,
         /// inverseOf, symmetric/transitive, sameAs) and store the inferred
@@ -368,9 +403,20 @@ enum Command {
         /// Input files (or `-` for stdin).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly |
+        /// jsonld | yamlld. `.json`, `.yaml` and `.yml` are not detected by extension.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly", "jsonld", "yamlld"])]
         format: Option<String>,
+        /// Answer a remote JSON-LD / YAML-LD `@context` from a local file:
+        /// `--context https://schema.org/=schema.jsonld`. Repeatable. A build
+        /// fetches nothing unless `--fetch-contexts` is also given.
+        #[arg(long = "context", value_name = "IRI=FILE")]
+        contexts: Vec<String>,
+        /// Fetch remote JSON-LD / YAML-LD contexts over HTTP(S) when no
+        /// `--context` covers them. Off by default, so a build stays offline and
+        /// repeatable.
+        #[arg(long = "fetch-contexts")]
+        fetch_contexts: bool,
         /// Fail on the first invalid IRI instead of counting them (same rule as
         /// `rete build --strict`).
         #[arg(long)]
@@ -1686,7 +1732,13 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             inputs,
             output,
             format,
+            contexts,
+            fetch_contexts,
             collapse_graphs,
+            merge_files,
+            graph_per_file,
+            shared_blank_nodes,
+            graph_base,
             materialize,
             reason,
             no_pyramid,
@@ -1739,6 +1791,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 "per-graph" => rete_core::GraphLayout::PerGraph,
                 _ => rete_core::GraphLayout::Quad,
             };
+            commands::jsonld_ctx::configure(&contexts, fetch_contexts)?;
             let surface = commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?;
             let text_index = text_index_scope(
                 text_index,
@@ -1755,6 +1808,19 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 description,
                 created,
             };
+            let resolved = commands::build_folder::resolve(
+                &inputs,
+                &commands::build_folder::Options {
+                    format: format.as_deref(),
+                    merge_files,
+                    graph_per_file,
+                    collapse_graphs,
+                    graph_base: graph_base.as_deref(),
+                    shared_blank_nodes,
+                },
+            )?;
+            let inputs = resolved.files;
+            let file_plans = resolved.plans.as_deref();
             if let Some(mb) = memory_budget_mb {
                 commands::build::build_external_cmd(
                     &inputs,
@@ -1774,6 +1840,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     surface,
                     type_predicate.as_deref(),
                     sections,
+                    file_plans,
                 )
             } else {
                 commands::build::build(
@@ -1794,20 +1861,26 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     strict,
                     surface,
                     sections,
+                    file_plans,
                 )
             }
         }
         Command::Validate {
             inputs,
             format,
+            contexts,
+            fetch_contexts,
             strict,
             quoted_triple_syntax,
-        } => commands::build::validate(
-            &inputs,
-            format.as_deref(),
-            strict,
-            commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?,
-        ),
+        } => {
+            commands::jsonld_ctx::configure(&contexts, fetch_contexts)?;
+            commands::build::validate(
+                &inputs,
+                format.as_deref(),
+                strict,
+                commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?,
+            )
+        }
         Command::Estimate {
             inputs,
             format,

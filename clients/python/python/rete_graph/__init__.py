@@ -854,6 +854,8 @@ _FORMAT_BY_SUFFIX = {
     ".owl": "rdfxml",
     ".xml": "rdfxml",
     ".jelly": "jelly",
+    ".jsonld": "jsonld",
+    ".yamlld": "yamlld",
 }
 
 
@@ -941,7 +943,7 @@ class Builder:
         fmt = format or _FORMAT_BY_SUFFIX.get(os.path.splitext(fspath)[1].lower())
         if fmt is None:
             raise ValueError(
-                f"cannot infer RDF format from {fspath!r}; pass format='nt'|'nq'|'ttl'|'trig'|'rdfxml'|'jelly'"
+                f"cannot infer RDF format from {fspath!r}; pass format='nt'|'nq'|'ttl'|'trig'|'rdfxml'|'jelly'|'jsonld'|'yamlld'"
             )
         if fmt == "jelly":  # binary: the file's bytes, not text
             with io.open(fspath, "rb") as fb:

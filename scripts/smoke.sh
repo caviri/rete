@@ -82,6 +82,11 @@ check "build .nq"  "quads"              -- "$B" build "$T/d.nq" -o "$T/d.rete"
 printf '<http://ex/Z> <http://ex/p> <http://ex/W> .\n' > "$T/extra.nt"
 check "build merge" "triples"           -- "$B" build "$T/g.nt" "$T/extra.nt" -o "$T/merge.rete"
 check "build stdin" "triples"           -- bash -c "cat '$T/g.nt' | $B build - --format nt -o '$T/stdin.rete'"
+mkdir -p "$T/folder/sub"
+cp "$T/g.nt" "$T/folder/a.nt"
+cp "$T/extra.nt" "$T/folder/sub/b.nt"
+check "build folder" "quads"            -- "$B" build "$T/folder" -o "$T/folder.rete"
+check "folder graph" "Z"                -- "$B" sparql "$T/folder.rete" "SELECT ?s WHERE { GRAPH <urn:rete:file:sub/b> { ?s ?p ?o } }"
 check "merge has both" "Z"              -- "$B" query "$T/merge.rete" --subject "<http://ex/Z>"
 # Writer knobs change the bytes, never the answers; the memory-bounded build
 # writes the in-memory build's bytes under every one, promotion included.

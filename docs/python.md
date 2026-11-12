@@ -160,7 +160,7 @@ public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
 upload:
 
 ```python
-data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl", "trig", "rdfxml")
+data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl", "trig", "rdfxml", "jsonld", "yamlld")
 pathlib.Path("out.rete").write_bytes(data)
 ```
 

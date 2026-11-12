@@ -741,6 +741,10 @@ extension's <code>partition_by</code> does this with checkpoints on disk.</p>
 <p>Jelly is a binary RDF format, so it goes in as bytes:
 <code>build(await readFile("data.jelly"), "jelly")</code>. <code>build</code> takes a <code>Uint8Array</code>
 or <code>ArrayBuffer</code> for any format (text formats are read as UTF-8).</p>
+<h3 id="json-ld-and-yaml-ld">JSON-LD and YAML-LD</h3>
+<p><code>build(text, "jsonld")</code> and <code>build(text, "yamlld")</code> read documents whose contexts are
+inline. A document that names a remote <code>@context</code> fails with an error naming the IRI;
+the browser engine fetches nothing. Use the CLI's <code>--context</code> for that.</p>
 <h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
 <p>The CLI's <code>--quoted-triple-syntax</code> vocabulary and defaults, in both directions.
 <code>build(text, "ttl" | "trig", { quotedTripleSyntax })</code> reads Turtle/TriG

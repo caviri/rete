@@ -5,6 +5,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **`rete build` reads JSON-LD and YAML-LD.** `.jsonld` and `.yamlld` files are detected by extension (also with `.gz`); `.json`, `.yaml` and `.yml` are not, and take `--format jsonld` or `--format yamlld`. Named graphs stay named graphs, and `--collapse-graphs` works as for TriG. YAML-LD is the YAML document turned into JSON and read as JSON-LD. The YAML parser is `yaml_serde` on `libyaml-rs`, which is libyaml translated from C and uses `unsafe`, and it puts no limit on alias expansion: a YAML-LD file from a source you do not trust can use a lot of memory. A build fetches no remote `@context`: a document that needs one fails with an error naming its IRI, and `--context IRI=FILE` (repeatable) or `--fetch-contexts` supplies it. The same flags are on `rete validate`. A document is read whole, so it is refused under `--memory-budget-mb`. The browser engine's `build(text, "jsonld" | "yamlld")` and the Python, R and JavaScript `build` accept the two names, with inline contexts only. See `docs/cli.md`.
+- **`rete build` reads a folder.** `rete build papers/ -o papers.rete` reads every RDF file under the folder, in sorted path order, and puts each file in a named graph named after it (`urn:rete:file:2024/march` for `2024/march.ttl.gz`; `--graph-base` changes the start). Quads that name a graph keep it. `--merge-files` reads the folder as if the files had been listed, and `--graph-per-file` gives a list of files the same graphs. Hidden files and files with no RDF extension are skipped, and two files that give one graph name are an error. It works with `--memory-budget-mb`. See `docs/cli.md`.
+
+### Changed
+
+- **Blank nodes of different input files are different nodes.** `rete build a.nt b.nt` kept blank node labels as written, so `_:b0` in both files became one node with the statements of both. A label means something only inside its document: each input's labels are now prefixed (`_:b0` of the second file is `_:f1_b0`), in every position and inside quoted triples, for a list of files, a folder, and the memory-bounded build. A build from one input is unchanged. `--shared-blank-nodes` gives the old reading, for one document cut into several files.
+
 ### Fixed
 
 - **The concurrent browser engine ran out of stack on nested function calls.** A query with `IF(…, IF(…, …))` nested about ten deep in a page (twenty in Node) failed with "Maximum call stack size exceeded" on the Asyncify build, the default reader of the playground and the explorers; the sequential build takes about 280. The Asyncify pass ran without optimization, which leaves every function it instruments with its spill locals unmerged, and the query parser recurses about a dozen functions for each nested call. The pass now runs at `-O1` (`scripts/build_playground_async.sh`): the two builds reach the same depth, and `rete_wasm_async.wasm` is 7.5 MB instead of 17.4 MB. The gate holds 100 nested calls on both builds (`tests/gate/checks/check_nested_calls.mjs`).

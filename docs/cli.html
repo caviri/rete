@@ -629,15 +629,46 @@ the <code>rete(1)</code> man page. Maintainers generate these from the exact bin
 hidden <code>rete generate --output &lt;directory&gt;</code> packaging command; they are never
 maintained as hand-written copies of the CLI definition.</p>
 <h2 id="building">Building</h2>
-<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxmljelly---quoted-triple-syntax-rdf12rdf-star"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml|jelly] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
-<p>Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code> / <code>.jelly</code>, plus <code>.rdf</code> /
+<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxmljellyjsonldyamlld---merge-files----graph-per-file---graph-base-iri---context-irifile---fetch-contexts---quoted-triple-syntax-rdf12rdf-star"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml|jelly|jsonld|yamlld] [--merge-files | --graph-per-file] [--graph-base IRI] [--context IRI=FILE] [--fetch-contexts] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
+<p>Build a file from one or more RDF inputs (files, folders or <code>-</code>), merged under one shared dictionary.
+Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code> / <code>.jelly</code> / <code>.jsonld</code> / <code>.yamlld</code>, plus <code>.rdf</code> /
 <code>.owl</code> / <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
 defaults to N-Triples; <code>--format</code> forces a format for all inputs (use <code>--format rdfxml</code> for an RDF/XML file with a non-standard extension). N-Quads inputs produce
 a dataset with named graphs.</p>
 <pre><code class="language-sh">rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
 </code></pre>
+<p><strong>A folder as input.</strong> An input that is a directory is read recursively, and each
+file becomes a named graph named after it:</p>
+<pre><code class="language-sh">rete build papers/ -o papers.rete
+rete sparql papers.rete 'SELECT * WHERE { GRAPH &lt;urn:rete:file:2024/march&gt; { ?s ?p ?o } } LIMIT 5'
+</code></pre>
+<ul>
+<li>Files are read in sorted order of their path relative to the folder, so the same
+folder gives the same file on every machine. Hidden files and folders (a leading
+<code>.</code>) are skipped, directory symlinks are not followed, and files whose extension is
+not an RDF one are skipped with one line on stderr naming the first few. A folder
+with no RDF file is an error. <code>--format</code> reads every visible file as that format.</li>
+<li>The graph is <code>&lt;base&gt;&lt;path&gt;</code>: the path relative to the folder with <code>/</code> separators,
+the format extension and any <code>.gz</code> removed, and each segment percent-encoded (every
+byte but letters, digits and <code>- . _ ~</code>). <code>papers/2024/march.ttl.gz</code> is
+<code>urn:rete:file:2024/march</code>. <code>--graph-base IRI</code> replaces <code>urn:rete:file:</code>. Two files
+that give the same graph (<code>a.ttl</code> and <code>a.nt</code>) are an error naming both.</li>
+<li>The triples of a file go to its graph. A quad that names a graph in the file
+(N-Quads, TriG) keeps it.</li>
+<li><code>--merge-files</code> reads the folder's files as if they had been listed one by one: no
+graph per file. <code>--collapse-graphs</code> does the same and also folds the files' own
+graphs into the default graph.</li>
+<li><code>--graph-per-file</code> gives a list of files the same graphs, named from the paths as
+given (relative, without <code>..</code>). It cannot read stdin.</li>
+<li>It works with <code>--memory-budget-mb</code> too.</li>
+</ul>
+<p>Blank nodes belong to their file, however the files are given (a folder, a list,
+merged or not): <code>_:b0</code> in two files are two nodes, as RDF says, and <code>_:b0</code> of the
+second file is stored as <code>_:f1_b0</code>. A build from one input keeps its labels as
+written. <code>--shared-blank-nodes</code> reads the labels of all inputs as one namespace, for
+one document cut into several files (a chunked N-Triples dump): there <code>_:b0</code> in two
+files is one node.</p>
 <p><strong>Jelly.</strong> <code>.jelly</code> and <code>.jelly.gz</code> files are <a href="https://jelly-rdf.github.io/">Jelly</a>
 RDF streams, a binary format. Both layouts are read: Jelly 1.0 and 1.1 (the row
 layout) and Jelly 1.2 (the column layout), triples or quads, with RDF-star quoted
@@ -648,6 +679,20 @@ named graphs land in the quad index. A malformed file is refused with the frame
 number. Not read: generalized RDF (a literal as subject, predicate or graph),
 streams of RDF Messages (the optional 1.2 stream type), lookup tables above
 1,048,576 entries, and writing Jelly (<code>rete export</code> has no Jelly format).</p>
+<p><strong>JSON-LD and YAML-LD.</strong> <code>.jsonld</code> is JSON-LD 1.1 and <code>.yamlld</code> is YAML-LD (its
+basic profile: the YAML document is turned into JSON and read as JSON-LD, so the two
+give the same quads). <code>.json</code>, <code>.yaml</code> and <code>.yml</code> are not detected, because too many
+files share them; name the format: <code>--format jsonld</code> or <code>--format yamlld</code>. Named
+graphs (<code>@graph</code> under an <code>@id</code>) become named graphs, and <code>--collapse-graphs</code> folds
+them away as for TriG. A blank-node label in a file (<code>_:b0</code>) is renamed per file, so
+two files that both use it do not merge their nodes. Relative IRIs are not resolved
+against a base, as in Turtle here; JSON-LD drops a relative <code>@id</code> it cannot resolve.</p>
+<p>A build is offline: a remote <code>@context</code> is not fetched. A document that needs one
+fails with an error naming the context IRI. Either save the context and map it,
+<code>--context https://schema.org/=schema.jsonld</code> (repeatable; the file may be JSON or
+YAML), or allow the fetch with <code>--fetch-contexts</code>. A JSON-LD document is read whole,
+not streamed, so it is not accepted under <code>--memory-budget-mb</code>: convert it to N-Quads
+first. The browser engine's <code>build(text, "jsonld")</code> reads inline contexts only.</p>
 <p>A long build shows where it is with <code>--progress</code> (a live bar on a terminal by
 default; <code>plain</code> lines for logs): see <a href="#progress">Progress</a>.</p>
 <p><code>--materialize</code> bakes RDFS/OWL-RL entailments into the file at build time (see

@@ -16,9 +16,9 @@ maintained as hand-written copies of the CLI definition.
 
 ## Building
 
-### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml|jelly] [--quoted-triple-syntax rdf12|rdf-star]`
-Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig` / `.jelly`, plus `.rdf` /
+### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml|jelly|jsonld|yamlld] [--merge-files | --graph-per-file] [--graph-base IRI] [--context IRI=FILE] [--fetch-contexts] [--quoted-triple-syntax rdf12|rdf-star]`
+Build a file from one or more RDF inputs (files, folders or `-`), merged under one shared dictionary.
+Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig` / `.jelly` / `.jsonld` / `.yamlld`, plus `.rdf` /
 `.owl` / `.rdfxml` for RDF/XML — how most OWL ontologies ship); `-` reads stdin and
 defaults to N-Triples; `--format` forces a format for all inputs (use `--format
 rdfxml` for an RDF/XML file with a non-standard extension). N-Quads inputs produce
@@ -28,6 +28,40 @@ a dataset with named graphs.
 rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
 ```
+
+**A folder as input.** An input that is a directory is read recursively, and each
+file becomes a named graph named after it:
+
+```sh
+rete build papers/ -o papers.rete
+rete sparql papers.rete 'SELECT * WHERE { GRAPH <urn:rete:file:2024/march> { ?s ?p ?o } } LIMIT 5'
+```
+
+- Files are read in sorted order of their path relative to the folder, so the same
+  folder gives the same file on every machine. Hidden files and folders (a leading
+  `.`) are skipped, directory symlinks are not followed, and files whose extension is
+  not an RDF one are skipped with one line on stderr naming the first few. A folder
+  with no RDF file is an error. `--format` reads every visible file as that format.
+- The graph is `<base><path>`: the path relative to the folder with `/` separators,
+  the format extension and any `.gz` removed, and each segment percent-encoded (every
+  byte but letters, digits and `- . _ ~`). `papers/2024/march.ttl.gz` is
+  `urn:rete:file:2024/march`. `--graph-base IRI` replaces `urn:rete:file:`. Two files
+  that give the same graph (`a.ttl` and `a.nt`) are an error naming both.
+- The triples of a file go to its graph. A quad that names a graph in the file
+  (N-Quads, TriG) keeps it.
+- `--merge-files` reads the folder's files as if they had been listed one by one: no
+  graph per file. `--collapse-graphs` does the same and also folds the files' own
+  graphs into the default graph.
+- `--graph-per-file` gives a list of files the same graphs, named from the paths as
+  given (relative, without `..`). It cannot read stdin.
+- It works with `--memory-budget-mb` too.
+
+Blank nodes belong to their file, however the files are given (a folder, a list,
+merged or not): `_:b0` in two files are two nodes, as RDF says, and `_:b0` of the
+second file is stored as `_:f1_b0`. A build from one input keeps its labels as
+written. `--shared-blank-nodes` reads the labels of all inputs as one namespace, for
+one document cut into several files (a chunked N-Triples dump): there `_:b0` in two
+files is one node.
 
 **Jelly.** `.jelly` and `.jelly.gz` files are [Jelly](https://jelly-rdf.github.io/)
 RDF streams, a binary format. Both layouts are read: Jelly 1.0 and 1.1 (the row
@@ -39,6 +73,22 @@ named graphs land in the quad index. A malformed file is refused with the frame
 number. Not read: generalized RDF (a literal as subject, predicate or graph),
 streams of RDF Messages (the optional 1.2 stream type), lookup tables above
 1,048,576 entries, and writing Jelly (`rete export` has no Jelly format).
+
+**JSON-LD and YAML-LD.** `.jsonld` is JSON-LD 1.1 and `.yamlld` is YAML-LD (its
+basic profile: the YAML document is turned into JSON and read as JSON-LD, so the two
+give the same quads). `.json`, `.yaml` and `.yml` are not detected, because too many
+files share them; name the format: `--format jsonld` or `--format yamlld`. Named
+graphs (`@graph` under an `@id`) become named graphs, and `--collapse-graphs` folds
+them away as for TriG. A blank-node label in a file (`_:b0`) is renamed per file, so
+two files that both use it do not merge their nodes. Relative IRIs are not resolved
+against a base, as in Turtle here; JSON-LD drops a relative `@id` it cannot resolve.
+
+A build is offline: a remote `@context` is not fetched. A document that needs one
+fails with an error naming the context IRI. Either save the context and map it,
+`--context https://schema.org/=schema.jsonld` (repeatable; the file may be JSON or
+YAML), or allow the fetch with `--fetch-contexts`. A JSON-LD document is read whole,
+not streamed, so it is not accepted under `--memory-budget-mb`: convert it to N-Quads
+first. The browser engine's `build(text, "jsonld")` reads inline contexts only.
 
 A long build shows where it is with `--progress` (a live bar on a terminal by
 default; `plain` lines for logs): see [Progress](#progress).

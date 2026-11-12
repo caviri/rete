@@ -160,6 +160,12 @@ Jelly is a binary RDF format, so it goes in as bytes:
 `build(await readFile("data.jelly"), "jelly")`. `build` takes a `Uint8Array`
 or `ArrayBuffer` for any format (text formats are read as UTF-8).
 
+### JSON-LD and YAML-LD
+
+`build(text, "jsonld")` and `build(text, "yamlld")` read documents whose contexts are
+inline. A document that names a remote `@context` fails with an error naming the IRI;
+the browser engine fetches nothing. Use the CLI's `--context` for that.
+
 ### RDF 1.2 and quoted triples
 
 The CLI's `--quoted-triple-syntax` vocabulary and defaults, in both directions.

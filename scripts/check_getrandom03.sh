@@ -29,6 +29,12 @@ cd "$(dirname "$0")/.."
 # dependency so its `wasm-js` feature can pick the browser backend (its own code
 # must not call it; see the source check below).
 COMMON="getrandom oxrdf oxttl rand rand_chacha rand_core rete-core"
+# The browser engine also reads JSON-LD (the Chicory engine does not). `oxjsonld`
+# is on the path for the same reason as `oxttl`: it depends on `oxrdf` 0.3 for
+# its terms and has no dependency on `rand` or `getrandom` of its own (its
+# direct dependencies are json-event-parser, oxiri, oxrdf, ryu-js and
+# thiserror), so the only randomness it reaches is the blank-node labelling.
+WASM_ONLY="oxjsonld"
 
 inverse_tree() { # inverse_tree <cargo tree args...>
   cargo tree --target wasm32-unknown-unknown -e normal --prefix none \
@@ -72,7 +78,7 @@ source_check() {
 case "${1:-}" in
   wasm)
     source_check
-    check rete-wasm "$COMMON rete-wasm" --locked -p rete-wasm
+    check rete-wasm "$COMMON $WASM_ONLY rete-wasm" --locked -p rete-wasm
     ;;
   ffi)
     source_check
