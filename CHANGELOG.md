@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **`rete build` reads a folder.** `rete build papers/ -o papers.rete` reads every RDF file under the folder, in sorted path order, and puts each file in a named graph named after it (`urn:rete:file:2024/march` for `2024/march.ttl.gz`; `--graph-base` changes the start). Quads that name a graph keep it, and blank nodes stay apart per file. `--merge-files` reads the folder as if the files had been listed, and `--graph-per-file` gives a list of files the same graphs. Hidden files and files with no RDF extension are skipped, and two files that give one graph name are an error. It works with `--memory-budget-mb`. See `docs/cli.md`.
+
 ### Fixed
 
 - **The concurrent browser engine ran out of stack on nested function calls.** A query with `IF(…, IF(…, …))` nested about ten deep in a page (twenty in Node) failed with "Maximum call stack size exceeded" on the Asyncify build, the default reader of the playground and the explorers; the sequential build takes about 280. The Asyncify pass ran without optimization, which leaves every function it instruments with its spill locals unmerged, and the query parser recurses about a dozen functions for each nested call. The pass now runs at `-O1` (`scripts/build_playground_async.sh`): the two builds reach the same depth, and `rete_wasm_async.wasm` is 7.5 MB instead of 17.4 MB. The gate holds 100 nested calls on both builds (`tests/gate/checks/check_nested_calls.mjs`).
