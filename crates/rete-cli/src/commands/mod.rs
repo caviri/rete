@@ -4,6 +4,7 @@
 //! helpers shared across the query/export/communities commands.
 
 pub(crate) mod build;
+pub(crate) mod build_folder;
 pub(crate) mod buildinfo;
 pub(crate) mod card;
 pub(crate) mod card_jsonld;
