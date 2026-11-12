@@ -1,21 +1,6 @@
-/* rete landing page. Palette follows the docs site (crates/docgen). */
+/* rete landing page. Dark only; the palette is the docs site's dark one (crates/docgen). */
 
 :root {
-  --fg:#17211d; --muted:#5f6e67; --bg:#f6f8f7; --panel:#ffffff; --panel-2:#fbfcfb;
-  --accent:#147d69; --accent-2:#c84f2f; --accent-deep:#0b4f42; --iri:#0b6f5e;
-  --border:#d9e2de; --border-2:#e7eeea; --code-bg:#eef3f1; --tint:#eaf1ed; --warm:#fff8f4;
-  --on-accent:#ffffff;
-  --hl-kw:#8a3d5a; --hl-str:#0b745f; --hl-num:#a85424; --hl-comment:#5d7266; --hl-fn:#235e9c; --hl-var:#87500a;
-  --shadow:0 18px 44px rgba(32,47,41,.10);
-  --shadow-sm:0 2px 10px rgba(32,47,41,.07);
-  --hero-bg:#0b1411; --hero-fg:#e6f0eb; --hero-muted:#a6b9b0;
-  --serif:Georgia,"Times New Roman",serif;
-  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  --mono:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
-  --r:14px;
-  color-scheme: light;
-}
-:root[data-theme="dark"] {
   --fg:#dde8e2; --muted:#93a69d; --bg:#0f1512; --panel:#161e1a; --panel-2:#131a17;
   --accent:#35b299; --accent-2:#e57e5e; --accent-deep:#7fdcc7; --iri:#6fcdb6;
   --border:#2a352f; --border-2:#222c27; --code-bg:#1a231e; --tint:#1a2620; --warm:#2c211a;
@@ -23,19 +8,12 @@
   --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#8fa598; --hl-fn:#8abcf3; --hl-var:#edb974;
   --shadow:0 18px 44px rgba(0,0,0,.45);
   --shadow-sm:0 2px 10px rgba(0,0,0,.3);
+  --hero-bg:#0b1411; --hero-fg:#e6f0eb; --hero-muted:#a6b9b0;
+  --serif:Georgia,"Times New Roman",serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  --r:14px;
   color-scheme: dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --fg:#dde8e2; --muted:#93a69d; --bg:#0f1512; --panel:#161e1a; --panel-2:#131a17;
-    --accent:#35b299; --accent-2:#e57e5e; --accent-deep:#7fdcc7; --iri:#6fcdb6;
-    --border:#2a352f; --border-2:#222c27; --code-bg:#1a231e; --tint:#1a2620; --warm:#2c211a;
-    --on-accent:#06110d;
-    --hl-kw:#d98cab; --hl-str:#57c9ab; --hl-num:#e0a06d; --hl-comment:#8fa598; --hl-fn:#8abcf3; --hl-var:#edb974;
-    --shadow:0 18px 44px rgba(0,0,0,.45);
-    --shadow-sm:0 2px 10px rgba(0,0,0,.3);
-    color-scheme: dark;
-  }
 }
 
 :root { --mq-h:34px; --top-h:60px; }
@@ -132,13 +110,6 @@ h1, h2, h3 { font-family:var(--serif); font-weight:700; letter-spacing:-.01em; l
 .nav a:hover, .nav a.on { opacity:1; background:rgba(127,127,127,.14); }
 .top-actions { margin-left:auto; display:flex; align-items:center; gap:8px; }
 @media (min-width:820px) { .nav { display:flex; } .top { padding:0 28px; } }
-.i-moon { display:none; }
-:root[data-theme="dark"] .i-sun { display:none; }
-:root[data-theme="dark"] .i-moon { display:block; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .i-sun { display:none; }
-  :root:not([data-theme="light"]) .i-moon { display:block; }
-}
 
 /* ───────── Hero ───────── */
 .hero {
