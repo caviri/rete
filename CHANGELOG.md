@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-12
+
+0.7.1 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
 ### Added
 
 - **`rete build` reads JSON-LD and YAML-LD.** `.jsonld` and `.yamlld` files are detected by extension (also with `.gz`); `.json`, `.yaml` and `.yml` are not, and take `--format jsonld` or `--format yamlld`. Named graphs stay named graphs, and `--collapse-graphs` works as for TriG. YAML-LD is the YAML document turned into JSON and read as JSON-LD. The YAML parser is `yaml_serde` on `libyaml-rs`, which is libyaml translated from C and uses `unsafe`, and it puts no limit on alias expansion: a YAML-LD file from a source you do not trust can use a lot of memory. A build fetches no remote `@context`: a document that needs one fails with an error naming its IRI, and `--context IRI=FILE` (repeatable) or `--fetch-contexts` supplies it. The same flags are on `rete validate`. A document is read whole, so it is refused under `--memory-budget-mb`. The browser engine's `build(text, "jsonld" | "yamlld")` and the Python, R and JavaScript `build` accept the two names, with inline contexts only. See `docs/cli.md`.
