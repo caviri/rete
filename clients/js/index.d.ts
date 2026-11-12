@@ -263,7 +263,7 @@ export const wasm: Record<string, (...args: never[]) => unknown>;
  */
 export function build(
   text: string | Uint8Array | ArrayBuffer,
-  format?: "nt" | "nq" | "ttl" | "trig" | "jelly",
+  format?: "nt" | "nq" | "ttl" | "trig" | "jelly" | "jsonld" | "yamlld",
   opts?: { quotedTripleSyntax?: QuotedTripleSyntax },
 ): Promise<Uint8Array>;
 

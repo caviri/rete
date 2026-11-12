@@ -372,6 +372,8 @@ fn media_type(format: &str) -> Option<&'static str> {
         "trig" => "application/trig",
         "rdfxml" => "application/rdf+xml",
         "jelly" => "application/x-jelly-rdf",
+        "jsonld" => "application/ld+json",
+        "yamlld" => "application/ld+yaml",
         "rete" => "application/x-rete",
         _ => return None,
     })

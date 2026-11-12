@@ -439,6 +439,8 @@ pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static s
             "ttl" => "ttl",
             "trig" => "trig",
             "jelly" => "jelly",
+            "jsonld" => "jsonld",
+            "yamlld" => "yamlld",
             "rdfxml" | "rdf" | "owl" | "xml" => "rdfxml",
             _ => "nt",
         };
@@ -457,6 +459,12 @@ pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static s
     } else if p.ends_with(".jelly") {
         // Jelly has no magic number, so only the extension (or `--format jelly`) says so.
         "jelly"
+    } else if p.ends_with(".jsonld") {
+        // `.json` is left alone (too many files are JSON); `--format jsonld` says so.
+        "jsonld"
+    } else if p.ends_with(".yamlld") {
+        // Likewise `.yaml` / `.yml`: pass `--format yamlld`.
+        "yamlld"
     } else if p.ends_with(".rdf") || p.ends_with(".owl") || p.ends_with(".rdfxml") {
         // RDF/XML — the common OWL serialization (an `rdf:RDF` root). `.xml` is left
         // to default to N-Triples since it's ambiguous; pass `--format rdfxml` for it.
@@ -503,6 +511,12 @@ fn ingest_error(input: Option<&str>, e: ingest::IngestError) -> anyhow::Error {
     let where_ = input.map(|i| format!("{i}: ")).unwrap_or_default();
     match e {
         ingest::IngestError::InvalidIri { .. } => anyhow::anyhow!("{where_}{e}\n{STRICT_HINT}"),
+        ingest::IngestError::JsonLdRemoteContext(ref iri) => {
+            anyhow::anyhow!(
+                "{where_}{e}\n{}",
+                super::jsonld_ctx::remote_context_hint(iri)
+            )
+        }
         _ => anyhow::anyhow!("{where_}{e}"),
     }
 }
@@ -534,7 +548,17 @@ fn parse_inputs(
         // (~64 B/line) to avoid Vec doublings; for a compressed input that hint is
         // the *compressed* length, which under-shoots harmlessly. stdin and the
         // structured syntaxes take the text path below.
-        let parsed = if fmt == "jelly" || (input != "-" && (fmt == "nt" || fmt == "nq")) {
+        let parsed = if matches!(fmt, "jsonld" | "yamlld") {
+            // Read whole, with remote contexts only from `--context` / `--fetch-contexts`.
+            let text = read_input(input, tap)?;
+            ingest::parse_jsonld_audited(
+                &text,
+                fmt == "yamlld",
+                &super::jsonld_ctx::options(),
+                Some(audit),
+            )
+            .map_err(|e| ingest_error(Some(input), e))?
+        } else if fmt == "jelly" || (input != "-" && (fmt == "nt" || fmt == "nq")) {
             let cap = std::fs::metadata(input)
                 .map(|m| (m.len() / 64) as usize)
                 .unwrap_or(0);
@@ -1101,7 +1125,7 @@ pub(crate) fn build_external_cmd(
     {
         anyhow::bail!(
             "--memory-budget-mb streams N-Triples/N-Quads/Turtle/TriG/Jelly only \
-             ({bad} is {fmt}); convert RDF/XML inputs to .ttl or .nt first"
+             ({bad} is {fmt}); convert RDF/XML, JSON-LD and YAML-LD inputs to .ttl or .nt first"
         );
     }
 

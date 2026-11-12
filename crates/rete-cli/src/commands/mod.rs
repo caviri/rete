@@ -16,6 +16,7 @@ pub(crate) mod federate;
 pub(crate) mod hdt;
 pub(crate) mod inspect;
 pub(crate) mod iri_report;
+pub(crate) mod jsonld_ctx;
 pub(crate) mod manifest;
 pub(crate) mod memtrace;
 pub(crate) mod merge;

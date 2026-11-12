@@ -95,7 +95,7 @@ enum Command {
     },
     /// Build a `.rete` file from one or more RDF inputs (merged into one file).
     ///
-    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`/`.jelly`, plus
+    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`/`.jelly`/`.jsonld`/`.yamlld`, plus
     /// `.rdf`/`.owl`/`.rdfxml` (RDF/XML — how most OWL ontologies ship). Any input
     /// may be **gzipped** (`.ttl.gz`, `.trig.gz`, …) — compression is detected from
     /// the bytes and decompressed while streaming, so a dump never has to be
@@ -109,9 +109,20 @@ enum Command {
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly |
+        /// jsonld | yamlld. `.json`, `.yaml` and `.yml` are not detected by extension.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly", "jsonld", "yamlld"])]
         format: Option<String>,
+        /// Answer a remote JSON-LD / YAML-LD `@context` from a local file:
+        /// `--context https://schema.org/=schema.jsonld`. Repeatable. A build
+        /// fetches nothing unless `--fetch-contexts` is also given.
+        #[arg(long = "context", value_name = "IRI=FILE")]
+        contexts: Vec<String>,
+        /// Fetch remote JSON-LD / YAML-LD contexts over HTTP(S) when no
+        /// `--context` covers them. Off by default, so a build stays offline and
+        /// repeatable.
+        #[arg(long = "fetch-contexts")]
+        fetch_contexts: bool,
         /// Fold every named graph into the **default graph**, dropping the graph
         /// term. Dumps that put all their data inside named graphs — TriG
         /// exports like SemOpenAlex, most Wikibase and GraphDB dumps — otherwise
@@ -368,9 +379,20 @@ enum Command {
         /// Input files (or `-` for stdin).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml | jelly |
+        /// jsonld | yamlld. `.json`, `.yaml` and `.yml` are not detected by extension.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml", "jelly", "jsonld", "yamlld"])]
         format: Option<String>,
+        /// Answer a remote JSON-LD / YAML-LD `@context` from a local file:
+        /// `--context https://schema.org/=schema.jsonld`. Repeatable. A build
+        /// fetches nothing unless `--fetch-contexts` is also given.
+        #[arg(long = "context", value_name = "IRI=FILE")]
+        contexts: Vec<String>,
+        /// Fetch remote JSON-LD / YAML-LD contexts over HTTP(S) when no
+        /// `--context` covers them. Off by default, so a build stays offline and
+        /// repeatable.
+        #[arg(long = "fetch-contexts")]
+        fetch_contexts: bool,
         /// Fail on the first invalid IRI instead of counting them (same rule as
         /// `rete build --strict`).
         #[arg(long)]
@@ -1686,6 +1708,8 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             inputs,
             output,
             format,
+            contexts,
+            fetch_contexts,
             collapse_graphs,
             materialize,
             reason,
@@ -1739,6 +1763,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 "per-graph" => rete_core::GraphLayout::PerGraph,
                 _ => rete_core::GraphLayout::Quad,
             };
+            commands::jsonld_ctx::configure(&contexts, fetch_contexts)?;
             let surface = commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?;
             let text_index = text_index_scope(
                 text_index,
@@ -1800,14 +1825,19 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Validate {
             inputs,
             format,
+            contexts,
+            fetch_contexts,
             strict,
             quoted_triple_syntax,
-        } => commands::build::validate(
-            &inputs,
-            format.as_deref(),
-            strict,
-            commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?,
-        ),
+        } => {
+            commands::jsonld_ctx::configure(&contexts, fetch_contexts)?;
+            commands::build::validate(
+                &inputs,
+                format.as_deref(),
+                strict,
+                commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?,
+            )
+        }
         Command::Estimate {
             inputs,
             format,
