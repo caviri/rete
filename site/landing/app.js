@@ -548,17 +548,34 @@ function showSkeleton() {
   el.table.replaceChildren(sk.cloneNode(true));
 }
 
+/* Opening a new item (an Explore button, an IRI, a node, a crumb, "What
+   links here", a card's query) starts at the top of the explorer: the view
+   bar, then the trail, then the item. A click far down a long list otherwise
+   leaves the new item's top out of sight. Nothing moves when the bar is
+   already in the upper part of the screen. */
+function toExplorerTop() {
+  for (const w of $$(".table-wrap", el.table)) w.scrollTop = 0;
+  const bar = $(".viewbar", $("#console"));
+  if (!bar) return;
+  const head = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+  const top = bar.getBoundingClientRect().top;
+  if (top >= head - 1 && top <= innerHeight * 0.45) return;
+  bar.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" });
+}
+
 /* Explore one IRI: what does the graph say about it? */
 function explore(iri) {
   if (!state.graph) return;
   const q = `SELECT ?p ?o WHERE {\n  <${iri}> ?p ?o .\n} LIMIT 300`;
   setQuery(q);
   if (state.view === "sparql") setView(state.lastView);
+  toExplorerTop();
   restart(q, { explore: true, iri, label: humanize(iri) });
 }
 function exploreIncoming(iri) {
   const q = `SELECT ?s ?p WHERE {\n  ?s ?p <${iri}> .\n} LIMIT 100`;
   setQuery(q);
+  toExplorerTop();
   restart(q, { explore: true, iri: null, label: `links to ${humanize(iri)}` });
 }
 
@@ -575,6 +592,7 @@ function renderCrumbs() {
         state.trail = state.trail.slice(0, i + 1);
         setQuery(c.query);
         showResult(c.result, c.r);
+        toExplorerTop();
       },
     }, c.label));
   });
@@ -1405,7 +1423,7 @@ function useCardQuery(g, q, big) {
   if (state.graph !== g) return;
   cancel();
   selectQuestion({ label: q.title || q.question || "Card query", q: q.sparql });
-  $("#console").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" });
+  toExplorerTop();
   if (big) { setView("sparql"); setStatus("Loaded from the card. Press Run when you want it."); }
   else runFromEditor();
 }
