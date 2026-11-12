@@ -55828,6 +55828,704 @@
    "elapsedMs": 45,
    "shot": "web/preview/shots/openalex-astrocytes-6.png"
   },
+  "opencitations-index:0": {
+   "id": "opencitations-index:0",
+   "dataset": "opencitations-index",
+   "index": 0,
+   "view": "table",
+   "ok": true,
+   "qmeta": "1 row(s) | 22 range req · 10.9 MB of 103.40 GB fetched (incl. opening the file) · 10.6 MB cached this session · 10284 ms",
+   "count": 1,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citing work",
+     "var": "citing"
+    },
+    {
+     "label": "Cited work",
+     "var": "cited"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/meta/br/0601785",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0602134",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 10311
+  },
+  "opencitations-index:1": {
+   "id": "opencitations-index:1",
+   "dataset": "opencitations-index",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "9 row(s) | 0 range req · 0 B of 103.40 GB fetched — 0 new bytes, all served from this session's cache (10.6 MB) · 10 ms",
+   "count": 9,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Property",
+     "var": "p"
+    },
+    {
+     "label": "Value",
+     "var": "o"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "http://purl.org/spar/cito/hasCitationCreationDate",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://purl.org/spar/cito/hasCitationTimeSpan",
+      "media": false
+     },
+     {
+      "text": "P1Y",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://purl.org/spar/cito/hasCitedEntity",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0602134",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://purl.org/spar/cito/hasCitingEntity",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601785",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/cito/Citation",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/cito/JournalSelfCitation",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.w3.org/ns/prov#atLocation",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/index/doci/",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "http://www.w3.org/ns/prov#atLocation",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/index/moci/",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 41
+  },
+  "opencitations-index:2": {
+   "id": "opencitations-index:2",
+   "dataset": "opencitations-index",
+   "index": 2,
+   "view": "table",
+   "ok": true,
+   "qmeta": "44 row(s) | 32 range req · 16.0 MB of 103.40 GB fetched · 26.6 MB cached this session · 13916 ms",
+   "count": 44,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citation",
+     "var": "citation"
+    },
+    {
+     "label": "Cited work",
+     "var": "cited"
+    },
+    {
+     "label": "Creation date",
+     "var": "date"
+    },
+    {
+     "label": "Time span",
+     "var": "span"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-0602134",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0602134",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "P1Y",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-06102978628",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/06102978628",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "P7Y",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-06103801137",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/06103801137",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-061102099159",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/061102099159",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "P2Y",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-061103608703",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/061103608703",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-061202052452",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/061202052452",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "P20Y",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-061303345323",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/061303345323",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "P16Y",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-061402543278",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/061402543278",
+      "media": false
+     },
+     {
+      "text": "2021",
+      "media": false
+     },
+     {
+      "text": "P7Y",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 13939
+  },
+  "opencitations-index:3": {
+   "id": "opencitations-index:3",
+   "dataset": "opencitations-index",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "4 row(s) | 17 range req · 6.5 MB of 103.40 GB fetched · 33.2 MB cached this session · 7293 ms",
+   "count": 4,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citation",
+     "var": "citation"
+    },
+    {
+     "label": "Citing work",
+     "var": "citing"
+    },
+    {
+     "label": "Creation date",
+     "var": "date"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/061704349958-0601785",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/061704349958",
+      "media": false
+     },
+     {
+      "text": "2024-06-17",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/06023041970-0601785",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/06023041970",
+      "media": false
+     },
+     {
+      "text": "2025",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/06023100716-0601785",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/06023100716",
+      "media": false
+     },
+     {
+      "text": "2025",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/06026550270-0601785",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/06026550270",
+      "media": false
+     },
+     {
+      "text": "2025",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 7307
+  },
+  "opencitations-index:4": {
+   "id": "opencitations-index:4",
+   "dataset": "opencitations-index",
+   "index": 4,
+   "view": "table",
+   "ok": true,
+   "qmeta": "10 row(s) | 4 range req · 2.5 MB of 103.40 GB fetched · 35.7 MB cached this session · 2057 ms",
+   "count": 10,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citation",
+     "var": "citation"
+    },
+    {
+     "label": "Citing work",
+     "var": "citing"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000034-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000034",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000046-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000046",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000051-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000051",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000056-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000056",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000066-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000066",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000081-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000081",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000082-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000082",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601000092-06104029082",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0601000092",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 2082
+  },
+  "opencitations-index:5": {
+   "id": "opencitations-index:5",
+   "dataset": "opencitations-index",
+   "index": 5,
+   "view": "table",
+   "ok": true,
+   "qmeta": "3 row(s) | 2 range req · 1.0 MB of 103.40 GB fetched · 36.7 MB cached this session · 890 ms",
+   "count": 3,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Source collection",
+     "var": "source"
+    },
+    {
+     "label": "Citations",
+     "var": "citations"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/index/moci/",
+      "media": false
+     },
+     {
+      "text": "42",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/doci/",
+      "media": false
+     },
+     {
+      "text": "41",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/oroci/",
+      "media": false
+     },
+     {
+      "text": "21",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 916
+  },
+  "opencitations-index:6": {
+   "id": "opencitations-index:6",
+   "dataset": "opencitations-index",
+   "index": 6,
+   "view": "table",
+   "ok": true,
+   "qmeta": "3 row(s) | 0 range req · 0 B of 103.40 GB fetched — 0 new bytes, all served from this session's cache (36.7 MB) · 17 ms",
+   "count": 3,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citation",
+     "var": "citation"
+    },
+    {
+     "label": "Cited work",
+     "var": "cited"
+    },
+    {
+     "label": "Kind",
+     "var": "kind"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-06503757181",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/06503757181",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/cito/AuthorSelfCitation",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-06504256355",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/06504256355",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/cito/AuthorSelfCitation",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/oc/index/ci/0601785-0602134",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/oc/meta/br/0602134",
+      "media": false
+     },
+     {
+      "text": "http://purl.org/spar/cito/JournalSelfCitation",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 32
+  },
+  "opencitations-index:7": {
+   "id": "opencitations-index:7",
+   "dataset": "opencitations-index",
+   "index": 7,
+   "view": "table",
+   "ok": true,
+   "qmeta": "4 row(s) | 2 range req · 1.0 MB of 103.40 GB fetched · 37.7 MB cached this session · 968 ms",
+   "count": 4,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Count",
+     "var": "count"
+    },
+    {
+     "label": "Citations",
+     "var": "citations"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "author self-citations",
+      "media": false
+     },
+     {
+      "text": "2",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "citations received",
+      "media": false
+     },
+     {
+      "text": "4",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "journal self-citations",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "references made",
+      "media": false
+     },
+     {
+      "text": "44",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 984
+  },
   "opencitations-meta:0": {
    "id": "opencitations-meta:0",
    "dataset": "opencitations-meta",

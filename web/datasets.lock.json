@@ -67,6 +67,14 @@
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021.rete"
     },
     {
+      "key": "opencitations-index",
+      "url": "https://data.graphplaza.com/opencitations-index/opencitations-index.rete",
+      "formatVersion": 6,
+      "contentHash": "8299481bae98c849ad6e84cfa3d22dcf",
+      "size": 111022809006,
+      "cardUrl": "https://data.graphplaza.com/opencitations-index/opencitations-index.rete"
+    },
+    {
       "key": "opencitations-meta",
       "url": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete",
       "formatVersion": 6,
