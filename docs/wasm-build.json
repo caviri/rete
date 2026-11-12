@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "gitCommit": "08e216a1a1c01629d45b16ba565c23765c11b0be",
+  "gitCommit": "b00e893ad131f9212bab730995a0380e5ae626da",
   "engineSource": "433204e081e546c9c3522f74795a1b0f8e3804cd28cb578330ec06acaebdb9f4",
   "buildStamp": "0.7.0",
   "toolchain": {
@@ -24,13 +24,13 @@
     },
     {
       "path": "web/pkg-nomodules-async/rete_wasm_bg.wasm",
-      "bytes": 17415645,
-      "sha256": "0f239464cbf3999b7f0225a7d873b9ec741ad200460bbb3b4174826ee1424fd7"
+      "bytes": 7503809,
+      "sha256": "edea117cce001e5b490e3c918d19320e4c398bbc71ac05c663742be0b651f50c"
     },
     {
       "path": "docs/rete_wasm_async.wasm",
-      "bytes": 17415645,
-      "sha256": "0f239464cbf3999b7f0225a7d873b9ec741ad200460bbb3b4174826ee1424fd7"
+      "bytes": 7503809,
+      "sha256": "edea117cce001e5b490e3c918d19320e4c398bbc71ac05c663742be0b651f50c"
     }
   ]
 }
