@@ -2,7 +2,7 @@
 // over stdio, call every tool. Covers the two paths that matter — a LOCAL
 // .rete read lazily off disk, and a PUBLISHED one read over HTTP Range.
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -51,6 +51,7 @@ test("serves the declared tools", async (t) => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
+    "about",
     "build_rete",
     "cancel_query",
     "dataset_card",
@@ -58,6 +59,15 @@ test("serves the declared tools", async (t) => {
     "describe_entity",
     "example_queries",
     "find_entities",
+    "graph_view",
+    "graph_view_edit",
+    "graph_view_expand",
+    "graph_view_labels",
+    "graph_view_search",
+    "graph_view_state",
+    "graph_view_sync",
+    "graph_view_update",
+    "graph_view_upload",
     "list_datasets",
     "load_rdf",
     "query_result",
@@ -66,6 +76,23 @@ test("serves the declared tools", async (t) => {
     "start_query",
     "validate_shacl",
   ]);
+});
+
+test("says which version it is, who made it, and what it bundles", async (t) => {
+  const client = await connect(t, await fixture());
+  const about = payload(await client.callTool({ name: "about", arguments: {} }));
+  const manifest = JSON.parse(await readFile(join(here, "..", "build", "manifest.json"), "utf8"));
+  assert.equal(about.version, manifest.version);
+  assert.match(about.build.date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(about.author.name, "Carlos Vivar Rios");
+  assert.equal(about.cite.doi, "10.5281/zenodo.21546287");
+  assert.equal(about.links.repository, "https://github.com/caviri/rete");
+  const cytoscape = about.credits.find((c) => c.name === "cytoscape");
+  assert.equal(cytoscape.license, "MIT");
+  assert.match(cytoscape.version, /^\d+\.\d+\.\d+$/);
+  assert.ok(about.credits.some((c) => c.name === "@dagrejs/dagre"));
+  // The agent reads the version without a call, too.
+  assert.match(client.getInstructions(), new RegExp(`This is rete-graphs ${manifest.version.replaceAll(".", "\\.")}`));
 });
 
 test("queries a local graph lazily, by file name", async (t) => {
@@ -212,6 +239,9 @@ test("reads a published graph over HTTP Range", { concurrency: 1 }, async (t) =>
   assert.match(card.card.title, /BOE/);
   // The card tier is index-free: a couple of small reads, not the whole file.
   assert.ok(card.stats.fractionRead < 0.5, `read too much for a card: ${card.stats.fractionRead}`);
+  assert.equal(card.stats.requests, 2);
+  assert.equal(card.capabilities.schema, true);
+  assert.equal(card.capabilities.name_search, true);
 
   const schema = payload(
     await client.callTool({ name: "dataset_schema", arguments: { dataset: "boe" } }),
@@ -223,6 +253,52 @@ test("reads a published graph over HTTP Range", { concurrency: 1 }, async (t) =>
   );
   assert.ok(examples.queries.length > 0, "boe ships example queries");
 
+});
+
+test("says what each graph supports, and answers honestly where an index is missing", { concurrency: 1 }, async (t) => {
+  const client = await connect(t, await fixture());
+  const call = async (name, args) => payload(await client.callTool({ name, arguments: args }));
+
+  // crossref: 66 GB, built for size — no schema pyramid, so no name index.
+  // Saying so costs the header and the card, not the 100 MB open.
+  const card = await call("dataset_card", { dataset: "crossref" });
+  assert.equal(card.capabilities.schema, false);
+  assert.equal(card.capabilities.name_search, false);
+  assert.match(card.supports, /schema \(dataset_schema\): no/);
+  assert.ok(card.stats.bytesRead < 1_000_000, `a card read ${card.stats.bytesRead} bytes`);
+  assert.equal(card.stats.requests, 2);
+
+  const schema = await call("dataset_schema", { dataset: "crossref" });
+  assert.equal(schema.from, "card");
+  assert.match(schema.note, /no schema pyramid/);
+  assert.ok(schema.stats.bytesRead < 1_000_000);
+
+  const found = await call("find_entities", { dataset: "crossref", text: "Nature" });
+  assert.deepEqual(found.hits, []);
+  assert.deepEqual(found.searched, []);
+  assert.match(found.note, /no name index and no full-text index, so nothing was searched/);
+  assert.match(found.note, /SPARQL/);
+
+  // A file built with --text-index says so — in the catalogue too.
+  const plaza = await call("dataset_card", { dataset: "imaging-plaza" });
+  assert.equal(plaza.capabilities.full_text_search, true);
+  const listed = await call("list_datasets", { query: "imaging-plaza" });
+  assert.equal(listed.published.find((d) => d.key === "imaging-plaza").full_text_search, true);
+});
+
+test("a local graph's card says what it supports", async (t) => {
+  const client = await connect(t, await fixture());
+  const card = payload(await client.callTool({ name: "dataset_card", arguments: { dataset: "people" } }));
+  assert.equal(card.capabilities.schema, true);
+  assert.equal(card.capabilities.name_search, true);
+  assert.equal(card.capabilities.full_text_search, false);
+  assert.equal(card.stats.where, "local file (lazy byte-range reads)");
+  // Found by name, with the search that ran named.
+  const found = payload(await client.callTool({ name: "find_entities", arguments: { dataset: "people", text: "Ada" } }));
+  assert.equal(found.hits[0].subject, "https://example.org/ada");
+  assert.deepEqual(found.searched, ["label-prefix"]);
+  const none = payload(await client.callTool({ name: "find_entities", arguments: { dataset: "people", text: "Zelda" } }));
+  assert.match(none.note, /nothing matched in the label-prefix search \(the file has no full-text index\)/);
 });
 
 test("says something useful about a sharded dataset", async (t) => {
