@@ -85,7 +85,7 @@ check "build stdin" "triples"           -- bash -c "cat '$T/g.nt' | $B build - -
 mkdir -p "$T/folder/sub"
 cp "$T/g.nt" "$T/folder/a.nt"
 cp "$T/extra.nt" "$T/folder/sub/b.nt"
-check "build folder" "triples"          -- "$B" build "$T/folder" -o "$T/folder.rete"
+check "build folder" "quads"            -- "$B" build "$T/folder" -o "$T/folder.rete"
 check "folder graph" "Z"                -- "$B" sparql "$T/folder.rete" "SELECT ?s WHERE { GRAPH <urn:rete:file:sub/b> { ?s ?p ?o } }"
 check "merge has both" "Z"              -- "$B" query "$T/merge.rete" --subject "<http://ex/Z>"
 # Writer knobs change the bytes, never the answers; the memory-bounded build

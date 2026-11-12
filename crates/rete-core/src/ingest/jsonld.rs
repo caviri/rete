@@ -10,7 +10,7 @@
 //!
 //! **No I/O.** A document that names a remote `@context` gets it from a
 //! [`ContextLoader`] the caller supplies; with none, the parse fails with
-//! [`IngestError::JsonLdRemoteContext`] naming the IRI. That keeps the core free
+//! [`crate::ingest::IngestError::JsonLdRemoteContext`] naming the IRI. That keeps the core free
 //! of sockets and files (the wasm engine compiles it) and a build offline and
 //! repeatable unless the caller opts in.
 //!
@@ -33,7 +33,7 @@ use std::sync::Arc;
 /// accepted too and converted.
 pub trait ContextLoader: Send + Sync + UnwindSafe + RefUnwindSafe {
     /// The document at `iri`; `Ok(None)` if this loader has nothing for it
-    /// (the parse then fails with [`IngestError::JsonLdRemoteContext`]), `Err`
+    /// (the parse then fails with [`crate::ingest::IngestError::JsonLdRemoteContext`]), `Err`
     /// if it should have and could not.
     fn load(&self, iri: &str) -> Result<Option<Vec<u8>>, String>;
 }
@@ -52,7 +52,7 @@ where
 #[derive(Clone, Default)]
 pub struct JsonLdOptions {
     /// Where remote contexts come from. `None`: nowhere, so a document that
-    /// needs one fails with [`IngestError::JsonLdRemoteContext`].
+    /// needs one fails with [`crate::ingest::IngestError::JsonLdRemoteContext`].
     pub context_loader: Option<Arc<dyn ContextLoader>>,
 }
 
