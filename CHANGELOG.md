@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The concurrent browser engine ran out of stack on nested function calls.** A query with `IF(…, IF(…, …))` nested about ten deep in a page (twenty in Node) failed with "Maximum call stack size exceeded" on the Asyncify build, the default reader of the playground and the explorers; the sequential build takes about 280. The Asyncify pass ran without optimization, which leaves every function it instruments with its spill locals unmerged, and the query parser recurses about a dozen functions for each nested call. The pass now runs at `-O1` (`scripts/build_playground_async.sh`): the two builds reach the same depth, and `rete_wasm_async.wasm` is 7.5 MB instead of 17.4 MB. The gate holds 100 nested calls on both builds (`tests/gate/checks/check_nested_calls.mjs`).
+
 ## [0.7.0] - 2026-11-12
 
 0.7.0 writes format 0x08 and reads 0x05 to 0x08. Readers up to 0.6.1 refuse a 0x08 file by name (`unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`), so convert a published file (`rete convert`) only once its readers are on 0.7.0.

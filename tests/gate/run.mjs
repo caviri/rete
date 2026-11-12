@@ -166,6 +166,18 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
+  // Function calls nested 100 deep, on both browser engines: the Asyncify build
+  // once ended the stack at 20 (it was made without -O1).
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_nested_calls.mjs`, { encoding: "utf8" });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record("G0", "both browser engines take function calls nested 100 deep", ok,
+      ok ? "" : (verdict ? JSON.stringify(verdict.failures || verdict).slice(0, 160) : out.slice(-160)));
+  } catch (e) {
+    record("G0", "both browser engines take function calls nested 100 deep", false,
+      String(e.stderr || e.stdout || e).slice(-160));
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/check_yasgui_wasm_parity.mjs`, {
       encoding: "utf8",
