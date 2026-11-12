@@ -133,7 +133,7 @@ nt <- '
 <urn:x:alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
 '
 img <- rete_build(nt,
-  format = "nt",                       # nt | nq | ttl | trig | rdfxml
+  format = "nt",                       # nt | nq | ttl | trig | rdfxml | jsonld | yamlld
   card = list(
     title = "Tiny demo",
     description = "Two triples about Alice",

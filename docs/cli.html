@@ -629,9 +629,9 @@ the <code>rete(1)</code> man page. Maintainers generate these from the exact bin
 hidden <code>rete generate --output &lt;directory&gt;</code> packaging command; they are never
 maintained as hand-written copies of the CLI definition.</p>
 <h2 id="building">Building</h2>
-<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxmljelly---quoted-triple-syntax-rdf12rdf-star"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml|jelly] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
+<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxmljellyjsonldyamlld---context-irifile---fetch-contexts---quoted-triple-syntax-rdf12rdf-star"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml|jelly|jsonld|yamlld] [--context IRI=FILE] [--fetch-contexts] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code> / <code>.jelly</code>, plus <code>.rdf</code> /
+Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code> / <code>.jelly</code> / <code>.jsonld</code> / <code>.yamlld</code>, plus <code>.rdf</code> /
 <code>.owl</code> / <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
 defaults to N-Triples; <code>--format</code> forces a format for all inputs (use <code>--format rdfxml</code> for an RDF/XML file with a non-standard extension). N-Quads inputs produce
 a dataset with named graphs.</p>
@@ -648,6 +648,20 @@ named graphs land in the quad index. A malformed file is refused with the frame
 number. Not read: generalized RDF (a literal as subject, predicate or graph),
 streams of RDF Messages (the optional 1.2 stream type), lookup tables above
 1,048,576 entries, and writing Jelly (<code>rete export</code> has no Jelly format).</p>
+<p><strong>JSON-LD and YAML-LD.</strong> <code>.jsonld</code> is JSON-LD 1.1 and <code>.yamlld</code> is YAML-LD (its
+basic profile: the YAML document is turned into JSON and read as JSON-LD, so the two
+give the same quads). <code>.json</code>, <code>.yaml</code> and <code>.yml</code> are not detected, because too many
+files share them; name the format: <code>--format jsonld</code> or <code>--format yamlld</code>. Named
+graphs (<code>@graph</code> under an <code>@id</code>) become named graphs, and <code>--collapse-graphs</code> folds
+them away as for TriG. A blank-node label in a file (<code>_:b0</code>) is renamed per file, so
+two files that both use it do not merge their nodes. Relative IRIs are not resolved
+against a base, as in Turtle here; JSON-LD drops a relative <code>@id</code> it cannot resolve.</p>
+<p>A build is offline: a remote <code>@context</code> is not fetched. A document that needs one
+fails with an error naming the context IRI. Either save the context and map it,
+<code>--context https://schema.org/=schema.jsonld</code> (repeatable; the file may be JSON or
+YAML), or allow the fetch with <code>--fetch-contexts</code>. A JSON-LD document is read whole,
+not streamed, so it is not accepted under <code>--memory-budget-mb</code>: convert it to N-Quads
+first. The browser engine's <code>build(text, "jsonld")</code> reads inline contexts only.</p>
 <p>A long build shows where it is with <code>--progress</code> (a live bar on a terminal by
 default; <code>plain</code> lines for logs): see <a href="#progress">Progress</a>.</p>
 <p><code>--materialize</code> bakes RDFS/OWL-RL entailments into the file at build time (see

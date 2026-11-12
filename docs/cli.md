@@ -16,9 +16,9 @@ maintained as hand-written copies of the CLI definition.
 
 ## Building
 
-### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml|jelly] [--quoted-triple-syntax rdf12|rdf-star]`
+### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml|jelly|jsonld|yamlld] [--context IRI=FILE] [--fetch-contexts] [--quoted-triple-syntax rdf12|rdf-star]`
 Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig` / `.jelly`, plus `.rdf` /
+Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig` / `.jelly` / `.jsonld` / `.yamlld`, plus `.rdf` /
 `.owl` / `.rdfxml` for RDF/XML — how most OWL ontologies ship); `-` reads stdin and
 defaults to N-Triples; `--format` forces a format for all inputs (use `--format
 rdfxml` for an RDF/XML file with a non-standard extension). N-Quads inputs produce
@@ -39,6 +39,22 @@ named graphs land in the quad index. A malformed file is refused with the frame
 number. Not read: generalized RDF (a literal as subject, predicate or graph),
 streams of RDF Messages (the optional 1.2 stream type), lookup tables above
 1,048,576 entries, and writing Jelly (`rete export` has no Jelly format).
+
+**JSON-LD and YAML-LD.** `.jsonld` is JSON-LD 1.1 and `.yamlld` is YAML-LD (its
+basic profile: the YAML document is turned into JSON and read as JSON-LD, so the two
+give the same quads). `.json`, `.yaml` and `.yml` are not detected, because too many
+files share them; name the format: `--format jsonld` or `--format yamlld`. Named
+graphs (`@graph` under an `@id`) become named graphs, and `--collapse-graphs` folds
+them away as for TriG. A blank-node label in a file (`_:b0`) is renamed per file, so
+two files that both use it do not merge their nodes. Relative IRIs are not resolved
+against a base, as in Turtle here; JSON-LD drops a relative `@id` it cannot resolve.
+
+A build is offline: a remote `@context` is not fetched. A document that needs one
+fails with an error naming the context IRI. Either save the context and map it,
+`--context https://schema.org/=schema.jsonld` (repeatable; the file may be JSON or
+YAML), or allow the fetch with `--fetch-contexts`. A JSON-LD document is read whole,
+not streamed, so it is not accepted under `--memory-budget-mb`: convert it to N-Quads
+first. The browser engine's `build(text, "jsonld")` reads inline contexts only.
 
 A long build shows where it is with `--progress` (a live bar on a terminal by
 default; `plain` lines for logs): see [Progress](#progress).

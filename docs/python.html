@@ -741,7 +741,7 @@ public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
 <h2 id="build-rete-files-from-python">Build <code>.rete</code> files from Python</h2>
 <p><code>rete.build()</code> produces a complete file image, ready to <code>open()</code>, save, or
 upload:</p>
-<pre><code class="language-python">data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl", "trig", "rdfxml")
+<pre><code class="language-python">data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl", "trig", "rdfxml", "jsonld", "yamlld")
 pathlib.Path("out.rete").write_bytes(data)
 </code></pre>
 <p>It also accepts a <strong>graph object from another RDF library</strong> — anything with a

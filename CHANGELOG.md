@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **`rete build` reads JSON-LD and YAML-LD.** `.jsonld` and `.yamlld` files are detected by extension (also with `.gz`); `.json`, `.yaml` and `.yml` are not, and take `--format jsonld` or `--format yamlld`. Named graphs stay named graphs, and `--collapse-graphs` works as for TriG. YAML-LD is the YAML document turned into JSON and read as JSON-LD. A build fetches no remote `@context`: a document that needs one fails with an error naming its IRI, and `--context IRI=FILE` (repeatable) or `--fetch-contexts` supplies it. The same flags are on `rete validate`. A document is read whole, so it is refused under `--memory-budget-mb`. The browser engine's `build(text, "jsonld" | "yamlld")` and the Python, R and JavaScript `build` accept the two names, with inline contexts only. See `docs/cli.md`.
+
 ### Fixed
 
 - **The concurrent browser engine ran out of stack on nested function calls.** A query with `IF(…, IF(…, …))` nested about ten deep in a page (twenty in Node) failed with "Maximum call stack size exceeded" on the Asyncify build, the default reader of the playground and the explorers; the sequential build takes about 280. The Asyncify pass ran without optimization, which leaves every function it instruments with its spill locals unmerged, and the query parser recurses about a dozen functions for each nested call. The pass now runs at `-O1` (`scripts/build_playground_async.sh`): the two builds reach the same depth, and `rete_wasm_async.wasm` is 7.5 MB instead of 17.4 MB. The gate holds 100 nested calls on both builds (`tests/gate/checks/check_nested_calls.mjs`).
