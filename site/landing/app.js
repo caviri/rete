@@ -1324,15 +1324,6 @@ function onScrollHeader() { topBar.classList.toggle("solid", scrollY > hero.offs
 addEventListener("scroll", onScrollHeader, { passive: true });
 onScrollHeader();
 
-// Theme toggle (shares the docs' localStorage key).
-$("#themeBtn").addEventListener("click", () => {
-  const root = document.documentElement;
-  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  root.dataset.theme = dark ? "light" : "dark";
-  try { localStorage.setItem("theme", root.dataset.theme); } catch { /* private mode */ }
-  drawStrip(); graphView.redraw();
-});
-
 // Reveal on scroll.
 const revealer = new IntersectionObserver((entries) => {
   for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); revealer.unobserve(e.target); }
