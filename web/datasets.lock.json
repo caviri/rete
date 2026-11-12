@@ -84,11 +84,11 @@
     },
     {
       "key": "tree-city-inventory",
-      "url": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory.rete",
-      "formatVersion": 5,
-      "contentHash": "079f5d5fc2e62687d589a16d47d760f3",
-      "size": 25071772,
-      "cardUrl": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory.rete"
+      "url": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory-2026-07-31.rete",
+      "formatVersion": 8,
+      "contentHash": "0e239442e35b1c136e6f1d3e041e64bf",
+      "size": 27820151,
+      "cardUrl": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory-2026-07-31.rete"
     }
   ]
 }

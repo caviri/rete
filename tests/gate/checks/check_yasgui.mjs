@@ -147,7 +147,7 @@ console.log("tabs: create + switch keep per-tab editor state ✓");
 // 10. share link round-trip (hash → new tab), against a second dataset
 await page.evaluate(() => {
   location.hash = "query=" + encodeURIComponent("SELECT ?s WHERE { ?s ?p ?o } LIMIT 3") +
-    "&endpoint=" + encodeURIComponent("https://data.graphplaza.com/nidm/nidm.rete");
+    "&endpoint=" + encodeURIComponent("https://data.graphplaza.com/nidm/nidm-2026-07-03.rete");
 });
 await page.reload({ waitUntil: "load" });
 await page.waitForSelector(".cm-content", { timeout: 15000 });

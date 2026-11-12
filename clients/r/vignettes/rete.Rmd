@@ -99,7 +99,7 @@ The same calls work against a URL — the host only needs to answer `Range`
 requests with `206 Partial Content`, which any object store or CDN does:
 
 ```{r, eval = FALSE}
-g <- rete_open("https://data.graphplaza.com/boe/boe.rete")
+g <- rete_open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 rete_query(g, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3")
 
 rete_stats(g)

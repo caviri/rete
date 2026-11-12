@@ -99,7 +99,7 @@ class ReteSettings(PropertyGroup):
     source: StringProperty(
         name="Graph",
         description="A .rete file: a local path, or an https URL read lazily over HTTP range requests",
-        default="https://data.graphplaza.com/z-anatomy/z-anatomy.rete",
+        default="https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete",
     )
     query: PointerProperty(
         name="Query",

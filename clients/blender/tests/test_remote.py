@@ -26,10 +26,10 @@ from addon import builder, detect, engine, props as rprops  # noqa: E402
 
 PASSED, FAILED = [], []
 
-ANATOMY = "https://data.graphplaza.com/z-anatomy/z-anatomy.rete"
-SMITHSONIAN = "https://data.graphplaza.com/smithsonian3d/smithsonian3d.rete"
-DANCE = "https://data.graphplaza.com/dance/dance.rete"
-TRACKING = "https://data.graphplaza.com/tracking/tracking.rete"
+ANATOMY = "https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete"
+SMITHSONIAN = "https://data.graphplaza.com/smithsonian3d/smithsonian3d-2026-06-29.rete"
+DANCE = "https://data.graphplaza.com/dance/dance-2026-07-18.rete"
+TRACKING = "https://data.graphplaza.com/tracking/tracking-2026-07-13.rete"
 
 
 def test(name):

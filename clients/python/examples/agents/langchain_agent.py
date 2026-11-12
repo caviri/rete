@@ -23,7 +23,7 @@ from langchain_core.tools import StructuredTool
 
 from rete_tools import SYSTEM_PROMPT, ReteGraphTools
 
-GRAPH = os.environ.get("RETE_GRAPH", "https://data.graphplaza.com/boe/boe.rete")
+GRAPH = os.environ.get("RETE_GRAPH", "https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 
 
 def build_model():

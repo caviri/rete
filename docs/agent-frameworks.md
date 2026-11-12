@@ -8,7 +8,7 @@ a local path or an `https://` URL with no server anywhere in between.
 
 This page is a tutorial for that, in **Pydantic AI** and **LangChain** — both
 verified end to end against a live model and the published
-[`boe`](https://data.graphplaza.com/boe/boe.rete) graph. The runnable scripts
+[`boe`](https://data.graphplaza.com/boe/boe-2026-07-07.rete) graph. The runnable scripts
 live in
 [`clients/python/examples/agents/`](https://github.com/caviri/rete/tree/main/clients/python/examples/agents).
 
@@ -147,7 +147,7 @@ import asyncio
 from pydantic_ai import Agent
 from rete_tools import SYSTEM_PROMPT, ReteGraphTools
 
-tools = ReteGraphTools("https://data.graphplaza.com/boe/boe.rete")
+tools = ReteGraphTools("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 
 agent = Agent(
     "anthropic:claude-sonnet-5",
@@ -193,7 +193,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.tools import StructuredTool
 from rete_tools import SYSTEM_PROMPT, ReteGraphTools
 
-tools = ReteGraphTools("https://data.graphplaza.com/boe/boe.rete")
+tools = ReteGraphTools("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 methods = [tools.dataset_card, tools.dataset_schema, tools.example_queries,
            tools.find_entities, tools.sparql_query]
 toolkit = [StructuredTool.from_function(m, name=m.__name__) for m in methods]

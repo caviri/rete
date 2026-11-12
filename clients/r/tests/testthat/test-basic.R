@@ -142,7 +142,7 @@ test_that("no card means NULL and empty examples", {
 test_that("remote graph over HTTP range (live)", {
   skip_on_cran()
   skip_if_offline("data.graphplaza.com")
-  g <- rete_open("https://data.graphplaza.com/boe/boe.rete")
+  g <- rete_open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
   df <- rete_query(g, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3")
   expect_equal(nrow(df), 3)
   s <- rete_stats(g)

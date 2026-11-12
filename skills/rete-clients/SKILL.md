@@ -30,7 +30,7 @@ pip install rete-graph        # CPython >= 3.9, Linux/macOS/Windows wheels
 ```python
 import rete_graph as rete
 
-g = rete.open("https://data.graphplaza.com/boe/boe.rete")   # or a local path / bytes
+g = rete.open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")   # or a local path / bytes
 for row in g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3"):
     print(row["s"].value)          # Term: .kind/.value/.datatype/.lang/.to_python()
 
@@ -68,7 +68,7 @@ npm install rete-graph       # Node >= 18; TypeScript types included
 ```js
 import { open, build } from "rete-graph";
 
-const g = await open("https://data.graphplaza.com/boe/boe.rete");
+const g = await open("https://data.graphplaza.com/boe/boe-2026-07-07.rete");
 for (const row of g.query("SELECT ?s ?label WHERE { ?s rdfs:label ?label } LIMIT 5")) {
   console.log(row.s.value, row.label.toJS());
 }
