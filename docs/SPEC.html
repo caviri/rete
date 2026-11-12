@@ -552,7 +552,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.6.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.7.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li><details class="nav-section" open><summary class="nav-h">Start here</summary><ul>
         <li><a href="index.html">Overview</a></li>
@@ -1248,7 +1248,7 @@ domain (<code>"rete/0x08"</code>) and the <code>format_version</code> a card is 
 <p><strong>Compatibility.</strong> Writers write <code>0x08</code> only; the reader reads <code>0x05</code>, <code>0x06</code>,
 <code>0x07</code> and <code>0x08</code>. A reader that predates <code>0x08</code> refuses the file at the header,
 by name: <code>unsupported .rete format 0x08; this Rete build reads 0x05..=0x07</code>
-(0.6.0 says exactly that). There is no backward-compatibility promise before
+(0.6.1 says exactly that). There is no backward-compatibility promise before
 1.0.0, and none is possible here: a <code>0x07</code> reader would search the dictionary in
 byte order and miss terms. <code>rete convert</code> turns a <code>0x05</code>, <code>0x06</code> or <code>0x07</code> file
 into a <code>0x08</code> one. Because every term gets a new id, it is a <strong>re-encode, not a
