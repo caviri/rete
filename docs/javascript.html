@@ -625,7 +625,7 @@ clean IRIs, the same API shape as the <a href="python.html">Python client</a>.</
 </code></pre>
 <pre><code class="language-js">import { open, build } from "rete-graph";
 
-const g = await open("https://data.graphplaza.com/boe/boe.rete"); // Node / worker
+const g = await open("https://data.graphplaza.com/boe/boe-2026-07-07.rete"); // Node / worker
 for (const row of g.query(`
     SELECT ?s ?label WHERE {
         ?s &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; ?label
