@@ -469,10 +469,12 @@ In this repo, commit **without** the Claude `Co-Authored-By` trailer.
 Ignored does not mean disposable here. Several paths are git-ignored *on
 purpose* and hold real, unrecoverable work:
 
-- `/data/*` — dataset build pipelines and their outputs. `data/scripts/` is the
-  clone of the private `caviri/rete-datasets` repo (versioned there, ignored
-  here); some datasets also keep local working copies under `data/<dataset>/`.
-  They deliberately do not live in the rete repo.
+- `/data/` — dataset build pipelines and their outputs, ignored as a whole (no
+  file under it is tracked). `data/scripts/` is the clone of the private
+  `caviri/rete-datasets` repo (versioned there, ignored here; it also holds the
+  scholar ontology and the internal dataset catalog, `CATALOG.md`); some
+  datasets also keep local working copies under `data/<dataset>/`. They
+  deliberately do not live in the rete repo.
 - `/.claude/skills/` — the local skill definitions and their scripts.
 - `/dev/` — engineering notes and scratch plans.
 
