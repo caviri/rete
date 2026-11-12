@@ -29,9 +29,9 @@
     {
       "key": "davidrumsey",
       "url": "https://data.graphplaza.com/davidrumsey/davidrumsey.rete",
-      "formatVersion": 5,
-      "contentHash": "1995d188effccd1f357b55dd0e6c418c",
-      "size": 76427712,
+      "formatVersion": 8,
+      "contentHash": "52d290336a0c89013e677d9595ce8021",
+      "size": 77319608,
       "cardUrl": "https://data.graphplaza.com/davidrumsey/davidrumsey.rete"
     },
     {
@@ -45,9 +45,9 @@
     {
       "key": "hugging-face",
       "url": "https://data.graphplaza.com/hugging-face/hugging-face.rete",
-      "formatVersion": 5,
-      "contentHash": "32b5bd3e27fb9bae91ee21f789e4e339",
-      "size": 1161874550,
+      "formatVersion": 8,
+      "contentHash": "f1c7c45d39a9f0591cdab1feb4c20c59",
+      "size": 1121761510,
       "cardUrl": "https://data.graphplaza.com/hugging-face/hugging-face.rete"
     },
     {
