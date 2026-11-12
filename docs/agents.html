@@ -734,22 +734,36 @@ architecture-neutral wasm</strong>, so the extension is a plain <code>node</code
 JS files (the server and its query worker) plus one <code>.wasm</code> — that runs
 unchanged on macOS, Windows and Linux with the Node runtime Claude Desktop
 ships.</p>
-<p>Fourteen tools, mirroring the hosted server's read surface plus local
-authoring and query jobs: <code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>,
-<code>example_queries</code>, <code>sparql_query</code>, <code>start_query</code>, <code>query_status</code>,
-<code>query_result</code>, <code>cancel_query</code>, <code>find_entities</code>, <code>describe_entity</code>,
-<code>validate_shacl</code>, <code>build_rete</code>, <code>load_rdf</code>. Every <code>dataset</code> argument takes a
-local file name, a catalog key, an <code>https://</code> URL to any published <code>.rete</code>,
-or <code>chat:&lt;name&gt;</code>.</p>
+<p>Eighteen tools, mirroring the hosted server's read surface plus local
+authoring, query jobs and a graph view: <code>list_datasets</code>, <code>dataset_card</code>,
+<code>dataset_schema</code>, <code>example_queries</code>, <code>sparql_query</code>, <code>start_query</code>,
+<code>query_status</code>, <code>query_result</code>, <code>cancel_query</code>, <code>find_entities</code>,
+<code>describe_entity</code>, <code>validate_shacl</code>, <code>build_rete</code>, <code>load_rdf</code>, <code>graph_view</code>,
+<code>graph_view_update</code>, <code>graph_view_state</code> and <code>about</code>. Every <code>dataset</code> argument
+takes a local file name, a catalog key, an <code>https://</code> URL to any published
+<code>.rete</code>, <code>chat:&lt;name&gt;</code>, or the path of a file attached to the chat.
+<code>dataset_card</code> also says what each graph supports (a schema, name search,
+word search), read from its header and card without opening it.</p>
+<p><strong>The graph view.</strong> Claude Desktop renders <a href="https://github.com/modelcontextprotocol/ext-apps">MCP Apps</a>,
+so <code>graph_view</code> shows a query's results, an entity's neighbourhood or a
+dataset's schema as an interactive graph in the conversation: as dots, as boxes
+listing each entity's properties, or as a class diagram. The user can change
+labels, layers and layout, search, expand and aggregate nodes, switch to a
+table, and send a selection back to the chat; Claude changes the open view with
+<code>graph_view_update</code> and reads what the user selected with <code>graph_view_state</code>.
+The view fetches its data with tools only it can call, so the triples never
+pass through the model. Details in <code>clients/mcpb/README.md</code>.</p>
 <p><strong>Files shared in the chat.</strong> Claude Desktop does not pass chat attachments
-to an extension. For RDF the user attaches or pastes (Turtle, TriG,
-N-Triples, N-Quads), the model sends the text to <code>load_rdf</code>, which builds a
-graph in memory, queryable by every tool as <code>chat:&lt;name&gt;</code> until the extension
-restarts — no granted folder needed. Long files go in several parts; <code>save_as</code>
-keeps the result as a <code>.rete</code> in a granted folder. A <code>.rete</code> itself is binary
-and cannot travel through the chat: put it in a granted folder or give its URL.
-The same goes for a Jelly (<code>.jelly</code>) file: <code>load_rdf</code> and <code>build_rete</code> read it by
-<code>path</code> from a granted folder.</p>
+to an extension: the path Claude sees for an upload is in its own sandbox.
+Given that path, the extension uses a file of that name in a granted folder;
+otherwise <code>graph_view</code> opens a view that asks the user to choose or drop the
+file, and sends it to the extension in parts, so a <code>.rete</code> (up to 512 MB) can
+come from the chat too. For RDF the user attaches or pastes (Turtle, TriG,
+N-Triples, N-Quads), the model can also send the text to <code>load_rdf</code>, which
+builds a graph in memory, queryable by every tool as <code>chat:&lt;name&gt;</code> until the
+extension restarts — no granted folder needed. Long files go in several parts;
+<code>save_as</code> keeps the result as a <code>.rete</code> in a granted folder. A Jelly (<code>.jelly</code>)
+file is read by <code>path</code> from a granted folder, by <code>load_rdf</code> and <code>build_rete</code>.</p>
 <p><strong>Long queries do not time out.</strong> Claude gives up on a tool call after 60 s,
 and a query that visits thousands of scattered entities in a large published
 graph (title and year for every work citing a paper, on the 60 GB Crossref
@@ -780,7 +794,7 @@ byte-range path as a remote graph, via the JS client's <code>file://</code> read
 a multi-gigabyte graph on disk answers a selective query in megabytes and is
 never loaded into memory.</p>
 <h3 id="try-it-now">Try it now</h3>
-<p><strong>⬇ <a href="https://github.com/caviri/rete/releases/latest/download/rete.mcpb">Download rete.mcpb</a></strong> (1.6 MB)
+<p><strong>⬇ <a href="https://github.com/caviri/rete/releases/latest/download/rete.mcpb">Download rete.mcpb</a></strong> (2.8 MB)
 — then double-click it, or drag it into Claude Desktop.</p>
 <p>That link always serves the build attached to the latest
 <a href="https://github.com/caviri/rete/releases/latest">GitHub release</a>. Each release

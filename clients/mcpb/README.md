@@ -117,10 +117,12 @@ through the host.
 ### What each graph supports
 
 Not every `.rete` carries every index. The largest published graphs are built
-by the low-memory builder, which writes no schema pyramid — so no schema and no
-label index for names — and only files built with `--text-index` can be searched
-by word. `src/capabilities.mjs` reads what a file has from its header and its
-card (two small reads, cached per file version), before anything opens it:
+by the low-memory builder, which writes no schema and no label index for
+names, and only files built with `--text-index` can be searched by word.
+`src/capabilities.mjs` reads what a file has from its header and its card (two
+small reads, cached per file version), before anything opens it. It reads both
+header layouts: `0x05` (a section directory, most of the published catalogue
+for now) and `0x06`–`0x08` (presence bits; the engine decodes the card):
 
 - `dataset_card` reports it as `capabilities` and one plain `supports` line, and
   now reads the card itself that way: crossref's card used to cost the full
@@ -312,6 +314,17 @@ docker run --rm -v "$PWD/../..":/w -w /w/clients/mcpb node:22-slim \
 The suite spawns the built server and speaks MCP over stdio exactly as Claude
 Desktop does — covering a local graph, the sandbox refusal, an offline build,
 SHACL, and a published graph over HTTP Range.
+
+The graph view's browser tests (`test/view-ui.test.mjs`) are skipped unless
+`RETE_UI_TEST=1`. They load the view in Chromium inside a sandboxed iframe
+behind a small MCP Apps host, so they need the Playwright image;
+`RETE_UI_SHOT=<file>.png` also saves screenshots, one per step:
+
+```sh
+docker run --rm --ipc=host -v "$PWD/../..":/w -w /w/clients/mcpb -e RETE_UI_TEST=1 \
+  mcr.microsoft.com/playwright:v1.49.0-jammy \
+  sh -c 'npm install --no-save --silent playwright@1.49.0 && node --test test/view-ui.test.mjs'
+```
 
 ## Notes and limits
 
