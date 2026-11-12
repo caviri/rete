@@ -72,6 +72,22 @@ window.__reteView = S; // tests read the view through this
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+/** A web address to open, or null: only http(s) leaves the view, whatever scheme an IRI has. */
+const webUrl = (u) => {
+  try {
+    const url = new URL(String(u ?? ""));
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+};
+const openUrl = (u) => {
+  const url = webUrl(u);
+  return url ? S.app.openLink({ url }) : Promise.reject(new Error("only http(s) links open"));
+};
+/** An IRI in the details panel: a link when it is a web address, text otherwise. */
+const iriLine = (iri) =>
+  webUrl(iri) ? `<a href="#" class="iri" data-open="${esc(iri)}">${esc(iri)}</a>` : `<span class="iri">${esc(iri)}</span>`;
 const local = (iri) => {
   const s = String(iri ?? "");
   const cut = Math.max(s.lastIndexOf("#"), s.lastIndexOf("/"));
@@ -917,7 +933,7 @@ function renderDetails() {
   const props = n.props.slice(0, MAX_PROPS).map(([p, v]) => `<dt title="${esc(p)}">${esc(local(p))}</dt><dd>${esc(trunc(v, 300))}</dd>`).join("");
   body.innerHTML =
     `<p class="title">${esc(n.label || local(n.iri) || n.id)}</p>` +
-    (n.iri ? `<a href="#" class="iri" data-open="${esc(n.iri)}">${esc(n.iri)}</a>` : "") +
+    (n.iri ? iriLine(n.iri) : "") +
     (n.types.length ? `<div class="types">${n.types.map((t) => esc(local(t))).join(", ")}</div>` : "") +
     (n.kind === "class" && n.count != null ? `<div class="types">${n.count.toLocaleString("en-US")} instance${n.count === 1 ? "" : "s"}</div>` : "") +
     `<div class="actions">` +
@@ -936,7 +952,7 @@ function classDetails(c) {
     .join("");
   return (
     `<p class="title">${esc(c.label)}</p>` +
-    (c.iri ? `<a href="#" class="iri" data-open="${esc(c.iri)}">${esc(c.iri)}</a>` : "") +
+    (c.iri ? iriLine(c.iri) : "") +
     `<div class="actions"><button type="button" data-act="members">Show members</button><button type="button" data-act="ask">Ask Claude</button></div>` +
     `<p class="hint">${c.members.length} in the view: ${c.members.slice(0, 12).map((m) => esc(nodeLabel(m))).join(" · ")}${c.members.length > 12 ? " …" : ""}</p>` +
     (props ? `<dl>${props}</dl>` : "")
@@ -1019,7 +1035,7 @@ function nodeMenu(el) {
     "-",
     { label: `Hide${count}`, hint: "until shown again", run: () => hide(ids) },
     { label: `Remove${count}`, hint: "from the view", danger: true, run: () => removeNodes(ids) },
-    n?.iri && { label: "Open in browser", run: () => S.app.openLink({ url: n.iri }).catch(() => {}) },
+    webUrl(n?.iri) && { label: "Open in browser", run: () => openUrl(n.iri).catch(() => {}) },
   ]);
 }
 
@@ -1061,7 +1077,7 @@ function openMenu(title, items, x, y) {
 function renderAbout() {
   if (!ABOUT) return;
   const { version, build, author, license, links, cite, credits, data } = ABOUT;
-  const link = (url, text) => (url ? `<a href="#" data-open="${esc(url)}">${esc(text)}</a>` : esc(text));
+  const link = (url, text) => (webUrl(url) ? `<a href="#" data-open="${esc(url)}">${esc(text)}</a>` : esc(text));
   $("about-open").textContent = `rete ${version}`;
   $("about").innerHTML =
     `<p class="title">rete graph view <span class="v">${esc(version)}</span></p>` +
@@ -1515,7 +1531,7 @@ function wire() {
     const open = e.target.closest("[data-open]");
     if (open) {
       e.preventDefault();
-      S.app.openLink({ url: open.dataset.open }).catch(() => {});
+      openUrl(open.dataset.open).catch(() => {});
       return;
     }
     const act = e.target.closest("[data-act]")?.dataset.act;
@@ -1593,7 +1609,7 @@ function wire() {
     const open = e.target.closest("[data-open]");
     if (!open) return;
     e.preventDefault();
-    S.app.openLink({ url: open.dataset.open }).catch((error) => setNote(`link: ${error.message}`));
+    openUrl(open.dataset.open).catch((error) => setNote(`link: ${error.message}`));
   });
   document.addEventListener("pointerdown", (e) => {
     if (!$("about").hidden && !$("about").contains(e.target) && e.target !== $("about-open")) $("about").hidden = true;

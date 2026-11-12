@@ -14,6 +14,12 @@ import { init, wasm } from "rete-graph";
 // header: so the first read is that, and the engine's card reader asks for it too.
 const HEAD = 1024;
 const KEEP = 200; // tiers held, per bytes
+// No read of the tier is larger. The lengths and offsets come from the file,
+// which may be malformed or hostile; a stored card is a few KiB (its long
+// fields go to the annex, SPEC.md §4.4), so a file asking for more is not one
+// this tier reads, and the tools open it through the engine, which checks it.
+const MAX_READ = 16 << 20;
+const UNREADABLE = Object.freeze({ readable: false });
 
 // Format 0x06 and later: a 128-byte header with presence bits (SPEC.md §4.1).
 const HEADER_LEN = 128;
@@ -57,14 +63,48 @@ export class CardTier {
   }
 }
 
+/** A read readTier never makes; a caller that asks for one is a bug, not a bad file. */
+function checkRead(at, n) {
+  if (!Number.isSafeInteger(at) || at < 0 || !Number.isSafeInteger(n) || n < 1 || n > MAX_READ) {
+    throw new RangeError(`a card-tier read of ${n} bytes at ${at}`);
+  }
+}
+
+/** At most `n` bytes of a response body; the rest is cancelled, whatever the server sends. */
+async function bodyUpTo(res, n) {
+  if (!res.body) return new Uint8Array(0);
+  const out = new Uint8Array(n);
+  let got = 0;
+  const reader = res.body.getReader();
+  try {
+    while (got < n) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const take = Math.min(value.length, n - got);
+      out.set(value.subarray(0, take), got);
+      got += take;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return out.subarray(0, got);
+}
+
 /** Range reads for each kind of source: HTTP Range, a file, or a chat graph's bytes. */
 function rangeReader(source) {
   if (source.kind === "chat") {
     const bytes = source.bytes;
-    return { size: async () => bytes.length, read: async (at, n) => new Uint8Array(bytes.subarray(at, at + n)) };
+    return {
+      size: async () => bytes.length,
+      read: async (at, n) => {
+        checkRead(at, n);
+        return new Uint8Array(bytes.subarray(at, at + n));
+      },
+    };
   }
   if (source.kind === "local") {
     const read = async (at, n) => {
+      checkRead(at, n);
       const file = await openFile(source.path, "r");
       try {
         const buf = new Uint8Array(n);
@@ -86,10 +126,15 @@ function rangeReader(source) {
   }
   let total = null;
   const read = async (at, n) => {
+    checkRead(at, n);
     const res = await fetch(source.url, { headers: { Range: `bytes=${at}-${at + n - 1}` }, signal: AbortSignal.timeout(20_000) });
-    if (res.status !== 206) throw new Error(`HTTP ${res.status} for a range of ${source.url}`);
+    if (res.status !== 206) {
+      // A host that ignores Range answers 200 with the whole file: stop it.
+      await res.body?.cancel().catch(() => {});
+      throw new Error(`HTTP ${res.status} for a range of ${source.url}`);
+    }
     total ??= Number(res.headers.get("content-range")?.split("/")[1]) || null;
-    return new Uint8Array(await res.arrayBuffer());
+    return bodyUpTo(res, n);
   };
   return { size: async () => total, read };
 }
@@ -123,7 +168,7 @@ function parseHead05(b) {
   return {
     version: V05,
     quoted: (b[5] & V05_FLAG_QUOTED) !== 0,
-    fileBytes: 0, // not in a 0x05 header; the range reader's Content-Range says it
+    fileBytes: null, // not in a 0x05 header; the range reader says it
     schema: pyramid || has(K05.schema),
     labels: pyramid || has(K05.labelIndex),
     text: has(K05.textIndex) || has(K05.textIndexSome),
@@ -136,11 +181,20 @@ function parseHead05(b) {
 function parseHead06(b) {
   const view = new DataView(b.buffer, b.byteOffset, b.byteLength);
   if (!VERSIONS.has(b[4]) || view.getUint16(6, true) !== HEADER_LEN) return null;
+  const fileLen = view.getBigUint64(24, true);
   const rootLen = view.getUint32(32, true);
+  const regionLen = view.getUint32(36, true);
+  const dataOffset = view.getBigUint64(40, true);
   const cardAt = view.getUint32(80, true);
   const cardLen = view.getUint32(84, true);
   const buildAt = view.getUint32(104, true);
   const buildLen = view.getUint32(108, true);
+  // The structural bounds rete-core checks at open (Header06::from_bytes): the
+  // front fits before the data region, the data region in the file, the card
+  // and the record in their region.
+  const frontMin = BigInt(HEADER_LEN + rootLen) + BigInt(regionLen);
+  if (frontMin > dataOffset || dataOffset > fileLen) return null;
+  if (cardAt + cardLen > regionLen || buildAt + buildLen > regionLen) return null;
   // The card region starts after the header and the root block; the engine
   // reads the card and the build record in one span of it.
   const region = HEADER_LEN + rootLen;
@@ -150,7 +204,7 @@ function parseHead06(b) {
   return {
     version: b[4],
     quoted: (b[5] & FLAG_QUOTED) !== 0,
-    fileBytes: Number(view.getBigUint64(24, true)),
+    fileBytes: fileLen,
     // dataset_schema reads the stats + schema section; name search the label index.
     schema: has(P_SCHEMA),
     labels: has(P_LABELS),
@@ -172,17 +226,25 @@ async function readTier(source) {
   const reader = rangeReader(source);
   let prefix = await reader.read(0, HEAD);
   const head = parseHead(prefix);
-  if (!head) return { readable: false };
+  if (!head) return UNREADABLE;
+  // The resource's real length: a file's, a chat graph's, or what the first
+  // range response said (null when a server does not say).
+  const size = await reader.size();
+  if (head.fileBytes !== null && size !== null && head.fileBytes !== BigInt(size)) return UNREADABLE;
+  /** A range this tier may read: bounded, and inside the file when its length is known. */
+  const fits = (at, n) => Number.isSafeInteger(at) && n <= MAX_READ && (size === null || at + n <= size);
   const stats = { bytesRead: prefix.length, requests: 1 };
   let card = null;
   if (head.version === V05) {
     if (head.metadata) {
+      if (!fits(head.metadata.offset, head.metadata.length)) return UNREADABLE;
       const bytes = await reader.read(head.metadata.offset, head.metadata.length);
       stats.bytesRead += bytes.length;
       stats.requests += 1;
       card = JSON.parse(new TextDecoder().decode(bytes));
     }
   } else if (head.cardLen > 0) {
+    if (!fits(0, head.cardEnd)) return UNREADABLE;
     if (head.cardEnd > prefix.length) {
       const rest = await reader.read(prefix.length, head.cardEnd - prefix.length);
       stats.bytesRead += rest.length;
@@ -205,7 +267,7 @@ async function readTier(source) {
   return {
     readable: true,
     card,
-    fileBytes: head.fileBytes || (await reader.size()),
+    fileBytes: head.fileBytes !== null ? Number(head.fileBytes) : size,
     stats,
     capabilities: {
       card: Boolean(card),

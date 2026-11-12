@@ -33,6 +33,11 @@ const WAIT_MS = 35_000; // a view call answers before the client's 60 s limit
 const NEIGHBOURS = 150; // statements per direction when a node is expanded
 const LABEL_BATCH = 200;
 const SCHEMA_CLASSES = 60; // classes a schema view draws: the most frequent
+// Files being opened in views are held whole until their last part: an upload
+// the view stopped sending is dropped after this long, and all of them
+// together may hold this much (one file opened in a view may be 512 MB).
+const UPLOAD_IDLE_MS = 2 * 60_000;
+const UPLOADS_MAX_BYTES = 512 * 1024 * 1024;
 // What a file opened in a view shows first, unless Claude asked for a query.
 const SAMPLE = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 300";
 const mb = (n) => `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`;
@@ -403,9 +408,21 @@ const iriToken = (iri) => {
  */
 export function registerGraphViews({ server, store, jobs, here, guard, json, UsageError, dataset, capabilities, schemaOf }) {
   const views = new Map();
-  const uploads = new Map(); // view id -> the file it is receiving: { name, size, bytes, received }
+  const uploads = new Map(); // view id -> the file it is receiving: { name, size, bytes, received, timer }
   let seq = 0;
   let html = null;
+
+  /** Forget a view's unfinished upload, and the memory it holds. */
+  const dropUpload = (id) => {
+    clearTimeout(uploads.get(id)?.timer);
+    uploads.delete(id);
+  };
+  /** (Re)arm an upload's idle timer: one the view stopped sending is dropped. */
+  const touchUpload = (id, up) => {
+    clearTimeout(up.timer);
+    up.timer = setTimeout(() => uploads.get(id) === up && uploads.delete(id), UPLOAD_IDLE_MS);
+    up.timer.unref?.();
+  };
 
   /** A view's dataset — none yet while it waits for the user to open a file. */
   const datasetOf = (view) => {
@@ -449,6 +466,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
     while (views.size > MAX_VIEWS) {
       const oldest = [...views.values()].sort((a, b) => a.touchedAt - b.touchedAt)[0];
       views.delete(oldest.id);
+      dropUpload(oldest.id);
     }
     return view;
   }
@@ -943,6 +961,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       const view = viewOf(view_id);
       let up = uploads.get(view.id);
       if (offset === 0) {
+        dropUpload(view.id); // a restart replaces the view's unfinished upload
         const max = uploadLimit(view.awaiting?.file ?? name);
         if (size > max) {
           throw new UsageError(
@@ -950,7 +969,14 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
               "Graph folder instead (the extension's settings): there it is read lazily, at any size.",
           );
         }
-        up = { name, size, bytes: new Uint8Array(new SharedArrayBuffer(size)), received: 0 };
+        const pending = [...uploads.values()].reduce((sum, u) => sum + u.size, 0);
+        if (pending + size > UPLOADS_MAX_BYTES) {
+          throw new UsageError(
+            `${name} would bring the files being opened in views to ${mb(pending + size)}, more than ` +
+              `${mb(UPLOADS_MAX_BYTES)} at once — let the others finish, or put it in a Graph folder`,
+          );
+        }
+        up = { name, size, bytes: new Uint8Array(new SharedArrayBuffer(size)), received: 0, timer: null };
         uploads.set(view.id, up);
       }
       if (!up || up.name !== name || up.size !== size || offset !== up.received) {
@@ -958,13 +984,16 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       }
       const part = Buffer.from(data, "base64");
       if (offset + part.length > size) {
-        uploads.delete(view.id);
+        dropUpload(view.id);
         throw new UsageError(`${name} came out longer than its ${size} bytes — open it again`);
       }
       up.bytes.set(part, offset);
       up.received += part.length;
-      if (up.received < size) return json({ received: up.received, size });
-      uploads.delete(view.id);
+      if (up.received < size) {
+        touchUpload(view.id, up);
+        return json({ received: up.received, size });
+      }
+      dropUpload(view.id);
       const done = await opened(view, name, up.bytes);
       return json({ ...view.since(v), ...done });
     }),
