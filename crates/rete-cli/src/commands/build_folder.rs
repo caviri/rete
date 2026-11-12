@@ -5,7 +5,12 @@
 //! files. `--merge-files` reads a directory's files as if they had been listed.
 //!
 //! The result of [`resolve`] is a flat list of input paths (what the build
-//! functions already take) and, in per-file mode, one graph token per path.
+//! functions already take) and one [`FilePlan`] per path: the graph its triples
+//! go to, if any, and the tag that keeps its blank nodes apart from the other
+//! files'. A blank node label means something only inside the document that
+//! wrote it, so `_:b0` of two inputs are two nodes whenever there are two
+//! inputs, unless `--shared-blank-nodes` says the files are one document cut
+//! into pieces.
 
 use std::path::Path;
 
@@ -24,14 +29,43 @@ pub(crate) struct Options<'a> {
     pub graph_per_file: bool,
     pub collapse_graphs: bool,
     pub graph_base: Option<&'a str>,
+    pub shared_blank_nodes: bool,
+}
+
+/// What to do with the quads of one input file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FilePlan {
+    /// The graph term (`<iri>`) its triples go to; `None` leaves them where
+    /// they are.
+    pub graph: Option<String>,
+    /// What its blank node labels are prefixed with; `None` leaves them as
+    /// written.
+    pub tag: Option<String>,
 }
 
 /// Inputs ready for the build functions.
 pub(crate) struct Resolved {
     /// File paths, in the order they are read (`-` is stdin).
     pub files: Vec<String>,
-    /// In per-file mode, the graph term (`<iri>`) of each file, same indexing.
-    pub graphs: Option<Vec<String>>,
+    /// One plan per file, same indexing; `None` when no quad needs a change
+    /// (one input, or a list read with `--shared-blank-nodes`).
+    pub plans: Option<Vec<FilePlan>>,
+}
+
+/// The plans of files that get no graph: a tag by position when there is more
+/// than one file and blank nodes are not shared.
+fn merged_plans(n: usize, shared_blank_nodes: bool) -> Option<Vec<FilePlan>> {
+    if shared_blank_nodes || n < 2 {
+        return None;
+    }
+    Some(
+        (0..n)
+            .map(|i| FilePlan {
+                graph: None,
+                tag: Some(format!("f{i}")),
+            })
+            .collect(),
+    )
 }
 
 /// Does the extension of `path` name an RDF input syntax? Asks
@@ -66,7 +100,7 @@ pub(crate) fn resolve(inputs: &[String], opts: &Options<'_>) -> anyhow::Result<R
         if !any_dir {
             return Ok(Resolved {
                 files: inputs.to_vec(),
-                graphs: None,
+                plans: merged_plans(inputs.len(), opts.shared_blank_nodes),
             });
         }
     }
@@ -99,13 +133,11 @@ pub(crate) fn resolve(inputs: &[String], opts: &Options<'_>) -> anyhow::Result<R
     }
     let files: Vec<String> = found.iter().map(|(p, _)| p.clone()).collect();
     if !per_file {
-        return Ok(Resolved {
-            files,
-            graphs: None,
-        });
+        let plans = merged_plans(files.len(), opts.shared_blank_nodes);
+        return Ok(Resolved { files, plans });
     }
 
-    let mut graphs: Vec<String> = Vec::with_capacity(found.len());
+    let mut plans: Vec<FilePlan> = Vec::with_capacity(found.len());
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (i, (path, name)) in found.iter().enumerate() {
         let iri = format!("{base}{}", graph_path(name));
@@ -116,11 +148,20 @@ pub(crate) fn resolve(inputs: &[String], opts: &Options<'_>) -> anyhow::Result<R
             );
         }
         seen.insert(iri.clone(), i);
-        graphs.push(format!("<{iri}>"));
+        // The tag comes from the graph name, so a file's labels do not change
+        // when another file is added to the folder.
+        let tag = (!opts.shared_blank_nodes).then(|| {
+            let h = blake3::hash(iri.as_bytes());
+            format!("f{}", &h.to_hex()[..8])
+        });
+        plans.push(FilePlan {
+            graph: Some(format!("<{iri}>")),
+            tag,
+        });
     }
     Ok(Resolved {
         files,
-        graphs: Some(graphs),
+        plans: Some(plans),
     })
 }
 
@@ -278,27 +319,69 @@ fn skipped_note(dir: &str, skipped: &[String]) -> Option<String> {
     ))
 }
 
-/// Put a quad of one file into that file's graph, and keep its blank nodes
-/// apart from the blank nodes of every other file.
+/// Apply a file's plan to one of its quads.
 ///
-/// A triple (no graph) goes to `graph`; a quad that names a graph keeps it.
-/// Blank node labels are scoped to the file: `_:b0` of two files are two nodes.
-/// A blank node written inside a quoted triple is not rewritten.
-pub(crate) fn place(q: RawQuad, graph: &str) -> RawQuad {
+/// With a graph, a triple (no graph) goes to it and a quad that names a graph
+/// keeps its own. With a tag, every blank node label gets it as a prefix, in
+/// subject, object and graph position and inside a quoted triple or triple
+/// term: `_:b0` of the file tagged `f1` is `_:f1_b0`.
+pub(crate) fn place(q: RawQuad, plan: &FilePlan) -> RawQuad {
     let (s, p, o, g) = q;
-    let g = g.map_or_else(|| graph.to_string(), |g| scope(g, graph));
-    (scope(s, graph), p, scope(o, graph), Some(g))
+    let tag = plan.tag.as_deref();
+    let g = match g {
+        Some(g) => Some(scope(g, tag)),
+        None => plan.graph.clone(),
+    };
+    (scope(s, tag), p, scope(o, tag), g)
 }
 
-fn scope(term: String, graph: &str) -> String {
-    match term.strip_prefix("_:") {
-        Some(label) => {
-            let h = blake3::hash(graph.as_bytes());
-            let tag: String = h.to_hex().chars().take(8).collect();
-            format!("_:f{tag}_{label}")
-        }
-        None => term,
+fn scope(term: String, tag: Option<&str>) -> String {
+    let Some(tag) = tag else { return term };
+    if let Some(label) = term.strip_prefix("_:") {
+        return format!("_:{tag}_{label}");
     }
+    if term.starts_with("<<") {
+        return scope_inside(&term, tag);
+    }
+    term
+}
+
+/// Tag the blank node labels inside a quoted triple or triple term. IRIs and
+/// literals are copied as they are: a `_:` inside `<…>` or `"…"` is text.
+fn scope_inside(term: &str, tag: &str) -> String {
+    let b = term.as_bytes();
+    let mut out = String::with_capacity(term.len() + 16);
+    let mut i = 0;
+    let mut copied = 0;
+    while i < b.len() {
+        match b[i] {
+            // `<<` and `<<(` open a triple; a single `<` opens an IRI.
+            b'<' if b.get(i + 1) == Some(&b'<') => i += 2,
+            b'<' => {
+                while i < b.len() && b[i] != b'>' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'_' if b.get(i + 1) == Some(&b':') => {
+                out.push_str(&term[copied..i + 2]);
+                out.push_str(tag);
+                out.push('_');
+                i += 2;
+                copied = i;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&term[copied.min(term.len())..]);
+    out
 }
 
 #[cfg(test)]
@@ -325,12 +408,79 @@ mod tests {
         }
     }
 
+    fn plan(graph: Option<&str>, tag: Option<&str>) -> FilePlan {
+        FilePlan {
+            graph: graph.map(str::to_string),
+            tag: tag.map(str::to_string),
+        }
+    }
+
     #[test]
     fn blank_nodes_are_scoped() {
-        let q = ("_:b0".to_string(), "<p>".into(), "<o>".into(), None);
-        let a = place(q.clone(), "<urn:a>");
-        let b = place(q, "<urn:b>");
-        assert_ne!(a.0, b.0);
+        let q = ("_:b0".to_string(), "<p>".into(), "_:b1".into(), None);
+        let a = place(q.clone(), &plan(Some("<urn:a>"), Some("f0")));
+        assert_eq!(a.0, "_:f0_b0");
+        assert_eq!(a.2, "_:f0_b1");
         assert_eq!(a.3.as_deref(), Some("<urn:a>"));
+        // No graph: the triple stays in the default graph.
+        let b = place(q.clone(), &plan(None, Some("f1")));
+        assert_eq!((b.0.as_str(), b.3.as_deref()), ("_:f1_b0", None));
+        // No tag: labels as written.
+        let c = place(q, &plan(Some("<urn:c>"), None));
+        assert_eq!(c.0, "_:b0");
+        // A blank graph name is a blank node too; a named one is kept.
+        let g = (
+            "<s>".to_string(),
+            "<p>".into(),
+            "<o>".into(),
+            Some("_:g".to_string()),
+        );
+        assert_eq!(
+            place(g, &plan(Some("<urn:a>"), Some("f0"))).3.as_deref(),
+            Some("_:f0_g")
+        );
+    }
+
+    #[test]
+    fn blank_nodes_inside_a_quoted_triple_are_scoped_and_text_is_not() {
+        for (term, want) in [
+            (
+                "<< _:b0 <http://e/p> _:b1 >>",
+                "<< _:f0_b0 <http://e/p> _:f0_b1 >>",
+            ),
+            (
+                "<<( _:b0 <http://e/_:p> \"_:x \\\" _:y\" )>>",
+                "<<( _:f0_b0 <http://e/_:p> \"_:x \\\" _:y\" )>>",
+            ),
+            (
+                "<< << _:a <p> <o> >> <q> \"v\"@en >>",
+                "<< << _:f0_a <p> <o> >> <q> \"v\"@en >>",
+            ),
+            ("<http://e/_:b0>", "<http://e/_:b0>"),
+            ("\"_:b0\"", "\"_:b0\""),
+        ] {
+            assert_eq!(scope(term.to_string(), Some("f0")), want, "{term}");
+        }
+    }
+
+    #[test]
+    fn plans_of_a_list() {
+        let o = |shared| Options {
+            format: None,
+            merge_files: false,
+            graph_per_file: false,
+            collapse_graphs: false,
+            graph_base: None,
+            shared_blank_nodes: shared,
+        };
+        let two = ["a.nt".to_string(), "b.nt".to_string()];
+        let r = resolve(&two, &o(false)).unwrap();
+        assert_eq!(
+            r.plans,
+            Some(vec![plan(None, Some("f0")), plan(None, Some("f1"))])
+        );
+        assert_eq!(resolve(&two, &o(true)).unwrap().plans, None);
+        // One input: its labels are kept as written.
+        assert_eq!(resolve(&two[..1], &o(false)).unwrap().plans, None);
     }
 }

@@ -49,7 +49,6 @@ rete sparql papers.rete 'SELECT * WHERE { GRAPH <urn:rete:file:2024/march> { ?s 
   that give the same graph (`a.ttl` and `a.nt`) are an error naming both.
 - The triples of a file go to its graph. A quad that names a graph in the file
   (N-Quads, TriG) keeps it.
-- Blank nodes belong to their file: `_:b0` in two files are two nodes.
 - `--merge-files` reads the folder's files as if they had been listed one by one: no
   graph per file. `--collapse-graphs` does the same and also folds the files' own
   graphs into the default graph.
@@ -57,8 +56,12 @@ rete sparql papers.rete 'SELECT * WHERE { GRAPH <urn:rete:file:2024/march> { ?s 
   given (relative, without `..`). It cannot read stdin.
 - It works with `--memory-budget-mb` too.
 
-Listing files without a folder keeps its old behaviour, including blank nodes: the
-same label in two files is one node.
+Blank nodes belong to their file, however the files are given (a folder, a list,
+merged or not): `_:b0` in two files are two nodes, as RDF says, and `_:b0` of the
+second file is stored as `_:f1_b0`. A build from one input keeps its labels as
+written. `--shared-blank-nodes` reads the labels of all inputs as one namespace, for
+one document cut into several files (a chunked N-Triples dump): there `_:b0` in two
+files is one node.
 
 **Jelly.** `.jelly` and `.jelly.gz` files are [Jelly](https://jelly-rdf.github.io/)
 RDF streams, a binary format. Both layouts are read: Jelly 1.0 and 1.1 (the row

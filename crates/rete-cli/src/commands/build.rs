@@ -538,7 +538,7 @@ fn parse_inputs(
     audit: &mut ingest::IriAudit,
     surface: ingest::QuotedTripleSurface,
     taps: &[buildinfo::InputTap],
-    file_graphs: Option<&[String]>,
+    file_plans: Option<&[super::build_folder::FilePlan]>,
 ) -> anyhow::Result<Vec<ingest::RawQuad>> {
     let mut quads: Vec<ingest::RawQuad> = Vec::new();
     for (i, input) in inputs.iter().enumerate() {
@@ -585,11 +585,12 @@ fn parse_inputs(
                 },
             )?
         };
-        // A graph per file: the triples of this file go to its graph.
-        let parsed = match file_graphs.and_then(|g| g.get(i)) {
-            Some(g) => parsed
+        // This file's plan: its graph, if files are graphs, and its blank
+        // nodes kept apart from the other files'.
+        let parsed = match file_plans.and_then(|p| p.get(i)) {
+            Some(plan) => parsed
                 .into_iter()
-                .map(|q| super::build_folder::place(q, g))
+                .map(|q| super::build_folder::place(q, plan))
                 .collect(),
             None => parsed,
         };
@@ -652,7 +653,7 @@ pub(crate) fn build(
     strict: bool,
     surface: ingest::QuotedTripleSurface,
     sections: BuildSections,
-    file_graphs: Option<&[String]>,
+    file_plans: Option<&[super::build_folder::FilePlan]>,
 ) -> anyhow::Result<()> {
     let text_index = text_index.into_text_index();
     // Format 0x06 stores named graphs in the quad index only.
@@ -763,10 +764,12 @@ pub(crate) fn build(
                             live::set_stat(Stat::Statements, read.get());
                         }
                     }
+                    let q = match file_plans.and_then(|p| p.get(i)) {
+                        Some(plan) => super::build_folder::place(q, plan),
+                        None => q,
+                    };
                     if collapse_graphs {
                         visit((q.0, q.1, q.2, None))
-                    } else if let Some(g) = file_graphs.and_then(|g| g.get(i)) {
-                        visit(super::build_folder::place(q, g))
                     } else {
                         visit(q)
                     }
@@ -839,7 +842,7 @@ pub(crate) fn build(
         Unit::Bytes,
     );
     let mut audit = iri_audit(strict);
-    let mut quads = parse_inputs(inputs, format, &mut audit, surface, &rec.taps, file_graphs)?;
+    let mut quads = parse_inputs(inputs, format, &mut audit, surface, &rec.taps, file_plans)?;
     let read = quads.len() as u64;
     live::set_stat(Stat::Statements, read);
     // 1a. `--collapse-graphs`: drop the graph term so everything lands in the
@@ -1097,7 +1100,7 @@ pub(crate) fn build_external_cmd(
     surface: ingest::QuotedTripleSurface,
     type_predicate: Option<&str>,
     sections: BuildSections,
-    file_graphs: Option<&[String]>,
+    file_plans: Option<&[super::build_folder::FilePlan]>,
 ) -> anyhow::Result<()> {
     if materialize || reason {
         anyhow::bail!(
@@ -1179,7 +1182,7 @@ pub(crate) fn build_external_cmd(
     let out_path = std::path::Path::new(output).to_path_buf();
     // Named graphs come from N-Quads and TriG unless they are folded away.
     let named = !collapse_graphs
-        && (file_graphs.is_some()
+        && (file_plans.is_some_and(|p| p.iter().any(|f| f.graph.is_some()))
             || inputs_fmt
                 .iter()
                 .any(|(_, f)| matches!(*f, "nq" | "trig" | "jelly")));
@@ -1226,10 +1229,12 @@ pub(crate) fn build_external_cmd(
                         if read.get() & 0xFFF == 0 {
                             live::set_stat(Stat::Statements, read.get());
                         }
+                        let q = match file_plans.and_then(|p| p.get(i)) {
+                            Some(plan) => super::build_folder::place(q, plan),
+                            None => q,
+                        };
                         let q = if collapse_graphs {
                             (q.0, q.1, q.2, None)
-                        } else if let Some(g) = file_graphs.and_then(|g| g.get(i)) {
-                            super::build_folder::place(q, g)
                         } else {
                             q
                         };

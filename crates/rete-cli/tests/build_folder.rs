@@ -349,3 +349,61 @@ fn json_ld_and_yaml_ld_files_in_a_folder_are_graphs_too() {
         ]
     );
 }
+
+/// Two files that both write `_:b0`, as a plain list: two nodes, in memory and
+/// under a memory budget; one node with `--shared-blank-nodes`.
+#[test]
+fn listed_files_keep_their_blank_nodes_apart_unless_shared() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.nt");
+    let b = dir.path().join("b.ttl");
+    std::fs::write(
+        &a,
+        "_:b0 <http://ex.test/name> \"Alice\" .\n_:b0 <http://ex.test/knows> _:b1 .\n",
+    )
+    .unwrap();
+    std::fs::write(&b, "_:b0 <http://ex.test/name> \"Bob\" .\n").unwrap();
+    let subjects = "SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s <http://ex.test/name> ?o }";
+    // A node keeps its identity inside its file.
+    let same_node = "SELECT ?o WHERE { ?s <http://ex.test/name> ?o ; <http://ex.test/knows> ?x }";
+    for extra in [&[][..], &["--memory-budget-mb", "64"][..]] {
+        let out = dir.path().join("apart.rete");
+        build_args(&[&a, &b], &out, extra).success();
+        assert_eq!(rows(&out, subjects), ["2"], "{extra:?}");
+        assert_eq!(rows(&out, same_node), ["Alice"], "{extra:?}");
+        let out = dir.path().join("shared.rete");
+        let mut with = extra.to_vec();
+        with.push("--shared-blank-nodes");
+        build_args(&[&a, &b], &out, &with).success();
+        assert_eq!(rows(&out, subjects), ["1"], "{with:?}");
+    }
+    // One input: nothing to keep apart, the build is the same with the flag.
+    let one = dir.path().join("one.rete");
+    let one_shared = dir.path().join("one-shared.rete");
+    build_args(&[&a], &one, &[]).success();
+    build_args(&[&a], &one_shared, &["--shared-blank-nodes"]).success();
+    assert_eq!(read_plain(&one), read_plain(&one_shared));
+}
+
+/// A folder read with `--merge-files`, and one with `--collapse-graphs`, keep
+/// the blank nodes of their files apart too.
+#[test]
+fn a_merged_folder_keeps_blank_nodes_apart() {
+    let dir = tree();
+    let nodes = "SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s ?p ?o FILTER(isBlank(?s)) }";
+    for flag in ["--merge-files", "--collapse-graphs"] {
+        let (_keep, out) = built(dir.path(), &[flag]);
+        assert_eq!(rows(&out, nodes), ["2"], "{flag}");
+        let (_keep, out) = built(dir.path(), &[flag, "--shared-blank-nodes"]);
+        assert_eq!(rows(&out, nodes), ["1"], "{flag} shared");
+    }
+    // Graph per file, shared labels: the one node is in two graphs.
+    let (_keep, out) = built(dir.path(), &["--shared-blank-nodes"]);
+    assert_eq!(
+        rows(
+            &out,
+            "SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o FILTER(isBlank(?s)) } }"
+        ),
+        ["1"]
+    );
+}

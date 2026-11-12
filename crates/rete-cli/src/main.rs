@@ -150,6 +150,12 @@ enum Command {
         /// Start of the graph IRI of each file (default `urn:rete:file:`).
         #[arg(long = "graph-base", value_name = "IRI")]
         graph_base: Option<String>,
+        /// Treat the blank node labels of all inputs as one namespace: `_:b0`
+        /// in two files is one node. For a document cut into several files
+        /// (a chunked N-Triples dump). Without it each file's labels are its
+        /// own, as RDF says, and `_:b0` of two files are two nodes.
+        #[arg(long = "shared-blank-nodes")]
+        shared_blank_nodes: bool,
         /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
         /// over the default graph (subClassOf/subPropertyOf/domain/range,
         /// inverseOf, symmetric/transitive, sameAs) and store the inferred
@@ -1731,6 +1737,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             collapse_graphs,
             merge_files,
             graph_per_file,
+            shared_blank_nodes,
             graph_base,
             materialize,
             reason,
@@ -1809,10 +1816,11 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     graph_per_file,
                     collapse_graphs,
                     graph_base: graph_base.as_deref(),
+                    shared_blank_nodes,
                 },
             )?;
             let inputs = resolved.files;
-            let file_graphs = resolved.graphs.as_deref();
+            let file_plans = resolved.plans.as_deref();
             if let Some(mb) = memory_budget_mb {
                 commands::build::build_external_cmd(
                     &inputs,
@@ -1832,7 +1840,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     surface,
                     type_predicate.as_deref(),
                     sections,
-                    file_graphs,
+                    file_plans,
                 )
             } else {
                 commands::build::build(
@@ -1853,7 +1861,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     strict,
                     surface,
                     sections,
-                    file_graphs,
+                    file_plans,
                 )
             }
         }

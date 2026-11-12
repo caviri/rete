@@ -656,7 +656,6 @@ byte but letters, digits and <code>- . _ ~</code>). <code>papers/2024/march.ttl.
 that give the same graph (<code>a.ttl</code> and <code>a.nt</code>) are an error naming both.</li>
 <li>The triples of a file go to its graph. A quad that names a graph in the file
 (N-Quads, TriG) keeps it.</li>
-<li>Blank nodes belong to their file: <code>_:b0</code> in two files are two nodes.</li>
 <li><code>--merge-files</code> reads the folder's files as if they had been listed one by one: no
 graph per file. <code>--collapse-graphs</code> does the same and also folds the files' own
 graphs into the default graph.</li>
@@ -664,8 +663,12 @@ graphs into the default graph.</li>
 given (relative, without <code>..</code>). It cannot read stdin.</li>
 <li>It works with <code>--memory-budget-mb</code> too.</li>
 </ul>
-<p>Listing files without a folder keeps its old behaviour, including blank nodes: the
-same label in two files is one node.</p>
+<p>Blank nodes belong to their file, however the files are given (a folder, a list,
+merged or not): <code>_:b0</code> in two files are two nodes, as RDF says, and <code>_:b0</code> of the
+second file is stored as <code>_:f1_b0</code>. A build from one input keeps its labels as
+written. <code>--shared-blank-nodes</code> reads the labels of all inputs as one namespace, for
+one document cut into several files (a chunked N-Triples dump): there <code>_:b0</code> in two
+files is one node.</p>
 <p><strong>Jelly.</strong> <code>.jelly</code> and <code>.jelly.gz</code> files are <a href="https://jelly-rdf.github.io/">Jelly</a>
 RDF streams, a binary format. Both layouts are read: Jelly 1.0 and 1.1 (the row
 layout) and Jelly 1.2 (the column layout), triples or quads, with RDF-star quoted
