@@ -124,7 +124,7 @@ SELECT ?title (COUNT(?m) AS ?maps) WHERE {
     key: "hugging-face", name: "Hugging Face Hub", ico: "🤗",
     url: `${R2}/hugging-face/hugging-face.rete`,
     blurb: "2.9 million models, 1.4 million Spaces and the people behind them, with which model was fine-tuned from which.",
-    facts: { triples: "85.1 M" },
+    facts: { triples: "84.7 M" },
     questions: [
       { label: "Llama-3.1-8B: parents, children, Spaces", view: "graph", q: `PREFIX hf: <https://w3id.org/rete/huggingface#>
 CONSTRUCT {
