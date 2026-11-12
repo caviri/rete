@@ -21,6 +21,9 @@
 use crate::{Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo, DEFAULT_TILE_BUDGET};
 
 mod jelly;
+mod jsonld;
+
+pub use jsonld::{ContextLoader, JsonLdOptions};
 
 /// A parsed triple as three canonical term tokens.
 pub type RawTriple = (String, String, String);
@@ -133,12 +136,25 @@ pub enum IngestError {
     #[error("rdf/xml: {0}")]
     RdfXml(String),
     /// The requested format is not one this crate can parse.
-    #[error("unknown input format: {0} (expected nt, nq, ttl, trig, rdf/xml, or jelly)")]
+    #[error(
+        "unknown input format: {0} (expected nt, nq, ttl, trig, rdf/xml, jelly, jsonld, or yamlld)"
+    )]
     UnknownFormat(String),
     /// A Jelly file that is malformed, uses a feature this reader refuses, or
     /// breaks a rule of the specification.
     #[error("jelly: {0}")]
     Jelly(String),
+    /// A JSON-LD or YAML-LD document that is malformed or that the JSON-LD
+    /// processor refuses. Also what a build without the `jsonld` feature, or a
+    /// streaming reader (JSON-LD is expanded whole), answers.
+    #[error("{0}")]
+    JsonLd(String),
+    /// A JSON-LD or YAML-LD document names a remote `@context` (the IRI) and no
+    /// [`ContextLoader`] was given, so it cannot be expanded.
+    #[error(
+        "json-ld: the document needs the remote context {0}, and remote contexts are not loaded"
+    )]
+    JsonLdRemoteContext(String),
     /// [`QuotedTripleSurface::Rdf12`] was asked for on a Turtle/TriG input, but
     /// this build of `rete-core` has the `rdf12-turtle` feature off, so the
     /// RDF 1.2 reader was not compiled in. Refused by name rather than read as
@@ -460,6 +476,10 @@ pub fn stream_reader_audited_surface<R: std::io::BufRead>(
         "ttl" => turtle_star(reader, audit, f),
         "trig" => trig_star(reader, audit, f),
         "jelly" => jelly::stream(reader, audit, f),
+        "jsonld" | "yamlld" => Err(IngestError::JsonLd(format!(
+            "{format}: a JSON-LD document is expanded whole, so it cannot be streamed from a \
+             reader; build without --memory-budget-mb, or convert it to N-Quads first"
+        ))),
         "rdfxml" => {
             for r in oxrdfxml::RdfXmlParser::new().for_reader(reader) {
                 let t = r.map_err(|e| IngestError::RdfXml(e.to_string()))?;
@@ -805,6 +825,10 @@ pub fn parse_statements_audited_surface(
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
             .collect(),
+        // Inline contexts only here; `parse_jsonld_audited` takes a loader.
+        "jsonld" | "yamlld" => {
+            return parse_jsonld_audited(text, format == "yamlld", &JsonLdOptions::default(), audit)
+        }
         "jelly" => {
             return Err(IngestError::Jelly(
                 "Jelly is a binary format, so it cannot come in as text; \
@@ -820,6 +844,20 @@ pub fn parse_statements_audited_surface(
         })?;
     }
     Ok(quads)
+}
+
+/// Parse one JSON-LD (`yaml == false`) or YAML-LD document into quads. Named
+/// graphs stay named. Remote contexts come from `options`; with none, a document
+/// that needs one fails with [`IngestError::JsonLdRemoteContext`].
+pub fn parse_jsonld_audited(
+    text: &str,
+    yaml: bool,
+    options: &JsonLdOptions,
+    audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
+    let mut out = Vec::new();
+    jsonld::parse(text, yaml, options, audit, &mut |q| out.push(q))?;
+    Ok(out)
 }
 
 /// Parse a whole Jelly file held in memory (`"jelly"` is binary, so it has no

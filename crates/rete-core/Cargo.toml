@@ -32,6 +32,9 @@ oxttl.workspace = true
 oxttl12 = { workspace = true, optional = true }
 oxrdf12 = { workspace = true, optional = true }
 oxrdfxml.workspace = true
+# JSON-LD / YAML-LD input (the `jsonld` feature).
+oxjsonld = { workspace = true, optional = true }
+yaml_serde = { workspace = true, optional = true }
 spargebra.workspace = true
 # Derive-based (de)serialization for the Dataset Card types in `card_derive` /
 # `card_queries`. Pure Rust, no_std-capable, and already a transitive dependency
@@ -91,7 +94,7 @@ ureq = { version = "2", optional = true, default-features = false, features = ["
 proptest = "1"
 
 [features]
-default = ["compression", "rdf12-turtle", "unicode-regex", "regex-perf"]
+default = ["compression", "rdf12-turtle", "jsonld", "unicode-regex", "regex-perf"]
 # Unicode-aware SPARQL `REGEX` / `REPLACE` and SHACL `sh:pattern` (the `regex`
 # crate). Without it, `regex-lite`: the same syntax, but `\b` `\w` `\d` `\s` and
 # `(?i)` are ASCII-only. See the `regex` dependency above for the size cost.
@@ -133,6 +136,12 @@ v06-parity = []
 # own; asking for `--quoted-triple-syntax rdf12` on Turtle/TriG in such a build
 # is refused by name rather than read as RDF-star.
 rdf12-turtle = ["dep:oxttl12", "dep:oxrdf12"]
+# Read JSON-LD (`jsonld`) and YAML-LD (`yamlld`) as input formats. `oxjsonld`
+# renders terms with `oxrdf` 0.3, so this shares `oxrdf12` with `rdf12-turtle`; a
+# wasm build that turns it on needs the getrandom 0.3 backend `oxrdf` 0.3 wants
+# for anonymous blank-node ids (the `wasm-js` feature, or the Chicory `custom`
+# one). Without the feature both format names are refused by name.
+jsonld = ["dep:oxjsonld", "dep:oxrdf12", "dep:yaml_serde"]
 # Prototype data-parallel query evaluator. NOT default; wasm must never enable it
 # (wasm has no threads). Enables the `parallel` module + `rayon`.
 parallel = ["dep:rayon"]
