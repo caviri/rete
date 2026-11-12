@@ -102,8 +102,14 @@ enum Command {
     /// expanded to disk first. Use `-` to read stdin (defaults to N-Triples).
     /// `--format` overrides detection for all inputs.
     /// Example: `cat *.nt | rete build - -o out.rete`.
+    ///
+    /// An input that is a **directory** is read recursively (files in path order,
+    /// hidden names and files with no RDF extension skipped) and each file becomes
+    /// a named graph named after it: `<urn:rete:file:sub/name>`. Quads that name a
+    /// graph keep it. `--merge-files` puts them all in the default graph instead.
+    /// Example: `rete build data/ -o out.rete`.
     Build {
-        /// Input files (or `-` for stdin); multiple are merged.
+        /// Input files, directories, or `-` for stdin; multiple are merged.
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
         /// Output `.rete` file.
@@ -117,10 +123,22 @@ enum Command {
         /// exports like SemOpenAlex, most Wikibase and GraphDB dumps — otherwise
         /// answer `?s ?p ?o` with nothing and build an empty pyramid, because in
         /// SPARQL the default graph is not the union of the named ones. It is
-        /// also what makes such an input eligible for `--memory-budget-mb`,
-        /// which writes default-graph files only.
+        /// also a way to read a directory as one graph (it implies
+        /// `--merge-files`).
         #[arg(long = "collapse-graphs")]
         collapse_graphs: bool,
+        /// Read a directory's files as if they had been listed one by one: no
+        /// graph per file, triples go to the default graph.
+        #[arg(long = "merge-files", conflicts_with = "graph_per_file")]
+        merge_files: bool,
+        /// Put the triples of each input file in a named graph named after the
+        /// file (the path as given, extension removed, percent-encoded). This is
+        /// what a directory input does by default. Not with `-` (stdin).
+        #[arg(long = "graph-per-file", conflicts_with = "collapse_graphs")]
+        graph_per_file: bool,
+        /// Start of the graph IRI of each file (default `urn:rete:file:`).
+        #[arg(long = "graph-base", value_name = "IRI")]
+        graph_base: Option<String>,
         /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
         /// over the default graph (subClassOf/subPropertyOf/domain/range,
         /// inverseOf, symmetric/transitive, sameAs) and store the inferred
@@ -1687,6 +1705,9 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             output,
             format,
             collapse_graphs,
+            merge_files,
+            graph_per_file,
+            graph_base,
             materialize,
             reason,
             no_pyramid,
@@ -1755,6 +1776,18 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 description,
                 created,
             };
+            let resolved = commands::build_folder::resolve(
+                &inputs,
+                &commands::build_folder::Options {
+                    format: format.as_deref(),
+                    merge_files,
+                    graph_per_file,
+                    collapse_graphs,
+                    graph_base: graph_base.as_deref(),
+                },
+            )?;
+            let inputs = resolved.files;
+            let file_graphs = resolved.graphs.as_deref();
             if let Some(mb) = memory_budget_mb {
                 commands::build::build_external_cmd(
                     &inputs,
@@ -1774,6 +1807,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     surface,
                     type_predicate.as_deref(),
                     sections,
+                    file_graphs,
                 )
             } else {
                 commands::build::build(
@@ -1794,6 +1828,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     strict,
                     surface,
                     sections,
+                    file_graphs,
                 )
             }
         }
