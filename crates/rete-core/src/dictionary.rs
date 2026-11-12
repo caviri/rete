@@ -10,20 +10,22 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::chunk_cache::ChunkCache;
-use crate::dict::{ChunkedSection, DictSectionBuilder, MultiChunkBulkLoader};
+use crate::dict::{ChunkedSection, DictSectionBuilder, Lookup, MultiChunkBulkLoader};
+use crate::term_order::TermOrder;
 use crate::terms::{NodeId, ObjectId, PredicateId, SubjectId};
+use std::sync::Arc;
 
 /// Sort a term slice ascending — in parallel when the `parallel` feature is on.
 /// The front-coded dictionary sections need ascending order; doing it once here
 /// (rather than per-insert in a `BTreeSet`) is the fast path for large graphs.
 #[cfg(feature = "parallel")]
-fn sort_terms(v: &mut [String]) {
+fn sort_terms(v: &mut [String], order: TermOrder) {
     use rayon::slice::ParallelSliceMut;
-    v.par_sort_unstable();
+    v.par_sort_unstable_by(|a, b| order.cmp(a.as_bytes(), b.as_bytes()));
 }
 #[cfg(not(feature = "parallel"))]
-fn sort_terms(v: &mut [String]) {
-    v.sort_unstable();
+fn sort_terms(v: &mut [String], order: TermOrder) {
+    v.sort_unstable_by(|a, b| order.cmp(a.as_bytes(), b.as_bytes()));
 }
 
 /// Builds a [`Dictionary`] from observed `(subject, predicate, object)` terms.
@@ -50,13 +52,35 @@ pub struct DictionaryBuilder {
     /// their string bytes ([`Self::footprint`]).
     entries: u64,
     entry_bytes: u64,
+    /// How the sections sort their terms.
+    order: TermOrder,
 }
 
 impl DictionaryBuilder {
     /// A builder with the process-wide writer settings
-    /// ([`crate::write_opts::frequent_objects`]).
+    /// ([`crate::write_opts::frequent_objects`]), sorting terms in the SPARQL
+    /// order (the order of format `0x08`). `RETE_WRITE_FORMAT=5` makes the
+    /// legacy byte order the default, so that hook still writes a real `0x05`
+    /// image.
     pub fn new() -> Self {
-        Self::default().with_frequent_objects(crate::write_opts::frequent_objects())
+        let order = crate::term_order::builder_order_override().unwrap_or_else(|| {
+            if crate::build_record::writes_legacy() {
+                TermOrder::Bytewise
+            } else {
+                TermOrder::Sparql
+            }
+        });
+        Self::default()
+            .with_order(order)
+            .with_frequent_objects(crate::write_opts::frequent_objects())
+    }
+
+    /// Sort the sections' terms in `order`. The `0x05` to `0x07` generations
+    /// need [`TermOrder::Bytewise`]: the tests that make an old-format input
+    /// use it.
+    pub fn with_order(mut self, order: TermOrder) -> Self {
+        self.order = order;
+        self
     }
 
     /// Promote the `n` most frequent **object-only** terms (by the number of
@@ -175,8 +199,9 @@ impl DictionaryBuilder {
         // the old BTreeSet iteration, but without the per-insert tree cost.
         let mut subjects: Vec<String> = self.subjects.into_iter().collect();
         let mut predicates: Vec<String> = self.predicates.into_iter().collect();
-        sort_terms(&mut subjects);
-        sort_terms(&mut predicates);
+        let order = self.order;
+        sort_terms(&mut subjects, order);
+        sort_terms(&mut predicates, order);
 
         // A term is "shared" when it appears as both a subject and an object.
         let subject_set: HashSet<&str> = subjects.iter().map(String::as_str).collect();
@@ -200,25 +225,29 @@ impl DictionaryBuilder {
                 .collect();
             let k = self.promote.min(top.len());
             if k > 0 && k < top.len() {
-                top.select_nth_unstable_by(k - 1, |a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+                top.select_nth_unstable_by(k - 1, |a, b| {
+                    b.1.cmp(&a.1).then_with(|| order.cmp_str(a.0, b.0))
+                });
             }
             top.truncate(k);
             promoted = top.into_iter().map(|(t, _)| t.clone()).collect();
-            sort_terms(&mut promoted);
+            sort_terms(&mut promoted, order);
         }
         let promoted_set: HashSet<&str> = promoted.iter().map(String::as_str).collect();
 
-        let mut shared_b = DictSectionBuilder::new();
-        let mut subj_b = DictSectionBuilder::new();
-        let mut obj_b = DictSectionBuilder::new();
-        let mut pred_b = DictSectionBuilder::new();
+        let mut shared_b = DictSectionBuilder::new().with_order(order);
+        let mut subj_b = DictSectionBuilder::new().with_order(order);
+        let mut obj_b = DictSectionBuilder::new().with_order(order);
+        let mut pred_b = DictSectionBuilder::new().with_order(order);
 
         // Subjects ascending: shared (also an object) vs subject-only. Promoted
         // objects are merged into the shared run in term order.
         let mut promoted_iter = promoted.iter().peekable();
         for s in &subjects {
             if object_set.contains(s) {
-                while let Some(p) = promoted_iter.next_if(|p| p.as_str() < s.as_str()) {
+                while let Some(p) =
+                    promoted_iter.next_if(|p| order.cmp_str(p, s) == std::cmp::Ordering::Less)
+                {
                     shared_b.push(p.clone());
                 }
                 shared_b.push(s.clone());
@@ -247,14 +276,14 @@ impl DictionaryBuilder {
         match object_set {
             ObjectTerms::Counted(counts) if count_objects => {
                 let mut objects: Vec<(String, u64)> = counts.into_iter().collect();
-                sort_counted_terms(&mut objects);
+                sort_counted_terms(&mut objects, order);
                 for (o, n) in &objects {
                     take_object(o, *n);
                 }
             }
             object_set => {
                 let mut objects: Vec<String> = object_set.into_terms();
-                sort_terms(&mut objects);
+                sort_terms(&mut objects, order);
                 for o in &objects {
                     take_object(o, 0);
                 }
@@ -265,8 +294,10 @@ impl DictionaryBuilder {
         }
 
         let shared = shared_b.build();
-        let mut dict =
-            Dictionary::from_sections([shared, subj_b.build(), obj_b.build(), pred_b.build()]);
+        let mut dict = Dictionary::from_sections_ordered(
+            [shared, subj_b.build(), obj_b.build(), pred_b.build()],
+            order,
+        );
         dict.has_quoted_triples = has_quoted_triples;
         (dict, object_only_counts)
     }
@@ -274,14 +305,14 @@ impl DictionaryBuilder {
 
 /// Sort `(term, count)` pairs by term — the terms are distinct, so the
 /// count never decides. In parallel when the `parallel` feature is on.
-fn sort_counted_terms(v: &mut [(String, u64)]) {
+fn sort_counted_terms(v: &mut [(String, u64)], order: TermOrder) {
     #[cfg(feature = "parallel")]
     {
         use rayon::slice::ParallelSliceMut;
-        v.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        v.par_sort_unstable_by(|a, b| order.cmp(a.0.as_bytes(), b.0.as_bytes()));
     }
     #[cfg(not(feature = "parallel"))]
-    v.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    v.sort_unstable_by(|a, b| order.cmp(a.0.as_bytes(), b.0.as_bytes()));
 }
 
 /// The object terms a [`DictionaryBuilder`] observed: a set, or the
@@ -354,13 +385,17 @@ pub struct Dictionary {
     multi_bulk: Option<MultiChunkBulkLoader>,
     /// The literal object ids ([`Self::literal_objects`]), once found.
     literal_objects: std::sync::OnceLock<LiteralObjects>,
+    /// Rebuilds the terms of the subject-only chunks the file stores no body
+    /// for (a derived IRI family, [`crate::derived`]); `None` when it has none.
+    derived: Option<crate::derived::DerivedTerms>,
 }
 
-/// Which object ids are literals. Literal tokens (`"…`) sort before IRIs
-/// (`<…`), blank nodes (`_:…`) and quoted triples (`<<…`) in every dictionary
-/// section, so the literals of a section are one run of consecutive ids: the
-/// shared section's are normally none (a literal is never a subject), the
-/// object-only section's come first.
+/// Which object ids are literals. The literals of a section are one run of
+/// consecutive ids in either term order: up to `0x07` literal tokens (`"…`)
+/// sort before quoted triples (`<<…`), IRIs (`<…`) and blank nodes (`_:…`), so
+/// the run is the section's start; in the `0x08` order it follows the blank
+/// nodes and IRIs and the group counts of the root say where it is. The shared
+/// section's are normally none (a literal is never a subject).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiteralObjects {
     /// Shared object ids `shared.0+1..=shared.1` are literals.
@@ -395,14 +430,24 @@ impl Dictionary {
     /// [`ChunkCache`] (unlimited cap here, so every section body stays resident
     /// exactly as before).
     pub fn from_sections(sections: [Vec<u8>; 4]) -> Self {
+        Self::from_sections_ordered(sections, TermOrder::Bytewise)
+    }
+
+    /// [`Self::from_sections`] for sections whose terms are sorted in `order`.
+    pub fn from_sections_ordered(sections: [Vec<u8>; 4], order: TermOrder) -> Self {
         let cache = ChunkCache::unlimited_arc();
         let mut section_index = 0u8;
         let chunked = sections.map(|bytes| {
-            let s = ChunkedSection::local(bytes, cache.clone(), section_index);
+            let s = ChunkedSection::local(bytes, cache.clone(), section_index).with_order(order);
             section_index += 1;
             s
         });
         Self::from_chunked_sections(chunked)
+    }
+
+    /// How the terms of the four sections are ordered.
+    pub fn order(&self) -> TermOrder {
+        self.sections[0].order()
     }
 
     /// Rebuild from four already-chunked sections (the remote lazy-open path).
@@ -414,6 +459,7 @@ impl Dictionary {
             has_quoted_triples: false,
             multi_bulk: None,
             literal_objects: std::sync::OnceLock::new(),
+            derived: None,
         }
     }
 
@@ -425,6 +471,20 @@ impl Dictionary {
     pub fn literal_objects(&self) -> Option<LiteralObjects> {
         if let Some(found) = self.literal_objects.get() {
             return Some(*found);
+        }
+        // The SPARQL order puts literals after blank nodes and IRIs, as one run
+        // (text, then typed): the section's group counts say where.
+        if self.order() == TermOrder::Sparql {
+            let run = |si: usize| -> Option<(u32, u32)> {
+                let g = self.sections[si].groups()?;
+                Some((g.lit_start(), g.lit_end()))
+            };
+            let found = LiteralObjects {
+                shared: run(0)?,
+                n_shared: self.shared_len,
+                only: run(2)?,
+            };
+            return Some(*self.literal_objects.get_or_init(|| found));
         }
         // `"` is 0x22 and `#` the next byte: a literal token sorts in
         // [`"`, `#`), and nothing a well-formed file holds sorts before it.
@@ -438,6 +498,85 @@ impl Dictionary {
             only: run(2)?,
         };
         Some(*self.literal_objects.get_or_init(|| found))
+    }
+
+    /// Say which derived IRI families the subject-only section has chunks for
+    /// ([`crate::derived`]). The section must already know its elided chunks.
+    pub(crate) fn with_derived(mut self, families: Vec<crate::derived::Family>) -> Self {
+        if !families.is_empty() {
+            self.derived = Some(crate::derived::DerivedTerms::new(families));
+        }
+        self
+    }
+
+    /// The derived IRI families of this dictionary, if any.
+    pub fn derived_families(&self) -> &[crate::derived::Family] {
+        self.derived.as_ref().map_or(&[], |d| d.families())
+    }
+
+    /// Hand a dictionary with derived families the index it reads their inputs
+    /// from. Until it has one, a derived term does not resolve.
+    pub fn wire_derived(&self, index: Arc<crate::index::GraphIndex>) {
+        if let Some(d) = &self.derived {
+            d.wire(index);
+        }
+    }
+
+    /// The subject-only chunk holding section-local id `local`.
+    pub(crate) fn subject_only_chunk(&self, local: u32) -> Option<usize> {
+        self.sections[1].chunk_of_id(local)
+    }
+
+    /// The term of subject-only id `local`: stored, or rebuilt when its chunk is
+    /// one the file derives.
+    fn subject_only_term(&self, local: u32) -> Option<String> {
+        if let Some(t) = self.sections[1].term(local) {
+            return Some(t);
+        }
+        match &self.derived {
+            Some(d) if self.sections[1].id_is_elided(local) => d.term(self, local),
+            _ => None,
+        }
+    }
+
+    /// After a section's `resolve_into`: fill the jobs of subject-only ids in
+    /// derived chunks, which it left empty.
+    fn fill_derived(&self, jobs: &[(u32, usize)], out: &mut [Option<String>]) {
+        let Some(d) = &self.derived else { return };
+        let todo: Vec<(u32, usize)> = jobs
+            .iter()
+            .copied()
+            .filter(|&(id, slot)| out[slot].is_none() && self.sections[1].id_is_elided(id))
+            .collect();
+        if !todo.is_empty() {
+            d.terms(self, &todo, out);
+        }
+    }
+
+    /// The subject-only ids among unified node ids (those that can be derived).
+    fn derived_locals(&self, nodes: &[NodeId]) -> Vec<u32> {
+        if self.derived.is_none() {
+            return Vec::new();
+        }
+        nodes
+            .iter()
+            .filter_map(|&n| match self.node_section_id(n) {
+                Some((1, local)) => Some(local),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Warm what decoding these subject-only ids in derived chunks reads.
+    fn prefetch_derived(&self, locals: impl IntoIterator<Item = u32>) {
+        let Some(d) = &self.derived else { return };
+        let ids: Vec<u32> = locals
+            .into_iter()
+            .filter(|&l| self.sections[1].id_is_elided(l))
+            .collect();
+        if !ids.is_empty() {
+            d.prefetch(self, &ids);
+        }
     }
 
     /// Attach a cross-section chunk fetcher (see [`MultiChunkBulkLoader`]):
@@ -598,6 +737,7 @@ impl Dictionary {
     /// up to thousands of chunks at once, outside every cache cap. A bounded
     /// export batches it so that transient stays a few MB.
     pub fn prefetch_terms_batched(&self, node_ids: &[u32], predicate_ids: &[u32], batch: usize) {
+        self.prefetch_derived(self.derived_locals(node_ids));
         let mut leaves: [Vec<usize>; 4] = Default::default();
         for &n in node_ids {
             if let Some((si, local)) = self.node_section_id(n) {
@@ -687,7 +827,19 @@ impl Dictionary {
         }
         // Both term lists are walked twice (routing needs the leaves, which are
         // faulted together first), so hold them.
+        self.prefetch_derived(self.derived_locals(node_ids));
         let node_terms: Vec<&'a str> = node_terms.into_iter().collect();
+        // A term of a derived family is looked up through its two inputs: read
+        // theirs in the same batches.
+        let inputs: Vec<String> = match &self.derived {
+            Some(d) => node_terms.iter().flat_map(|t| d.lookup_terms(t)).collect(),
+            None => Vec::new(),
+        };
+        let node_terms: Vec<&str> = node_terms
+            .iter()
+            .copied()
+            .chain(inputs.iter().map(String::as_str))
+            .collect();
         let pred_terms: Vec<&'a str> = pred_terms.into_iter().collect();
         let mut leaves: [Vec<usize>; 4] = Default::default();
         for &term in &node_terms {
@@ -830,6 +982,9 @@ impl Dictionary {
         }
         self.sections[0].resolve_into(&mut shared, &mut out);
         self.sections[own].resolve_into(&mut rest, &mut out);
+        if own == 1 {
+            self.fill_derived(&rest, &mut out);
+        }
         out
     }
 
@@ -897,7 +1052,16 @@ impl Dictionary {
                 (2, oid - self.shared_len)
             }
         };
-        self.sections[si].term_held(local, &mut hold.0[si])
+        if let Some(t) = self.sections[si].term_held(local, &mut hold.0[si]) {
+            return Some(t);
+        }
+        // A subject-only id in a chunk the file derives (`crate::derived`)
+        // stores no text: rebuild it, as `subject_only_term` does for the
+        // unheld path.
+        match &self.derived {
+            Some(d) if si == 1 && self.sections[1].id_is_elided(local) => d.term(self, local),
+            _ => None,
+        }
     }
 
     /// [`predicate_term`](Self::predicate_term), as [`Self::node_term_held`].
@@ -925,6 +1089,11 @@ impl Dictionary {
     /// will touch — one coalesced read per section instead of a blocking round
     /// trip per id. Purely a cache warmer (resident sections no-op).
     pub fn prefetch_subject_terms(&self, ids: &[SubjectId]) {
+        self.prefetch_derived(
+            ids.iter()
+                .filter(|&&id| id > self.shared_len)
+                .map(|&id| id - self.shared_len),
+        );
         let mut per_section: [Vec<usize>; 2] = Default::default();
         for &id in ids {
             let (si, local) = if id <= self.shared_len {
@@ -956,6 +1125,7 @@ impl Dictionary {
     /// of row decodes (a FILTER's string ops, the projection) is about to
     /// fault, using [`node_term`](Self::node_term)'s exact routing.
     pub fn prefetch_node_terms(&self, nodes: &[NodeId]) {
+        self.prefetch_derived(self.derived_locals(nodes));
         let su = self.subject_only_count();
         let mut per_section: [Vec<usize>; 3] = Default::default();
         for &node in nodes {
@@ -990,6 +1160,68 @@ impl Dictionary {
     /// A string literal also matches its other spelling (`"x"` ↔
     /// `"x"^^xsd:string`, one RDF 1.1 term; see [`Self::subject_id`]).
     pub fn node_of_term(&self, term: &str) -> Option<NodeId> {
+        // A string literal in the SPARQL order: both spellings in one search
+        // of each section.
+        if self.order() == TermOrder::Sparql {
+            if let Some(alias) = crate::terms::string_literal_alias(term) {
+                return self.node_of_string(term, &alias);
+            }
+        }
+        self.node_of_term_each(term)
+    }
+
+    /// [`node_of_term`](Self::node_of_term) for a string literal `term` whose
+    /// other spelling is `alias`: `term` in the shared, subject-only and
+    /// object-only sections, then `alias` in the same order, as two passes
+    /// would find them, with each section searched once where the search for
+    /// one spelling settles the other ([`ChunkedSection::lookup_pair`]).
+    fn node_of_string(&self, term: &str, alias: &str) -> Option<NodeId> {
+        let term_is_plain = term.len() < alias.len();
+        let (lo, hi) = if term_is_plain {
+            (term, alias)
+        } else {
+            (alias, term)
+        };
+        let node = |si: usize, id: u32| -> Option<NodeId> {
+            Some(match si {
+                0 => self.subject_node(id),
+                1 => self.subject_node(self.shared_len.checked_add(id)?),
+                _ => self.object_node(self.shared_len.checked_add(id)?),
+            })
+        };
+        // What each section's search said about the alias (`None`: nothing).
+        let mut aliases: [Option<Option<u32>>; 3] = [None; 3];
+        for (si, slot) in aliases.iter_mut().enumerate() {
+            let (plain, typed) = self.sections[si].lookup_pair(lo, hi);
+            let (mine, other) = if term_is_plain {
+                (Some(plain), typed)
+            } else {
+                (typed, Some(plain))
+            };
+            let mine = match mine {
+                Some(found) => found,
+                None => self.sections[si].id(term),
+            };
+            if let Some(id) = mine {
+                return node(si, id);
+            }
+            *slot = other;
+        }
+        for (si, known) in aliases.into_iter().enumerate() {
+            let found = match known {
+                Some(found) => found,
+                None => self.sections[si].id(alias),
+            };
+            if let Some(id) = found {
+                return node(si, id);
+            }
+        }
+        None
+    }
+
+    /// [`node_of_term`](Self::node_of_term), each spelling looked up on its
+    /// own: the byte order, and every term that is not a string literal.
+    fn node_of_term_each(&self, term: &str) -> Option<NodeId> {
         // Shared, subject-only, object-only: each section once (the subject and
         // the object role both begin with the shared section).
         let exact = |t: &str| {
@@ -1000,6 +1232,46 @@ impl Dictionary {
             Some(self.object_node(oid))
         };
         exact(term).or_else(|| exact(&crate::terms::string_literal_alias(term)?))
+    }
+
+    /// Where a node sorts for `ORDER BY` without being decoded: its section
+    /// (0 shared, 1 subject-only, 2 object-only) and its id in that section,
+    /// when the dictionary is in the SPARQL order and the id is in an
+    /// order-exact group (blank node, IRI, text literal, quoted triple). Two
+    /// nodes of the **same** section compare as their local ids do; nodes of
+    /// two sections, and a node that is `None` here (a typed literal: numbers
+    /// sort by value), have to be decoded and compared as terms.
+    pub fn order_slot(&self, node: NodeId) -> Option<(u8, u32)> {
+        let (si, local) = self.node_section_id(node)?;
+        self.sections[si]
+            .groups()?
+            .is_exact(local)
+            .then_some((si as u8, local))
+    }
+
+    /// The terms of section `si` (0 shared, 1 subject-only, 2 object-only, 3
+    /// predicates) by group, for a SPARQL-ordered dictionary: where the literals
+    /// and the quoted triples are.
+    pub fn section_groups(&self, si: usize) -> Option<crate::term_order::GroupCounts> {
+        self.sections.get(si)?.groups()
+    }
+
+    /// How many terms of section `si` sort before `term` in the section's own
+    /// order (0 shared, 1 subject-only, 2 object-only, 3 predicates): the
+    /// section-local ids `1..=n` are the smaller ones. One chunk is read (the
+    /// one `term` routes to). It places a decoded term among the ids of another
+    /// section without decoding any of them. `None` if that chunk cannot be read.
+    pub fn rank_in_section(&self, si: usize, term: &str) -> Option<u32> {
+        let sec = self.sections.get(si)?;
+        if si == 1 && sec.has_elided() {
+            return sec.rank_via(term, &|id| self.subject_only_term(id));
+        }
+        sec.rank(term)
+    }
+
+    /// [`Self::order_slot`] for a predicate id: always section 3.
+    pub fn predicate_order_slot(&self, pid: PredicateId) -> Option<(u8, u32)> {
+        self.sections[3].groups()?.is_exact(pid).then_some((3, pid))
     }
 
     /// Subject-role ID of a node, or `None` if the node never appears as a
@@ -1050,13 +1322,19 @@ impl Dictionary {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
-        self.sections[1]
-            .id(term)
-            .and_then(|id| self.shared_len.checked_add(id))
+        match self.sections[1].lookup(term) {
+            Lookup::Found(id) => self.shared_len.checked_add(id),
+            Lookup::Absent => None,
+            Lookup::Elided { first, last } => self
+                .derived
+                .as_ref()?
+                .lookup(self, term, first, last)
+                .and_then(|id| self.shared_len.checked_add(id)),
+        }
     }
 
     /// Object-role ID for `term`: shared `1..=S`, else object-only `S+1..`.
-    fn object_id_exact(&self, term: &str) -> Option<ObjectId> {
+    pub(crate) fn object_id_exact(&self, term: &str) -> Option<ObjectId> {
         if let Some(id) = self.sections[0].id(term) {
             return Some(id);
         }
@@ -1076,7 +1354,7 @@ impl Dictionary {
         if id <= self.shared_len {
             self.sections[0].term(id)
         } else {
-            self.sections[1].term(id - self.shared_len)
+            self.subject_only_term(id - self.shared_len)
         }
     }
 
@@ -1161,6 +1439,7 @@ impl Dictionary {
         for si in 0..4 {
             self.sections[si].resolve_into(&mut w.jobs[si], &mut w.out);
         }
+        self.fill_derived(&w.jobs[1], &mut w.out);
         for i in 0..ids.len() {
             if let (Some(s), Some(p), Some(o)) =
                 (&w.out[i * 3], &w.out[i * 3 + 1], &w.out[i * 3 + 2])
@@ -1192,6 +1471,77 @@ mod tests {
         b.observe("Alice", "knows", "Bob");
         b.observe("Bob", "knows", "Carol");
         b.build()
+    }
+
+    /// A string literal is found under either spelling, wherever each is
+    /// stored, exactly as two separate lookups find it. The dictionary holds
+    /// plain, typed and both, in every role, with language-tagged and other
+    /// neighbours, and enough of them that pairs fall on run boundaries.
+    #[test]
+    fn a_string_literal_is_found_under_either_spelling_in_one_search() {
+        const XS: &str = "^^<http://www.w3.org/2001/XMLSchema#string>";
+        let mut b = DictionaryBuilder::new();
+        let mut asked: Vec<String> = Vec::new();
+        for i in 0..600u32 {
+            let lex = format!("w{:03}", (i * 7) % 600);
+            let plain = format!("\"{lex}\"");
+            let typed = format!("\"{lex}\"{XS}");
+            // Which spellings are stored, and in which role.
+            let stored: Vec<&String> = match i % 5 {
+                0 => vec![&plain],
+                1 => vec![&typed],
+                2 => vec![&plain, &typed],
+                3 => vec![],
+                _ => vec![&typed, &plain],
+            };
+            for (k, t) in stored.into_iter().enumerate() {
+                match (i / 5 + k as u32) % 3 {
+                    0 => b.observe(t, "<p>", "<o>"),
+                    1 => b.observe("<s>", "<p>", t),
+                    _ => {
+                        b.observe(t, "<p>", "<o>");
+                        b.observe("<s>", "<q>", t);
+                    }
+                }
+            }
+            if i % 4 == 0 {
+                b.observe("<s>", "<p>", &format!("\"{lex}\"@en"));
+            }
+            if i % 9 == 0 {
+                b.observe(
+                    "<s>",
+                    "<p>",
+                    &format!("\"{lex}\"^^<http://www.w3.org/2001/XMLSchema#token>"),
+                );
+            }
+            asked.push(plain);
+            asked.push(typed);
+        }
+        let d = b.build();
+        assert_eq!(d.order(), TermOrder::Sparql);
+        let mut found = 0;
+        for t in &asked {
+            let got = d.node_of_term(t);
+            assert_eq!(got, d.node_of_term_each(t), "{t}");
+            found += usize::from(got.is_some());
+        }
+        // Four in five lexical forms are stored under some spelling.
+        assert_eq!(found, 2 * 480);
+        // A spelling that is stored is found as itself, not as its alias.
+        for t in &asked {
+            if let Some(n) = d.node_of_term(t) {
+                let back = d.node_term(n).unwrap();
+                let other = crate::terms::string_literal_alias(t).unwrap();
+                assert!(back == *t || back == other, "{t} -> {back}");
+                if d.node_of_term_each(t).is_some() && back != *t {
+                    assert_eq!(
+                        d.sections.iter().take(3).find_map(|sec| sec.id(t)),
+                        None,
+                        "{t} is stored, yet its alias was returned"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

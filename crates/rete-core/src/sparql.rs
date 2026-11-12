@@ -1006,7 +1006,8 @@ fn eval_partition_inner(
 /// [`eval_select_rows`].
 ///
 /// What the query itself needed has been decoded: the keys an `ORDER BY`
-/// sorts on, the values a `FILTER` or an aggregate reads. Every other column
+/// sorts on (none, when the file is `0x08` and the key is a plain variable
+/// of an order-exact group: ids sort), the values a `FILTER` or an aggregate reads. Every other column
 /// of every row stays an id until a page asks for it, so a result of 650,000
 /// rows costs the terms of the page shown, not of the result. `DISTINCT` and
 /// `GROUP BY` already work on ids.

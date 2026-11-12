@@ -792,7 +792,7 @@ def build_record(image: bytes) -> Optional[Dict[str, Any]]:
 
     ``query_costs`` describes the file as it is: when ``rete convert`` measured
     the starter queries on the converted file, its figures (their
-    ``context.layout`` says ``"0x07 (converted)"``) are returned here, and the
+    ``context.layout`` says ``"0x08 (converted)"``) are returned here, and the
     ones measured on the old layout move to ``source_query_costs``. Each entry
     of ``conversions`` keeps its own ``query_costs``."""
     raw = _rete.read_build_record(bytes(image))
@@ -809,7 +809,7 @@ def build_record(image: bytes) -> Optional[Dict[str, Any]]:
 
 
 def verify(image: bytes) -> bool:
-    """Check an image's content hash and, in format 0x07, every section digest
+    """Check an image's content hash and, in format 0x08, every section digest
     against its bytes."""
     return _rete.verify_image(bytes(image))
 

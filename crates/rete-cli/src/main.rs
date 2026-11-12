@@ -283,6 +283,15 @@ enum Command {
         /// Needs one byte of RAM per subject.
         #[arg(long = "cluster-subjects-by-class")]
         cluster_subjects_by_class: bool,
+        /// Keep every IRI as text. By default the builder looks for IRIs the
+        /// file itself spells out (a subject IRI that is its own objects'
+        /// texts put together, byte for byte) and, when that removes at least
+        /// 5 % of the file, stores them as a template and rebuilds them from
+        /// the index. Ids, order and answers are the same; `rete export` is
+        /// slower and a lookup of one such IRI costs two more requests. `rete
+        /// info` and the build record say what was found and why.
+        #[arg(long = "no-derive-iris")]
+        no_derive_iris: bool,
         /// How many index permutations to store: `6` (default) or `3`.
         ///
         /// `6` stores SPO, POS, OSP, SOP, PSO and OPS. `3` stores only SPO,
@@ -511,29 +520,27 @@ enum Command {
         #[arg(long)]
         section: Option<String>,
     },
-    /// Convert a format 0x05 file to format 0x06: the sections are read through
-    /// ranges and their payload copied verbatim (no text round trip); the
-    /// directories move to the front of the file. A file whose named graphs are
-    /// stored one index per graph is re-encoded as a quad index. A file whose
-    /// only labels are the pyramid's legacy block (≤ 8,192 entries) gets the
-    /// LABEL_INDEX section `build --label-index` writes, unless
-    /// `--no-label-index`. A format 0x06 input is written again with its
-    /// directory leaves cut anew (payload copied, card and record kept).
+    /// Convert a format 0x05, 0x06 or 0x07 file to format 0x08. The 0x08
+    /// dictionary is in the SPARQL order, so every term gets a new id and every
+    /// index is written again: the statements are walked through the source and
+    /// re-encoded by the memory-bounded builder (label and text index, schema
+    /// and the card, with its annex and build record, are kept), inside
+    /// `--memory-budget-mb`. A source with a community pyramid is re-encoded in
+    /// memory. A format 0x08 input is written again with its directory leaves
+    /// cut anew (payload copied).
     Convert {
-        /// The 0x05 (or 0x06) input (a path or an http(s) URL).
+        /// The 0x05, 0x06, 0x07 or 0x08 input (a path or an http(s) URL).
         input: String,
-        /// The 0x06 output path.
+        /// The 0x08 output path.
         #[arg(short, long)]
         output: String,
-        /// Quad-tile clustering of a `0x06` output: `auto` (graph-major when
-        /// graphs are small), `graph`, or `order`. Ignored for the `0x07`
-        /// `convert` writes, which is always order-major.
+        /// Accepted for scripts that set it for a `0x06` output; ignored (`0x07`
+        /// and `0x08` are order-major).
         #[arg(long = "quad-clustering", value_name = "MODE")]
         quad_clustering: Option<String>,
-        /// Directory for the spill of the sort that derives the `0x07` quad
-        /// orders (SPOG, POSG, OSPG) from GSPO when the file is big (default:
-        /// alongside the output). Needs free space of about 16 bytes per
-        /// named quad, one order at a time.
+        /// Directory for the spill of the sorts (default: alongside the
+        /// output). Needs free space of a few bytes per statement and index
+        /// order.
         #[arg(long = "tmp-dir")]
         tmp_dir: Option<String>,
         /// Cluster the default graph's subjects by class (`rete build
@@ -541,6 +548,11 @@ enum Command {
         /// written in subject order again.
         #[arg(long = "cluster-subjects-by-class")]
         cluster_subjects_by_class: bool,
+        /// Keep every IRI as text (`rete build --no-derive-iris`), also in a
+        /// file the builder would find derivable IRIs in. A derived input
+        /// stays derived.
+        #[arg(long = "no-derive-iris")]
+        no_derive_iris: bool,
         /// Do not build the label index for a file that has only the
         /// pyramid's legacy label block.
         #[arg(long = "no-label-index")]
@@ -551,8 +563,9 @@ enum Command {
         /// record.
         #[arg(long = "no-card-costs")]
         no_card_costs: bool,
-        /// Memory ceiling for the cost measurement (a query that passes it
-        /// stays in the card, flagged `over_budget`), as for `build`.
+        /// Memory budget of the re-encode (default 2048) and ceiling for the
+        /// cost measurement (a query that passes it stays in the card, flagged
+        /// `over_budget`), as for `build`.
         #[arg(long = "memory-budget-mb")]
         memory_budget_mb: Option<u64>,
     },
@@ -1696,6 +1709,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             memory_budget_mb,
             tmp_dir,
             cluster_subjects_by_class,
+            no_derive_iris,
             permutations,
             named_graphs,
             strict,
@@ -1711,6 +1725,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             let sections = commands::build::BuildSections {
                 label_index,
                 schema: !no_schema,
+                derive_iris: !no_derive_iris,
             };
             let perms = match permutations.as_str() {
                 "3" => rete_core::PermSet::CORE,
@@ -1862,6 +1877,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             quad_clustering,
             tmp_dir,
             cluster_subjects_by_class,
+            no_derive_iris,
             no_label_index,
             no_card_costs,
             memory_budget_mb,
@@ -1879,6 +1895,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     skip: no_card_costs,
                     memory_budget_mb,
                 },
+                (!no_derive_iris).then(rete_core::derived::DeriveOpts::default),
             )
         }
         Command::Search {

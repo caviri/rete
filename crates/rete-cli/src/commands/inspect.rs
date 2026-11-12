@@ -441,6 +441,16 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
                 bad.push(format!("quad order ({p})"));
             }
         }
+        // The dictionary's term order: every section sorted in the order its
+        // generation names, the root's group counts, every routing key.
+        let mut dict_terms = 0u64;
+        if bad.is_empty() && only.is_none_or(|k| k == rete_core::v06::kind::DICT_DATA) {
+            let (n, problems) = rete_core::v06::check_dictionary(&reader)?;
+            dict_terms = n;
+            for p in problems {
+                bad.push(format!("dictionary ({p})"));
+            }
+        }
         // The class clusters: every row is in the run of its subject's class.
         let mut clusters = 0usize;
         if bad.is_empty()
@@ -460,10 +470,29 @@ pub(crate) fn verify_cmd(file: &str, section: Option<&str>) -> anyhow::Result<()
             } else {
                 String::new()
             };
+            let checked = if dict_terms > 0 {
+                format!(
+                    "{checked}, and the {dict_terms} dictionary terms are in {} order",
+                    if head[4] >= rete_core::v06::VERSION {
+                        "SPARQL"
+                    } else {
+                        "byte"
+                    }
+                )
+            } else {
+                checked
+            };
             let checked = if clusters > 0 {
                 format!("{checked}, and the {clusters} clustered orders hold their classes")
             } else {
                 checked
+            };
+            // The dictionary check rebuilt every dropped chunk and compared it.
+            let checked = match derived_chunks(&reader) {
+                Some((fams, chunks)) if dict_terms > 0 => format!(
+                    "{checked}, and the {chunks} derived-IRI chunks ({fams} families) rebuild byte for byte"
+                ),
+                _ => checked,
             };
             println!(
                 "OK — {}{checked} (format 0x{:02x})",
@@ -672,7 +701,9 @@ pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
 /// section table — where every part of the file is, and its digest.
 fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> {
     use rete_core::v06::{kind, open};
-    use rete_core::v06::{F_CLUSTERED, F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED};
+    use rete_core::v06::{
+        F_CLUSTERED, F_DERIVED, F_NAMED, F_QUAD_GRAPH_MAJOR, F_QUOTED, F_TEXT_NAMED,
+    };
     let (h, root) = open::read_front(reader)?;
     let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
     println!("format version: 0x{:02x}", h.version);
@@ -685,6 +716,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
         (F_TEXT_NAMED, "text covers named graphs"),
         (F_QUAD_GRAPH_MAJOR, "quad tiles graph-major"),
         (F_CLUSTERED, "subjects clustered by class"),
+        (F_DERIVED, "IRIs derived from the index"),
     ]
     .into_iter()
     .filter(|&(b, _)| h.flags & b != 0)
@@ -716,6 +748,7 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
             (tag::DICT, "dict"),
             (tag::INDEX, "index"),
             (tag::CLUSTER, "cluster"),
+            (tag::DERIVED, "derived"),
             (tag::QUAD, "quad"),
             (tag::LABELS, "labels"),
             (tag::TEXT, "text"),
@@ -756,10 +789,109 @@ fn print_v06_layout(reader: &LocalRangeReader, raw: bool) -> anyhow::Result<()> 
             hex(&s.digest)
         );
     }
-    print_leaf_counts(&root);
+    print_leaf_counts(&root, h.version);
+    print_term_order(&root, h.version);
     print_clusters(&root);
+    print_derived(&root, h.version);
+    print_derive_report(reader, &h);
     print_quad_orders(&h, &root);
     Ok(())
+}
+
+/// The derived IRI families of a file (SPEC.md section 5.3), from the root alone:
+/// each template, and how many of the subject-only dictionary chunks have no
+/// stored body.
+fn print_derived(root: &rete_core::v06::Root06, version: u8) {
+    use rete_core::v06::{decode_dict_root, tag};
+    let Some(unit) = root.unit(tag::DERIVED) else {
+        return;
+    };
+    let Some(dict) = root
+        .unit(tag::DICT)
+        .and_then(|d| decode_dict_root(d, version).ok())
+    else {
+        return;
+    };
+    let total = dict[rete_core::derived::SECTION].n_chunks;
+    let Ok(fams) = rete_core::derived::decode_families(unit, total) else {
+        println!("  derived IRIs : the root is malformed");
+        return;
+    };
+    for f in fams {
+        println!(
+            "  derived IRIs : {} chunk(s) of {total} subject-only chunks, no stored body",
+            f.chunk_count()
+        );
+        println!("    template  {}", f.spec());
+    }
+}
+
+/// `(families, chunks without a stored body)` of a derived file.
+fn derived_chunks(reader: &LocalRangeReader) -> Option<(usize, usize)> {
+    use rete_core::v06::{decode_dict_root, tag};
+    let (h, root) = rete_core::v06::open::read_front(reader).ok()?;
+    let unit = root.unit(tag::DERIVED)?;
+    let dict = decode_dict_root(root.unit(tag::DICT)?, h.version).ok()?;
+    let fams =
+        rete_core::derived::decode_families(unit, dict[rete_core::derived::SECTION].n_chunks)
+            .ok()?;
+    Some((fams.len(), fams.iter().map(|f| f.chunk_count()).sum()))
+}
+
+/// What the writer's detection of derived IRIs said about this file, from the
+/// build record: each family taken or left, and why.
+fn print_derive_report(reader: &LocalRangeReader, h: &rete_core::v06::Header06) {
+    let r = h.build_range();
+    if r.len == 0 {
+        return;
+    }
+    let Ok(rec) = rete_core::RangeReader::read_at(reader, r.offset, r.len) else {
+        return;
+    };
+    let Some(v) = rete_core::build_record::derive_report_text(&rec)
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    else {
+        return;
+    };
+    let n = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    println!(
+        "  derive-iris  : {} subjects in {} windows sampled; subject-only dictionary {} B of {} B",
+        n("sampled_subjects"),
+        n("sampled_windows"),
+        n("subject_only_dictionary_bytes"),
+        n("file_bytes")
+    );
+    if let Some(rule) = v.get("rule").and_then(|x| x.as_str()) {
+        println!("    rule      {rule}");
+    }
+    for t in v
+        .get("taken")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let s = |k: &str| t.get(k).map(|x| x.to_string()).unwrap_or_default();
+        println!(
+            "    taken     {} - {} of {} chunks, {} B removed ({} % of the file)",
+            s("template").trim_matches('"'),
+            s("chunks"),
+            s("of_chunks"),
+            s("bytes_removed"),
+            s("percent_of_file")
+        );
+    }
+    for t in v
+        .get("rejected")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let g = |k: &str| t.get(k).and_then(|x| x.as_str()).unwrap_or("");
+        match g("template") {
+            "" => println!("    not taken {}", g("why")),
+            tpl => println!("    not taken {tpl} - {}", g("why")),
+        }
+    }
 }
 
 /// The class runs of a clustered file, from the root alone: per permutation,
@@ -878,15 +1010,52 @@ fn codec_name(id: u8) -> String {
     }
 }
 
+/// The order of the dictionary's terms (SPEC.md section 5.2), and from `0x08`
+/// the terms per group of each section, which say where the order-exact id
+/// ranges are: blank nodes, IRIs, text literals, typed literals, triples.
+fn print_term_order(root: &rete_core::v06::Root06, version: u8) {
+    use rete_core::v06::{decode_dict_root, tag};
+    let sparql = rete_core::v06::term_order(version) == rete_core::term_order::TermOrder::Sparql;
+    println!(
+        "  term order   : {}",
+        if sparql {
+            "SPARQL (ids compare as ORDER BY does within a section, outside the typed literals)"
+        } else {
+            "bytewise (the stored token's bytes)"
+        }
+    );
+    if !sparql {
+        return;
+    }
+    if let Some(Ok(d)) = root.unit(tag::DICT).map(|u| decode_dict_root(u, version)) {
+        let names = ["shared", "subject-only", "object-only", "predicates"];
+        println!("    groups per section (blank, iri, text, typed, triple):");
+        for (n, s) in names.iter().zip(&d) {
+            println!(
+                "      {n:<13} {}",
+                s.groups
+                    .0
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+    }
+}
+
 /// Leaves per directory, from the root alone: `dict` (shared, subject, object,
 /// predicate), `index` and `quad` (per stored order), `text`.
-fn print_leaf_counts(root: &rete_core::v06::Root06) {
+fn print_leaf_counts(root: &rete_core::v06::Root06, root_version: u8) {
     use rete_core::v06::{
         decode_dict_root, decode_index_root, decode_quad_root, decode_text_root, tag,
     };
     let list = |v: Vec<usize>| v.iter().map(usize::to_string).collect::<Vec<_>>().join(" ");
     println!("  leaves       :");
-    if let Some(Ok(d)) = root.unit(tag::DICT).map(decode_dict_root) {
+    if let Some(Ok(d)) = root
+        .unit(tag::DICT)
+        .map(|u| decode_dict_root(u, root_version))
+    {
         println!(
             "    dict   {}",
             list(d.iter().map(|s| s.leaves.len()).collect())

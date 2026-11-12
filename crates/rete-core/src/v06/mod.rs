@@ -26,10 +26,13 @@
 
 pub mod annex;
 pub mod cluster;
+pub mod derived;
+pub mod dictcheck;
 pub(crate) mod neworders;
 pub mod open;
 pub mod parts;
 pub use cluster::check_clusters;
+pub use dictcheck::check_dictionary;
 pub use neworders::check_orders;
 pub mod write;
 
@@ -42,14 +45,33 @@ use crate::file::FileError;
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// The format byte writers stamp (the current generation).
-pub const VERSION: u8 = 0x07;
-/// The previous generation this reader still reads (no annex, label root in
-/// the root block).
+pub const VERSION: u8 = 0x08;
+/// The generation with the card annex, the label root section, the four quad
+/// orders and class clustering: dictionary terms in byte order.
+pub const VERSION_07: u8 = 0x07;
+/// The first generation of this layout (no annex, label root in the root
+/// block).
 pub const VERSION_06: u8 = 0x06;
 
 /// Does this module read format byte `v`?
 pub fn reads(v: u8) -> bool {
-    v == VERSION_06 || v == VERSION
+    (VERSION_06..=VERSION).contains(&v)
+}
+
+/// Does generation `v` have what `0x07` added (label root, card annex, the
+/// graph-last quad orders, clustering)? `0x08` keeps all of it.
+pub fn has_v07(v: u8) -> bool {
+    v >= VERSION_07
+}
+
+/// The term order of dictionary sections in generation `v` (SPEC.md §5):
+/// byte order up to `0x07`, the SPARQL order from `0x08`.
+pub fn term_order(v: u8) -> crate::term_order::TermOrder {
+    if v >= VERSION {
+        crate::term_order::TermOrder::Sparql
+    } else {
+        crate::term_order::TermOrder::Bytewise
+    }
 }
 /// Fixed header length.
 pub const HEADER_LEN: usize = 128;
@@ -59,7 +81,7 @@ pub const FIRST_READ: u64 = 128 * 1024;
 /// The 8-byte footer of the current generation: the generation, then `RETE`
 /// — so every reader that confirms a length by the file's last four bytes
 /// finds the magic there.
-pub const FOOTER: [u8; 8] = *b"\x07\x00\x00\x00RETE";
+pub const FOOTER: [u8; 8] = *b"\x08\x00\x00\x00RETE";
 
 /// The footer of generation `version`.
 pub fn footer(version: u8) -> [u8; 8] {
@@ -96,6 +118,13 @@ pub const F_QUAD_GRAPH_MAJOR: u8 = 0b1000;
 /// clustered by class: their tiles are in `(cluster, s, p, o)` order, listed
 /// by the cluster root ([`tag::CLUSTER`]).
 pub const F_CLUSTERED: u8 = 0b1_0000;
+/// Header flag (`0x08`): the subject-only dictionary section has chunks with no
+/// stored body, derived from the index ([`crate::derived`], [`tag::DERIVED`]).
+/// A reader that does not know the flag refuses the file by name.
+pub const F_DERIVED: u8 = 0b10_0000;
+/// Every header flag this build knows.
+pub const F_KNOWN: u8 =
+    F_NAMED | F_QUOTED | F_TEXT_NAMED | F_QUAD_GRAPH_MAJOR | F_CLUSTERED | F_DERIVED;
 /// `ClusterOrder::si` of the quad index's SPOG (its quad slot).
 pub const QUAD_SPOG: usize = crate::quad7::FIRST_LAST_SLOT;
 /// The most classes a clustered permutation has a run for (the rest are run 0).
@@ -194,6 +223,8 @@ pub mod tag {
     pub const TEXT: u8 = 5;
     /// `0x07`: the class clusters of the subject-leading permutations.
     pub const CLUSTER: u8 = 6;
+    /// `0x08`: the derived IRI families of the subject-only dictionary section.
+    pub const DERIVED: u8 = 7;
 }
 
 /// The parsed 128-byte header.
@@ -270,6 +301,16 @@ impl Header06 {
         }
         if u16::from_le_bytes([b[6], b[7]]) as usize != HEADER_LEN {
             return Err(FileError::Container("0x06 header length is not 128"));
+        }
+        if b[5] & !F_KNOWN != 0 {
+            return Err(FileError::Container(
+                "unsupported .rete feature: this Rete build does not know that header flag",
+            ));
+        }
+        if b[5] & F_DERIVED != 0 && b[4] < VERSION {
+            return Err(FileError::Container(
+                "derived IRIs are a format 0x08 feature, this header says an older format",
+            ));
         }
         let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
@@ -418,10 +459,10 @@ pub fn id_position_names() -> [&'static str; 4] {
 pub fn content_hash(h: &Header06) -> [u8; 16] {
     let b = h.to_bytes();
     let mut x = blake3::Hasher::new();
-    x.update(if h.version == VERSION_06 {
-        b"rete/0x06"
-    } else {
-        b"rete/0x07"
+    x.update(match h.version {
+        VERSION_06 => b"rete/0x06",
+        VERSION_07 => b"rete/0x07",
+        _ => b"rete/0x08",
     });
     x.update(&b[4..8]);
     x.update(&b[48..80]);
@@ -685,13 +726,21 @@ pub struct DictSecRoot {
     pub data_len: u64,
     /// Leaves: `(leaf, first run, chunk offset within the section's data, first key)`.
     pub leaves: Vec<(LeafRef, usize, u64, Vec<u8>)>,
+    /// `0x08`: terms per group (blank, IRI, text, typed, triple), which say
+    /// where the order-exact id ranges are. All zero before `0x08`.
+    pub groups: crate::term_order::GroupCounts,
 }
 
-/// Encode the dictionary unit root.
-pub fn encode_dict_root(secs: &[DictSecRoot; 4]) -> Vec<u8> {
+/// Encode the dictionary unit root of generation `version`.
+pub fn encode_dict_root(secs: &[DictSecRoot; 4], version: u8) -> Vec<u8> {
     let mut o = Vec::new();
     for s in secs {
         write_uvarint(&mut o, s.term_count as u64);
+        if version >= VERSION {
+            for n in s.groups.0 {
+                write_uvarint(&mut o, n as u64);
+            }
+        }
         write_uvarint(&mut o, s.restart_interval as u64);
         write_uvarint(&mut o, s.n_chunks as u64);
         write_uvarint(&mut o, s.data_off);
@@ -709,12 +758,22 @@ pub fn encode_dict_root(secs: &[DictSecRoot; 4]) -> Vec<u8> {
     o
 }
 
-/// Decode the dictionary unit root.
-pub fn decode_dict_root(p: &[u8]) -> Result<[DictSecRoot; 4], FileError> {
+/// Decode the dictionary unit root of generation `version`.
+pub fn decode_dict_root(p: &[u8], version: u8) -> Result<[DictSecRoot; 4], FileError> {
     let mut c = Cur::new(p);
     let mut out: [DictSecRoot; 4] = Default::default();
     for s in out.iter_mut() {
         s.term_count = c.u32v()?;
+        if version >= VERSION {
+            for n in s.groups.0.iter_mut() {
+                *n = c.u32v()?;
+            }
+            if s.groups.total() != s.term_count as u64 {
+                return Err(FileError::Container(
+                    "0x08 dict term groups do not add up to the term count",
+                ));
+            }
+        }
         s.restart_interval = c.u32v()?;
         s.n_chunks = c.count(u32::MAX as u64)?;
         s.data_off = c.uv()?;

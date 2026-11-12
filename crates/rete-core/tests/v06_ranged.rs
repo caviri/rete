@@ -494,9 +494,10 @@ fn a_sequential_walk_reads_ahead() {
     // Round trips: each batch is one, each read outside a batch another.
     let rounds = batches.iter().filter(|b| b.iter().any(in_dict)).count() + fetched - batched;
     // Every chunk of the subject-only section, faulted in order.
-    let (_, root) = read_front(&SliceReader::new(&image)).unwrap();
+    let (h, root) = read_front(&SliceReader::new(&image)).unwrap();
     let units =
-        rete_core::v06::decode_dict_root(root.unit(rete_core::v06::tag::DICT).unwrap()).unwrap();
+        rete_core::v06::decode_dict_root(root.unit(rete_core::v06::tag::DICT).unwrap(), h.version)
+            .unwrap();
     let chunks = units[1].n_chunks as usize;
     assert!(chunks > 8, "the fixture needs many chunks ({chunks})");
     // One round trip per chunk without the read-ahead; with it, the

@@ -113,7 +113,7 @@ and the small unit roots.
 |---|---|---|
 | 0 | 4 | magic `RETE` |
 | 4 | 1 | format version: `0x07` (written), or `0x06` (read, §4.10) |
-| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 `0x07`: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6) |
+| 5 | 1 | flags: bit0 named graphs (in the quad index, §6.5); bit1 RDF-star quoted triples; bit2 the text index also covers the named graphs' literals (§6.3); bit3 quad tiles are clustered graph-major (§4.5); bit4 `0x07`: the subject-leading permutations and the quad index's SPOG are clustered by class (§6.6); bit5 `0x08`: the subject-only dictionary section has chunks with no stored body, derived from the index (§5.3) |
 | 6 | 2 | header length (128) |
 | 8 | 16 | content hash (§4.7) — also an ETag-like id |
 | 24 | 8 | file length (a client needs no `Content-Range` and no `HEAD`) |
@@ -200,14 +200,16 @@ that does.
 
 The **unit roots** are the first level of every two-level directory, plus the
 small fixed facts that would otherwise cost a read. Tags: `1` dictionary, `2`
-index, `3` quad index, `4` label index, `5` text index, `6` class clusters (`0x07`, only when header flag bit4 is set). All integers are
+index, `3` quad index, `4` label index, `5` text index, `6` class clusters (`0x07`, only when header flag bit4 is set), `7` derived IRI families (`0x08`, only when header flag bit5 is set). All integers are
 unsigned LEB128 varints, byte strings are length-prefixed.
 
 - **Dictionary** (always four sections, in the order shared, subject-only,
-  object-only, predicates): term count, restart interval, chunk count, the
-  section's offset and length within `dict`, then per leaf: entry count, offset
-  and stored length within `dict-leaves`, the first chunk's first run, its data
-  offset within the section, and its separator key.
+  object-only, predicates): term count, then in `0x08` the five **group counts**
+  (§5.2: blank nodes, IRIs, text literals, typed literals, quoted triples; they
+  add up to the term count), restart interval, chunk count, the section's offset
+  and length within `dict`, then per leaf: entry count, offset and stored length
+  within `dict-leaves`, the first chunk's first run, its data offset within the
+  section, and its separator key (a separator in the section's order, §5.2).
 - **Index** (one per stored permutation): permutation number, tile count, the
   permutation's offset and length within `index`, then per leaf: entry count,
   offset, stored length, the first tile's lowest and the last tile's highest
@@ -219,6 +221,10 @@ unsigned LEB128 varints, byte strings are length-prefixed.
   of each of the *k* + 1 runs, run 0 first (§6.6). The runs partition the
   order's tiles, in order; no leaf of the index unit root (or, for SPOG, of the
   quad unit root) spans two runs.
+- **Derived IRI families** (`0x08`, flag bit5): the number of families, and per family:
+the number of holes *n*, the first literal piece, then per hole its predicate
+IRI, its object-IRI prefix and the literal piece after it, then the number of
+runs and each run's first chunk and chunk count (§5.3).
 - **Quad index**: graph count, quad count, graphs per directory block (1,024 in
   `0x06`, 8,192 in `0x07`), the block index `P0` (§6.5), the graph directory's
   length, then per order: order number, tile count and per leaf: entry count,
@@ -380,12 +386,12 @@ to re-tile every permutation instead of copying its tiles.
 ### 4.7 Content hash and verify
 
 ```
-content hash = BLAKE3("rete/0x07" ‖ header[4..8] ‖ header[48..80]
+content hash = BLAKE3("rete/0x08" ‖ header[4..8] ‖ header[48..80]
                       ‖ card length (u32) ‖ card digest
                       ‖ root length (u32) ‖ root digest)[0..16]
 ```
 
-(`"rete/0x06"` for a `0x06` file.) `header[4..8]` is the version, the flags and
+(`"rete/0x07"` and `"rete/0x06"` for a `0x07` and a `0x06` file.) `header[4..8]` is the version, the flags and
 the header length;
 `header[48..80]` the counts, the mask, the codecs, the pyramid levels and the
 presence bits. Through the root digest the hash covers every section digest, so
@@ -665,8 +671,8 @@ Other differences: the version byte, the footer (`07 00 00 00 "RETE"`), the
 hash domain (`"rete/0x07"`) and the `format_version` a card is stamped with
 (`7`).
 
-**Compatibility.** Writers write `0x07` only; the reader reads `0x05`, `0x06` and
-`0x07`. A reader that predates `0x07` refuses the file at the header, by name:
+**Compatibility.** (As of `0x07`; §4.11 is the current one.) Writers wrote `0x07`
+only; the reader read `0x05`, `0x06` and `0x07`. A reader that predates `0x07` refuses the file at the header, by name:
 `unsupported .rete format 0x07; this Rete build reads 0x05..=0x06`. It cannot
 read a `0x07` file as a `0x06` one with an unknown section, because the root's
 label unit no longer holds the root node. There is no backward-compatibility
@@ -678,6 +684,41 @@ sort pass each (external past 100 M quads) and dropping the other graph-leading
 orders; the catalog is converted in step, and the `0x06` reader is removed once
 it is.
 
+### 4.11 Format `0x08` and compatibility
+
+`0x08` is `0x07` with one change: **the dictionary's term order** (§5.2). Every
+other section, leaf and unit root is laid out as in `0x07`, apart from the
+dictionary unit root, which gains the five group counts per section (§4.2), and
+the routing keys of the dictionary's chunks, which are separators in the new
+order. The same code reads `0x06`, `0x07` and `0x08`: the header's version byte
+says which order a file's dictionary is in.
+
+Other differences: the version byte, the footer (`08 00 00 00 "RETE"`), the hash
+domain (`"rete/0x08"`) and the `format_version` a card is stamped with (`8`).
+
+**Compatibility.** Writers write `0x08` only; the reader reads `0x05`, `0x06`,
+`0x07` and `0x08`. A reader that predates `0x08` refuses the file at the header,
+by name: `unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`
+(0.6.0 says exactly that). There is no backward-compatibility promise before
+1.0.0, and none is possible here: a `0x07` reader would search the dictionary in
+byte order and miss terms. `rete convert` turns a `0x05`, `0x06` or `0x07` file
+into a `0x08` one. Because every term gets a new id, it is a **re-encode, not a
+copy**: the statements are walked through the source and written by the
+memory-bounded builder (sorted terms, every permutation, the quad orders, the
+label and text indexes, the schema and the class clusters rebuilt for the new
+ids; the card, its annex and the build record kept), inside `--memory-budget-mb`
+with its spill in `--tmp-dir`. A source with a community pyramid is re-encoded in
+memory. Converting a `0x08` file again rewrites it under the current leaf policy
+and gives the same bytes.
+
+**Derived IRIs** (§5.3) are an optional part of `0x08`: a file may drop the
+bodies of subject-only dictionary chunks that its index spells out. The file says
+so in header flag bit5 and root unit `7`. A reader that knows `0x08` but not the
+flag refuses the header by name (`unsupported .rete feature`), because without
+the index it would read empty terms. `rete convert` carries derived chunks over
+as they are, and `rete convert` and `rete build` find derived IRIs by
+themselves (§5.3; `--no-derive-iris` turns that off).
+
 ---
 
 ## 5. Dictionary
@@ -686,9 +727,11 @@ it is.
 
 *Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.*
 
-- Terms are **sorted within each kind** and **front-coded** (store the shared
-  prefix length + the suffix vs. the previous term). Cheap to compress, supports
-  binary search for `string → id`, and prefix-friendly for IRI namespaces.
+- Terms are **sorted within each kind**, in the order of §5.2, and
+  **front-coded** (store the shared prefix length + the suffix vs. the previous
+  term). Cheap to compress, supports binary search for `string → id`, and
+  prefix-friendly for IRI namespaces. Up to `0x07` the order is the bytes of the
+  stored token; from `0x08` it is the SPARQL `ORDER BY` order.
 - IDs are assigned so that **shared terms get the lowest IDs**, then subjects,
   then objects — this lets a triple pattern know a term's role from its ID range.
 
@@ -734,8 +777,9 @@ it is.
 ### 5.1 Section encoding (front-coded, restart-indexed)
 
 Each dictionary *kind* (shared / subjects / objects / predicates / graphs) is one
-**section**. Within a section terms are UTF-8, **sorted ascending**, deduped, and
-assigned **dense 1-based IDs** in that order (ID `0` is reserved as "absent").
+**section**. Within a section terms are UTF-8, **sorted ascending in the section's
+order** (§5.2), deduped, and assigned **dense 1-based IDs** in that order (ID `0`
+is reserved as "absent").
 
 Terms are stored in **runs of `R` entries** (default `R = 16`, the *restart
 interval*). Each run begins at a **restart point** storing the full term; the
@@ -757,6 +801,172 @@ lookups stay within one run after a binary search over restarts:
 
 Restart points are also the natural **chunk/compression boundaries**: a client
 fetches just the run(s) covering the IDs/terms a query touches.
+
+### 5.2 Term order (`0x05`-`0x07` bytes, `0x08` SPARQL)
+
+IDs are lexical ranks, so the order a section uses decides what comparing two
+IDs means. Formats `0x05` to `0x07` sort the **bytes of the stored token**
+(`<iri>`, `_:b`, `"lit"` with its suffix). That is not the order SPARQL's
+`ORDER BY` uses: an IRI's closing `>` is above `-`, `.`, `/` and the digits, so
+`<…/Ng8130_provenance>` sorts before `<…/Ng8>`, which is the case for every
+nanopublication; a closing quote sorts `"a b"` before `"a"`; literals sort
+before IRIs before blank nodes. An `ORDER BY ?s` over a result therefore had to
+decode every key (181 MB of dictionary for the 653 k subjects of one class of the
+2018 nanopub dump) to sort it.
+
+`0x08` sorts each section so that **ID order is the engine's `ORDER BY` order**
+(SPARQL 1.1 §15.1: blank nodes, then IRIs, then literals) wherever that order is
+a function of the term alone. A term belongs to one **group**; groups are
+ordered as listed, and a group sorts as shown:
+
+| group | terms | sorted by |
+|---|---|---|
+| 0 blank | `_:…` | the token's bytes |
+| 1 IRI | `<…>` | the IRI text without `<` and `>`, by code point (= UTF-8 byte order) |
+| 2 text | a simple, `xsd:string` or language-tagged literal | the lexical form with its escapes resolved (code point), then `rdf:dirLangString` < `rdf:langString` < `xsd:string`, then the language tag lower-cased, then the token |
+| 3 typed | any other literal (numbers, booleans, dates, other datatypes) and anything that is no term | the token's bytes |
+| 4 triple | `<< … >>` | the token's bytes |
+
+So `<…/Ng8>` sorts before `<…/Ng8130_provenance>`, `"a"` before `"a b"`, and
+`"a"@en` before `"a"`. The comparison is total (two terms compare equal only if
+they are the same bytes), UTF-8 byte order equals code point order, and the
+empty string sorts first (a chunk directory's first key is empty).
+
+Groups 0, 1, 2 and 4 are **order-exact**: two terms of one section that are in
+them compare as their IDs do. Group 3 is not, because `ORDER BY` puts numbers
+and dates by value, and the dictionary cannot. A reader that sorts by ID
+decodes group 3 and compares across sections (the shared, subject-only and
+object-only sections are three separately sorted lists with their own ID
+ranges); it decodes only what it must. The engine's text order
+(`sparql::value::order_cmp`) and this one are the same function on group 2, and
+a test holds them to it.
+
+The dictionary unit root (§4.2) records, per section, how many terms are in each
+group. They give the ID ranges: IDs `1..=g0+g1` are blank nodes and IRIs,
+`..=+g2` text literals, `..=+g3` typed literals, and the rest quoted triples.
+They replace the old assumption that literals are a prefix of a section: the
+literal object IDs are the run after the IRIs. `rete verify` checks that every
+section is strictly increasing in its order and that the counts are what the
+terms say.
+
+**Chunk routing.** A chunk's directory key is a *separator* `k` with
+`last(prev) < k ≤ first(this)` **in the section's order**. Between two IRIs it
+is the shortest separator of their texts written as an IRI (`<` + text + `>`);
+between two text literals the shortest separator of their lexical forms written
+as a simple literal; at any other boundary the first term itself. A lookup
+routes and searches with the order the file's version names, and a reader must
+not search a `0x08` section bytewise.
+
+Front coding is not hurt: terms with a shared prefix stay adjacent. The 2018
+nanopub dump's dictionary goes from 995,549,459 to 994,962,742 bytes (-0.06 %), the
+OpenCitations sample's from 26.16 to 26.03 MB (-0.5 %).
+
+### 5.3 Derived IRI families (`0x08`, optional)
+
+Some IRIs are a function of terms that are in the file anyway. The OpenCitations
+Index names a citation `https://w3id.org/oc/index/ci/<citing>-<cited>`, and the
+two OMIDs are the objects of the citation's `cito:hasCitingEntity` and
+`cito:hasCitedEntity` triples; stored as text those names are 99.7 % of that
+file's dictionary. A **family** says how such an IRI is built, and the file stops
+storing the ones that follow it:
+
+- a **template**: `n + 1` literal pieces around `n` holes. The first piece starts
+  with `<` and the last ends with `>` (a term is its token); the pieces between
+  holes are not empty;
+- `n` **inputs**, one per hole: a predicate IRI and an object-IRI prefix. The text
+  of a hole is what follows the prefix in the object of the subject's triple with
+  that predicate, which must be one IRI under the prefix with something after it.
+
+Nobody writes a family. The writer finds them in the data, in the same pass on
+every dataset, and stores the ones it takes. For the OpenCitations Index it finds
+`https://w3id.org/oc/index/ci/{…/hasCitingEntity|https://w3id.org/oc/meta/br/}-{…/hasCitedEntity|https://w3id.org/oc/meta/br/}`
+by itself; for any other file it finds what that file spells, or nothing.
+`--no-derive-iris` turns the pass off.
+
+**Finding families.** The pass reads the subject-only section, the one section
+that can be derived (below), and nothing else of the file's meaning.
+
+1. *Sample.* 64 windows of 16 consecutive subject-only ids, spread over the
+   whole section by a golden-ratio sequence (deterministic, and any prefix of the
+   windows is spread too). The rows of those subjects come from PSO, or from an
+   unclustered SPO; with neither, nothing is derived. The sample reads at most
+   1,536 index tiles.
+2. *Shape of a subject.* For a sampled subject, look at the predicates it has
+   exactly one object for, and at the objects that are IRIs. The longest suffix
+   of such an object's IRI (at least two bytes) that occurs inside the subject's
+   own IRI is that predicate's hole; holes may not overlap, the longest wins. A
+   hole starts at its first character that is not ASCII punctuation: a separator
+   in front of an id belongs to the literal piece and to the prefix. What is left
+   of the subject's IRI is the literal pieces, and the part of the object's IRI
+   before the hole is the input's prefix. That is the subject's **signature**.
+   A predicate with more than one object for the subject is never a candidate,
+   and literal objects are not looked at: their lexical form is not their text
+   in the file, since the N-Triples escapes of a literal and of an IRI differ,
+   and nothing here needs them.
+3. *Candidates.* A window fits a signature when every subject in it has it. A
+   signature's estimate is the section's stored bytes times the share of the
+   windows it fits. The (at most four) best signatures whose estimate reaches the
+   threshold become candidates.
+4. *Verification.* A candidate is checked over the whole section, as the next
+   paragraph says: every term is rebuilt from the index and the object sections
+   and compared byte for byte. A chunk in which one term does not fit stays
+   stored, whole. The family is kept only if the chunks that did derive remove at
+   least the threshold.
+
+**The decision rule.** A family is taken when the bytes it removes are at least
+5 % of the file and at least 256 KiB, and for no other reason: a derived term
+costs a lookup two requests more and `rete export` about twice the time (§5.3,
+last paragraph), so a small saving is not worth it. The rule and the numbers are
+the writer's, not a setting; the only switch is `--no-derive-iris`. Nothing in
+it names a dataset, an IRI or a predicate. The build record (key `derive_iris`)
+and `rete info` say what was found: the sample, each family taken with its chunks
+and the bytes it removed, and each candidate left with its reason (an estimate
+under the threshold, a verification that removed too little, no PSO or SPO).
+
+**What is kept and what goes.** Only the subject-only section holds derived
+chunks, and only whole chunks. Every id, the section's term count, its group
+counts, its restart interval and its chunk directory (every chunk's first run and
+routing separator) are exactly what they are without derivation: an id is still
+the rank of its term, and `ORDER BY` on ids is as exact as before (§5.2). What
+goes is the **body** of each chunk whose every term the writer rebuilt from the
+index and the object sections and found equal, byte for byte, and which splits
+back into the same holes. The directory entry of such a chunk has stored length
+`0`, and the root unit `7` lists the chunks as runs of the family. A chunk with
+one term that does not derive stays stored, whole. A family that is not taken
+is not written. Nothing outside the subject-only section is derived,
+and the inputs are objects, so a derived term never needs another.
+
+**Decoding an id.** Subject `s` is the shared count plus the id's section-local
+number. For each input, read the one `(s, predicate, ?)` row from the index (SPO
+or PSO), decode the object, strip the prefix, and fill the template. A subject
+with no row or more than one for an input does not derive, and the writer has not
+dropped its chunk. Every reader path does this: a batched decode (a result page,
+`rete export`, a `FILTER` that reads the term) first reads the tiles of all its
+ids' rows in one batch and the objects' dictionary chunks in another.
+
+**Looking a string up.** The directory routes the string to a chunk as always. If
+that chunk is stored, nothing differs. If it is derived, the string is split
+along the template; each hole's object IRI is looked up in the dictionary; the
+subjects of the first input's `(?, predicate, object)` rows that lie in the
+chunk's id range are the candidates, and the first one whose other inputs also
+hold is the id. A string that does not fit the template, or names an IRI the file
+does not have, is absent. The writer checked that the split of a derived term is
+the holes it was built from, so this finds every one.
+
+`rete verify` rebuilds every dropped chunk and checks the terms like any other:
+strictly ascending in the section's order, the routing separators, the group
+counts. `rete info` lists each family, its template and how many chunks it
+dropped. The one-pattern ranged query (`Rete::query_ranged`, which reads the
+whole dictionary in one request and holds no index) refuses a file with derived
+chunks by name; every other reader, the browser's among them, reads it.
+
+The cost moves from the dictionary to the index. A list of the works that cite
+one work reads the citation names from the rows the query reads anyway and no
+longer one dictionary chunk per citation; a lookup of one citation by name reads
+the two OMIDs' chunks and the tiles that hold its rows instead of its own chunk
+(measured on a sample in the pull request that added this, and in
+`dev/session-notes/DICT-DERIVED-IRIS.md`).
+
 
 ---
 

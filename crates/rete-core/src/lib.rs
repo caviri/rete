@@ -33,6 +33,8 @@ pub mod card_queries;
 #[doc(hidden)]
 pub mod chunk_cache;
 #[doc(hidden)]
+pub mod derived;
+#[doc(hidden)]
 pub mod dict;
 #[doc(hidden)]
 pub mod dictionary;
@@ -93,6 +95,7 @@ pub mod sparql;
 /// from it (native targets only).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod sysmem;
+pub mod term_order;
 #[doc(hidden)]
 pub mod terms;
 #[doc(hidden)]

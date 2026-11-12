@@ -103,7 +103,7 @@ fn every_build_writes_the_four_orders_and_answers_alike() {
         .success();
 
     for f in [&a, &b, &c, &d] {
-        assert_eq!(std::fs::read(f).unwrap()[4], 7, "{f:?}");
+        assert_eq!(std::fs::read(f).unwrap()[4], 8, "{f:?}");
         rete().arg("verify").arg(f).assert().success();
         let lines = quad_order_lines(f);
         let names: Vec<&str> = lines

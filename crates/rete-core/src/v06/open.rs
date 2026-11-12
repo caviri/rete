@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::derived;
 use crate::dict::{ChunkLeaf, ChunkedSection, LeafedChunks, SectionMeta};
 use crate::dictionary::Dictionary;
 use crate::file::{decompress_bounded, ByteRange, FileError};
@@ -192,6 +193,27 @@ impl V06File {
         self.reader.read_at(r.offset, r.len).ok()
     }
 
+    /// The derived IRI families the root lists (SPEC.md section 5.3), checked
+    /// against the header flag and the chunk count of the subject-only section.
+    pub fn derived_families(&self, n_chunks: usize) -> Result<Vec<derived::Family>, FileError> {
+        let flagged = self.h.flags & F_DERIVED != 0;
+        let Some(unit) = self.root.unit(tag::DERIVED) else {
+            if flagged {
+                return Err(FileError::Container(
+                    "0x08 derived-IRI flag without a derived-IRI root",
+                ));
+            }
+            return Ok(Vec::new());
+        };
+        if !flagged || self.h.version < VERSION {
+            return Err(FileError::Container(
+                "derived-IRI root without the derived-IRI header flag",
+            ));
+        }
+        derived::decode_families(unit, n_chunks)
+            .map_err(|_| FileError::Container("0x08 derived-IRI root is malformed"))
+    }
+
     /// The four dictionary sections, two-level, chunks faulted on demand.
     /// `want[si] == false` leaves that section empty (a search-only open).
     pub fn dictionary(&self, want: [bool; 4]) -> Result<Dictionary, FileError> {
@@ -199,7 +221,10 @@ impl V06File {
             .root
             .unit(tag::DICT)
             .ok_or(FileError::Container("0x06 file has no dictionary"))?;
-        let roots = decode_dict_root(unit)?;
+        let roots = decode_dict_root(unit, self.h.version)?;
+        let order = term_order(self.h.version);
+        let fams = self.derived_families(roots[derived::SECTION].n_chunks)?;
+        let elided = derived::elided_runs(&fams);
         let leaves_base = self.section(kind::DICT_LEAVES).map_or(0, |r| r.offset);
         let data_base = self.section(kind::DICT_DATA).map_or(0, |r| r.offset);
         let cache = crate::chunk_cache::ChunkCache::unlimited_arc();
@@ -214,13 +239,10 @@ impl V06File {
                 restart_offsets: Vec::new(),
             };
             if !want[si] {
-                sections.push(ChunkedSection::from_parts(
-                    meta,
-                    Vec::new(),
-                    None,
-                    cache.clone(),
-                    si as u8,
-                ));
+                sections.push(
+                    ChunkedSection::from_parts(meta, Vec::new(), None, cache.clone(), si as u8)
+                        .with_order(order),
+                );
                 dirs.push(None);
                 continue;
             }
@@ -256,10 +278,17 @@ impl V06File {
                     .map(|b| decompress_bounded(codec, b, max).ok())
                     .collect()
             });
-            sections.push(
+            let mut section =
                 ChunkedSection::leafed(meta, dir.clone(), loader, cache.clone(), si as u8)
-                    .with_bulk_loader(bulk),
-            );
+                    .with_bulk_loader(bulk)
+                    .with_order(order);
+            if order == crate::term_order::TermOrder::Sparql {
+                section = section.with_groups(s.groups);
+            }
+            if si == derived::SECTION {
+                section = section.with_elided(elided.clone());
+            }
+            sections.push(section);
             dirs.push(Some(dir));
         }
         let arr: [ChunkedSection; 4] = sections
@@ -301,6 +330,9 @@ impl V06File {
         });
         let mut dict = Dictionary::from_chunked_sections(arr).with_multi_bulk_loader(multi);
         dict.set_has_quoted_triples(self.h.flags & F_QUOTED != 0);
+        if want[derived::SECTION] {
+            dict = dict.with_derived(fams);
+        }
         Ok(dict)
     }
 
@@ -589,7 +621,7 @@ impl V06File {
                 leaves,
                 data,
                 self.h.internal_codec,
-                self.h.version == VERSION,
+                has_v07(self.h.version),
             )
             .and_then(|v| v.with_clusters(&clusters))
             .map(|mut v| {

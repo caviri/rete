@@ -65,6 +65,14 @@ fn quads(n: usize, graphs: bool) -> Vec<RawQuad> {
     q
 }
 
+/// The in-memory `0x05` image of a build whose dictionary is in byte order: the
+/// input of the generations that are (`0x06`, `0x07`).
+fn legacy_image(n: usize, graphs: bool, text: bool, labels: bool, pyramid: bool) -> Vec<u8> {
+    crate::term_order::with_builder_order(crate::term_order::TermOrder::Bytewise, || {
+        image(n, graphs, text, labels, pyramid)
+    })
+}
+
 fn image(n: usize, graphs: bool, text: bool, labels: bool, pyramid: bool) -> Vec<u8> {
     let mut o = AssembleOptions::sectioned();
     o.with_text_index = text;
@@ -145,7 +153,7 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
     let a = convert_image(&v5, WriteOpts::default()).unwrap();
     let b = convert_image(&v5, WriteOpts::default()).unwrap();
     assert_eq!(a, b);
-    // `0x07` is order-major whatever the option says.
+    // `0x07`+ is order-major whatever the option says.
     let mut seven = WriteOpts {
         quad: write::QuadClustering::GraphMajor,
         ..WriteOpts::default()
@@ -153,7 +161,9 @@ fn conversion_is_deterministic_and_idempotent_on_layout() {
     assert_eq!(convert_image(&v5, seven.clone()).unwrap(), a);
     seven.quad = write::QuadClustering::OrderMajor;
     assert_eq!(convert_image(&v5, seven).unwrap(), a);
-    // `0x06`: order-major and graph-major hold the same content.
+    // `0x06` (a byte-ordered dictionary): order-major and graph-major hold the
+    // same content.
+    let v5 = legacy_image(500, true, true, true, true);
     let mut o = WriteOpts {
         quad: write::QuadClustering::OrderMajor,
         ..v06_opts()
@@ -442,11 +452,11 @@ fn every_section_records_its_largest_block() {
 /// Leaves per group of a `0x06` image: dictionary sections, index orders, quad
 /// orders and the text index, from the root alone.
 fn leaf_counts(v6: &[u8]) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
-    let (_, root) = open::read_front(&crate::reader::SliceReader::new(v6)).unwrap();
+    let (h, root) = open::read_front(&crate::reader::SliceReader::new(v6)).unwrap();
     let dict = root
         .unit(tag::DICT)
         .map(|u| {
-            decode_dict_root(u)
+            decode_dict_root(u, h.version)
                 .unwrap()
                 .iter()
                 .map(|s| s.leaves.len())
@@ -611,6 +621,13 @@ fn v06_opts() -> WriteOpts {
     }
 }
 
+fn v07_opts() -> WriteOpts {
+    WriteOpts {
+        version: VERSION_07,
+        ..WriteOpts::default()
+    }
+}
+
 /// Records every range read (offset, length).
 struct Recording {
     inner: BytesReader,
@@ -642,13 +659,19 @@ fn front_of(bytes: &[u8]) -> (Header06, Root06) {
 }
 
 #[test]
-fn writers_write_0x07_and_the_label_root_has_its_own_section() {
+fn writers_write_0x08_and_the_label_root_has_its_own_section() {
     let v5 = image(1500, true, true, true, false);
-    let v7 = convert_image(&v5, WriteOpts::default()).unwrap();
+    let v8 = convert_image(&v5, WriteOpts::default()).unwrap();
+    assert_eq!(v8[4], 8);
+    assert_eq!(&v8[v8.len() - 8..], &footer(8));
+    assert_eq!(front_of(&v8).0.version, VERSION);
+    // The same build as 0x07 (byte-ordered dictionary).
+    let v5 = legacy_image(1500, true, true, true, false);
+    let v7 = convert_image(&v5, v07_opts()).unwrap();
     assert_eq!(v7[4], 7);
     assert_eq!(&v7[v7.len() - 8..], &footer(7));
     let (h, root) = front_of(&v7);
-    assert_eq!(h.version, VERSION);
+    assert_eq!(h.version, VERSION_07);
     assert!(root.section(kind::LABEL_ROOT).is_some());
     let unit = decode_label_root(root.unit(tag::LABELS).unwrap()).unwrap();
     assert_eq!(unit.head.len(), 32, "the root keeps the preamble only");
@@ -669,8 +692,8 @@ fn writers_write_0x07_and_the_label_root_has_its_own_section() {
     // The root node (a few bytes on this small file) is out of the root; the
     // price is one 38-byte table entry. (A file without named graphs: the quad
     // orders of 0x07 are a different set from 0x06's and change the root too.)
-    let plain = image(1500, false, true, true, false);
-    let (h7p, _) = front_of(&convert_image(&plain, WriteOpts::default()).unwrap());
+    let plain = legacy_image(1500, false, true, true, false);
+    let (h7p, _) = front_of(&convert_image(&plain, v07_opts()).unwrap());
     let (h6p, _) = front_of(&convert_image(&plain, v06_opts()).unwrap());
     assert!(h7p.root_len as usize <= h6p.root_len as usize + SEC_ENTRY_LEN);
 }
@@ -683,16 +706,19 @@ fn convert_0x06_to_0x07_keeps_every_answer() {
         (true, false, true, false),
         (false, true, true, false),
     ] {
-        let v5 = image(1200, graphs, text, labels, pyramid);
+        let v5 = legacy_image(1200, graphs, text, labels, pyramid);
         let v6 = convert_image(&v5, v06_opts()).unwrap();
         let src = crate::reader::SliceReader::new(&v6);
         let mut out = std::io::Cursor::new(Vec::new());
-        write::rewrite(&src, &mut out, WriteOpts::default()).unwrap();
+        write::rewrite(&src, &mut out, v07_opts()).unwrap();
         let v7 = out.into_inner();
         assert_eq!(v7[4], 7);
         assert!(crate::file::verify(&v7).unwrap());
         // Identical to converting the 0x05 source straight to 0x07.
-        assert_eq!(v7, convert_image(&v5, WriteOpts::default()).unwrap());
+        assert_eq!(v7, convert_image(&v5, v07_opts()).unwrap());
+        // A byte-ordered dictionary is not a 0x08 one: that takes a re-encode.
+        let mut sink = std::io::Cursor::new(Vec::new());
+        assert!(write::rewrite(&src, &mut sink, WriteOpts::default()).is_err());
         let want = answers(&Rete::open(&v6).unwrap());
         assert_eq!(answers(&Rete::open(&v7).unwrap()), want, "resident");
         assert_eq!(answers(&lazy(&v7)), want, "lazy");
@@ -857,7 +883,7 @@ fn recard_with_an_annex_streams_equal_and_in_place_only_when_it_is_unchanged() {
 
 #[test]
 fn a_0x06_file_has_no_annex() {
-    let v6 = convert_image(&image(300, false, false, false, false), v06_opts()).unwrap();
+    let v6 = convert_image(&legacy_image(300, false, false, false, false), v06_opts()).unwrap();
     let e = replace_card(&v6, Some(&big_extra_card()), None).unwrap_err();
     assert!(e.to_string().contains("rete convert"), "{e}");
 }
@@ -870,7 +896,10 @@ fn a_reader_refuses_a_generation_it_does_not_know_by_name() {
     )
     .unwrap();
     let mut future = v7.clone();
-    future[4] = 8;
+    future[4] = 9;
     let e = Rete::open(&future).err().expect("refused").to_string();
-    assert!(e.contains("0x08") && e.contains("0x05"), "{e}");
+    assert!(
+        e.contains("0x09") && e.contains("0x05") && e.contains("0x08"),
+        "{e}"
+    );
 }

@@ -265,7 +265,7 @@ jobs:
     needs: [changes, image]
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7

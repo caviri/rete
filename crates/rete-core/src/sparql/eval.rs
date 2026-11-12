@@ -705,7 +705,7 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
 
 /// A SELECT run to the id level: the projected variables, and every solution
 /// row as dictionary ids (and computed strings) with nothing decoded yet.
-/// ORDER BY has decoded its sort keys, and nothing else has been decoded.
+/// ORDER BY has decoded its sort keys unless they sort as ids (a plain variable of an order-exact group of a 0x08 file), and nothing else has been decoded.
 /// Decoding is [`crate::sparql::SelectRows::page`].
 pub(super) fn run_select_ids(rete: &Rete, sel: &Select) -> super::SelectRows {
     let ctx = query_ctx(rete, sel);
@@ -1245,12 +1245,13 @@ pub(super) fn run_select_communities(
 /// Compare two decorated rows by the ORDER BY spec, with the arrival sequence
 /// as the final tiebreak (= a stable sort's order).
 fn cmp_keyed(
+    ctx: &Ctx,
     order: &[(FExpr, bool)],
     a: &(Vec<SortKey>, usize, Row),
     b: &(Vec<SortKey>, usize, Row),
 ) -> std::cmp::Ordering {
     for (i, (_, desc)) in order.iter().enumerate() {
-        let ord = a.0[i].cmp(&b.0[i]);
+        let ord = a.0[i].cmp(&b.0[i], ctx);
         let ord = if *desc { ord.reverse() } else { ord };
         if ord != std::cmp::Ordering::Equal {
             return ord;
@@ -1261,18 +1262,29 @@ fn cmp_keyed(
 
 /// Decorateâ€“sortâ€“undecorate: resolve each row's sort keys *once* (numeric value
 /// pre-parsed) instead of re-evaluating them on every comparison.
+/// One ORDER BY key of a row. A plain variable bound to a dictionary id the
+/// file's term order covers is not decoded ([`SortKey::of_val`]); everything
+/// else is evaluated and classified once, as it always was.
+fn sort_key(ctx: &Ctx, e: &FExpr, row: &Row) -> SortKey {
+    if let FExpr::Var(v) = e {
+        return match ctx.slots.slot(v).and_then(|slot| row[slot].as_ref()) {
+            Some(val) => SortKey::of_val(ctx, val),
+            None => SortKey::Unbound,
+        };
+    }
+    SortKey::of(e.value(ctx, row))
+}
+
 fn sort_all(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)]) -> Vec<Row> {
+    // (`sort_key` below: ids the dictionary order covers are not decoded.)
     let mut keyed: Vec<(Vec<SortKey>, usize, Row)> = rows
         .enumerate()
         .map(|(seq, b)| {
-            let keys = order
-                .iter()
-                .map(|(e, _)| SortKey::of(e.value(ctx, &b)))
-                .collect();
+            let keys = order.iter().map(|(e, _)| sort_key(ctx, e, &b)).collect();
             (keys, seq, b)
         })
         .collect();
-    keyed.sort_by(|a, b| cmp_keyed(order, a, b));
+    keyed.sort_by(|a, b| cmp_keyed(ctx, order, a, b));
     keyed.into_iter().map(|(_, _, b)| b).collect()
 }
 
@@ -1284,16 +1296,14 @@ fn top_k(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)], k: usize) -> Vec<Row
     }
     let mut top: Vec<(Vec<SortKey>, usize, Row)> = Vec::with_capacity(k + 1);
     for (seq, b) in rows.enumerate() {
-        let keys: Vec<SortKey> = order
-            .iter()
-            .map(|(e, _)| SortKey::of(e.value(ctx, &b)))
-            .collect();
+        let keys: Vec<SortKey> = order.iter().map(|(e, _)| sort_key(ctx, e, &b)).collect();
         let entry = (keys, seq, b);
-        if top.len() >= k && cmp_keyed(order, &entry, &top[k - 1]) != std::cmp::Ordering::Less {
+        if top.len() >= k && cmp_keyed(ctx, order, &entry, &top[k - 1]) != std::cmp::Ordering::Less
+        {
             continue;
         }
-        let pos =
-            top.partition_point(|e| cmp_keyed(order, e, &entry) != std::cmp::Ordering::Greater);
+        let pos = top
+            .partition_point(|e| cmp_keyed(ctx, order, e, &entry) != std::cmp::Ordering::Greater);
         top.insert(pos, entry);
         top.truncate(k);
     }

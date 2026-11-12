@@ -2,6 +2,45 @@
 
 ## Stable `.rete` file compatibility
 
+### Format `0x08` (generation 2, the dictionary order)
+
+Every writer now writes format byte `0x08` ([SPEC §4.11](SPEC.md#411-format-0x08-and-compatibility)):
+`0x07` with the dictionary's terms in the **SPARQL order** instead of byte order
+([SPEC §5.2](SPEC.md#52-term-order-0x05-0x07-bytes-0x08-sparql)): blank nodes, then IRIs by
+their text (so `<…/Ng8>` sorts before `<…/Ng8130_provenance>`, which byte order
+reverses), then literals, text literals by lexical form. An id then compares as the
+term does, within a section and outside the typed literals, so an `ORDER BY` over a
+variable sorts on ids and decodes only the rows it shows. The reader reads `0x05`,
+`0x06`, `0x07` and `0x08`; **readers up to 0.6.0 cannot read `0x08`**: they refuse it by
+name (`unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`).
+
+- **Convert, do not rebuild, but it is a re-encode.** Every term gets a new id, so
+  `rete convert in.rete -o out.rete` no longer copies the payload of a `0x05`, `0x06`
+  or `0x07` file: it walks the statements and writes them again through the
+  memory-bounded builder (dictionary sorted, every index, the quad orders, the label and
+  text indexes, the schema and the class clusters rebuilt for the new ids; the card, its
+  annex and the build record kept). It runs inside `--memory-budget-mb` (default 2048) and
+  spills into `--tmp-dir`; a source with a community pyramid is re-encoded in memory.
+  Converting a `0x08` file again gives the same bytes.
+- **The dictionary is about the same size** (the OpenCitations sample's goes from 26.16 to
+  26.03 MB), and the file is not larger: its permutations come out a little smaller
+  because ids that sort together are now adjacent.
+- **Derived IRIs are found by the writer and refused by name.** `rete build` and `rete
+  convert` look for IRIs the file's own triples spell out, and when they remove at least
+  5% of the file they drop the stored text
+  ([SPEC §5.3](SPEC.md#53-derived-iri-families-0x08-optional); `--no-derive-iris` turns it
+  off). The file sets header flag bit5, and a reader that does not know the flag refuses it
+  (`unsupported .rete feature`); the one-request `Rete::query_ranged` refuses it too, since
+  it holds no index. Every other reader (the CLI, `sparql-url`, the browser) reads it.
+  Most files are not derived (nothing in them reaches 5%), and the dictionary a derived one
+  holds is not complete text: tools that read dictionary chunks themselves must go through
+  the reader.
+- **No backward compatibility** is promised before 1.0.0; the catalog is converted in
+  step with the readers, and the `0x06` and `0x07` readers go once it is.
+- **Publish after the readers**, as for `0x06` and `0x07`: a catalog file is converted
+  only when every engine that reads it (the CLI, the clients, the browser engines, the
+  MCPB bundle) is on this release.
+
 ### Format `0x07` (generation 2, second step)
 
 Every writer now writes format byte `0x07` ([SPEC §4.10](SPEC.md#410-format-0x07-and-compatibility)):

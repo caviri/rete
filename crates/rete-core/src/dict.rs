@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::chunk_cache::{CacheEntry, ChunkCache};
+use crate::term_order::{GroupCounts, TermOrder};
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// Default restart interval: a full term every `R` entries.
@@ -61,6 +62,7 @@ pub enum DictError {
 pub struct DictSectionBuilder {
     terms: Vec<String>,
     restart_interval: u32,
+    order: TermOrder,
 }
 
 /// Terms per restart run, overridable via `RETE_DICT_RESTART_INTERVAL`.
@@ -87,7 +89,14 @@ impl DictSectionBuilder {
         Self {
             terms: Vec::new(),
             restart_interval: env_restart_interval(),
+            order: TermOrder::Bytewise,
         }
+    }
+
+    /// Sort the terms in `order` (default: [`TermOrder::Bytewise`]).
+    pub fn with_order(mut self, order: TermOrder) -> Self {
+        self.order = order;
+        self
     }
 
     pub fn with_restart_interval(mut self, r: u32) -> Self {
@@ -103,7 +112,9 @@ impl DictSectionBuilder {
     /// Serialize to bytes. Terms are sorted and deduped; the resulting IDs are
     /// `1..=n` in sorted order.
     pub fn build(mut self) -> Vec<u8> {
-        self.terms.sort_unstable();
+        let order = self.order;
+        self.terms
+            .sort_unstable_by(|a, b| order.cmp(a.as_bytes(), b.as_bytes()));
         self.terms.dedup();
         let r = self.restart_interval as usize;
         let n = self.terms.len();
@@ -244,8 +255,19 @@ pub fn section_term(bytes: &[u8], meta: &SectionMeta, id: u32) -> Option<String>
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
-/// Resolve `term` to its ID using cached metadata.
+/// Resolve `term` to its ID using cached metadata (a bytewise-ordered section).
 pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
+    section_id_ordered(bytes, meta, term, TermOrder::Bytewise)
+}
+
+/// [`section_id`] for a section whose terms are sorted in `order`.
+pub fn section_id_ordered(
+    bytes: &[u8],
+    meta: &SectionMeta,
+    term: &str,
+    order: TermOrder,
+) -> Option<u32> {
+    let probe = order.probe(term.as_bytes());
     let mut buf = Vec::new();
     // Binary search restart runs by their first (full) term.
     let mut lo = 0usize;
@@ -253,7 +275,7 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
     while lo < hi {
         let mid = (lo + hi) / 2;
         run_entry_into(bytes, meta.restart_offsets[mid] as usize, &mut buf)?;
-        if buf.as_slice() <= term.as_bytes() {
+        if probe.cmp_stored(&buf) != std::cmp::Ordering::Greater {
             lo = mid + 1;
         } else {
             hi = mid;
@@ -272,11 +294,10 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
             .saturating_sub(run as u32 * meta.restart_interval),
     );
     for step in 0..run_len {
-        if buf.as_slice() == term.as_bytes() {
-            return Some(base_id + step);
-        }
-        if buf.as_slice() > term.as_bytes() {
-            return None;
+        match probe.cmp_stored(&buf) {
+            std::cmp::Ordering::Equal => return Some(base_id + step),
+            std::cmp::Ordering::Greater => return None,
+            std::cmp::Ordering::Less => {}
         }
         if step + 1 < run_len {
             pos = entry_into(bytes, pos, &mut buf)?;
@@ -580,9 +601,9 @@ impl LeafedChunks {
     }
 
     /// The leaf whose keys route `term`, by first key.
-    pub fn leaf_of_term(&self, term: &[u8]) -> Option<usize> {
+    pub fn leaf_of_term(&self, probe: &crate::term_order::Probe) -> Option<usize> {
         self.leaves
-            .partition_point(|l| l.key.as_slice() <= term)
+            .partition_point(|l| probe.cmp_stored(&l.key) != std::cmp::Ordering::Greater)
             .checked_sub(1)
     }
 
@@ -671,23 +692,24 @@ impl ChunkDir {
     }
 
     /// The chunk whose routing key range holds `term`.
-    fn chunk_for_term(&self, term: &[u8]) -> Option<usize> {
+    fn chunk_for_term(&self, probe: &crate::term_order::Probe) -> Option<usize> {
+        use std::cmp::Ordering::Greater;
         match self {
             ChunkDir::Full(v) => match v.len() {
                 0 => None,
                 1 => Some(0),
                 _ => v
-                    .partition_point(|c| c.key.as_slice() <= term)
+                    .partition_point(|c| probe.cmp_stored(&c.key) != Greater)
                     .checked_sub(1),
             },
             ChunkDir::Leafed(l) => {
                 if l.total == 0 {
                     return None;
                 }
-                let li = l.leaf_of_term(term)?;
+                let li = l.leaf_of_term(probe)?;
                 l.ensure_leaves(&[li]);
                 let cell = l.cells[li].get()?;
-                let j = cell.partition_point(|(c, _, _)| c.key.as_slice() <= term);
+                let j = cell.partition_point(|(c, _, _)| probe.cmp_stored(&c.key) != Greater);
                 // The leaf's first key routed here, so its first chunk is a
                 // candidate even when its own (equal) key compares <=.
                 Some(l.leaves[li].first + j.saturating_sub(1))
@@ -727,6 +749,32 @@ pub struct ChunkedSection {
     /// This section's discriminant in the shared cache's key space (0 shared,
     /// 1 subject-only, 2 object-only, 3 predicates).
     section_index: u8,
+    /// How the section's terms are ordered (`term -> id` searches with it).
+    order: TermOrder,
+    /// Terms per group, for a [`TermOrder::Sparql`] section: from the file's
+    /// root when it has them, else found on first use.
+    groups: std::sync::OnceLock<Option<GroupCounts>>,
+    /// Chunk ranges `(first chunk, chunks)` whose bodies the file does not
+    /// store (a derived IRI family, `crate::derived`): the term of an id in
+    /// them is rebuilt by the dictionary from the index, never read here.
+    elided: Vec<(usize, usize)>,
+}
+
+/// What looking a term up in one section found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lookup {
+    /// The term's section-local id.
+    Found(u32),
+    /// The term is not in the section.
+    Absent,
+    /// The term routes to a chunk the file does not store: it is there only if
+    /// some id of `first..=last` (section-local) derives to it.
+    Elided {
+        /// First section-local id of the chunk.
+        first: u32,
+        /// Last section-local id of the chunk.
+        last: u32,
+    },
 }
 
 /// How many sections a thread keeps read-ahead state for.
@@ -783,6 +831,9 @@ impl ChunkedSection {
             failed: AtomicBool::new(false),
             cache,
             section_index,
+            order: TermOrder::Bytewise,
+            groups: std::sync::OnceLock::new(),
+            elided: Vec::new(),
         }
     }
 
@@ -805,6 +856,9 @@ impl ChunkedSection {
             failed: AtomicBool::new(false),
             cache,
             section_index,
+            order: TermOrder::Bytewise,
+            groups: std::sync::OnceLock::new(),
+            elided: Vec::new(),
         }
     }
 
@@ -833,6 +887,9 @@ impl ChunkedSection {
             failed: AtomicBool::new(false),
             cache,
             section_index,
+            order: TermOrder::Bytewise,
+            groups: std::sync::OnceLock::new(),
+            elided: Vec::new(),
         }
     }
 
@@ -853,12 +910,118 @@ impl ChunkedSection {
             failed: AtomicBool::new(false),
             cache,
             section_index,
+            order: TermOrder::Bytewise,
+            groups: std::sync::OnceLock::new(),
+            elided: Vec::new(),
         }
     }
 
     /// The chunk directory.
     pub fn chunk_dir(&self) -> &ChunkDir {
         &self.chunks
+    }
+
+    /// Say how this section's terms are ordered (the format generation does;
+    /// the constructors assume [`TermOrder::Bytewise`]).
+    pub fn with_order(mut self, order: TermOrder) -> Self {
+        self.order = order;
+        self
+    }
+
+    /// Hand over the section's per-group term counts, as a `0x08` root holds
+    /// them, so [`Self::groups`] reads no chunk.
+    pub fn with_groups(self, counts: GroupCounts) -> Self {
+        let _ = self.groups.set(Some(counts));
+        self
+    }
+
+    /// Say which chunk ranges the file does not store (`(first, count)`, sorted,
+    /// disjoint): derived IRI families. See [`Self::is_elided`].
+    pub fn with_elided(mut self, ranges: Vec<(usize, usize)>) -> Self {
+        self.elided = ranges;
+        self
+    }
+
+    /// Is chunk `ci` one the file stores no body for?
+    pub fn is_elided(&self, ci: usize) -> bool {
+        let at = self.elided.partition_point(|&(first, _)| first <= ci);
+        at > 0 && ci < self.elided[at - 1].0 + self.elided[at - 1].1
+    }
+
+    /// Does the section have chunks with no stored body?
+    pub fn has_elided(&self) -> bool {
+        !self.elided.is_empty()
+    }
+
+    /// Is the section-local id `id` in a chunk with no stored body?
+    pub fn id_is_elided(&self, id: u32) -> bool {
+        !self.elided.is_empty() && self.chunk_of_id(id).is_some_and(|ci| self.is_elided(ci))
+    }
+
+    /// First and last section-local id of chunk `ci`.
+    pub fn chunk_ids(&self, ci: usize) -> Option<(u32, u32)> {
+        let ri = self.meta.restart_interval as usize;
+        let tc = self.meta.term_count as u64;
+        let first = (self.chunks.get(ci)?.first_run.checked_mul(ri)? as u64 + 1).min(tc + 1);
+        let last = match self.chunks.next_first_run(ci) {
+            Some(next) => (next.checked_mul(ri)? as u64).min(tc),
+            None => tc,
+        };
+        (first <= last).then_some((u32::try_from(first).ok()?, u32::try_from(last).ok()?))
+    }
+
+    /// The order of this section's terms.
+    pub fn order(&self) -> TermOrder {
+        self.order
+    }
+
+    /// How many terms are in each group; `None` unless the section is
+    /// [`TermOrder::Sparql`] (or a chunk could not be read). From the root
+    /// when it was given, else three binary searches over the term ids, cached
+    /// once found.
+    pub fn groups(&self) -> Option<GroupCounts> {
+        if self.order != TermOrder::Sparql {
+            return None;
+        }
+        if let Some(g) = self.groups.get() {
+            return *g;
+        }
+        let found = self.find_groups();
+        if found.is_some() {
+            let _ = self.groups.set(found);
+        }
+        found
+    }
+
+    /// The first id (1-based, `term_count + 1` if none) whose group is at least `g`.
+    fn first_in_group_from(&self, g: u8) -> Option<u32> {
+        let n = self.meta.term_count;
+        let (mut lo, mut hi) = (1u32, n.checked_add(1)?);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let t = self.term(mid)?;
+            if crate::term_order::group(t.as_bytes()) >= g {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        Some(lo)
+    }
+
+    fn find_groups(&self) -> Option<GroupCounts> {
+        use crate::term_order::GROUPS;
+        let n = self.meta.term_count;
+        let mut starts = [0u32; GROUPS + 1];
+        for g in 1..GROUPS as u8 {
+            starts[g as usize] = self.first_in_group_from(g)? - 1;
+        }
+        starts[GROUPS] = n;
+        let mut c = GroupCounts::default();
+        for g in 0..GROUPS {
+            c.0[g] = starts[g + 1].saturating_sub(starts[g]);
+        }
+        Some(c)
     }
 
     /// Attach a batched chunk fetcher (see [`ChunkBulkLoader`]): full-section
@@ -890,7 +1053,9 @@ impl ChunkedSection {
             .iter()
             .copied()
             .filter(|&ci| {
-                ci < self.chunks.len() && !self.cache.contains((self.section_index, ci as u32))
+                ci < self.chunks.len()
+                    && !self.is_elided(ci)
+                    && !self.cache.contains((self.section_index, ci as u32))
             })
             .collect();
         if missing.len() < 2 {
@@ -916,7 +1081,9 @@ impl ChunkedSection {
         cis.iter()
             .copied()
             .filter(|&ci| {
-                ci < self.chunks.len() && !self.cache.contains((self.section_index, ci as u32))
+                ci < self.chunks.len()
+                    && !self.is_elided(ci)
+                    && !self.cache.contains((self.section_index, ci as u32))
             })
             .collect()
     }
@@ -981,6 +1148,9 @@ impl ChunkedSection {
     /// loader returns an empty body for a missing chunk, matching the old
     /// `get_or_init(Vec::new)` behavior.
     fn chunk_entry(&self, ci: usize) -> Option<Arc<CacheEntry>> {
+        if self.is_elided(ci) {
+            return None;
+        }
         let key = (self.section_index, ci as u32);
         if let Some(e) = self.cache.get(key) {
             return Some(e);
@@ -1387,14 +1557,17 @@ impl ChunkedSection {
     /// on the (resident) chunk directory, without touching a chunk body. `None`
     /// for an empty section, or a term that sorts before the first chunk.
     pub(crate) fn chunk_for_term(&self, term: &str) -> Option<usize> {
-        self.chunks.chunk_for_term(term.as_bytes())
+        self.chunks
+            .chunk_for_term(&self.order.probe(term.as_bytes()))
     }
 
     /// The leaf directory block that routes `term` to a chunk, without reading
     /// it. `None` on a section whose directory is resident (nothing to fault).
     pub(crate) fn leaf_for_term(&self, term: &str) -> Option<usize> {
         match &self.chunks {
-            ChunkDir::Leafed(l) if l.total > 0 => l.leaf_of_term(term.as_bytes()),
+            ChunkDir::Leafed(l) if l.total > 0 => {
+                l.leaf_of_term(&self.order.probe(term.as_bytes()))
+            }
             _ => None,
         }
     }
@@ -1433,12 +1606,23 @@ impl ChunkedSection {
         }
     }
 
-    /// How many terms of this section sort (bytewise) before `bound`: the
+    /// How many terms of this section sort (in its order) before `bound`: the
     /// routed chunk is the only one the boundary can lie in (every term of an
     /// earlier chunk sorts before its routing key, every term of a later one at
     /// or after the next key), so this faults that one chunk and binary-searches
     /// its ids. `None` when a chunk cannot be read.
     pub(crate) fn rank(&self, bound: &str) -> Option<u32> {
+        self.rank_via(bound, &|id| self.term(id))
+    }
+
+    /// [`rank`](Self::rank) with the term of an id read by `term_of`: how a
+    /// chunk with no stored body is searched.
+    pub(crate) fn rank_via(
+        &self,
+        bound: &str,
+        term_of: &dyn Fn(u32) -> Option<String>,
+    ) -> Option<u32> {
+        let probe = self.order.probe(bound.as_bytes());
         let tc = self.meta.term_count;
         let ri = self.meta.restart_interval as usize;
         if tc == 0 || ri == 0 {
@@ -1458,8 +1642,8 @@ impl ChunkedSection {
         let (mut lo, mut hi) = (first, last + 1);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            let term = self.term(u32::try_from(mid).ok()?)?;
-            if term.as_bytes() < bound.as_bytes() {
+            let term = term_of(u32::try_from(mid).ok()?)?;
+            if probe.cmp_stored(term.as_bytes()) == std::cmp::Ordering::Less {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -1477,6 +1661,111 @@ impl ChunkedSection {
     /// Resolve `term` to its ID. Chunk-level binary search runs on the (local)
     /// chunk directory, so this also costs at most one chunk fault.
     pub fn id(&self, term: &str) -> Option<u32> {
+        match self.lookup(term) {
+            Lookup::Found(id) => Some(id),
+            Lookup::Absent | Lookup::Elided { .. } => None,
+        }
+    }
+
+    /// [`id`](Self::id), telling a term that routes to a chunk the file does
+    /// not store from one that is absent.
+    pub fn lookup(&self, term: &str) -> Lookup {
+        let found = self.lookup_inner(term);
+        found.map_or(Lookup::Absent, |l| l)
+    }
+
+    /// Look up a string literal under both of its spellings in one search:
+    /// `lo` is the plain one (`"x"`), `hi` the typed one
+    /// (`"x"^^xsd:string`). Returns `lo`'s id, and `hi`'s when this search
+    /// settled it (`None`: not settled, look `hi` up on its own).
+    ///
+    /// In the SPARQL order the two are neighbours: the same lexical form,
+    /// datatype rank and tag, then the token, and the plain token is a prefix
+    /// of the typed one. So the search for `lo` ends on `hi` or proves it
+    /// absent, unless it ends at the edge of a run. A lookup that missed
+    /// under one spelling used to search every section again for the other;
+    /// a `BIND` of a new string is always such a miss. In the byte order
+    /// other terms sort between the two (`"x"@en`), and nothing is settled.
+    pub(crate) fn lookup_pair(&self, lo: &str, hi: &str) -> (Option<u32>, Option<Option<u32>>) {
+        let settled = if self.order == TermOrder::Sparql {
+            self.lookup_pair_inner(lo, hi)
+        } else {
+            None
+        };
+        settled.unwrap_or_else(|| (self.id(lo), None))
+    }
+
+    /// `None`: the search could not be made this way (an elided chunk, a
+    /// term before its chunk's first, a failed read); the caller looks each
+    /// spelling up on its own.
+    #[allow(clippy::type_complexity)]
+    fn lookup_pair_inner(&self, lo: &str, hi: &str) -> Option<(Option<u32>, Option<Option<u32>>)> {
+        if self.chunks.is_empty() {
+            return None;
+        }
+        let ri = self.meta.restart_interval as usize;
+        let probe = self.order.probe(lo.as_bytes());
+        let ci = self.chunks.chunk_for_term(&probe)?;
+        if self.is_elided(ci) {
+            return None;
+        }
+        let first_run = self.chunks.get(ci)?.first_run;
+        let entry = self.chunk_entry(ci)?;
+        let bytes: &[u8] = entry.body();
+        let run_end = self.run_end_of_chunk(ci, &entry, ri);
+        let mut buf = Vec::new();
+        let (mut a, mut b) = (first_run, run_end);
+        while a < b {
+            let mid = (a + b) / 2;
+            let off = self.run_off_in_chunk(ci, mid, &entry, ri)?;
+            run_entry_into(bytes, off, &mut buf)?;
+            if probe.cmp_stored(&buf) != std::cmp::Ordering::Greater {
+                a = mid + 1;
+            } else {
+                b = mid;
+            }
+        }
+        if a == first_run {
+            // `lo` sorts before the chunk's first term, which may be `hi`.
+            return None;
+        }
+        let run = a - 1;
+        let off = self.run_off_in_chunk(ci, run, &entry, ri)?;
+        let mut pos = run_entry_into(bytes, off, &mut buf)?;
+        let base_id = (run * ri) as u32 + 1;
+        let run_len = self.meta.restart_interval.min(
+            self.meta
+                .term_count
+                .saturating_sub(run as u32 * self.meta.restart_interval),
+        );
+        for step in 0..run_len {
+            let id = base_id + step;
+            match probe.cmp_stored(&buf) {
+                std::cmp::Ordering::Equal => {
+                    // `hi` is the next term of the section, or not in it.
+                    if step + 1 < run_len {
+                        entry_into(bytes, pos, &mut buf)?;
+                        let next = (buf.as_slice() == hi.as_bytes()).then_some(id + 1);
+                        return Some((Some(id), Some(next)));
+                    }
+                    return Some((Some(id), None));
+                }
+                // The first term past `lo`: `hi`, or `hi` is absent too.
+                std::cmp::Ordering::Greater => {
+                    let here = (buf.as_slice() == hi.as_bytes()).then_some(id);
+                    return Some((None, Some(here)));
+                }
+                std::cmp::Ordering::Less => {}
+            }
+            if step + 1 < run_len {
+                pos = entry_into(bytes, pos, &mut buf)?;
+            }
+        }
+        // Past the run's last term: `lo` is absent, `hi` may open the next run.
+        Some((None, None))
+    }
+
+    fn lookup_inner(&self, term: &str) -> Option<Lookup> {
         if self.chunks.is_empty() {
             return None;
         }
@@ -1497,8 +1786,14 @@ impl ChunkedSection {
         // gap `key(i) <= term < first(i)`; the run search below then hits its
         // `lo == first_run` branch and answers `None`, which is correct — such
         // a term is strictly between two chunks, i.e. absent.
-        let ci = self.chunk_for_term(term)?;
+        // The term is read once for the whole lookup ([`crate::term_order::Probe`]).
+        let probe = self.order.probe(term.as_bytes());
+        let ci = self.chunks.chunk_for_term(&probe)?;
         let first_run = self.chunks.get(ci)?.first_run;
+        if self.is_elided(ci) {
+            let (first, last) = self.chunk_ids(ci)?;
+            return Some(Lookup::Elided { first, last });
+        }
         let entry = self.chunk_entry(ci)?;
         let bytes: &[u8] = entry.body();
 
@@ -1511,7 +1806,7 @@ impl ChunkedSection {
             let mid = (lo + hi) / 2;
             let off = self.run_off_in_chunk(ci, mid, &entry, ri)?;
             run_entry_into(bytes, off, &mut buf)?;
-            if buf.as_slice() <= term.as_bytes() {
+            if probe.cmp_stored(&buf) != std::cmp::Ordering::Greater {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -1535,11 +1830,10 @@ impl ChunkedSection {
                 .saturating_sub(run as u32 * self.meta.restart_interval),
         );
         for step in 0..run_len {
-            if buf.as_slice() == term.as_bytes() {
-                return Some(base_id + step);
-            }
-            if buf.as_slice() > term.as_bytes() {
-                return None;
+            match probe.cmp_stored(&buf) {
+                std::cmp::Ordering::Equal => return Some(Lookup::Found(base_id + step)),
+                std::cmp::Ordering::Greater => return None,
+                std::cmp::Ordering::Less => {}
             }
             if step + 1 < run_len {
                 pos = entry_into(bytes, pos, &mut buf)?;

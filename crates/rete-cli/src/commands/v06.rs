@@ -1,7 +1,9 @@
-//! Format `0x06` and `0x07` in the CLI: what the in-RAM writers finish with, and
-//! `rete convert` (a `0x05` or `0x06` file to `0x07`, reading sections only). The
+//! Formats `0x06` to `0x08` in the CLI: what the in-RAM writers finish with, and
+//! `rete convert` (a `0x05`, `0x06` or `0x07` file to `0x08`: a re-encode through
+//! the memory-bounded builder, because the dictionary order changed). The
 //! memory-bounded writers (`build --memory-budget-mb`, `merge`) do not come
-//! through here: they write `0x06` themselves, once, from their spill.
+//! through the in-RAM finish: they write the file themselves, once, from their
+//! spill.
 
 use rete_core::v06::write::{WriteOpts, MIN_FILE_LEN};
 
@@ -12,12 +14,23 @@ pub(crate) fn writes_legacy() -> bool {
     rete_core::build_record::writes_legacy()
 }
 
-/// Turn a finished in-memory `0x05` image into the `0x07` file the writer
-/// emits (unless [`writes_legacy`]). The same code `rete convert` runs, so a
-/// build and a converted build of the same input are the same bytes.
+/// Turn a finished in-memory `0x05` image into the `0x08` file the writer
+/// emits (unless [`writes_legacy`]).
 pub(crate) fn finish(image: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    rete_core::build_record::finish_in_ram(image, None)
-        .map_err(|e| anyhow::anyhow!("writing 0x07: {e}"))
+    finish_with(image, Some(rete_core::derived::DeriveOpts::default()))
+}
+
+/// [`finish`] with derived-IRI detection on (`Some`) or off.
+pub(crate) fn finish_with(
+    image: Vec<u8>,
+    derive: Option<rete_core::derived::DeriveOpts>,
+) -> anyhow::Result<Vec<u8>> {
+    rete_core::build_record::finish_in_ram_with(
+        image,
+        None,
+        WriteOpts::default().with_derive(derive),
+    )
+    .map_err(|e| anyhow::anyhow!("writing 0x08: {e}"))
 }
 
 /// Is the file at `path` a `0x06` file? (Reads its first bytes.)
@@ -41,7 +54,19 @@ pub(crate) fn patch_record_in_place(path: &std::path::Path, info: &[u8]) -> anyh
     f.read_exact(&mut head)?;
     let h = rete_core::v06::Header06::from_bytes(&head)?;
     let r = h.build_range();
-    if r.len == 0 || info.len() as u64 > r.len {
+    if r.len == 0 {
+        return Ok(false);
+    }
+    // What the writer's derived-IRI detection said stays in the record: it
+    // belongs to the file, not to the measurements this patch replaces.
+    let mut old = vec![0u8; r.len as usize];
+    f.seek(SeekFrom::Start(r.offset))?;
+    f.read_exact(&mut old)?;
+    let carried = rete_core::build_record::derive_report_text(&old)
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|report| rete_core::build_record::with_derive_report(info, &report));
+    let info = carried.as_deref().unwrap_or(info);
+    if info.len() as u64 > r.len {
         return Ok(false);
     }
     let mut buf = info.to_vec();
@@ -61,10 +86,24 @@ pub(crate) struct CardCosts {
     pub memory_budget_mb: Option<u64>,
 }
 
-/// `rete convert IN -o OUT`: a `0x05` file to `0x06`, reading its sections
-/// through ranges (never text), payload copied verbatim. A file whose named
-/// graphs are stored per graph (kind 5) is re-encoded as a quad index from its
-/// decoded statements, as `repyramid` does.
+/// `rete convert IN -o OUT`: a `0x05`, `0x06` or `0x07` file to `0x08`.
+///
+/// `0x08` keeps its dictionary in the SPARQL order (SPEC.md section 5), so a
+/// term gets a new id and every structure that holds ids is written again:
+/// this is a re-encode, not a copy of the payload. The statements are walked
+/// through the source's own readers and fed to the memory-bounded builder
+/// (`rete merge` of one file, `rete_core::extbuild`), which sorts the terms,
+/// remaps and sorts every index, and writes the file; the dictionary, the
+/// four quad orders, the label and the text index, the schema and the class
+/// clusters are all rebuilt for the new ids, and the card (with its annex)
+/// and the build record are kept. The peak memory is the builder's:
+/// `--memory-budget-mb` (default 2048), the spill goes to `--tmp-dir`
+/// (default: beside the output).
+///
+/// A source with a community pyramid, or with per-graph named graphs (kind 5),
+/// is re-encoded in memory instead (the pyramid is built in memory). A `0x08`
+/// input is written again under the current directory-leaf policy, payload
+/// copied.
 pub(crate) fn convert(
     input: &str,
     output: &str,
@@ -72,10 +111,11 @@ pub(crate) fn convert(
     tmp_dir: Option<&str>,
     label_index: bool,
     costs: CardCosts,
+    derive: Option<rete_core::derived::DeriveOpts>,
 ) -> anyhow::Result<()> {
     use rete_core::v06::write::QuadClustering;
-    // The sort that derives the `0x07` quad orders spills beside the output
-    // unless told otherwise (a big file's spill is 16 bytes a quad).
+    // The sorts that derive the quad orders spill beside the output unless
+    // told otherwise (a big file's spill is bytes per statement and order).
     let spill_dir = match tmp_dir {
         Some(d) => std::path::PathBuf::from(d),
         None => std::path::Path::new(output)
@@ -89,7 +129,9 @@ pub(crate) fn convert(
     if std::path::Path::new(input) == std::path::Path::new(output) {
         anyhow::bail!("convert writes a new file: OUT must differ from IN");
     }
-    let mut opts = WriteOpts::default().with_spill_dir(Some(spill_dir));
+    let mut opts = WriteOpts::default()
+        .with_spill_dir(Some(spill_dir.clone()))
+        .with_derive(derive);
     match quad {
         Some("graph") => opts.quad = QuadClustering::GraphMajor,
         Some("order") => opts.quad = QuadClustering::OrderMajor,
@@ -99,20 +141,16 @@ pub(crate) fn convert(
     let reader = super::range_source::RangedSourceReader::open(input)?;
     let head =
         rete_core::RangeReader::read_at(&reader, 0, 8.min(rete_core::RangeReader::len(&reader)))?;
-    if rete_core::v06::open::is_v06(&head) {
+    if rete_core::v06::open::is_v06(&head) && head.get(4) == Some(&rete_core::v06::VERSION) {
         return rewrite_v06(input, output, &reader, opts);
     }
     let started = std::time::Instant::now();
-    let labels = if label_index {
-        legacy_label_section(input)?
-    } else {
-        None
-    };
     // The record says what happened: the source's own record, as it was, with
     // this conversion appended (or just the conversion, for a file without one).
     let in_len = rete_core::RangeReader::len(&reader);
-    let mut conversion = conversion_entry(input, &reader, quad, label_index)?;
-    let source_record = rete_core::v06::write::source_build_record(&reader)
+    let mut conversion = conversion_entry(input, &reader, quad, label_index, derive)?;
+    let source_record = rete_core::file::read_card_and_build_info_ranged(&reader)
+        .map(|(_, record)| record)
         .map_err(|e| anyhow::anyhow!("reading {input}: {e}"))?;
     // The card's queries are copied verbatim, so the source's card says which
     // ones to measure. Their costs depend on the new layout, so they are measured
@@ -127,37 +165,35 @@ pub(crate) fn convert(
     }
     let measured = starters.is_some();
     let record = super::buildinfo::with_conversion(source_record.as_deref(), &conversion)?;
+    // Which way: in memory (a pyramid, or kind-5 named graphs), or bounded.
+    let budget_mb = costs.memory_budget_mb.unwrap_or(2048);
+    let share = super::merge::reader_share(budget_mb.saturating_mul(1 << 20));
+    let probe = if super::range_source::is_url(input) {
+        rete_core::Rete::open_ranged_lazy(super::range_source::RangedSourceReader::open(input)?)?
+    } else {
+        super::merge::open_input(input, share)?
+    };
+    let in_ram = probe.pyramid().is_some() || probe.header().named_graphs_len > 0;
+    if in_ram {
+        drop(probe);
+        convert_in_ram(input, output, label_index, &record, derive)?;
+        return seal_costs(
+            output,
+            measured,
+            source_record.as_deref(),
+            conversion,
+            costs,
+        );
+    }
     let tmp = std::path::PathBuf::from(format!("{output}.convert-tmp"));
-    let written = {
-        let mut out = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(&tmp)?);
-        let w = match rete_core::v06::write::convert_with_record(
-            &reader,
-            labels.as_deref(),
-            Some(record.clone()),
-            &mut out,
-            opts,
-        ) {
-            Ok(w) => w,
-            Err(rete_core::format::FileError::Container(m)) if m.contains("kind 5") => {
-                drop(out);
-                let _ = std::fs::remove_file(&tmp);
-                convert_per_graph(input, output, label_index, &record)?;
-                return seal_costs(
-                    output,
-                    measured,
-                    source_record.as_deref(),
-                    conversion,
-                    costs,
-                );
-            }
-            Err(e) => {
-                drop(out);
-                let _ = std::fs::remove_file(&tmp);
-                return Err(anyhow::anyhow!("converting {input}: {e}"));
-            }
-        };
-        std::io::Write::flush(&mut out)?;
-        w
+    let stats = match convert_bounded(
+        input, &tmp, probe, &reader, &spill_dir, budget_mb, &record, derive,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
     };
     if let Err(e) = seal_costs(
         &tmp.to_string_lossy(),
@@ -170,15 +206,84 @@ pub(crate) fn convert(
         return Err(e);
     }
     std::fs::rename(&tmp, output)?;
+    let out_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0);
     eprintln!(
-        "convert: wrote {output} — format 0x07, {} bytes ({:+.2}% vs {} bytes), content hash {}, {:.1}s",
-        written.header.file_len,
-        (written.header.file_len as f64 - in_len as f64) * 100.0 / in_len.max(1) as f64,
-        in_len,
-        hex16(&written.header.content_hash),
+        "convert: wrote {output} — format 0x08, {out_len} bytes ({:+.2}% vs {in_len} bytes), \
+         {} statement(s), {} term(s), {:.1}s",
+        (out_len as f64 - in_len as f64) * 100.0 / in_len.max(1) as f64,
+        stats.statements,
+        stats.terms,
         started.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+/// The bounded re-encode: walk every statement of `probe` into the
+/// memory-bounded builder, with the features the source has.
+#[allow(clippy::too_many_arguments)]
+fn convert_bounded(
+    input: &str,
+    out: &std::path::Path,
+    probe: rete_core::Rete,
+    reader: &super::range_source::RangedSourceReader,
+    spill_dir: &std::path::Path,
+    budget_mb: u64,
+    record: &[u8],
+    derive: Option<rete_core::derived::DeriveOpts>,
+) -> anyhow::Result<rete_core::ingest::BuildStats> {
+    use rete_core::extbuild::{build_external, ExtBuildError, ExternalBuildOptions};
+    let budget = budget_mb.saturating_mul(1 << 20);
+    let share = super::merge::reader_share(budget);
+    let header = probe.header().clone();
+    let label_index = probe.has_label_index();
+    let text_index = probe.text_index_scope().filter(|_| probe.has_text_index());
+    let card = rete_core::file::read_card_full_ranged(reader)
+        .map_err(|e| anyhow::anyhow!("reading the card of {input}: {e}"))?
+        .unwrap_or_default();
+    drop(probe);
+    eprintln!(
+        "convert: {input} (format 0x{:02x}) -> format 0x08: re-encoding {} statement(s) through \
+         the memory-bounded builder (budget {budget_mb} MiB){}{}",
+        header.version,
+        header.quad_count,
+        if label_index { ", label index" } else { "" },
+        if text_index.is_some() {
+            ", text index"
+        } else {
+            ""
+        },
+    );
+    build_external(
+        |visit| {
+            let mut rete = super::merge::open_input(input, share).map_err(|e| {
+                ExtBuildError::Ingest(rete_core::ingest::IngestError::Io(format!("{input}: {e}")))
+            })?;
+            super::merge::stream_file(&mut rete, input, share, visit)?;
+            if rete.index_incomplete() {
+                return Err(ExtBuildError::Ingest(rete_core::ingest::IngestError::Io(
+                    format!("{input}: reads failed during the walk: the conversion would be short"),
+                )));
+            }
+            Ok(())
+        },
+        out,
+        ExternalBuildOptions {
+            memory_budget: budget,
+            tmp_dir: Some(spill_dir.to_path_buf()),
+            metadata: Box::new(move |_| card),
+            build_info: record.to_vec(),
+            perms: header.perms,
+            label_index,
+            schema: true,
+            type_override: None,
+            text_index,
+            graphs: rete_core::GraphLayout::Quad,
+            input_memory: share,
+            card_from_image: None,
+            derive,
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("converting {input}: {e}"))
 }
 
 /// Measure the starter queries on the converted file at `path` and patch the
@@ -207,6 +312,7 @@ fn conversion_entry(
     reader: &super::range_source::RangedSourceReader,
     quad: Option<&str>,
     label_index: bool,
+    derive: Option<rete_core::derived::DeriveOpts>,
 ) -> anyhow::Result<super::buildinfo::Conversion> {
     use super::buildinfo as bi;
     let len = rete_core::RangeReader::len(reader);
@@ -226,6 +332,9 @@ fn conversion_entry(
     if rete_core::write_opts::cluster().is_some() {
         command.push_str(" --cluster-subjects-by-class");
     }
+    if derive.is_none() {
+        command.push_str(" --no-derive-iris");
+    }
     Ok(bi::Conversion {
         at: bi::timestamp(),
         engine: Some(bi::engine()),
@@ -238,41 +347,19 @@ fn conversion_entry(
     })
 }
 
-/// The LABEL_INDEX section `build --label-index` would write, for an input
-/// whose only labels are the pyramid's legacy block (bounded to 8,192
-/// entries, which a prefix search over a large graph outgrows); `None` when
-/// the input has a LABEL_INDEX section already or no legacy labels.
-fn legacy_label_section(input: &str) -> anyhow::Result<Option<Vec<u8>>> {
-    let reader = super::range_source::RangedSourceReader::open(input)?;
-    let rete = rete_core::Rete::open_ranged_lazy(reader)?;
-    if rete.has_label_index() || rete.pyramid().is_none_or(|p| p.label_index.is_empty()) {
-        return Ok(None);
-    }
-    let legacy = rete.pyramid().map_or(0, |p| p.label_index.len());
-    let started = std::time::Instant::now();
-    let sec = rete_core::v06::write::label_section(&rete);
-    if sec.is_empty() {
-        return Ok(None);
-    }
-    eprintln!(
-        "convert: {input} has only the pyramid's legacy label block ({legacy} entries); built \
-         the label index ({} bytes) in {:.1}s — --no-label-index skips it",
-        sec.len(),
-        started.elapsed().as_secs_f64()
-    );
-    Ok(Some(sec))
-}
-
-/// Kind-5 inputs: decode every statement and rebuild with the quad index —
-/// the per-graph layout is not one `0x06` can carry.
-fn convert_per_graph(
+/// Inputs with a community pyramid, or with per-graph named graphs (kind 5):
+/// decode every statement and rebuild in memory, with the pyramid, and the
+/// quad index (the per-graph layout is not one `0x06` or later can carry).
+fn convert_in_ram(
     input: &str,
     output: &str,
     label_index: bool,
     record: &[u8],
+    derive: Option<rete_core::derived::DeriveOpts>,
 ) -> anyhow::Result<()> {
     eprintln!(
-        "convert: {input} stores its named graphs per graph (kind 5); re-encoding them as a quad index"
+        "convert: {input} has a community pyramid or per-graph named graphs (kind 5); re-encoding it in \
+         memory as a format 0x08 file (named graphs in the quad index)"
     );
     let bytes = std::fs::read(input)?;
     let rete = rete_core::Rete::open(&bytes)?;
@@ -300,13 +387,13 @@ fn convert_per_graph(
     let (image, stats) = rete_core::ingest::assemble_dataset_opts(quads, &opts, |_, _| {
         card.clone().unwrap_or_default()
     });
-    let image = finish_recorded(image, "convert", &stats)?;
+    let image = finish_recorded_with(image, "convert", &stats, derive)?;
     // The source's own record with the conversion appended, as for every other
     // source: not the lean record of the re-encode, which describes this run.
-    let image = rete_core::attach_build_info(&image, record)?;
+    let image = super::buildinfo::attach_record(&image, record)?;
     std::fs::write(output, &image)?;
     eprintln!(
-        "convert: wrote {output} — format 0x06, {} bytes",
+        "convert: wrote {output} — format 0x08, {} bytes",
         image.len()
     );
     Ok(())
@@ -378,6 +465,21 @@ pub(crate) fn finish_recorded(
     command: &str,
     stats: &rete_core::ingest::BuildStats,
 ) -> anyhow::Result<Vec<u8>> {
+    finish_recorded_with(
+        image,
+        command,
+        stats,
+        Some(rete_core::derived::DeriveOpts::default()),
+    )
+}
+
+/// [`finish_recorded`] with derived-IRI detection on (`Some`) or off.
+pub(crate) fn finish_recorded_with(
+    image: Vec<u8>,
+    command: &str,
+    stats: &rete_core::ingest::BuildStats,
+    derive: Option<rete_core::derived::DeriveOpts>,
+) -> anyhow::Result<Vec<u8>> {
     use rete_core::build_record as br;
     let record = br::to_json(
         &br::Record {
@@ -393,8 +495,12 @@ pub(crate) fn finish_recorded(
         },
         Some(stats),
     );
-    rete_core::build_record::finish_in_ram(image, Some(&record))
-        .map_err(|e| anyhow::anyhow!("writing 0x06: {e}"))
+    rete_core::build_record::finish_in_ram_with(
+        image,
+        Some(&record),
+        WriteOpts::default().with_derive(derive),
+    )
+    .map_err(|e| anyhow::anyhow!("writing 0x06: {e}"))
 }
 
 /// `rete convert IN -o OUT` on a `0x06` input: the same file written again
