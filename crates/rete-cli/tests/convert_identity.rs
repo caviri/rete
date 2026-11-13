@@ -1,8 +1,9 @@
 //! `rete convert` of a `0x05` build is byte-identical to the direct `0x06`
 //! build of the same input, card costs off (the costs in a build record are
 //! measured on the file the build wrote, so a 0x05 build's differ by design)
-//! (pyramid, quad index, label and text indexes, and
-//! the `--no-pyramid` shape), and the card of each says the format it got.
+//! (quad index, label and text indexes), and the card of each says the format
+//! it got. The builds have no pyramid: `convert` carries a source's pyramid
+//! over (`convert_pyramid.rs`), where a direct build computes one.
 
 mod common;
 
@@ -86,11 +87,19 @@ fn check(name: &str, extra: &[&str]) {
     );
 }
 
+/// Without a pyramid: a source's pyramid is carried over as it is
+/// (`convert_pyramid.rs`), and a direct build computes its own on the new ids.
 #[test]
 fn convert_equals_direct_build_with_indexes() {
     check(
         "full",
-        &["--card", "--no-card-costs", "--label-index", "--text-index"],
+        &[
+            "--card",
+            "--no-card-costs",
+            "--label-index",
+            "--text-index",
+            "--no-pyramid",
+        ],
     );
 }
 

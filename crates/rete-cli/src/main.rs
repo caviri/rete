@@ -571,9 +571,9 @@ enum Command {
     /// index is written again: the statements are walked through the source and
     /// re-encoded by the memory-bounded builder (label and text index, schema
     /// and the card, with its annex and build record, are kept), inside
-    /// `--memory-budget-mb`. A source with a community pyramid is re-encoded in
-    /// memory. A format 0x08 input is written again with its directory leaves
-    /// cut anew (payload copied).
+    /// `--memory-budget-mb`. A source's community pyramid is written as it is,
+    /// not computed again. A format 0x08 input is written again with its
+    /// directory leaves cut anew (payload copied).
     Convert {
         /// The 0x05, 0x06, 0x07 or 0x08 input (a path or an http(s) URL).
         input: String,

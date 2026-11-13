@@ -160,6 +160,8 @@ check "0x05 still written by the hook" "magic|version: 5" -- "$B" info "$T/g05.r
 check "convert"           "format 0x08"            -- "$B" convert "$T/g05.rete" -o "$T/g06.rete"
 check "convert = build"   "^same$"                 -- bash -c "same_content '$T/g06.rete' '$T/g.rete'"
 check "convert verify"    "OK|matches"             -- "$B" verify "$T/g06.rete"
+# The source's community pyramid is written as it is (superedge order follows the ids).
+check "convert keeps the pyramid" "^same$"         -- bash -c "[ \"\$('$B' summary '$T/g05.rete' | sort)\" = \"\$('$B' summary '$T/g06.rete' | sort)\" ] && echo same"
 check "convert answers"   "ex/Bob"                 -- "$B" sparql "$T/g06.rete" "SELECT ?o WHERE { <http://ex/Alice> <http://ex/knows> ?o }"
 check "convert 0x08 again"  "format 0x08"            -- "$B" convert "$T/g.rete" -o "$T/g07.rete"
 check "rewrite verify"     "OK|matches"             -- "$B" verify "$T/g07.rete"
