@@ -408,7 +408,7 @@ A Maven reactor with a shared wasm crate:
 
 ```
 clients/java/
-  pom.xml                  # parent (io.github.caviri:rete-parent:0.7.1)
+  pom.xml                  # parent (io.github.caviri:rete-parent:0.7.2)
   ffi/                     # Rust C-ABI crate → wasm32-unknown-unknown (no wasm-bindgen)
     Cargo.toml             #   excluded from the workspace; locks independently
     src/lib.rs             #   alloc/free + build/info/query/scan over linear memory

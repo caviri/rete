@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rete graph view</title>
+<style>/*STYLE*/</style>
+</head>
+<body>
+<div id="root">
+  <header id="bar">
+    <div class="tabs" role="tablist">
+      <button type="button" data-tab="graph" class="on">Graph</button>
+      <button type="button" data-tab="table">Table</button>
+    </div>
+    <label class="sel">Draw
+      <select id="opt-diagram" title="Dots, a box per entity with its properties, or a class diagram">
+        <option value="graph">nodes</option>
+        <option value="boxes">boxes</option>
+        <option value="classes">classes</option>
+      </select>
+    </label>
+    <label class="sel">Layers
+      <select id="opt-group">
+        <option value="type">by type</option>
+        <option value="namespace">by namespace</option>
+        <option value="none">none</option>
+      </select>
+    </label>
+    <label class="sel">Layout
+      <select id="opt-layout">
+        <option value="cose">force</option>
+        <option value="layered">layers</option>
+        <option value="concentric">concentric</option>
+        <option value="breadthfirst">tree</option>
+        <option value="circle">circle</option>
+        <option value="grid">grid</option>
+      </select>
+    </label>
+    <label class="sel">Lines
+      <select id="opt-edges">
+        <option value="curved">curved</option>
+        <option value="straight">straight</option>
+        <option value="square">square</option>
+      </select>
+    </label>
+    <details id="show" class="menu">
+      <summary>Show</summary>
+      <div class="menu-body">
+        <label class="chk"><input type="checkbox" id="opt-labels" checked> Labels</label>
+        <label class="chk"><input type="checkbox" id="opt-edge-labels"> Edge labels</label>
+        <label class="chk"><input type="checkbox" id="opt-props" checked> Properties in boxes</label>
+        <label class="chk"><input type="checkbox" id="opt-shape"> Square nodes</label>
+        <label class="chk"><input type="checkbox" id="opt-literals"> Literals as nodes</label>
+        <label class="chk"><input type="checkbox" id="opt-boxes"> Frame each layer</label>
+      </div>
+    </details>
+    <input id="search" type="search" placeholder="Search · Enter finds in the graph" autocomplete="off">
+    <button type="button" id="open-file" title="Open a .rete or RDF file from this computer in this view">Open file…</button>
+    <input type="file" id="file-input" accept=".rete,.ttl,.turtle,.nt,.ntriples,.nq,.nquads,.trig" hidden>
+    <span class="grow"></span>
+    <div class="zoom">
+      <button type="button" id="zoom-out" title="Zoom out">−</button>
+      <button type="button" id="zoom-in" title="Zoom in">+</button>
+      <button type="button" id="fit" title="Fit to view">Fit</button>
+      <button type="button" id="relayout" title="Run the layout again">↻</button>
+      <button type="button" id="theme" title="Theme: follows Claude — click to change">◐</button>
+      <button type="button" id="fullscreen" title="Fullscreen" hidden>⛶</button>
+    </div>
+  </header>
+  <main>
+    <section id="graph" aria-label="graph"></section>
+    <section id="table" hidden>
+      <div class="table-bar">
+        <input id="table-filter" type="search" placeholder="Filter rows" autocomplete="off">
+        <span id="table-count"></span>
+        <span class="grow"></span>
+        <button type="button" id="csv" hidden>CSV</button>
+      </div>
+      <div class="table-wrap"><table id="rows"></table></div>
+    </section>
+    <aside id="side">
+      <section id="layers">
+        <h3>Layers <span class="links"><a href="#" id="layers-all">all</a> · <a href="#" id="layers-none">none</a></span></h3>
+        <ul></ul>
+        <p id="hidden-nodes" hidden></p>
+      </section>
+      <section id="details">
+        <h3>Selection</h3>
+        <div class="body"><p class="hint">Click a node to see it. Double-click to expand it.</p></div>
+      </section>
+    </aside>
+    <div id="awaiting" hidden>
+      <div class="card">
+        <p class="big">Open <b id="awaiting-file">the file</b> here</p>
+        <p>Claude keeps files attached to the chat in its own sandbox, which this extension cannot reach. Choose the file on this computer, or drop it here: it goes straight to the extension.</p>
+        <button type="button" id="awaiting-choose" class="primary">Choose file…</button>
+        <p id="awaiting-progress"></p>
+      </div>
+    </div>
+    <div id="dropzone" hidden><div>Drop to open it in this view</div></div>
+    <div id="selecting" hidden>
+      <span>Selecting several: click nodes to add or remove them, or drag a box over many.</span>
+      <b id="selecting-count">0</b> selected
+      <button type="button" id="selecting-done">Done</button>
+    </div>
+  </main>
+  <footer id="status">
+    <span id="status-main">Waiting for the query…</span><span id="status-note"></span>
+    <button type="button" id="about-open" title="About rete: version, credits, links">rete</button>
+  </footer>
+  <div id="about" hidden></div>
+</div>
+<div id="ctx" role="menu" hidden></div>
+<script>/*SCRIPT*/</script>
+</body>
+</html>

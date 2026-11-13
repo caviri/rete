@@ -10,7 +10,10 @@
     "test": "node --test --test-timeout=120000 ./test/*.test.mjs"
   },
   "dependencies": {
+    "@dagrejs/dagre": "3.1.1",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "cytoscape": "^3.31.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

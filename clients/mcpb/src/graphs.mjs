@@ -7,7 +7,7 @@
 // at all. The exception is RDF shared in the chat (load_rdf): it arrives as
 // text in a tool call, so its graph is built and held in memory.
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { build, open } from "rete-graph";
@@ -19,6 +19,12 @@ const SKIP_DIRS = new Set(["node_modules", ".git", ".cache", "__pycache__"]);
 
 const CHAT = "chat:";
 const CHAT_MAX_BYTES = 32 * 1024 * 1024; // RDF text one chat graph may hold
+const FILE_MAX_BYTES = 512 * 1024 * 1024; // a .rete handed to a graph view, held in memory
+// Where Claude's own sandbox keeps the files it works with: a file attached to
+// the chat is /mnt/user-data/uploads/<name> there — not on this machine, where
+// the extension runs. (A path that does exist here, and is granted, is read as
+// usual first: a Linux box can have a /mnt/data of its own.)
+const SANDBOX = /^\/(mnt\/user-data|mnt\/data|home\/claude)\//;
 // RDF syntax by file extension, for a chat graph named after its file.
 const CHAT_FORMATS = {
   ".ttl": "ttl",
@@ -157,6 +163,9 @@ export class GraphStore {
     const key = chatKey(name);
     const previous = this.#chat.get(key);
     const base = append ? previous : undefined;
+    if (base?.format === "rete") {
+      throw new UsageError(`${key} is a .rete file the user opened whole: nothing can be appended to it`);
+    }
     format ??= base?.format ?? formatOf(name) ?? "ttl";
     if (base && format !== base.format) {
       throw new UsageError(`${key} holds ${base.format}; a part appended to it must be ${base.format} too, not ${format}`);
@@ -194,6 +203,33 @@ export class GraphStore {
     return entry;
   }
 
+  /**
+   * A file the user chose or dropped in a graph view — typically a chat
+   * attachment, which Claude cannot pass on: a .rete is held as it is (in the
+   * shared memory a chat graph's bytes live in), RDF text is built as
+   * load_rdf builds it. Either becomes the chat graph `chat:<name>`.
+   */
+  async loadFile(name, bytes) {
+    if (formatOf(name)) return this.loadChat(name, new TextDecoder().decode(bytes));
+    const key = chatKey(name);
+    let graph;
+    try {
+      graph = await open(bytes);
+    } catch (error) {
+      throw new UsageError(
+        `${name} is not a .rete file this can read (${String(error?.message ?? error).split("\n")[0]}), ` +
+          "nor RDF text by its name (.ttl, .nt, .nq, .trig)",
+      );
+    }
+    const previous = this.#chat.get(key);
+    if (previous) this.#cache.delete(previous.source.cacheKey);
+    const source = new Source({ kind: "chat", key, bytes, generation: (previous?.source.generation ?? 0) + 1 });
+    this.#cache.set(source.cacheKey, graph);
+    const entry = { source, text: null, size: bytes.length, format: "rete", parts: 1, loadedAt: new Date().toISOString() };
+    this.#chat.set(key, entry);
+    return entry;
+  }
+
   /** The chat graphs held, for list_datasets. */
   chatGraphs() {
     return [...this.#chat.values()];
@@ -214,6 +250,13 @@ export class GraphStore {
   }
 
   async #readGranted(path, encoding) {
+    if (SANDBOX.test(path) && !(await stat(path).catch(() => null))) {
+      // A chat attachment's path: the same file may be in a granted folder.
+      const file = path.split("/").pop();
+      return this.#readGranted(file, encoding).catch((error) => {
+        throw /^no (such file|folder granted)/.test(error.message) ? new AttachmentError(path, file, this.allowedDirs) : error;
+      });
+    }
     if (this.allowedDirs.length === 0) {
       throw new UsageError("no folder granted — add one in the extension's settings (Graph folders), or pass the RDF as `rdf`");
     }
@@ -277,15 +320,17 @@ export class GraphStore {
 
     if (name.includes(sep) || name.includes("/") || isAbsolute(name)) {
       const path = resolve(name);
-      if (!(await this.#isAllowed(path))) {
+      const allowed = await this.#isAllowed(path);
+      const info = allowed ? await stat(path).catch(() => null) : null;
+      if (info?.isFile()) return new Source({ kind: "local", key: name, path });
+      if (SANDBOX.test(name)) return this.#attachment(name, files);
+      if (!allowed) {
         throw new UsageError(
           `${path} is outside the directories this extension may read. Grant it in ` +
             "the extension's settings (Graph folders), or pass a published dataset key or URL.",
         );
       }
-      const info = await stat(path).catch(() => null);
-      if (!info?.isFile()) throw new UsageError(`no such file: ${path}`);
-      return new Source({ kind: "local", key: name, path });
+      throw new UsageError(`no such file: ${path}`);
     }
 
     const entry = this.catalog.find((d) => d.key === name);
@@ -307,6 +352,20 @@ export class GraphStore {
         (near.length ? `Did you mean: ${near.join(", ")}? ` : "") +
         "Call list_datasets for the published catalog and the local files.",
     );
+  }
+
+  /**
+   * A chat attachment's path in Claude's sandbox. The file may be here all the
+   * same: opened in a graph view (a chat graph of its name), or kept in a
+   * granted folder under its name.
+   */
+  #attachment(path, files) {
+    const file = path.split("/").pop();
+    const opened = this.#chat.get(chatKey(file, false));
+    if (opened) return opened.source;
+    const kept = files.find((f) => basename(f.path) === file);
+    if (kept) return new Source({ kind: "local", key: kept.key, path: kept.path });
+    throw new AttachmentError(path, file, this.allowedDirs);
   }
 
   /**
@@ -358,6 +417,34 @@ export class GraphStore {
 
 /** A user-facing problem (bad dataset name, path outside the sandbox, …). */
 export class UsageError extends Error {}
+
+/**
+ * A file attached to the chat that is not here: Claude's copy is in its own
+ * sandbox. Says how to get it to the extension; graph_view catches it and
+ * opens a view that asks the user for the file.
+ */
+export class AttachmentError extends UsageError {
+  constructor(path, file, dirs) {
+    const key = chatKey(file, false) ?? `${CHAT}attachment`;
+    super(
+      `${path} is a file attached to the chat: Claude's copy of it is in Claude's own sandbox, and ` +
+        "this extension runs on the user's computer, so it cannot read that path. To open it, call " +
+        `graph_view with dataset "${path}": the view asks the user to choose or drop ${file}, which ` +
+        `goes straight to the extension, not through the conversation. From then on "${key}" — or ` +
+        "this same path — works with every tool. " +
+        (dirs.length
+          ? `A ${file} kept in a Graph folder (${dirs.join(", ")}) is found by its name, so moving it there works too.`
+          : `Or the user adds the folder that holds ${file} as a Graph folder in the extension's settings.`) +
+        (formatOf(file) ? " Being RDF text, a small one can also go through load_rdf, as its text." : ""),
+    );
+    this.path = path;
+    this.file = file;
+    this.key = key;
+  }
+}
+
+/** The largest file a graph view takes from the user: RDF text is built in memory, a .rete held there. */
+export const uploadLimit = (name) => (formatOf(name) ? CHAT_MAX_BYTES : FILE_MAX_BYTES);
 
 /** The RDF syntax a file name's extension says ("people.nt" → "nt"), or undefined. */
 export const formatOf = (name) => CHAT_FORMATS[extname(String(name ?? "")).toLowerCase()];

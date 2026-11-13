@@ -41,34 +41,118 @@ No `node_modules` in the archive, no native modules, nothing to install.
 
 | Tool | What it does |
 | --- | --- |
+| `about` | The extension's version and build (commit, date), credits, how to cite rete, links (docs, playground, source, issues, releases), and the bundled open-source software with its licences |
 | `list_datasets` | Local files + published catalogue, optionally filtered |
-| `dataset_card` | The file's embedded self-description (2 small reads, any size) |
-| `dataset_schema` | Classes and relations with counts, from the baked pyramid |
+| `dataset_card` | The file's embedded self-description, and its `capabilities`: schema, name search, full-text search (2 small reads, any size) |
+| `dataset_schema` | Classes and relations with counts, from the baked pyramid — or, in a file built without one, the lists its card carries |
 | `example_queries` | Runnable SPARQL the dataset ships with |
 | `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL, `union_default_graph=true` to match every named graph from a pattern outside `GRAPH`; waits up to 40 s, then answers with a `job_id` while the query keeps running. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
 | `start_query` | The same, without waiting: a `job_id` at once. Both take `partition_by`, which runs a long extraction in resumable chunks |
 | `query_status` | Waits up to 45 s for a job; state, reads, bytes, elapsed; the first rows once done. No `job_id`: every job held |
 | `query_result` | A finished job's rows by cursor (up to 1000 a page), or all of them to a `.csv` / `.tsv` / `.json` / `.jsonl` / `.nt` file in a granted folder (`save_as`; never overwrites) |
 | `cancel_query` | Stops a job by terminating its worker |
-| `find_entities` | Label-prefix + full-text search → entity IRIs |
+| `find_entities` | Label-prefix + full-text search → entity IRIs; a graph with neither index answers at once, saying so and how to find the entity by SPARQL |
 | `describe_entity` | Every statement about one IRI, both directions |
 | `validate_shacl` | SHACL Core report; only the shapes' targets are read |
 | `build_rete` | RDF text (Turtle, TriG, N-Triples, N-Quads) → a new `.rete` in a granted folder, offline; `quoted_triple_syntax: "rdf12"` reads RDF 1.2 Turtle/TriG (default `rdf-star`, as `rete build`) |
 | `load_rdf` | RDF shared in the chat → a graph held in memory, `chat:<name>`, no folder needed; `append` adds a part, `path` reads a file in a granted folder (also a binary `.jelly` file), `save_as` keeps it as a `.rete` |
 
 Every `dataset` argument accepts a local file name or path, a catalogue key,
-an `https://` URL to any published `.rete`, or `chat:<name>`. Local files win
-a name clash.
+an `https://` URL to any published `.rete`, `chat:<name>`, or the sandbox
+path of a file attached to the chat (below). Local files win a name clash.
 
 `dataset_card` includes `signals.quoted_triples` — whether the graph holds quoted
 triples and the surfaces `rete export` can write them in — measured from the
 file's header, so it answers for every published file.
 
+### Graph views
+
+Where the client renders MCP Apps (Claude Desktop does), `graph_view` opens an
+interactive view in the conversation; `graph_view_update` changes it and
+`graph_view_state` reads what the user selected. Its page (`src/view/`) is
+built into one self-contained HTML file — cytoscape and dagre inlined, since
+the sandbox has no network — and fetches its elements with app-only tools, so
+the data never passes through the model. It draws the graph three ways:
+
+- **nodes** — a dot per entity (circles, or squares), in a force layout;
+- **boxes** — a box per entity: its name on a band in its layer's colour, its
+  type, then its properties a line each (a UML object diagram);
+- **classes** — a box per `rdf:type` listing the properties its members carry
+  and how many do, joined by the predicates between classes, counted (a UML
+  class diagram). A class leads to its members.
+
+Boxes and classes come laid out in layers (dagre, top down; what is not linked
+is packed in rows underneath) with square connectors; lines can also be curved
+or straight. `graph_view(dataset, schema: true)` draws a dataset's own schema —
+its most frequent classes as boxes listing their literal properties with
+counts, linked by their relations — from the schema pyramid, or the card's
+lists in a file without one.
+
+A right-click on a node opens its menu — on a node of the selection, the
+selection's: **Expand** (its links), **Compress** (take out what hangs only off
+it; Expand brings it back), **Select neighbours**, **Search its name** in the
+dataset, **Send to chat** (a message listing the nodes with their IRIs, types
+and properties), **Select several…** (clicks add or remove, a drag draws a box;
+a stray click on the background keeps the selection), **Aggregate** (draw
+several nodes — or every node of a layer — as one, their links merged and
+counted; **Ungroup** splits it), **Hide**, **Remove** (Delete does too) and
+**Open in browser**. The background has its own (select several, select all,
+show hidden, ungroup all, fit, lay out again). Removals and aggregates live on
+the server (`graph_view_edit`, app-only), so `graph_view_state` reports them,
+and `graph_view_update` can aggregate a type and ungroup too. The ◐ button
+switches the view between Claude's theme, light and dark (`options.theme`).
+
+### Version, credits and links
+
+`build.mjs` stamps every build with its version (from the workspace
+`Cargo.toml`), its commit (`RETE_BUILD_COMMIT`, CI's `GITHUB_SHA`, or git) and
+date, and `RETE_BUILD_LABEL` for a build that is not a release. With them goes
+who made it and how to cite it — read from `CITATION.cff` — the project's links,
+and the open-source packages the bundle inlines, each with the version and
+licence read from its own `package.json`. Claude reads the version in the
+server's instructions and the rest from the `about` tool; the graph view shows
+it in an About panel behind the version in its footer, whose links open
+through the host.
+
+### What each graph supports
+
+Not every `.rete` carries every index. The largest published graphs are built
+by the low-memory builder, which writes no schema and no label index for
+names, and only files built with `--text-index` can be searched by word.
+`src/capabilities.mjs` reads what a file has from its header and its card (two
+small reads, cached per file version), before anything opens it. It reads both
+header layouts: `0x05` (a section directory, most of the published catalogue
+for now) and `0x06`–`0x08` (presence bits; the engine decodes the card):
+
+- `dataset_card` reports it as `capabilities` and one plain `supports` line, and
+  now reads the card itself that way: crossref's card used to cost the full
+  open, 106 MB and 17 s.
+- `dataset_schema` on a file without a pyramid answers from the class, class-link
+  and predicate lists the card carries, marked `from: "card"`; with no card
+  either, it says how to look at the data without reading all of it.
+- `find_entities` runs only the searches the file can answer and names them
+  (`searched`). With neither index it answers at once that nothing was searched
+  and how to find the entity by SPARQL, rather than "nothing matched" after
+  opening the graph for nothing. The graph view's search box does the same.
+- `list_datasets` marks the published graphs built with a text index.
+
 ### Files shared in the chat
 
 Claude Desktop does not hand chat attachments to an extension, and the path
 the model sees for an upload (`/mnt/user-data/uploads/…`) is in Claude's own
-sandbox, not on this machine. So the model passes an attached or pasted RDF
+sandbox, not on this machine. Every tool still takes that path:
+
+- A file of that name in a granted folder, or one the user already opened in a
+  graph view, is used.
+- Otherwise the tool says how to get it here: `graph_view` with that path opens
+  a view that asks the user to choose or drop the file. The view sends it to
+  the server in 1 MB parts (`graph_view_upload`, app-only), so the bytes never
+  pass through the conversation; it becomes `chat:<name>` (a `.rete` held as
+  it is, up to 512 MB; RDF text built as below), the view shows what Claude
+  asked for, and posts a message saying the file is open. Any view also has an
+  **Open file…** button, and takes a file dropped on it.
+
+RDF text can also travel as text: the model passes an attached or pasted RDF
 file's text to `load_rdf`:
 
 - It is built in-wasm into a graph held in memory, shared with the query
@@ -83,7 +167,7 @@ file's text to `load_rdf`:
 - Reloading a name without `append` replaces the graph; the workers key it by
   a generation, so none answers from the old bytes.
 - CSV, JSON, RDF/XML and JSON-LD are the model's to convert to Turtle first; a
-  `.rete` is binary and has to come through a granted folder or a URL.
+  `.rete` is binary and comes through a graph view, a granted folder or a URL.
 
 ### Long queries: jobs
 
@@ -230,6 +314,17 @@ docker run --rm -v "$PWD/../..":/w -w /w/clients/mcpb node:22-slim \
 The suite spawns the built server and speaks MCP over stdio exactly as Claude
 Desktop does — covering a local graph, the sandbox refusal, an offline build,
 SHACL, and a published graph over HTTP Range.
+
+The graph view's browser tests (`test/view-ui.test.mjs`) are skipped unless
+`RETE_UI_TEST=1`. They load the view in Chromium inside a sandboxed iframe
+behind a small MCP Apps host, so they need the Playwright image;
+`RETE_UI_SHOT=<file>.png` also saves screenshots, one per step:
+
+```sh
+docker run --rm --ipc=host -v "$PWD/../..":/w -w /w/clients/mcpb -e RETE_UI_TEST=1 \
+  mcr.microsoft.com/playwright:v1.49.0-jammy \
+  sh -c 'npm install --no-save --silent playwright@1.49.0 && node --test test/view-ui.test.mjs'
+```
 
 ## Notes and limits
 

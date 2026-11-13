@@ -5,6 +5,17 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-12
+
+0.7.2 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
+### Added
+
+- **A graph view in the Claude Desktop extension.** Claude Desktop renders MCP Apps, so `graph_view` shows a query's results, an entity's neighbourhood or a dataset's schema (`schema: true`) as an interactive graph in the conversation. It can draw dots, boxes listing each entity's properties, or a class diagram. The user can change labels, layers and layout, search, expand and aggregate nodes, switch to a table, and send a selection back to the chat. Claude changes an open view with `graph_view_update` and reads what the user selected with `graph_view_state`. The view fetches its data through tools only it can call, so the triples do not pass through the model. See `docs/agents.md` and `clients/mcpb/README.md`.
+- **Files attached to the chat reach the extension.** The path Claude sees for an attachment (`/mnt/user-data/uploads/…`) is in its own sandbox, not on the user's computer. Given that path, the extension uses a file of that name in a granted folder. Otherwise `graph_view` asks the user to choose or drop the file, which goes straight to the extension. A `.rete` up to 512 MB (RDF text up to 32 MB) then works with every tool as `chat:<name>`.
+- **`dataset_card` says what a graph supports**: a schema, name search, full-text search. It reads this from the file's header and card in two small reads, without opening the graph. `dataset_schema` falls back to the classes and predicates the card lists when the file has no schema section, and `find_entities` says so when a file has no name index.
+- **An `about` tool** gives the extension's version and build commit, credits, how to cite rete, and links.
+
 ## [0.7.1] - 2026-11-12
 
 0.7.1 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
