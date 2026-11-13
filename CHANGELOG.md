@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rete convert` keeps the source's community pyramid.** A file with a pyramid, or with per-graph named graphs, was rebuilt in memory, and the pyramid was computed again with Louvain whatever the source had been built with. A file built with `--pyramid-algo types` came out with another summary (one catalog file went from 4 communities and 25 superedges to 1,065,104 and 9,635,405) and a larger file. A file of some tens of millions of statements did not fit in memory: one of 23 M was killed under `docker --memory 4g`. Every source now goes through the memory-bounded builder, and the pyramid is written as it is, the superedges under the new predicate ids. `rete summary` prints the same before and after. The 23 M file converts in 109 s and one of 51 M statements (32 M superedges) in 297 s, both under `docker --memory 4g` with the default budget. Files converted with 0.7.0 to 0.7.2 from a source with a pyramid carry the recomputed one; convert the source again to get its own.
+
 ## [0.7.2] - 2026-11-12
 
 0.7.2 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).

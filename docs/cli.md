@@ -721,9 +721,7 @@ and order) goes to `--tmp-dir`, by default beside the output. The 2018 nanopub d
 `docker --memory 4g` with `--memory-budget-mb 2800`, the 202 MB OpenCitations sample in
 110 s at 2.0 GB; with `--cluster-subjects-by-class` the dump was converted with
 `RETE_QUAD_RUN_ROWS=50000000` (the default sort run is 100 M rows; not measured under 4 GB). See the
-CHANGELOG for the figures. A source with a community
-pyramid (or per-graph named graphs) is re-encoded in memory instead, since the pyramid is
-built in memory.
+CHANGELOG for the figures.
 
 The card is carried as it is (its `format_version` says 8). The build record is carried
 too, with a `conversions` entry added that names the converting engine, the time, the
@@ -741,15 +739,17 @@ but no longer describe this file. `rete card`, `card-audit` and
 `build_record()` show the conversion's. `--no-card-costs` skips the run;
 `--memory-budget-mb` bounds it as it does the build's.
 
-Two inputs are re-encoded in memory instead of by the bounded builder, because they
-carry something the builder does not write:
+A source with a community pyramid or with per-graph named graphs goes through the
+bounded builder like any other:
 
-- **A community pyramid.** Its levels are built over the whole graph, in memory, as
-  `repyramid` does.
-- **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section): re-encoded as a quad
-  index from the decoded statements. A file whose only labels are the pyramid's legacy
-  block (at most 8,192 entries) gets the label index `build --label-index` writes;
-  `--no-label-index` skips it.
+- **A community pyramid** is written as it is: the same communities, superedges and
+  descriptors, with the superedges under the predicate ids of the new dictionary. It is
+  not computed again, so `rete summary` prints the same thing before and after, whatever
+  `--pyramid-algo` built the source. Its schema, statistics and labels are sections of
+  their own in `0x08`; a file whose only labels are the pyramid's legacy block gets a
+  label index (`--no-label-index` leaves it without one).
+- **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section) are walked graph by graph
+  and written in the quad index.
 
 **Named graphs** come out with the four `0x07` quad orders (GSPO, SPOG, POSG, OSPG, SPEC
 §6.5); the graph-leading `G+POS` and the others of a `0x06` input are not written.
@@ -759,7 +759,9 @@ order-major, always.
 **What a converted file is.** The same statements under the same card: a query returns the
 same rows from the input and the output (the tests compare the sorted rows of every query
 and the exact order of every `ORDER BY`). It is the file `rete build` writes for the same
-data and flags, record apart, byte for byte (the content hash is the build's). Converting
+data and flags, record apart, byte for byte (the content hash is the build's), unless
+the source has a community pyramid: the converted file has the source's, a build computes
+its own. Converting
 twice, or converting a `0x08` file, gives the same bytes; a `0x08` input is only written
 again under the current directory-leaf policy, payload copied (about two seconds for the
 2.4 GB nanopub dump). `rete verify` of the output checks the dictionary's order.

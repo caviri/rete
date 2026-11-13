@@ -1280,6 +1280,7 @@ pub(crate) fn build_external_cmd(
             input_memory: 0,
             card_from_image,
             derive: sections.derive(),
+            pyramid: None,
         },
     )
     .map_err(|e| match e {

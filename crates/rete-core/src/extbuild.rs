@@ -257,6 +257,64 @@ pub struct ExternalBuildOptions {
     /// `--no-derive-iris`. The finding is in the writer's assembly pass, over
     /// the spill, so it holds to `memory_budget` like the rest.
     pub derive: Option<crate::derived::DeriveOpts>,
+    /// A community pyramid to write as it is (`None`, the default: no pyramid).
+    /// The build computes none; `rete convert` passes the source file's.
+    pub pyramid: Option<CarriedPyramid>,
+}
+
+/// The community pyramid of another file of the same statements, to be
+/// written into this one: its summary and descriptors, not recomputed. The
+/// communities are numbers of the source's own partition and the descriptors
+/// name classes by IRI, so only the predicates of the superedges depend on the
+/// dictionary; they come as `(id in summary, term)` and are given the ids of
+/// the dictionary being built.
+#[derive(Debug, Clone, Default)]
+pub struct CarriedPyramid {
+    /// Dendrogram rounds (the header's `pyramid_levels`).
+    pub levels: u16,
+    /// The summarized round.
+    pub round: u32,
+    /// Superedges, with predicate ids of the SOURCE dictionary.
+    pub summary: Vec<crate::tiling::SuperEdge>,
+    /// The term of every predicate id `summary` uses.
+    pub predicates: Vec<(u32, String)>,
+    /// Per-community descriptors.
+    pub descriptors: Vec<crate::meta::CommunityDescriptor>,
+}
+
+impl CarriedPyramid {
+    /// The pyramid-meta stream for the dictionary behind `image`: the round,
+    /// the superedges in their canonical order under the new predicate ids,
+    /// and the descriptors. The schema, the planner statistics and the labels
+    /// are sections of their own in the output.
+    fn encode<R: crate::reader::RangeReader + Send + Sync + 'static>(
+        self,
+        image: R,
+    ) -> Result<Vec<u8>, ExtBuildError> {
+        let dict = crate::file::open_dictionary_lazy(image).map_err(file_err)?;
+        let mut ids: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for (old, term) in &self.predicates {
+            let new = dict.predicate_id(term).ok_or_else(|| {
+                ExtBuildError::Ingest(crate::ingest::IngestError::Io(format!(
+                    "the pyramid names the predicate {term}, which no statement uses"
+                )))
+            })?;
+            ids.insert(*old, new);
+        }
+        let mut summary = self.summary;
+        for e in &mut summary {
+            e.predicate = *ids.get(&e.predicate).ok_or_else(|| {
+                ExtBuildError::Ingest(crate::ingest::IngestError::Io(format!(
+                    "the pyramid's summary uses predicate id {}, which it does not name",
+                    e.predicate
+                )))
+            })?;
+        }
+        summary.sort_unstable_by_key(|e| (e.s_comm, e.predicate, e.o_comm));
+        let mut meta = crate::meta::PyramidMeta::new(self.round, summary, &[]);
+        meta.descriptors = self.descriptors;
+        Ok(meta.encode())
+    }
 }
 
 /// See [`ExternalBuildOptions::card_from_image`].
@@ -283,6 +341,7 @@ impl Default for ExternalBuildOptions {
             input_memory: 0,
             card_from_image: None,
             derive: Some(crate::derived::DeriveOpts::default()),
+            pyramid: None,
         }
     }
 }
@@ -660,7 +719,19 @@ where
             opts.perms,
             None,
             &[],
+            None,
         )?);
+        // A carried pyramid's predicates get this dictionary's ids.
+        let pyramid = match opts.pyramid {
+            Some(p) => {
+                let levels = p.levels;
+                Some((
+                    p.encode(crate::extbuild_v06::SharedImage(base.clone()))?,
+                    levels,
+                ))
+            }
+            None => None,
+        };
         let (label_section, schema_section) = if ext_labels.is_some() || ext_schema.is_some() {
             progress::begin(Phase::LabelsSchema, None, Unit::None);
             let shared = || crate::extbuild_v06::SharedImage(base.clone());
@@ -700,6 +771,7 @@ where
             opts.perms,
             label_section.as_ref(),
             &schema_section,
+            pyramid.as_ref().map(|(b, l)| (b.as_slice(), *l)),
         )?);
         *image_slot.borrow_mut() = Some(image.clone());
 
@@ -715,7 +787,7 @@ where
             default_triples: default_count as usize,
             named_graphs: named_graphs as usize,
             terms: merged.term_count as usize,
-            pyramid_levels: 0,
+            pyramid_levels: pyramid.as_ref().map_or(0, |(_, l)| *l),
             label_index: false,
         };
         // Every spill file is still there, and the output not yet started: the
@@ -757,7 +829,7 @@ where
             &tmp.dir,
             opts.derive,
         )?;
-        stats.pyramid_levels = 0;
+        stats.pyramid_levels = pyramid.as_ref().map_or(0, |(_, l)| *l);
         note_scratch(&tmp);
         trace::lap(Phase::Write);
         progress::set_spill_dir(None);
@@ -2741,6 +2813,7 @@ fn spill_image(
     perms: crate::index::PermSet,
     labels: Option<&crate::extbuild_sections::ExtLabelSection>,
     schema: &[u8],
+    pyramid: Option<(&[u8], u16)>,
 ) -> Result<crate::extbuild_v06::SpillImage, ExtBuildError> {
     use crate::extbuild_v06::ImageBuilder;
     use crate::header::{
@@ -2828,6 +2901,14 @@ fn spill_image(
         });
         b.bytes(schema);
     }
+    let pyramid_offset = b.at();
+    let (pyramid_len, pyramid_levels) = match pyramid {
+        Some((bytes, levels)) => {
+            b.bytes(bytes);
+            (bytes.len() as u64, levels)
+        }
+        None => (0, 0),
+    };
     b.bytes(&crate::header::MAGIC);
 
     let header = Header {
@@ -2859,11 +2940,11 @@ fn spill_image(
         dictionary_len: dict_len,
         root_dir_offset: index_offset,
         root_dir_len: index_len,
-        pyramid_meta_offset: 0,
-        pyramid_meta_len: 0,
+        pyramid_meta_offset: if pyramid_len > 0 { pyramid_offset } else { 0 },
+        pyramid_meta_len: pyramid_len,
         dict_codec: codec,
         block_codec: codec,
-        pyramid_levels: 0,
+        pyramid_levels,
         id_widths: 0,
         perms,
         quad_count,
@@ -3182,6 +3263,7 @@ mod tests {
             perms,
             None,
             &[],
+            None,
         )?);
         let partial = PartialFile::create(output)?;
         write_v06(

@@ -20,7 +20,7 @@ name (`unsupported .rete format 0x08; this Rete build reads 0x05..=0x07`).
   memory-bounded builder (dictionary sorted, every index, the quad orders, the label and
   text indexes, the schema and the class clusters rebuilt for the new ids; the card, its
   annex and the build record kept). It runs inside `--memory-budget-mb` (default 2048) and
-  spills into `--tmp-dir`; a source with a community pyramid is re-encoded in memory.
+  spills into `--tmp-dir`; a source's community pyramid is written as it is.
   Converting a `0x08` file again gives the same bytes.
 - **The dictionary is about the same size** (the OpenCitations sample's goes from 26.16 to
   26.03 MB), and the file is not larger: its permutations come out a little smaller

@@ -707,8 +707,9 @@ copy**: the statements are walked through the source and written by the
 memory-bounded builder (sorted terms, every permutation, the quad orders, the
 label and text indexes, the schema and the class clusters rebuilt for the new
 ids; the card, its annex and the build record kept), inside `--memory-budget-mb`
-with its spill in `--tmp-dir`. A source with a community pyramid is re-encoded in
-memory. Converting a `0x08` file again rewrites it under the current leaf policy
+with its spill in `--tmp-dir`. A source's community pyramid (§7.3) is written as
+it is, the superedges under the new predicate ids; it is not computed again.
+Converting a `0x08` file again rewrites it under the current leaf policy
 and gives the same bytes.
 
 **Derived IRIs** (§5.3) are an optional part of `0x08`: a file may drop the

@@ -100,10 +100,11 @@ pub(crate) struct CardCosts {
 /// `--memory-budget-mb` (default 2048), the spill goes to `--tmp-dir`
 /// (default: beside the output).
 ///
-/// A source with a community pyramid, or with per-graph named graphs (kind 5),
-/// is re-encoded in memory instead (the pyramid is built in memory). A `0x08`
-/// input is written again under the current directory-leaf policy, payload
-/// copied.
+/// A source's community pyramid is carried over, not computed again: its
+/// summary and descriptors are written as they are, the superedges under the
+/// predicate ids of the new dictionary. Per-graph named graphs (kind 5) are
+/// walked graph by graph and written in the quad index. A `0x08` input is
+/// written again under the current directory-leaf policy, payload copied.
 pub(crate) fn convert(
     input: &str,
     output: &str,
@@ -165,7 +166,6 @@ pub(crate) fn convert(
     }
     let measured = starters.is_some();
     let record = super::buildinfo::with_conversion(source_record.as_deref(), &conversion)?;
-    // Which way: in memory (a pyramid, or kind-5 named graphs), or bounded.
     let budget_mb = costs.memory_budget_mb.unwrap_or(2048);
     let share = super::merge::reader_share(budget_mb.saturating_mul(1 << 20));
     let probe = if super::range_source::is_url(input) {
@@ -173,21 +173,17 @@ pub(crate) fn convert(
     } else {
         super::merge::open_input(input, share)?
     };
-    let in_ram = probe.pyramid().is_some() || probe.header().named_graphs_len > 0;
-    if in_ram {
-        drop(probe);
-        convert_in_ram(input, output, label_index, &record, derive)?;
-        return seal_costs(
-            output,
-            measured,
-            source_record.as_deref(),
-            conversion,
-            costs,
-        );
-    }
     let tmp = std::path::PathBuf::from(format!("{output}.convert-tmp"));
     let stats = match convert_bounded(
-        input, &tmp, probe, &reader, &spill_dir, budget_mb, &record, derive,
+        input,
+        &tmp,
+        probe,
+        &reader,
+        &spill_dir,
+        budget_mb,
+        &record,
+        derive,
+        label_index,
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -230,12 +226,17 @@ fn convert_bounded(
     budget_mb: u64,
     record: &[u8],
     derive: Option<rete_core::derived::DeriveOpts>,
+    legacy_labels_to_index: bool,
 ) -> anyhow::Result<rete_core::ingest::BuildStats> {
     use rete_core::extbuild::{build_external, ExtBuildError, ExternalBuildOptions};
     let budget = budget_mb.saturating_mul(1 << 20);
     let share = super::merge::reader_share(budget);
     let header = probe.header().clone();
-    let label_index = probe.has_label_index();
+    let pyramid = carried_pyramid(input, &probe)?;
+    // A file that only has the pyramid's legacy label block gets the label
+    // index (unless `--no-label-index`): the block is not carried.
+    let legacy_labels = probe.pyramid().is_some_and(|p| !p.label_index.is_empty());
+    let label_index = probe.has_label_index() || (legacy_labels_to_index && legacy_labels);
     let text_index = probe.text_index_scope().filter(|_| probe.has_text_index());
     let card = rete_core::file::read_card_full_ranged(reader)
         .map_err(|e| anyhow::anyhow!("reading the card of {input}: {e}"))?
@@ -243,9 +244,22 @@ fn convert_bounded(
     drop(probe);
     eprintln!(
         "convert: {input} (format 0x{:02x}) -> format 0x08: re-encoding {} statement(s) through \
-         the memory-bounded builder (budget {budget_mb} MiB){}{}",
+         the memory-bounded builder (budget {budget_mb} MiB){}{}{}{}",
         header.version,
         header.quad_count,
+        match &pyramid {
+            Some(p) => format!(
+                ", pyramid carried over ({} superedge(s), round {})",
+                p.summary.len(),
+                p.round
+            ),
+            None => String::new(),
+        },
+        if header.named_graphs_len > 0 {
+            ", per-graph named graphs (kind 5) into the quad index"
+        } else {
+            ""
+        },
         if label_index { ", label index" } else { "" },
         if text_index.is_some() {
             ", text index"
@@ -281,9 +295,41 @@ fn convert_bounded(
             input_memory: share,
             card_from_image: None,
             derive,
+            pyramid,
         },
     )
     .map_err(|e| anyhow::anyhow!("converting {input}: {e}"))
+}
+
+/// The source's community pyramid, to be written as it is: the summary with
+/// the term of each predicate it uses, and the descriptors.
+fn carried_pyramid(
+    input: &str,
+    probe: &rete_core::Rete,
+) -> anyhow::Result<Option<rete_core::extbuild::CarriedPyramid>> {
+    if probe.header().pyramid_meta_len == 0 {
+        return Ok(None);
+    }
+    let Some(meta) = probe.pyramid() else {
+        anyhow::bail!("{input}: the pyramid section cannot be read");
+    };
+    let mut ids: Vec<u32> = meta.summary.iter().map(|e| e.predicate).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut predicates = Vec::with_capacity(ids.len());
+    for id in ids {
+        let term = probe.dictionary().predicate_term(id).ok_or_else(|| {
+            anyhow::anyhow!("{input}: the pyramid uses predicate id {id}, which is not a term")
+        })?;
+        predicates.push((id, term));
+    }
+    Ok(Some(rete_core::extbuild::CarriedPyramid {
+        levels: probe.header().pyramid_levels,
+        round: meta.round,
+        summary: meta.summary.clone(),
+        predicates,
+        descriptors: meta.descriptors.clone(),
+    }))
 }
 
 /// Measure the starter queries on the converted file at `path` and patch the
@@ -345,58 +391,6 @@ fn conversion_entry(
         source_name: Some(bi::file_name(input)),
         query_costs: None,
     })
-}
-
-/// Inputs with a community pyramid, or with per-graph named graphs (kind 5):
-/// decode every statement and rebuild in memory, with the pyramid, and the
-/// quad index (the per-graph layout is not one `0x06` or later can carry).
-fn convert_in_ram(
-    input: &str,
-    output: &str,
-    label_index: bool,
-    record: &[u8],
-    derive: Option<rete_core::derived::DeriveOpts>,
-) -> anyhow::Result<()> {
-    eprintln!(
-        "convert: {input} has a community pyramid or per-graph named graphs (kind 5); re-encoding it in \
-         memory as a format 0x08 file (named graphs in the quad index)"
-    );
-    let bytes = std::fs::read(input)?;
-    let rete = rete_core::Rete::open(&bytes)?;
-    let card = rete.metadata().map(<[u8]>::to_vec);
-    let mut quads: Vec<rete_core::format::RawQuad> = rete
-        .dump(None)
-        .into_iter()
-        .map(|(s, p, o)| (s, p, o, None))
-        .collect();
-    let named: Vec<String> = rete.graph_names().iter().map(|g| g.to_string()).collect();
-    for g in &named {
-        for (s, p, o) in rete.dump(Some(g)) {
-            quads.push((s, p, o, Some(g.clone())));
-        }
-    }
-    let scope = rete.text_index_scope();
-    let legacy_labels = rete.pyramid().is_some_and(|p| !p.label_index.is_empty());
-    let mut opts = rete_core::ingest::AssembleOptions::sectioned();
-    opts.graph_layout = rete_core::GraphLayout::Quad;
-    opts.with_pyramid = rete.header().pyramid_meta_len > 0;
-    opts.with_text_index = rete.has_text_index();
-    opts.text_index_scope = scope.as_ref();
-    opts.label_index = rete.has_label_index() || (label_index && legacy_labels);
-    opts.perms = rete.header().perms;
-    let (image, stats) = rete_core::ingest::assemble_dataset_opts(quads, &opts, |_, _| {
-        card.clone().unwrap_or_default()
-    });
-    let image = finish_recorded_with(image, "convert", &stats, derive)?;
-    // The source's own record with the conversion appended, as for every other
-    // source: not the lean record of the re-encode, which describes this run.
-    let image = super::buildinfo::attach_record(&image, record)?;
-    std::fs::write(output, &image)?;
-    eprintln!(
-        "convert: wrote {output} — format 0x08, {} bytes",
-        image.len()
-    );
-    Ok(())
 }
 
 fn hex16(b: &[u8; 16]) -> String {

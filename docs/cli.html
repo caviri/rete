@@ -1256,9 +1256,7 @@ and order) goes to <code>--tmp-dir</code>, by default beside the output. The 201
 <code>docker --memory 4g</code> with <code>--memory-budget-mb 2800</code>, the 202 MB OpenCitations sample in
 110 s at 2.0 GB; with <code>--cluster-subjects-by-class</code> the dump was converted with
 <code>RETE_QUAD_RUN_ROWS=50000000</code> (the default sort run is 100 M rows; not measured under 4 GB). See the
-CHANGELOG for the figures. A source with a community
-pyramid (or per-graph named graphs) is re-encoded in memory instead, since the pyramid is
-built in memory.</p>
+CHANGELOG for the figures.</p>
 <p>The card is carried as it is (its <code>format_version</code> says 8). The build record is carried
 too, with a <code>conversions</code> entry added that names the converting engine, the time, the
 command and flags, and the source's format, content hash and size (a file
@@ -1273,15 +1271,17 @@ record's own costs were measured on the old layout and are kept as they were,
 but no longer describe this file. <code>rete card</code>, <code>card-audit</code> and
 <code>build_record()</code> show the conversion's. <code>--no-card-costs</code> skips the run;
 <code>--memory-budget-mb</code> bounds it as it does the build's.</p>
-<p>Two inputs are re-encoded in memory instead of by the bounded builder, because they
-carry something the builder does not write:</p>
+<p>A source with a community pyramid or with per-graph named graphs goes through the
+bounded builder like any other:</p>
 <ul>
-<li><strong>A community pyramid.</strong> Its levels are built over the whole graph, in memory, as
-<code>repyramid</code> does.</li>
-<li><strong>Per-graph named graphs</strong> (the <code>0x05</code> NAMED_GRAPHS section): re-encoded as a quad
-index from the decoded statements. A file whose only labels are the pyramid's legacy
-block (at most 8,192 entries) gets the label index <code>build --label-index</code> writes;
-<code>--no-label-index</code> skips it.</li>
+<li><strong>A community pyramid</strong> is written as it is: the same communities, superedges and
+descriptors, with the superedges under the predicate ids of the new dictionary. It is
+not computed again, so <code>rete summary</code> prints the same thing before and after, whatever
+<code>--pyramid-algo</code> built the source. Its schema, statistics and labels are sections of
+their own in <code>0x08</code>; a file whose only labels are the pyramid's legacy block gets a
+label index (<code>--no-label-index</code> leaves it without one).</li>
+<li><strong>Per-graph named graphs</strong> (the <code>0x05</code> NAMED_GRAPHS section) are walked graph by graph
+and written in the quad index.</li>
 </ul>
 <p><strong>Named graphs</strong> come out with the four <code>0x07</code> quad orders (GSPO, SPOG, POSG, OSPG, SPEC
 §6.5); the graph-leading <code>G+POS</code> and the others of a <code>0x06</code> input are not written.
@@ -1290,7 +1290,9 @@ order-major, always.</p>
 <p><strong>What a converted file is.</strong> The same statements under the same card: a query returns the
 same rows from the input and the output (the tests compare the sorted rows of every query
 and the exact order of every <code>ORDER BY</code>). It is the file <code>rete build</code> writes for the same
-data and flags, record apart, byte for byte (the content hash is the build's). Converting
+data and flags, record apart, byte for byte (the content hash is the build's), unless
+the source has a community pyramid: the converted file has the source's, a build computes
+its own. Converting
 twice, or converting a <code>0x08</code> file, gives the same bytes; a <code>0x08</code> input is only written
 again under the current directory-leaf policy, payload copied (about two seconds for the
 2.4 GB nanopub dump). <code>rete verify</code> of the output checks the dictionary's order.</p>

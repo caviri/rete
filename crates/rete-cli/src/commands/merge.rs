@@ -394,6 +394,7 @@ pub(crate) fn merge_cmd(
             input_memory: share,
             card_from_image,
             derive: Some(rete_core::derived::DeriveOpts::default()),
+            pyramid: None,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
