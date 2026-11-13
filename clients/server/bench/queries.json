@@ -1,0 +1,7 @@
+{
+  "small": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
+  "api": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 200",
+  "large": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000",
+  "count": "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }",
+  "group": "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c"
+}
