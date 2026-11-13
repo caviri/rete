@@ -115,7 +115,7 @@ Every option is a flag and an environment variable; the flag wins.
 A catalog is `{"datasets": [{"key", "label", "description", "url", …}]}`.
 A relative `url` resolves against the catalog's own location, so a
 `catalog.json` can sit next to the files it lists. The published one is
-generated from the playground catalog by `scripts/export_space_catalog.py`;
+generated from the playground catalog by `scripts/export_catalog.py`;
 the package carries a copy and uses it when the published one cannot be
 read. URL catalogs are re-read every `RETE_CATALOG_REFRESH_S` (with
 `If-None-Match`), and a failed refresh keeps the last good copy.

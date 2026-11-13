@@ -1882,7 +1882,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n@prefix lj: <http://linkedjazz.org/ontology/> .\n\n[] a sh:NodeShape ;\n  sh:targetSubjectsOf lj:playedTogether ;\n  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:message \"A collaborator should be named.\" ] ."
     }
    ],
-   "url": "https://data.graphplaza.com/linked-jazz/linked-jazz.0x05.rete"
+   "url": "https://data.graphplaza.com/linked-jazz/linked-jazz.rete"
   },
   {
    "key": "getty-ulan",
@@ -3654,6 +3654,79 @@
    "url": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete"
   },
   {
+   "key": "opencitations-index",
+   "label": "opencitations-index — The OpenCitations Index in the OpenCitations Data Model: 2.56 billion citations between OpenCitations Meta works (one file, remote, lazy)",
+   "description": "**The OpenCitations Index** (Index CSV v8, 2026-09-08, with the source-info dump v7) **exactly as OpenCitations' own RDF states it, in the OpenCitations Data Model (OCDM)**: 2,556,381,540 citations and 15,821,719,427 statements in one file. Every citation is a `cito:Citation` at OpenCitations' IRI `https://w3id.org/oc/index/ci/{oci}` (the OCI is `<citing omid>-<cited omid>`), with `cito:hasCitingEntity` and `cito:hasCitedEntity`; `cito:hasCitationCreationDate` (2,526,739,654, typed `xsd:date`, `xsd:gYearMonth` or `xsd:gYear` by the value's shape, as OpenCitations' RDF does); `cito:hasCitationTimeSpan` (2,265,317,543, `xsd:duration`); the types `cito:JournalSelfCitation` (113,835,813) and `cito:AuthorSelfCitation` (64,057,568); and `prov:atLocation`, the source collections that state the citation (3,182,624,229: COCI 2,038,872,184, POCI 655,257,417, DOCI 279,990,075, MOCI 190,730,689, OROCI 14,181,370, OUTOCI 3,124,572, JOCI 467,821, CROCI 101). **The works are OpenCitations Meta's own `br` IRIs** `https://w3id.org/oc/meta/br/{omid}`, the same nodes as the `opencitations-meta` dataset, so a citation's citing and cited works resolve there with no mapping, and Meta's `oc:doiLink` leads on to a work's doi.org IRI, where `crossref`, `datacite` and `openaire` meet. The Index has no titles or authors of its own: get them from `opencitations-meta`. **One difference from OpenCitations' N-Triples dump, on purpose:** negative time spans that combine days with years or months (`-P6Y7M30D`, `-P4M7D`; 1,473,978) are kept, which their N-Triples writer drops. Duplicate source statements are collapsed and counted, never dropped silently; 397,634 citations are of a work by itself, kept as stated. Provenance (when and from what each citation was created) is not included. No full-text index, no label index, no pyramid. **Start queries from a constant**: a citation's OCI IRI, or a work's `br` IRI as citing or cited entity, read a few tiles of the file; a count or scan over all 2.56 billion citations does not belong over HTTP range. **CC0 1.0**, as the Index is. Format 0x06, built with rete 0.5.3 from the Index CSV (figshare 10.6084/m9.figshare.24356626.v8) and the source-info dump (10.6084/m9.figshare.24427051.v7).",
+   "kind": "remote-lazy",
+   "triples": 15821719427,
+   "size": "111.0 GB",
+   "license": "CC0",
+   "source": "https://doi.org/10.6084/m9.figshare.24356626.v8",
+   "tags": [
+    "OpenCitations",
+    "OpenCitations Index",
+    "OCDM",
+    "CiTO",
+    "OCI",
+    "OMID",
+    "citations",
+    "scholarly communication",
+    "billion-triples",
+    "CC0"
+   ],
+   "examples": [
+    {
+     "title": "The citing and cited work of one citation",
+     "tip": "A citation is a cito:Citation at OpenCitations' IRI https://w3id.org/oc/index/ci/{oci}, and the OCI is <citing omid>-<cited omid>. The two works are OpenCitations Meta br IRIs, the same nodes as in the opencitations-meta dataset: look them up there for title, authors, venue and identifiers.",
+     "reason": null,
+     "sparql": "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?citing ?cited WHERE {\n  <https://w3id.org/oc/index/ci/0601785-0602134> cito:hasCitingEntity ?citing ; cito:hasCitedEntity ?cited\n}"
+    },
+    {
+     "title": "One citation by its OCI: everything OpenCitations states about it",
+     "tip": "The citing and cited entities, the creation date (typed xsd:date, gYearMonth or gYear by its shape, as OpenCitations' RDF does), the time span (xsd:duration), the self-citation types and the source collections (prov:atLocation: COCI, DOCI, MOCI, OROCI ...) that state it. A constant subject reads a few tiles.",
+     "reason": null,
+     "sparql": "SELECT ?p ?o WHERE {\n  <https://w3id.org/oc/index/ci/0601785-0602134> ?p ?o\n} ORDER BY ?p ?o"
+    },
+    {
+     "title": "A work's reference list: the works it cites (by Meta OMID)",
+     "tip": "Outgoing citations of one work, from its OpenCitations Meta OMID IRI. The creation date is the citing work's publication date; the time span runs from the cited to the citing work's publication. Resolve a cited work's metadata in opencitations-meta.",
+     "reason": null,
+     "sparql": "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?citation ?cited ?date ?span WHERE {\n  ?citation cito:hasCitingEntity <https://w3id.org/oc/meta/br/0601785> ;\n            cito:hasCitedEntity ?cited .\n  OPTIONAL { ?citation cito:hasCitationCreationDate ?date }\n  OPTIONAL { ?citation cito:hasCitationTimeSpan ?span }\n} ORDER BY ?cited"
+    },
+    {
+     "title": "Who cites a work (incoming citations)",
+     "tip": "The citations that name one work as cited entity. Start from the work's OMID IRI: the query reads a few tiles. A work cited very often has many rows, so add LIMIT, as in the next example.",
+     "reason": null,
+     "sparql": "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?citation ?citing ?date WHERE {\n  ?citation cito:hasCitedEntity <https://w3id.org/oc/meta/br/0601785> ;\n            cito:hasCitingEntity ?citing .\n  OPTIONAL { ?citation cito:hasCitationCreationDate ?date }\n} ORDER BY ?date ?citing"
+    },
+    {
+     "title": "Ten works citing a heavily cited work (LIMIT 10)",
+     "tip": "br/06104029082 is among the most cited works in the Index (over 160,000 incoming citations, per the card's hub list). LIMIT 10 stops after the first tiles; without it the query returns every citing work.",
+     "reason": null,
+     "sparql": "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?citation ?citing WHERE {\n  ?citation cito:hasCitedEntity <https://w3id.org/oc/meta/br/06104029082> ;\n            cito:hasCitingEntity ?citing .\n} LIMIT 10"
+    },
+    {
+     "title": "Where a work's citations come from: the source collections",
+     "tip": "prov:atLocation names the Index collection that states a citation: COCI (Crossref), POCI (PubMed), DOCI (DataCite), MOCI (merged), OROCI (OpenAIRE) and others. A citation found by several sources has several, so the counts add up to more than the number of citations.",
+     "reason": null,
+     "sparql": "PREFIX cito: <http://purl.org/spar/cito/>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nSELECT ?source (COUNT(?citation) AS ?citations) WHERE {\n  ?citation cito:hasCitingEntity <https://w3id.org/oc/meta/br/0601785> ;\n            prov:atLocation ?source .\n} GROUP BY ?source ORDER BY DESC(?citations)"
+    },
+    {
+     "title": "A work's self-citations: shared journal or shared author",
+     "tip": "OpenCitations types a citation cito:JournalSelfCitation when citing and cited works are in the same journal, and cito:AuthorSelfCitation when they share an author.",
+     "reason": null,
+     "sparql": "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?citation ?cited ?kind WHERE {\n  ?citation cito:hasCitingEntity <https://w3id.org/oc/meta/br/0601785> ;\n            cito:hasCitedEntity ?cited ;\n            a ?kind .\n  FILTER(?kind IN (cito:JournalSelfCitation, cito:AuthorSelfCitation))\n} ORDER BY ?kind ?cited"
+    },
+    {
+     "title": "A work's citation counts: made, received, self-citations",
+     "tip": "References made, citations received, and the work's journal and author self-citations, in one query of four UNION branches, each starting from the work's OMID IRI.",
+     "reason": null,
+     "sparql": "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?count (COUNT(?citation) AS ?citations) WHERE {\n  { ?citation cito:hasCitingEntity <https://w3id.org/oc/meta/br/0601785> . BIND(\"references made\" AS ?count) }\n  UNION { ?citation cito:hasCitedEntity <https://w3id.org/oc/meta/br/0601785> . BIND(\"citations received\" AS ?count) }\n  UNION { ?citation cito:hasCitingEntity <https://w3id.org/oc/meta/br/0601785> ; a cito:JournalSelfCitation .\n          BIND(\"journal self-citations\" AS ?count) }\n  UNION { ?citation cito:hasCitingEntity <https://w3id.org/oc/meta/br/0601785> ; a cito:AuthorSelfCitation .\n          BIND(\"author self-citations\" AS ?count) }\n} GROUP BY ?count ORDER BY ?count"
+    }
+   ],
+   "url": "https://data.graphplaza.com/opencitations-index/opencitations-index.rete"
+  },
+  {
    "key": "nanopubs",
    "label": "nanopubs.rete — Nanopublications 2018: 10.8M nanopublications as 43.2M named graphs (remote, lazy)",
    "description": "**10,803,231 nanopublications**, as the Zenodo dump *Nanopublication dump from server network* (Tobias Kuhn, VU Amsterdam, version 20180405) states them: every nanopublication the decentralised server network held on 2018-04-05, as **378,654,287 quads in 43,212,923 named graphs**. Each nanopublication is four named graphs — head, assertion, provenance and publication info — linked by the `np:` vocabulary (`np:hasAssertion`, `np:hasProvenance`, `np:hasPublicationInfo`), so the graph a triple sits in says which nanopublication it belongs to. The default graph is empty. A mix of many sources (BEL Framework, Bio2RDF DrugBank, WikiPathways …), not one schema. Statements, graph names and IRIs are the dump's own. Use `GRAPH` patterns and start from a graph or a constant: a count or a scan over all 10.8M nanopublications takes minutes over HTTP range (the full count took over ten minutes on a home line). No full-text index, no label index. **CC BY-NC-SA 4.0** (non-commercial, share-alike): Kuhn, T. (2018), DOI 10.5281/zenodo.1213293; this `.rete` is an adaptation of the dump (format and card only) under the same licence. Format 0x06, built with rete 0.5.3; its directories rewritten into 16 KiB leaves by rete 0.5.6 `rete convert` (data, card and build record unchanged).",
@@ -4842,7 +4915,7 @@
      "sparql": "PREFIX schema: <http://schema.org/>\nPREFIX dct: <http://purl.org/dc/terms/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX geo: <http://www.opengis.net/ont/geosparql#>\nPREFIX efmo: <https://data.embassyofthefreemind.com/ontology#>\nCONSTRUCT {\n  ?b rdfs:label ?bl . ?b efmo:relatedBook ?r . ?r rdfs:label ?rl\n} WHERE {\n  ?b efmo:relatedBook ?r ; rdfs:label ?bl . ?r rdfs:label ?rl\n}\nLIMIT 200"
     }
    ],
-   "url": "https://data.graphplaza.com/bph/bph.0x05.rete"
+   "url": "https://data.graphplaza.com/bph/bph.rete"
   },
   {
    "key": "ustc",
@@ -6984,7 +7057,7 @@
   {
    "key": "orcid",
    "label": "orcid.rete — every public ORCID profile: 25M researchers, 150M works, ONE 1.3-billion-triple file (remote, lazy)",
-   "description": "The ORCID Public Data File 2025 (CC0) as ONE range-queryable graph — 1,296,338,454 triples / 397M terms / 17.5 GB, the largest single .rete published, and the first built with the memory-bounded external build (rete build --memory-budget-mb 16384: the 198 GB N-Triples stream is chunked to disk, dictionaries k-way-merged, each permutation external-sorted — peak RAM stays inside the budget while the output is byte-identical to an in-RAM build). 25,048,058 researchers sit at their CANONICAL https://orcid.org/{id} IRI (orc:Researcher with given/family names, credit-name label, country) — so this graph AUTO-MERGES with zenodo-records' 877k ORCID creators and the rest of the scholarly constellation (see data/scholar/scholar.ttl). 149,782,968 works (orc:Work + a fine-grained type like orc:journal-article / orc:conference-paper / orc:book-chapter) carry dcterms:creator → the researcher, the title as rdfs:label, orc:publicationYear, orc:journalTitle — and 78% carry orc:doi, the join key to DataCite / OpenAIRE / OpenCitations / DBLP. 25,063,901 affiliations are reified career events — orc:Employment / orc:Education / orc:Qualification / orc:Distinction / orc:InvitedPosition / orc:Membership / orc:Service ⊑ orc:Affiliation — each with orc:affiliationOf → the person, orc:organizationName, orc:roleTitle, start/end years, and (where ORCID disambiguated the org to ROR) orc:affiliationWith → the RAW https://ror.org/{id} IRI: the ror.rete dataset answers those same nodes, so the two files JOIN cross-source in the playground. Plus 1,838,095 fundings (orc:Funding, orc:awardedTo). The orcid.ttl OWL 2 QL ontology (https://w3id.org/rete/orcid#) travels inside the file. Built by scripts/orcid/orcid_to_nt.py → scripts/orcid/build_single_rete.sh. NOTE: the external build ships no Schema pyramid yet — keep queries SELECTIVE (one person, one org's people, one work's neighbourhood); each such query reads ~30–60 MB of the 17.5 GB over HTTP range, but a whole-graph aggregate would scan the file.",
+   "description": "The ORCID Public Data File 2025 (CC0) as ONE range-queryable graph — 1,296,338,454 triples / 397M terms / 17.5 GB, the largest single .rete published, and the first built with the memory-bounded external build (rete build --memory-budget-mb 16384: the 198 GB N-Triples stream is chunked to disk, dictionaries k-way-merged, each permutation external-sorted — peak RAM stays inside the budget while the output is byte-identical to an in-RAM build). 25,048,058 researchers sit at their CANONICAL https://orcid.org/{id} IRI (orc:Researcher with given/family names, credit-name label, country) — so this graph AUTO-MERGES with zenodo-records' 877k ORCID creators and the rest of the scholarly constellation (see the scholar ontology). 149,782,968 works (orc:Work + a fine-grained type like orc:journal-article / orc:conference-paper / orc:book-chapter) carry dcterms:creator → the researcher, the title as rdfs:label, orc:publicationYear, orc:journalTitle — and 78% carry orc:doi, the join key to DataCite / OpenAIRE / OpenCitations / DBLP. 25,063,901 affiliations are reified career events — orc:Employment / orc:Education / orc:Qualification / orc:Distinction / orc:InvitedPosition / orc:Membership / orc:Service ⊑ orc:Affiliation — each with orc:affiliationOf → the person, orc:organizationName, orc:roleTitle, start/end years, and (where ORCID disambiguated the org to ROR) orc:affiliationWith → the RAW https://ror.org/{id} IRI: the ror.rete dataset answers those same nodes, so the two files JOIN cross-source in the playground. Plus 1,838,095 fundings (orc:Funding, orc:awardedTo). The orcid.ttl OWL 2 QL ontology (https://w3id.org/rete/orcid#) travels inside the file. Built by scripts/orcid/orcid_to_nt.py → scripts/orcid/build_single_rete.sh. NOTE: the external build ships no Schema pyramid yet — keep queries SELECTIVE (one person, one org's people, one work's neighbourhood); each such query reads ~30–60 MB of the 17.5 GB over HTTP range, but a whole-graph aggregate would scan the file.",
    "kind": "remote-lazy",
    "triples": "1.30 B",
    "size": "17.38 GB",
