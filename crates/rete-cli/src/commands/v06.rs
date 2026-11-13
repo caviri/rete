@@ -308,27 +308,53 @@ fn convert_bounded(
 
 /// The predicate the source's schema types subjects with, when it is not
 /// `rdf:type`: the SCHEMA section names it; a pyramid-meta does not, so there
-/// it is the predicate most statements use to reach the least frequent class
-/// of the finest rollup (a file built with `--type-predicate`, or one without
-/// `rdf:type` whose typing predicate the build found). `None` keeps `rdf:type`.
+/// it is found from the least frequent class of the finest rollup (a file
+/// built with `--type-predicate`, or one without `rdf:type` whose typing
+/// predicate the build found). The predicates that say something about a class
+/// rather than give an instance of it (`rdfs:subClassOf`, `rdfs:range`, ...)
+/// are not candidates; among the others, the one with as many statements
+/// reaching the class as the rollup counts instances, else the one with most.
+/// `None` keeps `rdf:type`.
 fn source_type_predicate(probe: &rete_core::Rete) -> Option<String> {
     use rete_core::file::RDF_TYPE;
+    const ABOUT_A_CLASS: &[&str] = &[
+        "<http://www.w3.org/2000/01/rdf-schema#subClassOf>",
+        "<http://www.w3.org/2000/01/rdf-schema#domain>",
+        "<http://www.w3.org/2000/01/rdf-schema#range>",
+        "<http://www.w3.org/2002/07/owl#equivalentClass>",
+        "<http://www.w3.org/2002/07/owl#disjointWith>",
+        "<http://www.w3.org/2002/07/owl#complementOf>",
+        "<http://www.w3.org/2002/07/owl#someValuesFrom>",
+        "<http://www.w3.org/2002/07/owl#allValuesFrom>",
+        "<http://www.w3.org/2002/07/owl#onClass>",
+        "<http://www.w3.org/2002/07/owl#sameAs>",
+    ];
     if let Some(s) = probe.schema() {
         return s.type_predicate.clone().filter(|t| t != RDF_TYPE);
     }
     let rollup = probe.pyramid()?.level_rollups.last()?;
-    let (class, _) = rollup
+    let (class, instances) = rollup
         .classes
         .iter()
         .filter(|(c, _)| c.starts_with('<'))
         .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)))?;
     let mut by_predicate: std::collections::BTreeMap<String, u64> = Default::default();
     for t in probe.query(None, None, Some(class)) {
-        *by_predicate.entry(t.1).or_default() += 1;
+        if !ABOUT_A_CLASS.contains(&t.1.as_str()) {
+            *by_predicate.entry(t.1).or_default() += 1;
+        }
     }
-    let (best, _) = by_predicate
-        .into_iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))?;
+    let exact = by_predicate
+        .iter()
+        .filter(|(_, n)| *n == instances)
+        .map(|(p, _)| p.clone())
+        .min_by_key(|p| (p != RDF_TYPE, p.clone()));
+    let best = exact.or_else(|| {
+        by_predicate
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            .map(|(p, _)| p)
+    })?;
     (best != RDF_TYPE).then_some(best)
 }
 

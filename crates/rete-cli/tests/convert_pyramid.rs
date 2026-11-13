@@ -280,6 +280,40 @@ fn the_type_predicate_is_found_for_a_pyramid_meta_schema() {
                 ),
             ]
         })
+        // One class with a single instance and more statements about it than
+        // instances of it: those predicates are not the typing one.
+        .chain([
+            (
+                "<http://example.test/lone>".to_string(),
+                "<http://example.test/kind>".to_string(),
+                "<http://example.test/Rare>".to_string(),
+                None,
+            ),
+            (
+                "<http://example.test/Sub1>".to_string(),
+                "<http://www.w3.org/2000/01/rdf-schema#subClassOf>".to_string(),
+                "<http://example.test/Rare>".to_string(),
+                None,
+            ),
+            (
+                "<http://example.test/Sub2>".to_string(),
+                "<http://www.w3.org/2000/01/rdf-schema#subClassOf>".to_string(),
+                "<http://example.test/Rare>".to_string(),
+                None,
+            ),
+            (
+                "<http://example.test/a>".to_string(),
+                "<http://example.test/mentions>".to_string(),
+                "<http://example.test/Rare>".to_string(),
+                None,
+            ),
+            (
+                "<http://example.test/b>".to_string(),
+                "<http://example.test/mentions>".to_string(),
+                "<http://example.test/Rare>".to_string(),
+                None,
+            ),
+        ])
         .collect();
     let image = assemble_dataset_opts(quads, &AssembleOptions::legacy(), |_, _| Vec::new()).0;
     let dir = tempfile::tempdir().unwrap();

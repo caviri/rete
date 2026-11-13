@@ -751,9 +751,10 @@ bounded builder like any other:
   while it is written, outside `--memory-budget-mb`: about 64 bytes per superedge at the
   peak (2 GB for the 32 M superedges of a Louvain pyramid over 51 M statements).
 - **The schema's type predicate** is the source's. A `0x06` or `0x07` source names it in
-  its SCHEMA section. A `0x05` pyramid does not, so it is taken from the data: the
-  predicate that most statements use to reach the least frequent class of the source's
-  finest rollup. A file built with `--type-predicate`, or one without `rdf:type` whose
+  its SCHEMA section. A `0x05` pyramid does not, so it is taken from the data: of the
+  predicates that reach the least frequent class of the source's finest rollup, the one
+  with as many statements as that class has instances (`rdfs:subClassOf`, `rdfs:range`
+  and the like are not considered). A file built with `--type-predicate`, or one without `rdf:type` whose
   typing predicate the build found, keeps its classes; the line `convert` prints says
   `schema typed by <…>` when it is not `rdf:type`.
 - **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section) are walked graph by graph
