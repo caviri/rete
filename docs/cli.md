@@ -747,7 +747,15 @@ bounded builder like any other:
   not computed again, so `rete summary` prints the same thing before and after, whatever
   `--pyramid-algo` built the source. Its schema, statistics and labels are sections of
   their own in `0x08`; a file whose only labels are the pyramid's legacy block gets a
-  label index (`--no-label-index` leaves it without one).
+  label index (`--no-label-index` leaves it without one). The summary is held in memory
+  while it is written, outside `--memory-budget-mb`: about 64 bytes per superedge at the
+  peak (2 GB for the 32 M superedges of a Louvain pyramid over 51 M statements).
+- **The schema's type predicate** is the source's. A `0x06` or `0x07` source names it in
+  its SCHEMA section. A `0x05` pyramid does not, so it is taken from the data: the
+  predicate that most statements use to reach the least frequent class of the source's
+  finest rollup. A file built with `--type-predicate`, or one without `rdf:type` whose
+  typing predicate the build found, keeps its classes; the line `convert` prints says
+  `schema typed by <…>` when it is not `rdf:type`.
 - **Per-graph named graphs** (the `0x05` NAMED_GRAPHS section) are walked graph by graph
   and written in the quad index.
 

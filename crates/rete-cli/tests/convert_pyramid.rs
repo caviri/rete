@@ -195,3 +195,122 @@ fn the_legacy_label_block_becomes_a_label_index() {
         assert_eq!(summary(&old), summary(&out), "{flag:?}");
     }
 }
+
+/// A source whose schema was typed with another predicate than `rdf:type`
+/// (`build --type-predicate`) keeps that typing: a pyramid-meta does not name
+/// the predicate, so `convert` finds it from the classes of the rollup.
+#[test]
+fn the_type_predicate_of_the_source_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("in.nt");
+    let mut nt = String::new();
+    for i in 0..120 {
+        nt.push_str(&format!(
+            "<http://example.test/e{i}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.test/Item> .\n\
+             <http://example.test/e{i}> <http://example.test/kind> <http://example.test/K{}> .\n\
+             <http://example.test/e{i}> <http://example.test/next> <http://example.test/e{}> .\n",
+            i % 4,
+            (i + 1) % 120
+        ));
+    }
+    std::fs::write(&src, nt).unwrap();
+    let old = dir.path().join("old.rete");
+    let out = dir.path().join("out.rete");
+    run(
+        &[
+            "build",
+            src.to_str().unwrap(),
+            "-o",
+            old.to_str().unwrap(),
+            "--type-predicate",
+            "<http://example.test/kind>",
+        ],
+        &[("RETE_WRITE_FORMAT", "5")],
+    );
+    let (_, err) = run(
+        &[
+            "convert",
+            old.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--no-card-costs",
+        ],
+        &[],
+    );
+    assert!(
+        err.contains("schema typed by <http://example.test/kind>"),
+        "{err}"
+    );
+    let rollup = |f: &Path| {
+        let (s, _) = run(&["summary", f.to_str().unwrap()], &[]);
+        s.lines()
+            .find(|l| l.trim_start().starts_with("level 0"))
+            .map(|l| l.split("):").nth(1).unwrap().trim().to_string())
+            .unwrap_or_else(|| panic!("no rollup in {s}"))
+    };
+    assert!(
+        rollup(&old).contains("<http://example.test/K0>×30"),
+        "{}",
+        rollup(&old)
+    );
+    assert_eq!(rollup(&old), rollup(&out));
+}
+
+/// The same for a file as 0.3.x wrote it, whose pyramid-meta holds the schema
+/// and does not name the predicate: the build found `kind` (there is no
+/// `rdf:type`), and `convert` finds it again from the rollup's classes.
+#[test]
+fn the_type_predicate_is_found_for_a_pyramid_meta_schema() {
+    use rete_core::ingest::{assemble_dataset_opts, AssembleOptions, RawQuad};
+    let quads: Vec<RawQuad> = (0..200)
+        .flat_map(|i| {
+            let s = format!("<http://example.test/e{i}>");
+            [
+                (
+                    s.clone(),
+                    "<http://example.test/kind>".to_string(),
+                    format!("<http://example.test/K{}>", i % 4),
+                    None,
+                ),
+                (
+                    s,
+                    "<http://example.test/next>".to_string(),
+                    format!("<http://example.test/e{}>", (i + 1) % 200),
+                    None,
+                ),
+            ]
+        })
+        .collect();
+    let image = assemble_dataset_opts(quads, &AssembleOptions::legacy(), |_, _| Vec::new()).0;
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("old.rete");
+    let out = dir.path().join("out.rete");
+    std::fs::write(&old, &image).unwrap();
+    let rollup = |f: &Path| {
+        let (s, _) = run(&["summary", f.to_str().unwrap()], &[]);
+        s.lines()
+            .find(|l| l.trim_start().starts_with("level 0"))
+            .map(|l| l.split("):").nth(1).unwrap().trim().to_string())
+            .unwrap_or_else(|| panic!("no rollup in {s}"))
+    };
+    assert!(
+        rollup(&old).contains("<http://example.test/K0>×50"),
+        "{}",
+        rollup(&old)
+    );
+    let (_, err) = run(
+        &[
+            "convert",
+            old.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--no-card-costs",
+        ],
+        &[],
+    );
+    assert!(
+        err.contains("schema typed by <http://example.test/kind>"),
+        "{err}"
+    );
+    assert_eq!(rollup(&old), rollup(&out));
+}

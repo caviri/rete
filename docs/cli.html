@@ -1279,7 +1279,15 @@ descriptors, with the superedges under the predicate ids of the new dictionary. 
 not computed again, so <code>rete summary</code> prints the same thing before and after, whatever
 <code>--pyramid-algo</code> built the source. Its schema, statistics and labels are sections of
 their own in <code>0x08</code>; a file whose only labels are the pyramid's legacy block gets a
-label index (<code>--no-label-index</code> leaves it without one).</li>
+label index (<code>--no-label-index</code> leaves it without one). The summary is held in memory
+while it is written, outside <code>--memory-budget-mb</code>: about 64 bytes per superedge at the
+peak (2 GB for the 32 M superedges of a Louvain pyramid over 51 M statements).</li>
+<li><strong>The schema's type predicate</strong> is the source's. A <code>0x06</code> or <code>0x07</code> source names it in
+its SCHEMA section. A <code>0x05</code> pyramid does not, so it is taken from the data: the
+predicate that most statements use to reach the least frequent class of the source's
+finest rollup. A file built with <code>--type-predicate</code>, or one without <code>rdf:type</code> whose
+typing predicate the build found, keeps its classes; the line <code>convert</code> prints says
+<code>schema typed by &lt;…&gt;</code> when it is not <code>rdf:type</code>.</li>
 <li><strong>Per-graph named graphs</strong> (the <code>0x05</code> NAMED_GRAPHS section) are walked graph by graph
 and written in the quad index.</li>
 </ul>

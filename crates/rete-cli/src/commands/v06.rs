@@ -233,6 +233,7 @@ fn convert_bounded(
     let share = super::merge::reader_share(budget);
     let header = probe.header().clone();
     let pyramid = carried_pyramid(input, &probe)?;
+    let type_override = source_type_predicate(&probe);
     // A file that only has the pyramid's legacy label block gets the label
     // index (unless `--no-label-index`): the block is not carried.
     let legacy_labels = probe.pyramid().is_some_and(|p| !p.label_index.is_empty());
@@ -244,7 +245,7 @@ fn convert_bounded(
     drop(probe);
     eprintln!(
         "convert: {input} (format 0x{:02x}) -> format 0x08: re-encoding {} statement(s) through \
-         the memory-bounded builder (budget {budget_mb} MiB){}{}{}{}",
+         the memory-bounded builder (budget {budget_mb} MiB){}{}{}{}{}",
         header.version,
         header.quad_count,
         match &pyramid {
@@ -259,6 +260,10 @@ fn convert_bounded(
             ", per-graph named graphs (kind 5) into the quad index"
         } else {
             ""
+        },
+        match &type_override {
+            Some(t) => format!(", schema typed by {t}"),
+            None => String::new(),
         },
         if label_index { ", label index" } else { "" },
         if text_index.is_some() {
@@ -289,7 +294,7 @@ fn convert_bounded(
             perms: header.perms,
             label_index,
             schema: true,
-            type_override: None,
+            type_override,
             text_index,
             graphs: rete_core::GraphLayout::Quad,
             input_memory: share,
@@ -299,6 +304,32 @@ fn convert_bounded(
         },
     )
     .map_err(|e| anyhow::anyhow!("converting {input}: {e}"))
+}
+
+/// The predicate the source's schema types subjects with, when it is not
+/// `rdf:type`: the SCHEMA section names it; a pyramid-meta does not, so there
+/// it is the predicate most statements use to reach the least frequent class
+/// of the finest rollup (a file built with `--type-predicate`, or one without
+/// `rdf:type` whose typing predicate the build found). `None` keeps `rdf:type`.
+fn source_type_predicate(probe: &rete_core::Rete) -> Option<String> {
+    use rete_core::file::RDF_TYPE;
+    if let Some(s) = probe.schema() {
+        return s.type_predicate.clone().filter(|t| t != RDF_TYPE);
+    }
+    let rollup = probe.pyramid()?.level_rollups.last()?;
+    let (class, _) = rollup
+        .classes
+        .iter()
+        .filter(|(c, _)| c.starts_with('<'))
+        .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)))?;
+    let mut by_predicate: std::collections::BTreeMap<String, u64> = Default::default();
+    for t in probe.query(None, None, Some(class)) {
+        *by_predicate.entry(t.1).or_default() += 1;
+    }
+    let (best, _) = by_predicate
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))?;
+    (best != RDF_TYPE).then_some(best)
 }
 
 /// The source's community pyramid, to be written as it is: the summary with
