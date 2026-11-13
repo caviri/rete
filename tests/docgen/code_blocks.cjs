@@ -53,7 +53,7 @@ const root = path.resolve(__dirname, '../..');
     sh: 'rete build --card "$PWD/input.nt"', js: 'const answer = await open("a.rete");',
     json: '{"answer": 42}', sparql: 'SELECT ?s WHERE { ?s a <https://example.org/T> }',
     turtle: '@prefix ex: <https://example.org/> .', powershell: 'function rete { docker run -v "${PWD}:/data" @args }',
-    r: 'library(rete)\nx <- TRUE', toml: '[dependencies]\nrete-graph = "0.7.2"',
+    r: 'library(rete)\nx <- TRUE', toml: '[dependencies]\nrete-graph = "0.7.3"',
     yaml: 'jobs:\n  test: true # comment', html: '<div class="test">hello & goodbye</div>',
     xml: '<node id="1"/>', dockerfile: 'FROM node:22\nRUN npm install',
     mermaid: 'graph TD\n  A --> B', text: 'plain output\n<unchanged> & spaced  text',
