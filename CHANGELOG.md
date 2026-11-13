@@ -5,10 +5,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-13
+
+0.7.3 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
 ### Fixed
 
 - **`rete convert` keeps the source's community pyramid.** A file with a pyramid, or with per-graph named graphs, was rebuilt in memory, and the pyramid was computed again with Louvain whatever the source had been built with. A file built with `--pyramid-algo types` came out with another summary (one catalog file went from 4 communities and 25 superedges to 1,065,104 and 9,635,405) and a larger file. A file of some tens of millions of statements did not fit in memory: one of 23 M was killed under `docker --memory 4g`. Every source now goes through the memory-bounded builder, and the pyramid is written as it is, the superedges under the new predicate ids. `rete summary` prints the same before and after. The 23 M file converts in 109 s and one of 51 M statements (32 M superedges) in 297 s, both under `docker --memory 4g` with the default budget. Files converted with 0.7.0 to 0.7.2 from a source with a pyramid carry the recomputed one; convert the source again to get its own.
 - **`rete convert` keeps the type predicate of the source's schema.** The schema of the converted file was always computed with `rdf:type`. A source built with `--type-predicate`, or one without `rdf:type` whose typing predicate the build had found (a Wikibase export typed with its "instance of" property), lost its classes. The predicate now comes from the source: from its SCHEMA section, or for a `0x05` file from the classes of its rollup.
+
+### Security
+
+- **The Claude Desktop extension's `hono` and `@hono/node-server` are updated** to 4.13.18 and 2.1.8 (were 4.13.13 and 2.1.5), for seven advisories published on 2026-11-13: GHSA-3gg2-335m-rxc6, GHSA-46wx-v44x-9hh2, GHSA-4h7h-rv7c-7m2v, GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-jpvv-r467-5p4w and GHSA-qv5m-9pm6-hqp3. Both come in through `@modelcontextprotocol/sdk` (#476).
 
 ## [0.7.2] - 2026-11-12
 
