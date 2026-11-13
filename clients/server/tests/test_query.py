@@ -1,17 +1,16 @@
-"""Query round-trips through every plane relay serves, and the quoted-triple
-surface of CONSTRUCT/DESCRIBE.
+"""Query round-trips through REST and the SPARQL Protocol, and the
+quoted-triple surface of CONSTRUCT/DESCRIBE.
 
 The CONSTRUCT bug these pin (dev/client-audit/AUDIT.md, "relay
-/sparql/{dataset}"): relay joined the engine's stored tokens verbatim, so a
-quoted triple went out as the RDF-star surface ``<<s p o>>``. RDF 1.2
-N-Triples parsers reject that line, and an RDF 1.2 Turtle parser (relay
-serves the same bytes for ``text/turtle``) reads ``<< s p o >>`` as a
-*reifier*, a different graph. `rete export` writes ``<<( s p o )>>`` by
-default; relay now does the same.
+/sparql/{dataset}"): the relay joined the engine's stored tokens verbatim, so
+a quoted triple went out as the RDF-star surface ``<<s p o>>``. RDF 1.2
+N-Triples parsers reject that line, and an RDF 1.2 Turtle parser (the same
+bytes are served for ``text/turtle``) reads ``<< s p o >>`` as a *reifier*, a
+different graph. `rete export` writes ``<<( s p o )>>`` by default; so does
+this server.
 """
 from __future__ import annotations
 
-import json
 from importlib.metadata import version
 from urllib.parse import quote
 
@@ -31,9 +30,9 @@ def _sparql(client, dataset, query, **params):
     return client.get(f"/sparql/{dataset}?{qs}")
 
 
-def test_runs_against_rete_graph_0_3_3_or_later():
+def test_runs_against_rete_graph_0_6_1_or_later():
     major, minor, patch = (int(x) for x in version("rete-graph").split(".")[:3])
-    assert (major, minor, patch) >= (0, 3, 3), version("rete-graph")
+    assert (major, minor, patch) >= (0, 6, 1), version("rete-graph")
 
 
 def test_select_round_trip_rest(client):
@@ -99,7 +98,7 @@ def test_the_old_surface_is_still_available_and_is_what_parsers_reject(client):
     r = _sparql(client, PEOPLE, CONSTRUCT_CLAIM, quoted_triple_syntax="rdf-star")
     assert r.status_code == 200
     assert r.text == f"<{EX}claim1> <{EX}asserts> {QUOTED_STAR} .\n"
-    # What relay used to serve by default: no RDF 1.2 N-Triples parser takes it.
+    # What the relay used to serve by default: no RDF 1.2 N-Triples parser takes it.
     with pytest.raises(SyntaxError):
         list(ox.parse(r.text, format=ox.RdfFormat.N_TRIPLES))
 
@@ -108,9 +107,9 @@ def test_construct_rdf12_through_rest_and_describe(client):
     r = client.post("/api/query", json={"dataset": PEOPLE, "query": CONSTRUCT_CLAIM})
     assert r.json()["triples"] == [[f"<{EX}claim1>", f"<{EX}asserts>", QUOTED_RDF12]]
 
-    import rete_service as svc
+    from rete_server import state
 
-    doc = svc.describe_entity(PEOPLE, f"{EX}claim1")
+    doc = state.service.describe_entity(PEOPLE, f"{EX}claim1")
     assert [f"<{EX}claim1>", f"<{EX}asserts>", QUOTED_RDF12] in doc["triples"]
     assert not any(t[2].startswith("<<<") for t in doc["triples"])
 

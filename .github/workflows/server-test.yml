@@ -1,0 +1,83 @@
+name: Server tests
+
+# Runs clients/server's test suite inside its own image, built the way a
+# release builds it: with the rete-graph wheel compiled from THIS commit
+# (python-wheels.yml) as the image's wheelhouse, not the wheel PyPI happens to
+# serve. That is what lets a release PR, whose `rete-graph>=` floor names a
+# version PyPI does not have until the tag publishes it, pass here; and it
+# tests the server against the engine it will ship with. Allow-listed to the
+# server, the Python binding it imports, and the workflows that build them.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "clients/server/**"
+      - "clients/python/**"
+      - ".github/workflows/server-test.yml"
+      - ".github/workflows/python-wheels.yml"
+  pull_request:
+    paths:
+      - "clients/server/**"
+      - "clients/python/**"
+      - ".github/workflows/server-test.yml"
+      - ".github/workflows/python-wheels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wheel:
+    name: rete-graph wheel (linux x86-64)
+    uses: ./.github/workflows/python-wheels.yml
+    with:
+      platforms: linux-x86_64
+
+  test:
+    name: pytest in the server image
+    needs: wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheel-linux-x86_64
+          path: ${{ runner.temp }}/wheels
+      # The named context replaces the Dockerfile's empty `wheels` stage; the
+      # build installs the engine from it with --no-index and fails unless the
+      # installed version is the checked-out one.
+      - name: Build the server image on this commit's engine wheel
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' clients/python/pyproject.toml | head -1)
+          docker build -t rete-server-test \
+            --build-context wheels="$RUNNER_TEMP/wheels" \
+            --build-arg RETE_GRAPH_VERSION="$version" \
+            clients/server
+      - name: Run the test suite inside it
+        # The checkout is mounted and put first on the path, so the tests run
+        # the working-tree code; the image supplies Python, the engine wheel,
+        # graphviz and the app's dependencies.
+        run: |
+          docker run --rm --user 0 --entrypoint sh \
+            -v "$PWD/clients/server:/src" -w /src -e PYTHONPATH=/src rete-server-test -c '
+            set -e
+            pip install --quiet --no-cache-dir --root-user-action=ignore pytest pyoxigraph
+            python -c "import rete_graph; print(\"rete-graph\", rete_graph.__version__, \"engine\", rete_graph.__engine_version__)"
+            python -m pytest tests -q -p no:cacheprovider
+          '
+      - name: The image passes its own health check
+        run: |
+          docker run -d --name smoke -e RETE_TOKEN=ci-token -e RETE_CATALOG=none rete-server-test
+          for _ in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' smoke)
+            [ "$status" = healthy ] && break
+            [ "$status" = unhealthy ] && { docker logs smoke; exit 1; }
+            sleep 2
+          done
+          docker logs smoke
+          test "$(docker inspect --format '{{.State.Health.Status}}' smoke)" = healthy

@@ -1,0 +1,74 @@
+name: Publish catalog.json
+
+# rete-server reads its catalog from https://data.graphplaza.com/catalog.json:
+# a JSON projection of the playground catalog (web/playground-src/catalog.js)
+# made by scripts/export_catalog.py. This keeps the published copy in step
+# with main, and checks on every PR that the copy bundled in the package
+# (the server's fallback) is regenerated with the catalog it mirrors.
+#
+# Uploading needs three repository secrets for the R2 bucket's S3 API:
+# R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_S3_ENDPOINT. Without them the
+# upload is skipped with a notice and everything else still runs.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/playground-src/catalog.js"
+      - "scripts/export_catalog.py"
+      - "scripts/check_dataset_catalog.py"
+      - ".github/workflows/catalog-publish.yml"
+  pull_request:
+    paths:
+      - "web/playground-src/catalog.js"
+      - "scripts/export_catalog.py"
+      - "clients/server/rete_server/catalog.json"
+      - ".github/workflows/catalog-publish.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: The bundled copy matches the catalog
+        run: python3 scripts/export_catalog.py --check
+      - name: Export
+        run: python3 scripts/export_catalog.py --out "$RUNNER_TEMP/catalog.json"
+      - name: Upload to R2
+        if: github.event_name != 'pull_request'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$ENDPOINT" ]; then
+            echo "::notice::R2 secrets are not set; catalog.json was not uploaded"
+            exit 0
+          fi
+          aws s3api put-object --endpoint-url "$ENDPOINT" --bucket rete --key catalog.json \
+            --body "$RUNNER_TEMP/catalog.json" --content-type application/json \
+            --cache-control "public, max-age=300" >/dev/null
+          # Read it back through the public host, as the server will.
+          for _ in 1 2 3 4 5; do
+            if curl -fsS https://data.graphplaza.com/catalog.json -o "$RUNNER_TEMP/published.json" \
+               && cmp -s "$RUNNER_TEMP/catalog.json" "$RUNNER_TEMP/published.json"; then
+              echo "published $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["datasets"]))' "$RUNNER_TEMP/published.json") datasets"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::data.graphplaza.com/catalog.json does not match what was uploaded"
+          exit 1

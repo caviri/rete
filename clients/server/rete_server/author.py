@@ -9,28 +9,38 @@ conversation:
   over the ontology itself) + an OWL 2 QL rewriter smoke test. Returns
   actionable issues; an agent iterates until clean.
 * :func:`build_rete` — assemble a real `.rete` (card, examples, text index)
-  and serve it at an ephemeral URL. The file is immediately queryable and
-  SHACL-validatable through every existing tool (``dataset="generated/…"``
-  or the URL), and range-readable by any rete client or the playground.
+  and serve it from ``/generated/<name>``. The file is queryable at once
+  through every tool (``dataset="generated/…"``) and range-readable by any
+  rete client or the playground.
+* :func:`causal_diagram` — claims from a conversation → Mermaid, DOT, a
+  Graphviz SVG and a CauseNet-aligned `.rete`.
 
-Generated files live under ``GENERATED_DIR`` (``/tmp`` by default):
-ephemeral by design — download the base64 or republish properly to keep.
+Generated files live under the server's ``generated_dir`` (``/tmp`` by
+default): ephemeral by design — download the base64 or publish properly to
+keep one.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
 import os
-import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
 import rete_graph as rete
 
-GENERATED_DIR = Path(os.environ.get("RETE_GENERATED_DIR") or "/tmp/rete-generated")
-MAX_INPUT_BYTES = int(os.environ.get("AUTHOR_MAX_INPUT_MB") or 4) * (1 << 20)
-MAX_GENERATED = int(os.environ.get("AUTHOR_MAX_FILES") or 200)
+from . import state
+
+MAX_INPUT_BYTES = int(os.environ.get("RETE_AUTHOR_MAX_INPUT_MB") or 4) * (1 << 20)
+MAX_GENERATED = int(os.environ.get("RETE_AUTHOR_MAX_FILES") or 200)
+# Where the federated causal example sends its SERVICE call when the server
+# has no RETE_PUBLIC_URL: the public deployment that serves causenet.
+FALLBACK_PUBLIC_URL = "https://katospiegel-rete.hf.space"
+
+
+def _generated_dir() -> Path:
+    return state.settings.generated_dir
 
 LOV_API = "https://lov.linkeddata.es/dataset/lov/api/v2/term/search"
 
@@ -171,9 +181,11 @@ def check_ontology(ontology_text: str, format: str = "ttl") -> Dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 def _evict_generated() -> None:
-    files = sorted(GENERATED_DIR.glob("*.rete"), key=lambda p: p.stat().st_mtime)
+    files = sorted(_generated_dir().glob("*.rete"), key=lambda p: p.stat().st_mtime)
     while len(files) > MAX_GENERATED:
-        files.pop(0).unlink(missing_ok=True)
+        old = files.pop(0)
+        old.unlink(missing_ok=True)
+        state.catalog.drop_generated(old)
 
 
 def build_rete(rdf_text: str, format: str = "ttl",
@@ -185,7 +197,7 @@ def build_rete(rdf_text: str, format: str = "ttl",
 
     ``card`` is the curated Dataset Card (title, description, license, …);
     ``examples`` entries need title/question/sparql. Returns the dataset
-    key (queryable immediately via the other tools), the /generated URL
+    key (queryable at once through the other tools), the /generated URL
     (range-readable by any rete client and the playground), stats, and —
     when ``include_base64`` — the whole file as a data URI.
     """
@@ -205,10 +217,14 @@ def build_rete(rdf_text: str, format: str = "ttl",
         builder.text_index(True)
     data = builder.run()
 
-    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = _generated_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
     name = hashlib.sha256(data).hexdigest()[:16] + ".rete"
-    path = GENERATED_DIR / name
-    path.write_bytes(data)
+    path = out_dir / name
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+    state.catalog.add_generated(path, label=(card or {}).get("title"))
     _evict_generated()
 
     g = rete.open(data)
@@ -219,8 +235,8 @@ def build_rete(rdf_text: str, format: str = "ttl",
         "quads": g.quads,
         "terms": g.terms,
         "content_hash": g.content_hash(),
-        "note": "ephemeral: survives until the next Space restart — save the "
-                "base64 or republish to keep it",
+        "note": "ephemeral: kept until the server restarts or evicts it — save "
+                "the base64 or publish the file to keep it",
     }
     if include_base64:
         doc["data_uri"] = "data:application/octet-stream;base64," + base64.b64encode(data).decode()
@@ -339,10 +355,10 @@ def causal_diagram(claims: List[Dict[str, Any]], title: str = "Causal diagram",
 
     if build:
         ns = "urn:causal:" + _slug(title) + "#"
-        ttl = [f"@prefix cz: <https://w3id.org/rete/causal-conv#> .",
-               f"@prefix cn: <https://causenet.org/ontology#> .",
-               f"@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
-               f"@prefix xsd: <http://www.w3.org/2001/XMLSchema#> ."]
+        ttl = ["@prefix cz: <https://w3id.org/rete/causal-conv#> .",
+               "@prefix cn: <https://causenet.org/ontology#> .",
+               "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+               "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> ."]
         for slug, label in factors.items():
             ttl.append(f'<{ns}{slug}> a cz:Factor ; rdfs:label "{_ttl_escape(label)}" .')
         for e in edges:
@@ -359,7 +375,7 @@ def causal_diagram(claims: List[Dict[str, Any]], title: str = "Causal diagram",
         federated_example = (
             "PREFIX cn: <https://causenet.org/ontology#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
             "SELECT ?factor ?webCause WHERE {\n  ?f a <https://w3id.org/rete/causal-conv#Factor> ; rdfs:label ?factor .\n"
-            "  SERVICE <https://katospiegel-rete.hf.space/sparql/causenet> {\n"
+            f"  SERVICE <{state.settings.public_url or FALLBACK_PUBLIC_URL}/sparql/causenet> {{\n"
             "    ?rel cn:effect ?c . ?c rdfs:label ?factor .\n    ?rel cn:cause ?wc . ?wc rdfs:label ?webCause .\n  }\n} LIMIT 20"
         )
         built = build_rete(
@@ -382,20 +398,3 @@ def causal_diagram(claims: List[Dict[str, Any]], title: str = "Causal diagram",
         )
         doc.update({k: built[k] for k in ("dataset", "url", "bytes", "quads")})
     return doc
-
-
-def generated_datasets() -> List[Dict[str, Any]]:
-    """Catalog entries for the generated files (kind: generated)."""
-    out = []
-    if GENERATED_DIR.is_dir():
-        for p in sorted(GENERATED_DIR.glob("*.rete")):
-            out.append({
-                "key": f"generated/{p.name}",
-                "label": p.stem,
-                "description": "Agent-generated .rete (ephemeral).",
-                "url": f"/generated/{p.name}",
-                "local_path": str(p),
-                "size_bytes": p.stat().st_size,
-                "kind": "generated",
-            })
-    return out

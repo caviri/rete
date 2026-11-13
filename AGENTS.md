@@ -362,9 +362,13 @@ work from curl/CLI but fail in the browser (and are ~2× slower). An HF **bucket
 no public HTTP-range URL at all (Xet chunk storage, `hf_xet` client only). The
 `katospiegel-rete.hf.space` Space's **byte-range proxy plane** (a FastAPI FUSE-bucket
 Range proxy) served directly but wedged under load — R2 replaced that plane, and bulk
-Range traffic should never route through the Space again. The Space itself is alive and
-current (engine 0.3.0) for its other planes: `/api`, `/mcp`, and the per-dataset
-SPARQL 1.1 endpoints under `/sparql/…`.
+Range traffic should never route through the Space again. That proxy is gone: the query
+side is now `rete-server` (`clients/server`, `ghcr.io/caviri/rete-server`) — `/api`,
+`/mcp` and the per-dataset SPARQL 1.1 endpoints under `/sparql/…`, behind an optional
+bearer token — and the Space is meant to run that image. Its catalog is
+`data.graphplaza.com/catalog.json`, exported from `catalog.js` by
+`scripts/export_catalog.py` (`catalog-publish.yml`); after a catalog change, regenerate
+the bundled copy with the same script or that workflow's PR check fails.
 
 ## Re-Carding A Published Dataset
 
@@ -446,7 +450,7 @@ procedure and what each workflow does). There are no client tags any more:
 - Cut with `python3 scripts/sync_versions.py --set X.Y.Z`. Every channel must
   carry that exact version; `--check` fails otherwise, and every workflow the
   tag starts runs `--check-tag` before it publishes anything.
-- Nothing in a release installs `rete-graph` from PyPI: the relay image and the
+- Nothing in a release installs `rete-graph` from PyPI: the server image and the
   Blender add-on are built on wheels from the same run (`python-wheels.yml`),
   so the floors move in the release PR and no tag waits for another. Keep it
   that way: a new artifact that bundles the engine takes the wheels as a build

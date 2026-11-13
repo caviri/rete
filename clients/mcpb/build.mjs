@@ -77,7 +77,7 @@ cpSync(wasm, join(out, "server", "rete_wasm_bg.wasm"));
 
 // The published catalogue: evaluate catalog.js in a sandbox (it assigns to
 // window.RETE_PLAYGROUND_CATALOG) and project it onto what the tools serve —
-// the same projection scripts/export_space_catalog.py makes for the Space.
+// the same projection scripts/export_catalog.py makes for rete-server.
 const sandbox = { window: {} };
 runInNewContext(readFileSync(catalogSource, "utf8"), sandbox, { filename: catalogSource });
 const source = sandbox.window.RETE_PLAYGROUND_CATALOG;

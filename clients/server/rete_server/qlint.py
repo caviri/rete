@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import rete_graph as rete
 
-import rete_service as svc
+from . import state
 
 # A minimal in-memory graph: parsing is validated by evaluating against it
 # (the engine has no separate parse entry point; on one triple, evaluation
@@ -153,8 +153,9 @@ def validate_query(query: str, dataset: Optional[str] = None, url: Optional[str]
     # 3. Vocabulary probes against a real dataset (cheap lazy ASKs).
     if dataset or url:
         source_probes = []
-        handle = svc.get_handle(svc.resolve_source(dataset, url)[0])
-        with handle.lock:
+        service = state.service
+        handle = service.handle(service.resolve(dataset, url)[0])
+        with service._locked(handle):
             for t in terms[:25]:
                 iri = t["iri"]
                 if t["role"] == "class":

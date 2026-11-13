@@ -1,17 +1,18 @@
-"""FILTER type-error warnings (#279-#283) reach every caller of relay.
+"""FILTER type-error warnings (#279-#283) reach every caller.
 
 `CONTAINS(?s, "alice")` on an IRI is a SPARQL type error; FILTER treats it as
-false, so the query returns zero rows and, before rete-graph 0.3.3, no reason.
-The engine now reports it, and `Graph.last_warnings()` exposes it. These tests
-pin that relay hands it on: REST, the SPARQL 1.1 Protocol endpoint, the MCP
-tool, and the /api/ask agent's query tool. No LLM is called: the agent runs on
-pydantic-ai's FunctionModel, a scripted stand-in.
+false, so the query returns zero rows. The engine reports it, and these tests
+pin that the server hands it on: REST, the SPARQL 1.1 Protocol endpoint, the
+MCP tool, and the /api/ask agent's query tool. No LLM is called: the agent
+runs on pydantic-ai's FunctionModel, a scripted stand-in.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 from urllib.parse import quote
+
+import pytest
 
 from conftest import CONTAINS_ON_IRI, NAME, PEOPLE
 from helpers import tool_json
@@ -59,13 +60,13 @@ def test_protocol_construct_and_ask_carry_the_header(client):
     assert "STRSTARTS" in r.headers["x-rete-warnings"]
 
 
-def test_mcp_sparql_query_tool_returns_the_warning():
+def test_mcp_sparql_query_tool_returns_the_warning(client):
     from fastmcp import Client
 
-    import rete_mcp
+    from rete_server.mcp import build_mcp
 
     async def go():
-        async with Client(rete_mcp.mcp) as c:
+        async with Client(build_mcp(author=True)) as c:
             return tool_json(await c.call_tool(
                 "sparql_query", {"dataset": PEOPLE, "query": CONTAINS_ON_IRI}))
 
@@ -75,18 +76,21 @@ def test_mcp_sparql_query_tool_returns_the_warning():
 
 
 def test_mcp_instructions_tell_the_agent_about_str():
-    import rete_mcp
+    from rete_server.mcp import build_mcp
 
-    assert "STR()" in rete_mcp.INSTRUCTIONS and "`warnings`" in rete_mcp.INSTRUCTIONS
+    text = build_mcp(author=False).instructions
+    assert "STR()" in text and "`warnings`" in text
+    assert "build_rete" not in text  # authoring off: not advertised
 
 
-def test_ask_agent_sees_the_warning_in_its_query_tool():
+def test_ask_agent_sees_the_warning_in_its_query_tool(client):
     """Script the model: call sparql_query with the CONTAINS-on-IRI query,
     then finish. Capture what the tool handed back to the 'model'."""
+    pytest.importorskip("pydantic_ai")
     from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    import rete_ask
+    from rete_server import ask
 
     seen = []
 
@@ -101,7 +105,7 @@ def test_ask_agent_sees_the_warning_in_its_query_tool():
             "answer": "No rows; CONTAINS needs STR() on an IRI.",
             "sparql": CONTAINS_ON_IRI, "table": []})])
 
-    out = rete_ask.answer_question(FunctionModel(script), PEOPLE, "Whose IRI contains alice?")
+    out = ask.answer_question(FunctionModel(script), PEOPLE, "Whose IRI contains alice?")
     assert out["sparql"] == CONTAINS_ON_IRI
     (tool_doc,) = seen
     assert tool_doc["table"] == []

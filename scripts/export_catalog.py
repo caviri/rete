@@ -1,17 +1,25 @@
-"""Export the playground catalog to clients/relay/catalog.json.
+"""Export the playground catalog as the catalog.json rete-server reads.
 
 The playground's ``web/playground-src/catalog.js`` is the source of truth for
-published datasets. The HF Space (REST + MCP query planes) consumes a plain
-JSON projection of it: key, label, description, the direct range-readable R2
-URL, meta (triples/size/license/source), tags, and the example queries.
+published datasets. rete-server (clients/server) consumes a plain JSON
+projection of it: key, label, description, the direct range-readable R2 URL,
+meta (triples/size/license/source), tags, example queries and SHACL shapes.
+
+Two copies exist: the one bundled in the package
+(``clients/server/rete_server/catalog.json``, the fallback) and the published
+one at ``https://data.graphplaza.com/catalog.json``, which
+``.github/workflows/catalog-publish.yml`` uploads from this script's output.
 
 Needs node on PATH (the catalog is evaluated in a sandboxed VM — same
 approach as check_dataset_catalog.py). Run after catalog changes:
 
-    python scripts/export_space_catalog.py
+    python scripts/export_catalog.py            # rewrite the bundled copy
+    python scripts/export_catalog.py --check    # fail if it is stale
+    python scripts/export_catalog.py --out x.json
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -20,10 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from check_dataset_catalog import load_catalog  # noqa: E402
 
-OUT = ROOT / "clients/relay" / "catalog.json"
+OUT = ROOT / "clients/server" / "rete_server" / "catalog.json"
 
 
-def main() -> int:
+def render() -> str:
     catalog = load_catalog()
     base = catalog["remoteBase"].rstrip("/")
     meta = catalog.get("datasetMeta") or {}
@@ -65,9 +73,27 @@ def main() -> int:
             entry["url"] = d.get("url") or f"{base}/{key}/{key}.rete"
         datasets.append({k: v for k, v in entry.items() if v not in (None, [], "")})
 
-    OUT.write_text(json.dumps({"remoteBase": base, "datasets": datasets},
-                              indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"wrote {OUT.relative_to(ROOT)}: {len(datasets)} datasets")
+    return json.dumps({"remoteBase": base, "datasets": datasets}, indent=1, ensure_ascii=False) + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--out", type=Path, default=OUT, help=f"where to write (default {OUT.relative_to(ROOT)})")
+    ap.add_argument("--check", action="store_true", help="exit 1 when --out differs from the catalog")
+    args = ap.parse_args()
+    text = render()
+    count = len(json.loads(text)["datasets"])
+    if args.check:
+        current = args.out.read_text(encoding="utf-8") if args.out.is_file() else ""
+        if current != text:
+            print(f"{args.out}: stale; run python scripts/export_catalog.py", file=sys.stderr)
+            return 1
+        print(f"{args.out}: current ({count} datasets)")
+        return 0
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    print(f"wrote {args.out}: {count} datasets")
     return 0
 
 

@@ -74,14 +74,20 @@ TARGETS = [
         re.compile(r'"rete-graph>=([0-9.]+)"'),
         "blender test-image floor",
     ),
-    # The relay image installs the engine at build time: from the wheels a
-    # release builds in the same run, or, for the HF Space and a plain local
-    # `docker build`, from PyPI. A stale floor lets that PyPI path silently
-    # resolve an old engine.
+    # rete-server (ghcr.io/caviri/rete-server; not on PyPI) carries the
+    # release version, and its engine floor moves with it: the image installs
+    # the engine from the wheels a release builds in the same run, but a local
+    # `docker build` resolves it from PyPI, where a stale floor would silently
+    # pick an old engine.
     (
-        "clients/relay/requirements.txt",
-        re.compile(r"(?m)^rete-graph>=([0-9.]+)$"),
-        "clients/relay wheel floor",
+        "clients/server/pyproject.toml",
+        re.compile(r'(?m)^version = "([^"]+)"'),
+        "rete-server package (ghcr.io/caviri/rete-server)",
+    ),
+    (
+        "clients/server/pyproject.toml",
+        re.compile(r'(?m)^    "rete-graph>=([0-9.]+)",$'),
+        "rete-server engine floor",
     ),
     # mybinder.org builds its image from this file at launch, from PyPI. It is
     # the one consumer that resolves the new version from the registry, so a

@@ -692,7 +692,7 @@ docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
 <p>Merging to main can never publish; releasing is always the deliberate tag.</p>
 <p>The four native wheels are built by the reusable <code>python-wheels.yml</code>, which
 <code>release.yml</code> (the Blender add-on's bundled wheels), <code>docker-publish.yml</code> (the
-relay image's engine) and <code>relay-test.yml</code> call too. So every artifact that
+server image's engine) and <code>server-test.yml</code> call too. So every artifact that
 carries the engine is built from the commit being released or tested, and none
 of them installs <code>rete-graph</code> from PyPI while it is built.</p>
 <h2 id="releasing-to-pypi">Releasing to PyPI</h2>

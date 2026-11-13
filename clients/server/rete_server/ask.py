@@ -1,19 +1,20 @@
 """Natural-language → SPARQL, via a pydantic-ai agent (env-gated).
 
-Only imported when ASK_MODEL is set (e.g. ``anthropic:claude-sonnet-5`` with
-ANTHROPIC_API_KEY, or ``openai:gpt-5-mini`` with OPENAI_API_KEY). The agent
+Only imported when RETE_ASK_MODEL is set (e.g. ``anthropic:claude-sonnet-5-5``
+with ANTHROPIC_API_KEY). For an OpenAI-compatible router use the
+``openai-chat:<model>`` prefix with OPENAI_BASE_URL and OPENAI_API_KEY. The agent
 gets the same self-describing surface the MCP tools expose — schema, card,
 examples, entity search, query — scoped to one dataset per request.
 """
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
-import rete_service as svc
+from . import state
 
 
 class Answer(BaseModel):
@@ -39,29 +40,29 @@ def answer_question(model: str, dataset: str, question: str) -> Dict[str, Any]:
     @agent.tool
     def dataset_schema(ctx: RunContext[str]) -> str:
         """Classes with instance counts + subject-class/predicate/object-class relations."""
-        return json.dumps(svc.dataset_schema(ctx.deps))
+        return json.dumps(state.service.dataset_schema(ctx.deps))
 
     @agent.tool
     def dataset_card(ctx: RunContext[str]) -> str:
         """The dataset's embedded card (description, license, counts)."""
-        return json.dumps(svc.dataset_card(ctx.deps) or {})
+        return json.dumps(state.service.dataset_card(ctx.deps) or {})
 
     @agent.tool
     def example_queries(ctx: RunContext[str]) -> str:
         """Runnable example SPARQL queries the dataset ships with."""
-        return json.dumps(svc.dataset_examples(ctx.deps))
+        return json.dumps(state.service.dataset_examples(ctx.deps))
 
     @agent.tool
     def find_entities(ctx: RunContext[str], text: str) -> str:
         """Resolve a name to entity IRIs (label prefix + text index)."""
-        return json.dumps(svc.entity_search(text, ctx.deps, 20))
+        return json.dumps(state.service.entity_search(text, ctx.deps, 20))
 
     @agent.tool
     def sparql_query(ctx: RunContext[str], query: str) -> str:
         """Run SPARQL against the dataset; returns rows as plain values, and
         `warnings` when a FILTER hit a type error (e.g. CONTAINS on an IRI —
         wrap it in STR()) and so dropped rows without an error."""
-        doc = svc.run_query(ctx.deps, None, query, False, 200)
+        doc = state.service.run_query(ctx.deps, None, query, False, 200)
         keys = ("kind", "boolean", "table", "triples", "truncated", "warnings")
         return json.dumps({k: doc.get(k) for k in keys})
 
