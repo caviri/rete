@@ -128,9 +128,12 @@ read. URL catalogs are re-read every `RETE_CATALOG_REFRESH_S` (with
 - A graph is opened once, even when many first requests arrive together.
 - An answer is shaped once: each distinct term is converted once, the SPARQL
   endpoint builds only the W3C form, and JSON is written with orjson.
+- MCP answers go back as plain JSON, not as a one-event stream.
 - Queries on one graph still take turns, because the engine's check that a
   range fetch failed is per graph, not per query. A waiting request gives up
   with 503 after the query timeout instead of piling up.
+
+`bench/` measures all of this against `rete serve`; see `bench/README.md`.
 
 ## Tests
 

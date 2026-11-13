@@ -44,8 +44,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     service = Service(settings, catalog)
     state.settings, state.catalog, state.service = settings, catalog, service
 
+    # A tool answer is one JSON document, never a stream, so it goes back as
+    # plain JSON rather than a one-event SSE stream: measured 33-49% more MCP
+    # calls per second and a quarter less CPU per call (bench/).
     mcp_app = build_mcp(settings.author).http_app(
-        path="/mcp", stateless_http=True, host_origin_protection=False)
+        path="/mcp", stateless_http=True, json_response=True, host_origin_protection=False)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
