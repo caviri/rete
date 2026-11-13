@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rete summary` reads a file whose root is longer than the first read.** On a format 0x06 to 0x08 file with a pyramid and a root over 128 KiB, `rete summary`, `rete cost` and the other readers of the pyramid by range (`rete summary-url`, federation source selection) stopped with `0x06: range not held by this reader`. The file was sound. The root has the first key of every dictionary leaf, so it is long in a file with long literals that differ late: one catalog file of map geometries has a root of 242 KiB. The rest of the root is now read.
+
 ## [0.7.3] - 2026-11-13
 
 0.7.3 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
