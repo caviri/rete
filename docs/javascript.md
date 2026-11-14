@@ -12,7 +12,7 @@ npm install rete-graph
 ```js
 import { open, build } from "rete-graph";
 
-const g = await open("https://data.graphplaza.com/boe/boe.rete"); // Node / worker
+const g = await open("https://data.graphplaza.com/boe/boe-2026-07-07.rete"); // Node / worker
 for (const row of g.query(`
     SELECT ?s ?label WHERE {
         ?s <http://www.w3.org/2000/01/rdf-schema#label> ?label

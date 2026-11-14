@@ -558,7 +558,7 @@ function getEngine(){
   engineLoading=(async()=>{
     const msg=document.getElementById('customMsg'); if(msg) msg.textContent='loading the query engine + graph (~9 MB, once)…';
     const m=await import('./engine/rete_wasm.js'); await m.default();
-    const bytes=new Uint8Array(await (await fetch('https://data.graphplaza.com/z-anatomy/z-anatomy.rete')).arrayBuffer());
+    const bytes=new Uint8Array(await (await fetch('https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete')).arrayBuffer());
     engine=new m.Graph(bytes); if(msg) msg.textContent=''; return engine;
   })();
   return engineLoading;

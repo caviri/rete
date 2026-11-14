@@ -46,7 +46,7 @@ server anywhere:
 import { QueryEngine } from "@comunica/query-sparql";
 import { open, ReteSource } from "rete-graph";
 
-const source = new ReteSource(await open("https://data.graphplaza.com/boe/boe.rete"));
+const source = new ReteSource(await open("https://data.graphplaza.com/boe/boe-2026-07-07.rete"));
 const bindings = await (await new QueryEngine().queryBindings(
   `SELECT ?who ?label WHERE {
      ?s <urn:x:knows> ?who .

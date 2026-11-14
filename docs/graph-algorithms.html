@@ -642,7 +642,7 @@ self-describing RDF instead of a throwaway dict.</li>
 <pre><code class="language-python">import rete_graph as rete
 import networkx as nx
 
-g = rete.open("https://data.graphplaza.com/lombardi/lombardi.rete")
+g = rete.open("https://data.graphplaza.com/lombardi/lombardi-2026-07-20.rete")
 edges = g.query_df("""
     PREFIX lomb: &lt;https://w3id.org/rete/lombardi/&gt;
     SELECT ?src ?tgt ?type WHERE {

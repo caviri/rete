@@ -627,14 +627,14 @@ if you already installed the native CLI, continue at <a href="#building-a-rete-f
 <p>The published CLI container runs the same commands as a local <code>rete</code> binary.
 Define a wrapper in your current shell so that files in your working directory
 are available inside the container.</p>
-<p>This example pins the published 0.7.2 image, which writes format <code>0x08</code> and
+<p>This example pins the published 0.7.3 image, which writes format <code>0x08</code> and
 reads <code>0x05</code> to <code>0x08</code>. Readers up to 0.6.x cannot open <code>0x08</code> files. See
 <a href="compatibility.html">Compatibility</a> before exchanging files with older readers.</p>
 <p>On a POSIX shell (Linux or macOS):</p>
-<pre><code class="language-sh">alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.7.2'
+<pre><code class="language-sh">alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:0.7.3'
 </code></pre>
 <p>On PowerShell:</p>
-<pre><code class="language-powershell">function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.7.2 @args }
+<pre><code class="language-powershell">function rete { docker run --rm -i -v "${PWD}:/data" -w /data ghcr.io/caviri/rete-cli:0.7.3 @args }
 </code></pre>
 <p><code>-v</code> shares your directory with <code>/data</code>, <code>-w</code> makes relative filenames work,
 and <code>-i</code> allows piped input. Without <code>-i</code>, a piped build can silently receive
@@ -715,7 +715,7 @@ and the browser. Each example below uses the graph you just built. For the
 query language itself, see <a href="sparql.html">SPARQL support</a>; for joins, reasoning and
 analysis, <a href="query-and-analyze.html">Query and analyze</a>.</p>
 <h3 id="python">Python</h3>
-<pre><code class="language-sh">pip install rete-graph==0.7.2
+<pre><code class="language-sh">pip install rete-graph==0.7.3
 </code></pre>
 <p>Save as <code>query.py</code>:</p>
 <pre><code class="language-python">import rete_graph as rete
@@ -737,7 +737,7 @@ http://ex/web
 <p>The package is <code>rete-graph</code>; the module is <code>rete_graph</code>. <code>query()</code> returns one
 dict per row, with each value a <code>Term</code> that has <code>.value</code>. See <a href="python.html">Python</a>.</p>
 <h3 id="javascript">JavaScript</h3>
-<pre><code class="language-sh">npm install rete-graph@0.7.2
+<pre><code class="language-sh">npm install rete-graph@0.7.3
 </code></pre>
 <p>Save as <code>query.mjs</code>:</p>
 <pre><code class="language-js">import { readFileSync } from "node:fs";

@@ -635,7 +635,7 @@ covers everything below with captured outputs.</p>
 <h2 id="open-a-graph">Open a graph</h2>
 <pre><code class="language-python">import rete_graph as rete
 
-g = rete.open("https://data.graphplaza.com/boe/boe.rete")     # remote, lazy
+g = rete.open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")     # remote, lazy
 g = rete.open("data/example.rete")                            # local file, lazy too
 g = rete.open(file_bytes)                                     # bytes image, eager
 g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
@@ -716,7 +716,7 @@ the list as <code>warnings</code> when it is non-empty.</p>
 <a href="dataset-cards.html">Dataset Card</a>); CLI-built datasets ship a whole tiered
 starter library. <code>g.examples()</code> reads them — on a remote file that costs one
 small ranged read:</p>
-<pre><code class="language-python">g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+<pre><code class="language-python">g = rete.open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 for ex in g.examples():                     # 20 entries on this dataset
     print(ex["title"], "—", ex["question"])
 g.query(g.examples()[0]["sparql"])          # and they just run
@@ -840,7 +840,7 @@ playground — with no server anywhere. <strong>Try it right now</strong> in the
 %pip install rete-graph
 
 import rete_graph as rete
-g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+g = rete.open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 </code></pre>
 <p><strong>On the older Pyodide 0.29</strong> (Python 3.13), whose installer predates the

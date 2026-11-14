@@ -250,7 +250,7 @@
 // ── Linked Jazz: who played with whom ─────────────────────────────
 // openGraph() runs the rete engine in a Web Worker (its synchronous
 // range reads are worker-only) and returns promise-based methods.
-const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete");
 
 const rows = await graph.query(`
   PREFIX lj:   <http://linkedjazz.org/ontology/>
@@ -356,7 +356,7 @@ log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} byt
 // ── Top 20 best-connected musicians ───────────────────────────────
 // A SPARQL aggregation rendered as a bar chart: one series, one hue,
 // bars rounded only at the value end, recessive grid, hover tooltip.
-const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete");
 
 const rows = await graph.query(`
   PREFIX lj:   <http://linkedjazz.org/ontology/>
@@ -432,7 +432,7 @@ log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} byt
 // year-cursor sweeps 1896→1918, expeditions grow as it passes, crews
 // pop out of their expedition — and the four people who sailed more
 // than once are threads connecting expeditions across the years.
-const graph = await openGraph("https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions.rete");
+const graph = await openGraph("https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions-2026-06-13.rete");
 
 const rows = await graph.query(`
   PREFIX ex:   <http://ex/>
@@ -586,7 +586,7 @@ log("tip: press ▶ Run again to replay the animation");
 // DOMINANT relationship group between two musicians — hover a ribbon
 // for the exact breakdown, or an arc to isolate a musician.
 // (rel:knowsOf — 3,647 generic "knows" links — is left out on purpose.)
-const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete");
 
 const GROUPS = [
   { key: "band & stage", color: theme.blue,
@@ -714,7 +714,7 @@ log(`fetched ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} byt
 // ── Stacked bars: how each musician's collaborations break down ───
 // One row per musician, segments = relationship types (a validated
 // 4-color categorical palette; 2px surface gaps separate segments).
-const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+const graph = await openGraph("https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete");
 
 const rows = await graph.query(`
   PREFIX lj:   <http://linkedjazz.org/ontology/>

@@ -50,20 +50,20 @@ Same file, every runtime — always lazy (only touched byte ranges are read):
 
 ```python
 import rete_graph as rete                       # pip install rete-graph
-g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+g = rete.open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 ```
 
 ```js
 import { open } from "rete-graph";              // npm install rete-graph
-const g = await open("https://data.graphplaza.com/boe/boe.rete");
+const g = await open("https://data.graphplaza.com/boe/boe-2026-07-07.rete");
 ```
 
 ```r
-g <- rete_open("https://data.graphplaza.com/boe/boe.rete")   # R package `rete`
+g <- rete_open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")   # R package `rete`
 ```
 
 ```sh
-rete sparql-url https://data.graphplaza.com/boe/boe.rete "SELECT … LIMIT 5"
+rete sparql-url https://data.graphplaza.com/boe/boe-2026-07-07.rete "SELECT … LIMIT 5"
 ```
 
 No client at all? Each dataset is a **standard SPARQL 1.1 endpoint**
@@ -80,7 +80,7 @@ fraction of `fileLength` fetched.
 For repeated heavy analysis, one GET beats many ranges:
 
 ```sh
-curl -sO https://data.graphplaza.com/boe/boe.rete
+curl -sO https://data.graphplaza.com/boe/boe-2026-07-07.rete
 rete verify boe.rete && rete card boe.rete     # integrity + provenance
 ```
 

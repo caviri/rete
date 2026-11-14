@@ -38,7 +38,7 @@ docker run --rm -v "$PWD":/work -w /work rete-blender sh clients/blender/build.s
 4. *Build scene*.
 
 Try this against the anatomy graph
-(`https://data.graphplaza.com/z-anatomy/z-anatomy.rete`), which places 4,884
+(`https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete`), which places 4,884
 human structures in a real anatomical frame:
 
 ```sparql

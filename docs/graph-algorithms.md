@@ -28,7 +28,7 @@ The worked example for everything on this page is the
 import rete_graph as rete
 import networkx as nx
 
-g = rete.open("https://data.graphplaza.com/lombardi/lombardi.rete")
+g = rete.open("https://data.graphplaza.com/lombardi/lombardi-2026-07-20.rete")
 edges = g.query_df("""
     PREFIX lomb: <https://w3id.org/rete/lombardi/>
     SELECT ?src ?tgt ?type WHERE {

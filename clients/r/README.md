@@ -30,9 +30,9 @@ are planned.
 ```r
 library(rete)
 
-g <- rete_open("https://data.graphplaza.com/boe/boe.rete")
+g <- rete_open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 g
-#> <rete graph> https://data.graphplaza.com/boe/boe.rete
+#> <rete graph> https://data.graphplaza.com/boe/boe-2026-07-07.rete
 #>   465,543 quads, 111,203 terms, 3 pyramid level(s), 1 named graph(s)
 
 rete_query(g, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3")   # a data.frame

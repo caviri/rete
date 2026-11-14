@@ -624,7 +624,7 @@ Python library, so five short methods become five tools, and the agent queries
 a local path or an <code>https://</code> URL with no server anywhere in between.</p>
 <p>This page is a tutorial for that, in <strong>Pydantic AI</strong> and <strong>LangChain</strong> — both
 verified end to end against a live model and the published
-<a href="https://data.graphplaza.com/boe/boe.rete"><code>boe</code></a> graph. The runnable scripts
+<a href="https://data.graphplaza.com/boe/boe-2026-07-07.rete"><code>boe</code></a> graph. The runnable scripts
 live in
 <a href="https://github.com/caviri/rete/tree/main/clients/python/examples/agents"><code>clients/python/examples/agents/</code></a>.</p>
 <table><thead><tr><th>Route</th><th>The agent talks to</th><th>Choose it when</th></tr></thead><tbody>
@@ -743,7 +743,7 @@ as they are.</p>
 from pydantic_ai import Agent
 from rete_tools import SYSTEM_PROMPT, ReteGraphTools
 
-tools = ReteGraphTools("https://data.graphplaza.com/boe/boe.rete")
+tools = ReteGraphTools("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 
 agent = Agent(
     "anthropic:claude-sonnet-5",
@@ -781,7 +781,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.tools import StructuredTool
 from rete_tools import SYSTEM_PROMPT, ReteGraphTools
 
-tools = ReteGraphTools("https://data.graphplaza.com/boe/boe.rete")
+tools = ReteGraphTools("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 methods = [tools.dataset_card, tools.dataset_schema, tools.example_queries,
            tools.find_entities, tools.sparql_query]
 toolkit = [StructuredTool.from_function(m, name=m.__name__) for m in methods]

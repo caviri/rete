@@ -14,9 +14,9 @@ const R2 = "https://data.graphplaza.com";
 const GRAPHS = [
   {
     key: "linked-jazz", name: "Linked Jazz", ico: "🎷",
-    url: `${R2}/linked-jazz/linked-jazz.rete`,
+    url: `${R2}/linked-jazz/linked-jazz-2026-06-13.rete`,
     blurb: "Who knew whom in jazz, rebuilt from oral-history interviews: 54 interviewed musicians and about 2,000 people they mention.",
-    facts: { triples: "9,466", license: "CC BY-SA 3.0" },
+    facts: { triples: "11,471", license: "CC BY-SA 3.0" },
     questions: [
       { label: "Musicians, with photos", q: `PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 PREFIX dbo: <http://dbpedia.org/ontology/>
@@ -52,7 +52,7 @@ SELECT DISTINCT ?reached ?name WHERE {
   },
   {
     key: "bph", name: "Hermetic books", ico: "📜",
-    url: `${R2}/bph/bph.rete`,
+    url: `${R2}/bph/bph-2026-07-01.rete`,
     blurb: "The Embassy of the Free Mind in Amsterdam: 2,307 books on alchemy, mysticism and esotericism, with their covers.",
     facts: { triples: "5.74 M" },
     questions: [

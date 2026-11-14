@@ -183,7 +183,7 @@ direct origin that honors HTTP **Range** requests — mix them with local paths 
 
 ```sh
 rete federate \
-  https://data.graphplaza.com/worldcup2026/worldcup2026.rete \
+  https://data.graphplaza.com/worldcup2026/worldcup2026-2026-07-12.rete \
   data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing <http://purl.org/spar/cito/cites>
                                           <https://doi.org/10.1038/s41586-021-03819-2> }'

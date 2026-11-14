@@ -6,7 +6,7 @@ openalex	openalex-authors	https://data.graphplaza.com/openalex/openalex-authors.
 dblp	dblp	https://data.graphplaza.com/dblp/dblp.rete
 zenodo-records	zenodo-records	https://data.graphplaza.com/zenodo-records/zenodo-records.rete
 gotriple	gotriple	https://data.graphplaza.com/gotriple/gotriple.rete
-ror	ror	https://data.graphplaza.com/ror/ror.rete
+ror	ror	https://data.graphplaza.com/ror/ror-v1.54.rete
 openaire-2021	openaire-2021	https://data.graphplaza.com/openaire-2021/openaire-2021.rete
 epfl-graph	epfl-graph	https://data.graphplaza.com/epfl-graph/epfl-graph.rete
 biosyslit	biosyslit	https://data.graphplaza.com/biosyslit/biosyslit.rete
@@ -15,11 +15,11 @@ hugging-face	hugging-face	https://data.graphplaza.com/hugging-face/hugging-face.
 cordis	cordis	https://data.graphplaza.com/cordis/cordis.rete
 figshare	figshare	https://data.graphplaza.com/figshare/figshare.rete
 ethz-research-collection	ethz-research-collection	https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete
-open-pulse	open-pulse	https://data.graphplaza.com/open-pulse/open-pulse.rete
-swissubase	swissubase	https://data.graphplaza.com/swissubase/swissubase.rete
-orkg	orkg	https://data.graphplaza.com/orkg/orkg.rete
-imaging-plaza	imaging-plaza	https://data.graphplaza.com/imaging-plaza/imaging-plaza.rete
-enac-it4research	enac-it4research	https://data.graphplaza.com/enac-it4research/enac-it4research.rete
+open-pulse	open-pulse	https://data.graphplaza.com/open-pulse/open-pulse-2026-06.rete
+swissubase	swissubase	https://data.graphplaza.com/swissubase/swissubase-2026-07-23.rete
+orkg	orkg	https://data.graphplaza.com/orkg/orkg-2026-08-05.rete
+imaging-plaza	imaging-plaza	https://data.graphplaza.com/imaging-plaza/imaging-plaza-2026-07-22.rete
+enac-it4research	enac-it4research	https://data.graphplaza.com/enac-it4research/enac-it4research-2026-07-20.rete
 ecosyste-ms-science	ecosyste-ms-science	https://data.graphplaza.com/ecosyste-ms-science/ecosyste-ms-science.rete
 ecosyste-ms-papers	ecosyste-ms-papers	https://data.graphplaza.com/ecosyste-ms-papers/ecosyste-ms-papers.rete
 ecosyste-ms-services	ecosyste-ms-services	https://data.graphplaza.com/ecosyste-ms-services/ecosyste-ms-services.rete

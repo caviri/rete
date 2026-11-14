@@ -58,7 +58,7 @@ jobs:
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python dist/*.whl pytest pandas rdflib pyoxigraph==0.5.11
-          RETE_REMOTE_URL=https://data.graphplaza.com/boe/boe.rete \
+          RETE_REMOTE_URL=https://data.graphplaza.com/boe/boe-2026-07-07.rete \
             .venv/bin/python -m pytest clients/python/tests -q
       # The wheel against a real nginx that ignores Range (`max_ranges 0`): a
       # small file is kept whole and answers the same rows, a 300 MiB one is

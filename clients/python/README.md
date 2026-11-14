@@ -32,7 +32,7 @@ import rete_graph as rete
 
 # Remote: lazy HTTP range reads — a selective query over a multi-GB file
 # fetches KBs. Any S3/R2/CDN/GitHub URL with Range + CORS works.
-g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+g = rete.open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 
 rows = g.query("""
     SELECT ?s ?label WHERE {

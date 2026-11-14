@@ -22,27 +22,27 @@ from . import relations
 #: A few published graphs that carry 3D, offered in the UI as a starting point.
 CATALOG = [
     (
-        "https://data.graphplaza.com/z-anatomy/z-anatomy.rete",
+        "https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete",
         "Z-Anatomy — the human body",
         "4,884 anatomical structures with mesh geometry, 3D adjacency and per-system .glb assets",
     ),
     (
-        "https://data.graphplaza.com/smithsonian3d/smithsonian3d.rete",
+        "https://data.graphplaza.com/smithsonian3d/smithsonian3d-2026-06-29.rete",
         "Smithsonian 3D — 2,199 CC0 models",
         "Crania, fossils, the Apollo command module: every object streams a Draco .glb",
     ),
     (
-        "https://data.graphplaza.com/dance/dance.rete",
+        "https://data.graphplaza.com/dance/dance-2026-07-18.rete",
         "CoMPAS3D — salsa duets",
         "Danced motion as animated skeletons: 3D plus time, straight off the timeline",
     ),
     (
-        "https://data.graphplaza.com/bioexplora/bioexplora.rete",
+        "https://data.graphplaza.com/bioexplora/bioexplora-2026-06-30.rete",
         "Bioexplora — natural history scans",
         "Museu de Ciències Naturals de Barcelona: skull and bone scans as .glb",
     ),
     (
-        "https://data.graphplaza.com/geoadmin/geoadmin.rete",
+        "https://data.graphplaza.com/geoadmin/geoadmin-2026-06-30.rete",
         "geoBoundaries — administrative areas",
         "GeoSPARQL polygons — extrude them into terrain-scale massing",
     ),
