@@ -12,6 +12,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   named open-pulse's old address. The agent page now describes the extension
   it serves, and its table gives the published files' counts and sizes.
 
+### Fixed
+
+- **Catalog sizes of the 62 moved datasets.** 45 of them still showed the size
+  of an earlier conversion, not of the file that is published (open-pulse said
+  57.8 MB for a 50.2 MB file). The playground, the relay catalog and the share
+  pages and cards now give the published sizes.
+
 ## [0.7.4] - 2026-11-14
 
 0.7.4 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
