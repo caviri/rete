@@ -57,6 +57,17 @@ STUB = """<!doctype html>
 <body><p>This page moved to <a href="{rel}">{canon}</a>.</p></body>
 </html>
 """
+RETIRED_SW = """/* Retired. The playground that registered this worker here moved under
+ * docs/ and registers its own there. This version unregisters itself and
+ * reloads the pages it controlled, which then load without the isolation
+ * headers (a module worker on the landing page cannot start under them). */
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(
+  self.registration.unregister()
+    .then(() => self.clients.matchAll({ type: "window" }))
+    .then((cs) => Promise.all(cs.map((c) => c.navigate(c.url))))
+));
+"""
 
 stubs = copies = 0
 for f in sorted(p for p in src.rglob("*") if p.is_file()):
@@ -67,6 +78,14 @@ for f in sorted(p for p in src.rglob("*") if p.is_file()):
     if dest.exists():
         raise SystemExit(f"{rel}: collides with a landing file")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if rel.endswith("/coi-serviceworker.js") or rel == "coi-serviceworker.js":
+        # A page that registered this worker here moved under docs/ and
+        # registers it there. Browsers that kept the old registration (whose
+        # scope now covers the landing page) fetch this file on their next
+        # visit: it unregisters itself and reloads the pages it controlled.
+        dest.write_text(RETIRED_SW, encoding="utf-8")
+        copies += 1
+        continue
     if rel.endswith(".html"):
         depth = rel.count("/")
         target = "../" * depth + "docs/" + quote(rel)
