@@ -316,6 +316,192 @@
      "new": "https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete"
     }
    ]
+  },
+  {
+   "date": "2026-11-15",
+   "note": "catalog batch 2, converted with rete 0.7.3",
+   "files": [
+    {
+     "key": "bcn",
+     "old": "https://data.graphplaza.com/bcn/bcn.rete",
+     "new": "https://data.graphplaza.com/bcn/bcn-2026-07-14.rete"
+    },
+    {
+     "key": "bcul",
+     "old": "https://data.graphplaza.com/bcul/bcul.rete",
+     "new": "https://data.graphplaza.com/bcul/bcul-2026-07-07.rete"
+    },
+    {
+     "key": "biblissima",
+     "old": "https://data.graphplaza.com/biblissima-full/biblissima-full.rete",
+     "new": "https://data.graphplaza.com/biblissima-full/biblissima-full-2026-06-27.rete"
+    },
+    {
+     "key": "bne",
+     "old": "https://data.graphplaza.com/bne-full/bne-full.rete",
+     "new": "https://data.graphplaza.com/bne-full/bne-full-2026-06-29.rete"
+    },
+    {
+     "key": "chebi-full",
+     "old": "https://data.graphplaza.com/chebi-full/chebi-full.rete",
+     "new": "https://data.graphplaza.com/chebi-full/chebi-full-v252.rete"
+    },
+    {
+     "key": "cordis",
+     "old": "https://data.graphplaza.com/cordis/cordis.rete",
+     "new": "https://data.graphplaza.com/cordis/cordis-2026-04-02.rete"
+    },
+    {
+     "key": "dblp",
+     "old": "https://data.graphplaza.com/dblp/dblp.rete",
+     "new": "https://data.graphplaza.com/dblp/dblp-2026-07-01.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-cargo-2026-07-13.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-go.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-go-2026-07-13.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-maven.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-maven-2026-07-13.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-npm-0-2026-07-13.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-npm-1.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-npm-1-2026-07-13.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-nuget.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-nuget-2026-07-13.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-pypi.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-pypi-2026-07-13.rete"
+    },
+    {
+     "key": "deps-dev",
+     "old": "https://data.graphplaza.com/deps-dev/deps-dev-rubygems.rete",
+     "new": "https://data.graphplaza.com/deps-dev/deps-dev-rubygems-2026-07-13.rete"
+    },
+    {
+     "key": "epfl-infoscience",
+     "old": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience.rete",
+     "new": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience-2026-07-18.rete"
+    },
+    {
+     "key": "ethz-research-collection",
+     "old": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
+     "new": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-2026-07-23.rete"
+    },
+    {
+     "key": "farmacos-es",
+     "old": "https://data.graphplaza.com/farmacos-es/farmacos-es.rete",
+     "new": "https://data.graphplaza.com/farmacos-es/farmacos-es-2026-07-18.rete"
+    },
+    {
+     "key": "figshare",
+     "old": "https://data.graphplaza.com/figshare/figshare.rete",
+     "new": "https://data.graphplaza.com/figshare/figshare-2026-07-25.rete"
+    },
+    {
+     "key": "gbif-birds",
+     "old": "https://data.graphplaza.com/gbif-birds/gbif-birds.rete",
+     "new": "https://data.graphplaza.com/gbif-birds/gbif-birds-2026-07-01.rete"
+    },
+    {
+     "key": "gotriple",
+     "old": "https://data.graphplaza.com/gotriple/gotriple.rete",
+     "new": "https://data.graphplaza.com/gotriple/gotriple-2026-01-08.rete"
+    },
+    {
+     "key": "mmm",
+     "old": "https://data.graphplaza.com/mmm/mmm.rete",
+     "new": "https://data.graphplaza.com/mmm/mmm-v2.1.0.rete"
+    },
+    {
+     "key": "nanopubs",
+     "old": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete",
+     "new": "https://data.graphplaza.com/nanopubs/nanopubs-2018-04-05.rete"
+    },
+    {
+     "key": "ohm-full",
+     "old": "https://data.graphplaza.com/ohm-full/ohm-full.rete",
+     "new": "https://data.graphplaza.com/ohm-full/ohm-full-2026-06-14.rete"
+    },
+    {
+     "key": "switzerland-fedlex",
+     "old": "https://data.graphplaza.com/switzerland-fedlex.rete",
+     "new": "https://data.graphplaza.com/switzerland-fedlex-2026-07-30.rete"
+    },
+    {
+     "key": "wikidata-100mb",
+     "old": "https://data.graphplaza.com/wikidata-100MB/wikidata.rete",
+     "new": "https://data.graphplaza.com/wikidata-100MB/wikidata-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata",
+     "old": "https://data.graphplaza.com/wikidata-1GB/wikidata.rete",
+     "new": "https://data.graphplaza.com/wikidata-1GB/wikidata-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-ontology",
+     "old": "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology.rete",
+     "new": "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-xxl",
+     "old": "https://data.graphplaza.com/wikidata-xxl/shard_0000.rete",
+     "new": "https://data.graphplaza.com/wikidata-xxl/shard_0000-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-xxl",
+     "old": "https://data.graphplaza.com/wikidata-xxl/shard_0001.rete",
+     "new": "https://data.graphplaza.com/wikidata-xxl/shard_0001-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-xxl",
+     "old": "https://data.graphplaza.com/wikidata-xxl/shard_0002.rete",
+     "new": "https://data.graphplaza.com/wikidata-xxl/shard_0002-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-xxl",
+     "old": "https://data.graphplaza.com/wikidata-xxl/shard_0003.rete",
+     "new": "https://data.graphplaza.com/wikidata-xxl/shard_0003-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-xxl",
+     "old": "https://data.graphplaza.com/wikidata-xxl/shard_0004.rete",
+     "new": "https://data.graphplaza.com/wikidata-xxl/shard_0004-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-xxl",
+     "old": "https://data.graphplaza.com/wikidata-xxl/shard_0005.rete",
+     "new": "https://data.graphplaza.com/wikidata-xxl/shard_0005-2025-11-07.rete"
+    },
+    {
+     "key": "wikidata-zenodo",
+     "old": "https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo.rete",
+     "new": "https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo-2025-11-07.rete"
+    },
+    {
+     "key": "zenodo-records",
+     "old": "https://data.graphplaza.com/zenodo-records/zenodo-records.rete",
+     "new": "https://data.graphplaza.com/zenodo-records/zenodo-records-2026-07-10.rete"
+    }
+   ]
   }
  ]
 }

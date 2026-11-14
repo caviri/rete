@@ -36,11 +36,11 @@
     },
     {
       "key": "ethz-research-collection",
-      "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
-      "formatVersion": 5,
-      "contentHash": "e399dfb7a43a0d7f2dd4d4c0d778285a",
-      "size": 206054877,
-      "cardUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete"
+      "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-2026-07-23.rete",
+      "formatVersion": 8,
+      "contentHash": "d5782c04e4202ef7b77dccc2b9bef909",
+      "size": 220860610,
+      "cardUrl": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-2026-07-23.rete"
     },
     {
       "key": "hugging-face",
@@ -52,11 +52,11 @@
     },
     {
       "key": "nanopubs",
-      "url": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete",
-      "formatVersion": 6,
-      "contentHash": "127a5a8cd0d5f7e967ebe097be8badef",
-      "size": 3882041979,
-      "cardUrl": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete"
+      "url": "https://data.graphplaza.com/nanopubs/nanopubs-2018-04-05.rete",
+      "formatVersion": 8,
+      "contentHash": "887827d6d5c5882cd74c6efcbfcc4800",
+      "size": 2522157337,
+      "cardUrl": "https://data.graphplaza.com/nanopubs/nanopubs-2018-04-05.rete"
     },
     {
       "key": "openaire-2021",

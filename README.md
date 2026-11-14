@@ -94,14 +94,14 @@ rete sparql graph.rete 'SELECT ?s ?name WHERE { ?s <http://xmlns.com/foaf/0.1/na
 ```
 
 A remote file works the same way, with nothing to download first. OpenCitations
-Meta is a single 36 GB file with 5.2 billion triples; reading its card takes
-two small requests:
+Meta is a single 62 GB file with 5.7 billion triples; reading its card takes
+one small request:
 
 ```sh
-rete card-url https://data.graphplaza.com/opencitations/opencitations.rete
-# fetched 1740 of 35852509508 bytes in 2 range request(s) — index NOT fetched
+rete card-url https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete
+# fetched 131072 of 62288523062 bytes in 1 range request(s) — index NOT fetched
 
-rete sparql-url https://data.graphplaza.com/opencitations/opencitations.rete \
+rete sparql-url https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete \
   'SELECT * WHERE { ?s ?p ?o } LIMIT 3'
 ```
 
