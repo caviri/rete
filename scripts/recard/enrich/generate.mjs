@@ -175,7 +175,7 @@ const DERIVED_FROM = {
   geoadmin: ["https://www.geoboundaries.org", "https://www.naturalearthdata.com"],
   // The tiled file is derived from the graph file next to it, and says so.
   "geoadmin-tiles": [
-    "https://data.graphplaza.com/geoadmin/geoadmin.rete",
+    "https://data.graphplaza.com/geoadmin/geoadmin-2026-06-30.rete",
     "https://www.geoboundaries.org",
     "https://www.naturalearthdata.com",
   ],
@@ -192,7 +192,7 @@ const DERIVED_FROM = {
     "https://www.jcyl.es",
     "https://dadesobertes.gva.es",
   ],
-  "mira-wikidata": ["https://data.graphplaza.com/mira/mira.rete", "https://www.wikidata.org"],
+  "mira-wikidata": ["https://data.graphplaza.com/mira/mira-v1.0.rete", "https://www.wikidata.org"],
   nidm: ["https://github.com/incf-nidash/nidm-specs", "https://openneuro.org/datasets/ds000030"],
   worldcup: ["https://github.com/openfootball/worldcup", "https://www.wikidata.org"],
   worldcup2026: ["https://github.com/openfootball/worldcup", "https://www.wikidata.org"],

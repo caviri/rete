@@ -2,7 +2,7 @@
   "publisher": {
     "name": "rete"
   },
-  "canonical_url": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati.rete",
+  "canonical_url": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati-2026-06-13.rete",
   "sparql_endpoint": "https://database.factgrid.de/sparql",
   "derived_from": [
     "https://database.factgrid.de/sparql"

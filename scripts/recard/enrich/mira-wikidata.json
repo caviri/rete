@@ -2,9 +2,9 @@
   "publisher": {
     "name": "rete"
   },
-  "canonical_url": "https://data.graphplaza.com/mira-wikidata/mira-wikidata.rete",
+  "canonical_url": "https://data.graphplaza.com/mira-wikidata/mira-wikidata-2026-06-29.rete",
   "derived_from": [
-    "https://data.graphplaza.com/mira/mira.rete",
+    "https://data.graphplaza.com/mira/mira-v1.0.rete",
     "https://www.wikidata.org"
   ],
   "keywords": [
