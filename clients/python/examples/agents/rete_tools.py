@@ -42,7 +42,7 @@ def _value(term: Any) -> Any:
 class ReteGraphTools:
     """The five tools, bound to one graph.
 
-    >>> tools = ReteGraphTools("https://data.graphplaza.com/boe/boe.rete")
+    >>> tools = ReteGraphTools("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
     >>> tools.dataset_card()[:40]
     '{"title": "BOE — Spanish consolidated l'
     """

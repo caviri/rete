@@ -32,14 +32,14 @@ const el = (tag, cls, text) => {
 // still open and still browse under Namespace and Sections, but their class
 // list cannot be had without scanning, so they are not what to open first.
 const CATALOG = [
-  { key: "worldcup", name: "World Cup 2022", url: "https://data.graphplaza.com/worldcup/worldcup.rete", size: 227000, blurb: "tiny — opens instantly" },
-  { key: "lombardi", name: "Lombardi networks", url: "https://data.graphplaza.com/lombardi/lombardi.rete", size: 1040326, blurb: "art + conspiracy diagrams" },
-  { key: "z-anatomy", name: "Z-Anatomy", url: "https://data.graphplaza.com/z-anatomy/z-anatomy.rete", size: 5650000, blurb: "human anatomy, 3D" },
-  { key: "boe", name: "BOE (Spanish law)", url: "https://data.graphplaza.com/boe/boe.rete", size: 6960000, blurb: "12,330 laws, ELI" },
-  { key: "mtg", name: "Magic: The Gathering", url: "https://data.graphplaza.com/mtg/mtg.rete", size: 16310000, blurb: "34,633 cards, images, rulings" },
-  { key: "ror", name: "ROR organizations", url: "https://data.graphplaza.com/ror/ror.rete", size: 30050000, blurb: "111,068 research orgs" },
-  { key: "bioexplora", name: "Bioexplora (MCNB)", url: "https://data.graphplaza.com/bioexplora/bioexplora.rete", size: 47550000, blurb: "natural history specimens" },
-  { key: "arxiu", name: "Arxius en Línia", url: "https://data.graphplaza.com/arxiu/arxiu.rete", size: 72247508, blurb: "629,875 archival units" },
+  { key: "worldcup", name: "World Cup 2022", url: "https://data.graphplaza.com/worldcup/worldcup-2026-07-12.rete", size: 206195, blurb: "tiny — opens instantly" },
+  { key: "lombardi", name: "Lombardi networks", url: "https://data.graphplaza.com/lombardi/lombardi-2026-07-20.rete", size: 826686, blurb: "art + conspiracy diagrams" },
+  { key: "z-anatomy", name: "Z-Anatomy", url: "https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete", size: 6220771, blurb: "human anatomy, 3D" },
+  { key: "boe", name: "BOE (Spanish law)", url: "https://data.graphplaza.com/boe/boe-2026-07-07.rete", size: 9394230, blurb: "12,330 laws, ELI" },
+  { key: "mtg", name: "Magic: The Gathering", url: "https://data.graphplaza.com/mtg/mtg-v5.3.0-20260712.rete", size: 19529175, blurb: "34,633 cards, images, rulings" },
+  { key: "ror", name: "ROR organizations", url: "https://data.graphplaza.com/ror/ror-v1.54.rete", size: 44132712, blurb: "111,068 research orgs" },
+  { key: "bioexplora", name: "Bioexplora (MCNB)", url: "https://data.graphplaza.com/bioexplora/bioexplora-2026-06-30.rete", size: 49573498, blurb: "natural history specimens" },
+  { key: "arxiu", name: "Arxius en Línia", url: "https://data.graphplaza.com/arxiu/arxiu-2026-07-14.rete", size: 121654358, blurb: "629,875 archival units" },
   { key: "farmacos-es", name: "Medicines (Spain)", url: "https://data.graphplaza.com/farmacos-es/farmacos-es.rete", size: 291680000, blurb: "25,485 medicines" },
   { key: "wikidata", name: "Wikidata (1 GB slice)", url: "https://data.graphplaza.com/wikidata-1GB/wikidata.rete", size: 1490440000, blurb: "1.4 GB · 120M quads" },
   { key: "gbif-birds", name: "GBIF birds", url: "https://data.graphplaza.com/gbif-birds/gbif-birds.rete", size: 1532500000, blurb: "334M quads of occurrences" },

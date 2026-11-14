@@ -35,7 +35,7 @@ today.
 ```r
 library(rete)
 
-g <- rete_open("https://data.graphplaza.com/boe/boe.rete")   # remote, lazy
+g <- rete_open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")   # remote, lazy
 g <- rete_open("data/example.rete")                          # local file, lazy too
 g <- rete_open(file_image)                                   # raw vector, eager
 

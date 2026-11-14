@@ -71,7 +71,7 @@
     {
       "key": "getty-ulan",
       "title": "getty-ulan — artist mentorship lineage (remote, lazy)",
-      "rete": "https://data.graphplaza.com/getty-ulan/getty-ulan.rete",
+      "rete": "https://data.graphplaza.com/getty-ulan/getty-ulan-2026-06-13.rete",
       "kind": "remote-lazy",
       "icon": "🎨",
       "tags": ["art", "lineage", "Getty"],
@@ -105,7 +105,7 @@
     {
       "key": "chemotion",
       "title": "chemotion — chemistry ELN knowledge graph (remote, lazy)",
-      "rete": "https://data.graphplaza.com/chemotion/chemotion.rete",
+      "rete": "https://data.graphplaza.com/chemotion/chemotion-2025-07-28.rete",
       "kind": "remote-lazy",
       "icon": "🧪",
       "tags": ["chemistry", "ELN", "ontology", "ChEBI"],

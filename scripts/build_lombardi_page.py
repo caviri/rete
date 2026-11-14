@@ -32,7 +32,7 @@ APP_JS = WEB / "lombardi-src" / "app.js"
 TEMPLATE = WEB / "lombardi.template.html"
 DEFAULT_OUT = ROOT / "docs" / "lombardi.html"
 
-RETE_URL = "https://data.graphplaza.com/lombardi/lombardi.rete"
+RETE_URL = "https://data.graphplaza.com/lombardi/lombardi-2026-07-20.rete"
 
 
 def die(msg: str) -> None:

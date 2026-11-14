@@ -326,13 +326,13 @@
       </div>
       <div class="code-panes">
 <pre class="code" data-code="cli"><code><span class="c"># the CLI ships as a Docker image; see Install for the alias</span>
-rete sparql-url https://data.graphplaza.com/linked-jazz/linked-jazz.rete \
+rete sparql-url https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete \
   "PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
    SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5"</code></pre>
 <pre class="code" data-code="py" hidden><code><span class="c"># pip install rete-graph</span>
 import rete_graph as rete
 
-g = rete.open("https://data.graphplaza.com/linked-jazz/linked-jazz.rete")
+g = rete.open("https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete")
 rows = g.query("""PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
     SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5""")
 for row in rows:
@@ -340,18 +340,18 @@ for row in rows:
 <pre class="code" data-code="js" hidden><code><span class="c">// npm install rete-graph   (Node, or a worker in the browser)</span>
 import { open } from "rete-graph";
 
-const g = await open("https://data.graphplaza.com/linked-jazz/linked-jazz.rete");
+const g = await open("https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete");
 const rows = g.query(`PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
   SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5`);
 for (const row of rows) console.log(row.name.value);</code></pre>
 <pre class="code" data-code="r" hidden><code><span class="c"># remotes::install_github("caviri/rete", subdir = "clients/r")</span>
 library(rete)
 
-g &lt;- rete_open("https://data.graphplaza.com/linked-jazz/linked-jazz.rete")
+g &lt;- rete_open("https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete")
 rete_query(g, "PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
   SELECT ?name WHERE { ?p foaf:name ?name } LIMIT 5")</code></pre>
 <pre class="code" data-code="ai" hidden><code><span class="c"># install rete.mcpb in Claude Desktop, then ask in plain words:</span>
-Open https://data.graphplaza.com/linked-jazz/linked-jazz.rete
+Open https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete
 and tell me who Mary Lou Williams played with.</code></pre>
       </div>
       <div class="code-foot">

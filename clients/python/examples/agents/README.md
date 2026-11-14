@@ -24,7 +24,7 @@ python langchain_agent.py   "Which three laws are the oldest?"
 ```
 
 Both default to the published Spanish-legislation graph
-(`https://data.graphplaza.com/boe/boe.rete`, 7 MB on a CDN). Point them
+(`https://data.graphplaza.com/boe/boe-2026-07-07.rete`, 7 MB on a CDN). Point them
 anywhere — including a private file that never leaves the machine:
 
 ```sh

@@ -57,7 +57,7 @@ R2 = "https://data.graphplaza.com"
 CATALOG = [
     {
         "name": "getty-ulan — who taught whom",
-        "url": f"{R2}/getty-ulan/getty-ulan.rete",
+        "url": f"{R2}/getty-ulan/getty-ulan-2026-06-13.rete",
         "size": "205k triples",
         "blurb": "Getty ULAN artist lineage: 28,300 artists, gvp:teacherOf master→pupil edges, names + one-line bios. Try Rembrandt's pupils.",
         "query": (
@@ -72,7 +72,7 @@ CATALOG = [
     },
     {
         "name": "boe — Spanish law in force",
-        "url": f"{R2}/boe/boe.rete",
+        "url": f"{R2}/boe/boe-2026-07-07.rete",
         "size": "465k triples",
         "blurb": "BOE Legislación Consolidada as an ELI graph: 12,330 laws with repeals/amendments/citations. Toggle 🧠 reason for OWL 2 QL entailment.",
         "query": (
@@ -83,43 +83,43 @@ CATALOG = [
     },
     {
         "name": "scrolls — Herculaneum papyri",
-        "url": f"{R2}/scrolls/scrolls.rete",
+        "url": f"{R2}/scrolls/scrolls-2026-07-05.rete",
         "size": "18k triples",
         "blurb": "Vesuvius Challenge scroll data: carbonized Herculaneum scrolls, their segments and scan assets.",
     },
     {
         "name": "worldcup — FIFA 2022 KG",
-        "url": f"{R2}/worldcup/worldcup.rete",
+        "url": f"{R2}/worldcup/worldcup-2026-07-12.rete",
         "size": "8k triples",
         "blurb": "All 64 matches, goals, stadiums and player careers of the 2022 World Cup, with multi-source predictions as PROV.",
     },
     {
         "name": "mtg — Magic: The Gathering",
-        "url": f"{R2}/mtg/mtg.rete",
+        "url": f"{R2}/mtg/mtg-v5.3.0-20260712.rete",
         "size": "920k triples",
         "blurb": "34,633 MTG cards with Scryfall imagery, sets, rulings and Oracle text.",
     },
     {
         "name": "lineara — Linear A corpus",
-        "url": f"{R2}/lineara/lineara.rete",
+        "url": f"{R2}/lineara/lineara-2025-11-23.rete",
         "size": "1,721 inscriptions",
         "blurb": "The undeciphered Bronze-Age script: inscriptions linked to signs and words (SigLA).",
     },
     {
         "name": "nidm — neuroimaging cohort",
-        "url": f"{R2}/nidm/nidm.rete",
+        "url": f"{R2}/nidm/nidm-2026-07-03.rete",
         "size": "3.2k triples",
         "blurb": "A real 272-subject cohort (OpenNeuro ds000030) in the Neuroimaging Data Model, with full W3C PROV provenance.",
     },
     {
         "name": "peirce — C.S. Peirce papers",
-        "url": f"{R2}/peirce/peirce.rete",
+        "url": f"{R2}/peirce/peirce-2026-07-03.rete",
         "size": "36k triples",
         "blurb": "The Charles S. Peirce papers at Houghton Library: manuscript hierarchy, correspondence, IIIF scans.",
     },
     {
         "name": "subtitles — one film, 20 languages",
-        "url": f"{R2}/subtitles/tears_of_steel.rete",
+        "url": f"{R2}/subtitles/tears_of_steel-2026-07-13.rete",
         "size": "14k triples",
         "blurb": "Tears of Steel (CC BY) subtitles as a temporal graph: every line in 20 languages, aligned on the timeline.",
     },

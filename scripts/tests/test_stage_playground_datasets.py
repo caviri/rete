@@ -100,7 +100,7 @@ class StagePlaygroundDatasetsTests(unittest.TestCase):
             self.assertEqual((web_dir / "scholar.rete").read_bytes(), existing)
             self.assertIn("does not match", result.stderr)
 
-    def test_rejects_a_dataset_that_is_not_v5(self) -> None:
+    def test_rejects_a_dataset_of_an_unknown_format(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             html = root / "playground.html"
@@ -112,7 +112,7 @@ class StagePlaygroundDatasetsTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("causal", result.stderr)
-            self.assertIn("format v5", result.stderr)
+            self.assertIn("format 5 to 8", result.stderr)
 
 
 if __name__ == "__main__":

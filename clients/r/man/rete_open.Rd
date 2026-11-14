@@ -20,7 +20,7 @@ the byte ranges each query touches (the host must honor \code{Range}).
 }
 \examples{
 \dontrun{
-g <- rete_open("https://data.graphplaza.com/boe/boe.rete")
+g <- rete_open("https://data.graphplaza.com/boe/boe-2026-07-07.rete")
 rete_query(g, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 }
 }

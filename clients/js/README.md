@@ -42,7 +42,7 @@ One self-contained file, engine included — via any npm CDN:
 ## Remote graphs (HTTP Range)
 
 ```js
-const g = await open("https://data.graphplaza.com/boe/boe.rete"); // 447k triples
+const g = await open("https://data.graphplaza.com/boe/boe-2026-07-07.rete"); // 447k triples
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5");
 g.stats(); // { fileLength, bytes, requests } — a LIMIT query fetches KBs–MBs, not the file
 ```

@@ -61,10 +61,10 @@ def decode_v5(name: str, encoded: str) -> bytes:
     if (
         len(payload) < 9
         or payload[:4] != b"RETE"
-        or payload[4] != 5
+        or payload[4] not in (5, 6, 7, 8)
         or payload[-4:] != b"RETE"
     ):
-        raise StageError(f"dataset {name!r} is not a complete rete format v5 file")
+        raise StageError(f"dataset {name!r} is not a complete rete file of format 5 to 8")
     return payload
 
 

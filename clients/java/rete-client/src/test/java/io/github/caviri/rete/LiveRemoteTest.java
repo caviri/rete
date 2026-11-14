@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Test;
 class LiveRemoteTest {
 
     private static final URI URL =
-            URI.create("https://data.graphplaza.com/aifdb-open/aifdb-open.rete");
-    private static final long SIZE = 13_580_488L; // per web/datasets.lock.json
+            URI.create("https://data.graphplaza.com/aifdb-open/aifdb-open-2026-07-20.rete");
+    private static final long SIZE = 17_986_355L; // size of the published object
 
     @Test
     void opensAndQueriesARealRemoteDatasetLazily() {
