@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **62 catalog files have new addresses.** They are format 0x08 with a full card, named `<name>-<version or source date>.rete` (#473). `web/datasets.moved.json` lists each old and new address. The relay's catalog is exported again from the playground catalog (104 datasets, all on their current addresses), and the pages that still ran a reader older than 0.7.0 now run the current engine: the ISWC demo's playground (now the current playground), the historical atlas, the Lombardi drawings and the plaza.
+
 ### Fixed
 
 - **`rete summary` reads a file whose root is longer than the first read.** On a format 0x06 to 0x08 file with a pyramid and a root over 128 KiB, `rete summary`, `rete cost` and the other readers of the pyramid by range (`rete summary-url`, federation source selection) stopped with `0x06: range not held by this reader`. The file was sound. The root has the first key of every dictionary leaf, so it is long in a file with long literals that differ late: one catalog file of map geometries has a root of 242 KiB. The rest of the root is now read.

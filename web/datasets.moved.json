@@ -1,0 +1,321 @@
+{
+ "about": "Catalog files that moved to a new address. Each old address is the file as it was before the move; the new one is the same statements as format 0x08 with a full card, named <name>-<version or source date>.rete. Old files are deleted once nothing reads them.",
+ "moves": [
+  {
+   "date": "2026-11-13",
+   "note": "catalog batch 1 (#473), converted with rete 0.7.3",
+   "files": [
+    {
+     "key": "aifdb-open",
+     "old": "https://data.graphplaza.com/aifdb-open/aifdb-open.rete",
+     "new": "https://data.graphplaza.com/aifdb-open/aifdb-open-2026-07-20.rete"
+    },
+    {
+     "key": "albala",
+     "old": "https://data.graphplaza.com/albala/albala.rete",
+     "new": "https://data.graphplaza.com/albala/albala-2026-06-28.rete"
+    },
+    {
+     "key": "antarctic-expeditions",
+     "old": "https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions.rete",
+     "new": "https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions-2026-06-13.rete"
+    },
+    {
+     "key": "arxiu",
+     "old": "https://data.graphplaza.com/arxiu/arxiu.rete",
+     "new": "https://data.graphplaza.com/arxiu/arxiu-2026-07-14.rete"
+    },
+    {
+     "key": "bioexplora",
+     "old": "https://data.graphplaza.com/bioexplora/bioexplora.rete",
+     "new": "https://data.graphplaza.com/bioexplora/bioexplora-2026-06-30.rete"
+    },
+    {
+     "key": "boe",
+     "old": "https://data.graphplaza.com/boe/boe.rete",
+     "new": "https://data.graphplaza.com/boe/boe-2026-07-07.rete"
+    },
+    {
+     "key": "bph",
+     "old": "https://data.graphplaza.com/bph/bph.rete",
+     "new": "https://data.graphplaza.com/bph/bph-2026-07-01.rete"
+    },
+    {
+     "key": "c4dt",
+     "old": "https://data.graphplaza.com/c4dt/c4dt.rete",
+     "new": "https://data.graphplaza.com/c4dt/c4dt-2026-07-20.rete"
+    },
+    {
+     "key": "causal",
+     "old": "https://data.graphplaza.com/causal/causal.rete",
+     "new": "https://data.graphplaza.com/causal/causal-2026-07-14.rete"
+    },
+    {
+     "key": "causalgraph",
+     "old": "https://data.graphplaza.com/causalgraph/causalgraph.rete",
+     "new": "https://data.graphplaza.com/causalgraph/causalgraph-2026-06-29.rete"
+    },
+    {
+     "key": "chemotion",
+     "old": "https://data.graphplaza.com/chemotion/chemotion.rete",
+     "new": "https://data.graphplaza.com/chemotion/chemotion-2025-07-28.rete"
+    },
+    {
+     "key": "dance",
+     "old": "https://data.graphplaza.com/dance/dance.rete",
+     "new": "https://data.graphplaza.com/dance/dance-2026-07-18.rete"
+    },
+    {
+     "key": "ecal",
+     "old": "https://data.graphplaza.com/ecal/ecal.rete",
+     "new": "https://data.graphplaza.com/ecal/ecal-2026-07-11.rete"
+    },
+    {
+     "key": "enac-it4research",
+     "old": "https://data.graphplaza.com/enac-it4research/enac-it4research.rete",
+     "new": "https://data.graphplaza.com/enac-it4research/enac-it4research-2026-07-20.rete"
+    },
+    {
+     "key": "factgrid-illuminati",
+     "old": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati.rete",
+     "new": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati-2026-06-13.rete"
+    },
+    {
+     "key": "fuero_juzgo",
+     "old": "https://data.graphplaza.com/fuero_juzgo/fuero_juzgo.rete",
+     "new": "https://data.graphplaza.com/fuero_juzgo/fuero_juzgo-2026-07-06.rete"
+    },
+    {
+     "key": "fzk-haus",
+     "old": "https://data.graphplaza.com/cad/fzk-haus.rete",
+     "new": "https://data.graphplaza.com/cad/fzk-haus-2016-12-21.rete"
+    },
+    {
+     "key": "geoadmin",
+     "old": "https://data.graphplaza.com/geoadmin/geoadmin.rete",
+     "new": "https://data.graphplaza.com/geoadmin/geoadmin-2026-06-30.rete"
+    },
+    {
+     "key": "getty-ulan",
+     "old": "https://data.graphplaza.com/getty-ulan/getty-ulan.rete",
+     "new": "https://data.graphplaza.com/getty-ulan/getty-ulan-2026-06-13.rete"
+    },
+    {
+     "key": "gni-bim",
+     "old": "https://data.graphplaza.com/gni-bim/gni-bim.rete",
+     "new": "https://data.graphplaza.com/gni-bim/gni-bim-2026-07-22.rete"
+    },
+    {
+     "key": "history",
+     "old": "https://data.graphplaza.com/history/history.rete",
+     "new": "https://data.graphplaza.com/history/history-2026-06-13.rete"
+    },
+    {
+     "key": "imaging-plaza",
+     "old": "https://data.graphplaza.com/imaging-plaza/imaging-plaza.rete",
+     "new": "https://data.graphplaza.com/imaging-plaza/imaging-plaza-2026-07-22.rete"
+    },
+    {
+     "key": "jonas",
+     "old": "https://data.graphplaza.com/jonas/jonas.rete",
+     "new": "https://data.graphplaza.com/jonas/jonas-2026-06-25.rete"
+    },
+    {
+     "key": "lineara",
+     "old": "https://data.graphplaza.com/lineara/lineara.rete",
+     "new": "https://data.graphplaza.com/lineara/lineara-2025-11-23.rete"
+    },
+    {
+     "key": "linked-jazz",
+     "old": "https://data.graphplaza.com/linked-jazz/linked-jazz.rete",
+     "new": "https://data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete"
+    },
+    {
+     "key": "lombardi",
+     "old": "https://data.graphplaza.com/lombardi/lombardi.rete",
+     "new": "https://data.graphplaza.com/lombardi/lombardi-2026-07-20.rete"
+    },
+    {
+     "key": "memoria",
+     "old": "https://data.graphplaza.com/memoria/memoria.rete",
+     "new": "https://data.graphplaza.com/memoria/memoria-2026-06-28.rete"
+    },
+    {
+     "key": "mimotext",
+     "old": "https://data.graphplaza.com/mimotext/mimotext.rete",
+     "new": "https://data.graphplaza.com/mimotext/mimotext-2026-06-13.rete"
+    },
+    {
+     "key": "mira",
+     "old": "https://data.graphplaza.com/mira/mira.rete",
+     "new": "https://data.graphplaza.com/mira/mira-v1.0.rete"
+    },
+    {
+     "key": "mira-wikidata",
+     "old": "https://data.graphplaza.com/mira-wikidata/mira-wikidata.rete",
+     "new": "https://data.graphplaza.com/mira-wikidata/mira-wikidata-2026-06-29.rete"
+    },
+    {
+     "key": "mirbase",
+     "old": "https://data.graphplaza.com/mirbase/mirbase.rete",
+     "new": "https://data.graphplaza.com/mirbase/mirbase-v22.1.rete"
+    },
+    {
+     "key": "monarch",
+     "old": "https://data.graphplaza.com/monarch/monarch.rete",
+     "new": "https://data.graphplaza.com/monarch/monarch-2026-06-13.rete"
+    },
+    {
+     "key": "mtg",
+     "old": "https://data.graphplaza.com/mtg/mtg.rete",
+     "new": "https://data.graphplaza.com/mtg/mtg-v5.3.0-20260712.rete"
+    },
+    {
+     "key": "mtg-game",
+     "old": "https://data.graphplaza.com/mtg-game/mtg_game.rete",
+     "new": "https://data.graphplaza.com/mtg-game/mtg_game-2026-07-13.rete"
+    },
+    {
+     "key": "neuro-showcase",
+     "old": "https://data.graphplaza.com/neuro-showcase/neuro-showcase.rete",
+     "new": "https://data.graphplaza.com/neuro-showcase/neuro-showcase-2026-07-23.rete"
+    },
+    {
+     "key": "nidm",
+     "old": "https://data.graphplaza.com/nidm/nidm.rete",
+     "new": "https://data.graphplaza.com/nidm/nidm-2026-07-03.rete"
+    },
+    {
+     "key": "nomisma",
+     "old": "https://data.graphplaza.com/nomisma/nomisma.rete",
+     "new": "https://data.graphplaza.com/nomisma/nomisma-2026-06-13.rete"
+    },
+    {
+     "key": "ontoneurolog",
+     "old": "https://data.graphplaza.com/ontoneurolog/ontoneurolog.rete",
+     "new": "https://data.graphplaza.com/ontoneurolog/ontoneurolog-v2.2.rete"
+    },
+    {
+     "key": "open-pulse",
+     "old": "https://data.graphplaza.com/open-pulse/open-pulse.rete",
+     "new": "https://data.graphplaza.com/open-pulse/open-pulse-2026-06.rete"
+    },
+    {
+     "key": "openalex-astrocytes",
+     "old": "https://data.graphplaza.com/openalex-astrocytes/openalex-astrocytes.rete",
+     "new": "https://data.graphplaza.com/openalex-astrocytes/openalex-astrocytes-2026-06-13.rete"
+    },
+    {
+     "key": "orkg",
+     "old": "https://data.graphplaza.com/orkg/orkg.rete",
+     "new": "https://data.graphplaza.com/orkg/orkg-2026-08-05.rete"
+    },
+    {
+     "key": "oss-github-benchmark",
+     "old": "https://data.graphplaza.com/oss-github-benchmark/oss-github-benchmark.rete",
+     "new": "https://data.graphplaza.com/oss-github-benchmark/oss-github-benchmark-2026-07-20.rete"
+    },
+    {
+     "key": "peirce",
+     "old": "https://data.graphplaza.com/peirce/peirce.rete",
+     "new": "https://data.graphplaza.com/peirce/peirce-2026-07-03.rete"
+    },
+    {
+     "key": "plantatlas",
+     "old": "https://data.graphplaza.com/plantatlas/plantatlas.rete",
+     "new": "https://data.graphplaza.com/plantatlas/plantatlas-2026-07-23.rete"
+    },
+    {
+     "key": "postscriptum",
+     "old": "https://data.graphplaza.com/postscriptum/postscriptum.rete",
+     "new": "https://data.graphplaza.com/postscriptum/postscriptum-2026-06-29.rete"
+    },
+    {
+     "key": "proteinbase",
+     "old": "https://data.graphplaza.com/proteinbase/proteinbase.rete",
+     "new": "https://data.graphplaza.com/proteinbase/proteinbase-2026-01-28.rete"
+    },
+    {
+     "key": "ramon_llull",
+     "old": "https://data.graphplaza.com/ramon_llull/ramon_llull.rete",
+     "new": "https://data.graphplaza.com/ramon_llull/ramon_llull-2026-07-01.rete"
+    },
+    {
+     "key": "ror",
+     "old": "https://data.graphplaza.com/ror/ror.rete",
+     "new": "https://data.graphplaza.com/ror/ror-v1.54.rete"
+    },
+    {
+     "key": "scholar",
+     "old": "https://data.graphplaza.com/scholar/scholar.rete",
+     "new": "https://data.graphplaza.com/scholar/scholar-2026-07-14.rete"
+    },
+    {
+     "key": "scholar-noisy",
+     "old": "https://data.graphplaza.com/scholar-noisy/scholar-noisy.rete",
+     "new": "https://data.graphplaza.com/scholar-noisy/scholar-noisy-2026-07-14.rete"
+    },
+    {
+     "key": "scrolls",
+     "old": "https://data.graphplaza.com/scrolls/scrolls.rete",
+     "new": "https://data.graphplaza.com/scrolls/scrolls-2026-07-05.rete"
+    },
+    {
+     "key": "smithsonian3d",
+     "old": "https://data.graphplaza.com/smithsonian3d/smithsonian3d.rete",
+     "new": "https://data.graphplaza.com/smithsonian3d/smithsonian3d-2026-06-29.rete"
+    },
+    {
+     "key": "subtitles",
+     "old": "https://data.graphplaza.com/subtitles/tears_of_steel.rete",
+     "new": "https://data.graphplaza.com/subtitles/tears_of_steel-2026-07-13.rete"
+    },
+    {
+     "key": "swissubase",
+     "old": "https://data.graphplaza.com/swissubase/swissubase.rete",
+     "new": "https://data.graphplaza.com/swissubase/swissubase-2026-07-23.rete"
+    },
+    {
+     "key": "theographic-graph",
+     "old": "https://data.graphplaza.com/theographic-graph/theographic-graph.rete",
+     "new": "https://data.graphplaza.com/theographic-graph/theographic-graph-2026-06-13.rete"
+    },
+    {
+     "key": "tracking",
+     "old": "https://data.graphplaza.com/tracking/tracking.rete",
+     "new": "https://data.graphplaza.com/tracking/tracking-2026-07-13.rete"
+    },
+    {
+     "key": "tree-city-inventory",
+     "old": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory.rete",
+     "new": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory-2026-07-31.rete"
+    },
+    {
+     "key": "ustc",
+     "old": "https://data.graphplaza.com/ustc/ustc.rete",
+     "new": "https://data.graphplaza.com/ustc/ustc-2026-07-01.rete"
+    },
+    {
+     "key": "vidy",
+     "old": "https://data.graphplaza.com/vidy/vidy.rete",
+     "new": "https://data.graphplaza.com/vidy/vidy-2026-07-14.rete"
+    },
+    {
+     "key": "worldcup",
+     "old": "https://data.graphplaza.com/worldcup/worldcup.rete",
+     "new": "https://data.graphplaza.com/worldcup/worldcup-2026-07-12.rete"
+    },
+    {
+     "key": "worldcup2026",
+     "old": "https://data.graphplaza.com/worldcup2026/worldcup2026.rete",
+     "new": "https://data.graphplaza.com/worldcup2026/worldcup2026-2026-07-12.rete"
+    },
+    {
+     "key": "z-anatomy",
+     "old": "https://data.graphplaza.com/z-anatomy/z-anatomy.rete",
+     "new": "https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete"
+    }
+   ]
+  }
+ ]
+}
