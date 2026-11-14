@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-14
+
+0.7.4 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
 ### Changed
 
 - **62 catalog files have new addresses.** They are format 0x08 with a full card, named `<name>-<version or source date>.rete` (#473). `web/datasets.moved.json` lists each old and new address. The relay's catalog is exported again from the playground catalog (104 datasets, all on their current addresses), and the pages that still ran a reader older than 0.7.0 now run the current engine: the ISWC demo's playground (now the current playground), the historical atlas, the Lombardi drawings and the plaza.
