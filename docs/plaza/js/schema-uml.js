@@ -15,16 +15,16 @@ const isClass = (iri) => /^</.test(String(iri));
 const nsOf = (iri) => { const s = strip(iri); const m = s.match(/^(.*[#/])[^#/]+$/); return m ? m[1] : null; };
 const localName = (iri) => { const s = strip(iri); const m = s.match(/[#/]([^#/]+)\/?$/); return (m ? m[1] : s).slice(0, 28); };
 
-const TITLE_FONT = "600 13px ui-sans-serif, system-ui, sans-serif";
+const TITLE_FONT = "600 13px system-ui, sans-serif";
 const ATTR_FONT = "11px ui-monospace, Consolas, monospace";
 const HEADER_H = 24, ROW_H = 15, PAD_X = 9;
 
 export async function mountSchemaUML(card, graphEl, infoEl) {
-  if (typeof ELK === "undefined") { graphEl.innerHTML = `<div class="notice" style="padding:14px">ELK unavailable — diagram skipped.</div>`; return; }
+  if (typeof ELK === "undefined") { graphEl.innerHTML = `<div class="dz-note">The diagram library did not load, so the diagram is skipped.</div>`; return; }
   const classes = card.classes || [];
   const links = card.class_links || [];
   if (!classes.length && !links.length) return;
-  graphEl.innerHTML = `<div class="notice" style="padding:14px">laying out the schema…</div>`;
+  graphEl.innerHTML = `<div class="dz-note">Laying out the schema…</div>`;
 
   // --- pick boxes (real classes), ranked by instances + connectivity ---
   const countOf = new Map(classes.map(([i, n]) => [i, n]));
@@ -51,7 +51,7 @@ export async function mountSchemaUML(card, graphEl, infoEl) {
       e.count += l.count || 0; emap.set(k, e);
     } else {
       const a = attrs.get(l.s_class) || [];
-      a.push({ pred: l.predicate, count: l.count || 0, dt: /untyped/i.test(l.o_class) ? "untyped" : "literal" });
+      a.push({ pred: l.predicate, count: l.count || 0, dt: /untyped/i.test(l.o_class) ? "IRI" : "literal" });
       attrs.set(l.s_class, a);
     }
   }
@@ -74,7 +74,7 @@ export async function mountSchemaUML(card, graphEl, infoEl) {
   const elk = new ELK();
   const expanded = new Set();
   let pinned = null;
-  const HINT = `<div class="si-hint">Compact UML — boxes show only the properties that join classes; <b>click a class to expand</b> its literal properties. Arrows are object properties (orthogonally routed). Scroll to zoom.</div>`;
+  const HINT = `<div class="si-hint">Boxes show only the properties that join classes. <b>Click a class</b> to list its literal properties. Arrows are object properties. Scroll to zoom.</div>`;
   infoEl.innerHTML = HINT;
 
   await relayout();
@@ -107,7 +107,7 @@ export async function mountSchemaUML(card, graphEl, infoEl) {
           labels: [{ text: localName(e.pred), width: Math.ceil(tw(localName(e.pred), ATTR_FONT)) + 6, height: 14 }],
         })),
       });
-    } catch (err) { graphEl.innerHTML = `<div class="warnbox" style="border-radius:10px">Layout failed: ${esc(err)}</div>`; return; }
+    } catch (err) { graphEl.innerHTML = `<div class="dz-banner dz-banner-err" role="alert">Layout failed: ${esc(err)}</div>`; return; }
     draw(layout);
   }
 

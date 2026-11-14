@@ -49,7 +49,8 @@ function namespaceOf(iri) {
 function localName(iri) {
   const s = String(iri).replace(/^[<(]|[>)]$/g, "");
   const m = s.match(/[#/]([^#/]+)\/?$/);
-  return (m ? m[1] : s).slice(0, 18);
+  const n = m ? m[1] : s;
+  return n.length > 20 ? n.slice(0, 19) + "…" : n;
 }
 
 // Theme palette derived from the dataset's dominant vocabulary hue.
@@ -96,8 +97,10 @@ export function imageInfoFromCard(card, entry, header, mode = "dataset") {
     name: entry.key, // used to label header-only (schema-less) images
     tags: (entry.tags || []).slice(0, 3),
     triples: (card && (card.triple_count || card.quad_count)) || 1,
+    terms: (card && card.term_count) || 0,
     classes: (card && card.classes) || [],
     links: (card && card.class_links) || [],
+    predicates: (card && card.predicates) || [],
     vocabularies: (card && card.vocabularies) || [],
     geo: !!(sig.geo_wkt || sig.geo_latlong || (entry.tags || []).includes("geospatial")),
     geoWkt: !!(sig.geo_wkt || entry.geoWkt),
@@ -172,33 +175,56 @@ export function proceduralSVG(info = {}, opts = {}) {
 // ---------------------------------------------------------------------------
 // Schema portrait
 // ---------------------------------------------------------------------------
+// The card's class_links use two placeholders in the object position, "(literal)"
+// and "(untyped)" (an IRI with no rdf:type), and "(untyped)" can also be a
+// subject. Neither is a class, so neither is drawn as a node: literal links are
+// counted as the class's attributes, untyped ones are left out.
+export const isClassIri = (c) => !!c && !/^\(|^_:/.test(String(c));
+
 export function buildSchemaGraph(info, cap = 16) {
   const classCount = new Map();
-  for (const [iri, n] of info.classes) classCount.set(iri, n);
+  for (const [iri, n] of info.classes) if (isClassIri(iri)) classCount.set(iri, n);
 
   const edgeW = new Map();
+  const edgeTop = new Map(); // undirected key -> strongest directed link {from, to, pred, count}
   const incident = new Map();
+  const attrCount = new Map(); // class -> number of literal-valued properties
+  const loops = new Map(); // class -> strongest link back to itself {pred, count}
   for (const l of info.links || []) {
     const a = l.s_class,
-      b = l.o_class;
-    if (!a || !b || a === b) continue;
-    const key = a < b ? a + "\t" + b : b + "\t" + a;
-    edgeW.set(key, (edgeW.get(key) || 0) + (l.count || 1));
-    incident.set(a, (incident.get(a) || 0) + (l.count || 1));
-    incident.set(b, (incident.get(b) || 0) + (l.count || 1));
+      b = l.o_class,
+      c = l.count || 1;
+    if (!isClassIri(a)) continue;
+    if (b === "(literal)") { attrCount.set(a, (attrCount.get(a) || 0) + 1); continue; }
+    if (!isClassIri(b)) continue;
+    incident.set(a, (incident.get(a) || 0) + c);
+    if (a === b) {
+      const cur = loops.get(a);
+      if (!cur || c > cur.count) loops.set(a, { pred: l.predicate, count: c });
+      continue;
+    }
+    incident.set(b, (incident.get(b) || 0) + c);
+    const key = a < b ? a + "	" + b : b + "	" + a;
+    edgeW.set(key, (edgeW.get(key) || 0) + c);
+    const top = edgeTop.get(key);
+    if (!top || c > top.count) edgeTop.set(key, { from: a, to: b, pred: l.predicate, count: c });
   }
-  if (!classCount.size && !edgeW.size) return null;
+  if (!classCount.size && !edgeW.size && !loops.size) return null;
 
   const nodeIds = new Map();
   const topClasses = [...classCount.entries()].sort((x, y) => y[1] - x[1]);
   for (const [iri, n] of topClasses.slice(0, Math.ceil(cap / 2))) nodeIds.set(iri, n);
   for (const [key, w] of [...edgeW.entries()].sort((x, y) => y[1] - x[1])) {
     if (nodeIds.size >= cap) break;
-    for (const id of key.split("\t")) if (!nodeIds.has(id)) nodeIds.set(id, classCount.get(id) || incident.get(id) || w);
+    for (const id of key.split("	")) if (!nodeIds.has(id)) nodeIds.set(id, classCount.get(id) || incident.get(id) || w);
   }
   for (const [iri, n] of topClasses) {
     if (nodeIds.size >= cap) break;
     if (!nodeIds.has(iri)) nodeIds.set(iri, n);
+  }
+  for (const [iri, l] of loops) {
+    if (nodeIds.size >= cap) break;
+    if (!nodeIds.has(iri)) nodeIds.set(iri, classCount.get(iri) || l.count);
   }
 
   const ids = [...nodeIds.keys()];
@@ -209,12 +235,17 @@ export function buildSchemaGraph(info, cap = 16) {
   const ont = info.mode === "ontology";
   const dispMass = (id) => (ont ? propCount.get(id) || 1 : nodeIds.get(id) || 1);
   const maxDisp = Math.max(1, ...ids.map(dispMass));
+  const grow = ids.length <= 2 ? 1.9 : ids.length <= 5 ? 1.45 : ids.length <= 9 ? 1.15 : ids.length <= 12 ? 0.92 : 0.78;
   const nodes = ids.map((id) => {
     const ns = namespaceOf(id);
+    const loop = loops.get(id);
     return {
       id,
       mass: dispMass(id),
-      r: clamp(1.6 + 4.4 * Math.sqrt(dispMass(id) / maxDisp), 1.6, 5.6),
+      count: classCount.get(id) || 0, // instances, 0 when the card does not say
+      attrs: attrCount.get(id) || 0,
+      loop: loop ? { pred: localName(loop.pred), count: loop.count } : null,
+      r: clamp(1.6 + 4.4 * Math.sqrt(dispMass(id) / maxDisp), 1.6, 5.6) * grow,
       ns,
       hue: ns ? hueOf(ns) : null,
       label: localName(id),
@@ -227,7 +258,9 @@ export function buildSchemaGraph(info, cap = 16) {
   for (const [key, w] of edgeW) {
     const [a, b] = key.split("\t");
     if (index.has(a) && index.has(b)) {
-      edges.push({ a: index.get(a), b: index.get(b), w });
+      // a -> b follows the strongest link, so an arrow can be drawn at b.
+      const top = edgeTop.get(key);
+      edges.push({ a: index.get(top.from), b: index.get(top.to), w, pred: localName(top.pred) });
       maxW = Math.max(maxW, w);
       minW = Math.min(minW, w);
     }
@@ -240,7 +273,8 @@ export function buildSchemaGraph(info, cap = 16) {
   const bgHue = top && top.hue != null ? top.hue : hueOf(info.vocabularies[0] || "rete");
 
   layout(nodes, edges, mulberry32(xmur3("L" + info.seed)()));
-  return { nodes, edges, bgHue };
+  const classTotal = new Set([...classCount.keys(), ...ids]).size;
+  return { nodes, edges, bgHue, classTotal, relationTotal: edgeW.size + loops.size };
 }
 
 function layout(nodes, edges, rnd, iters = 170) {
@@ -252,7 +286,7 @@ function layout(nodes, edges, rnd, iters = 170) {
     n.y = 50 + Math.sin(a) * r;
     n.vx = n.vy = 0;
   });
-  const k = 17;
+  const k = N > 9 ? 23 : 17; // crowded schemas spread further, leaving room for labels
   for (let it = 0; it < iters; it++) {
     for (let i = 0; i < N; i++)
       for (let j = i + 1; j < N; j++) {
@@ -286,7 +320,7 @@ function layout(nodes, edges, rnd, iters = 170) {
       n.vx *= 0.85; n.vy *= 0.85;
     }
   }
-  fit(nodes, 14, 86);
+  fit(nodes, 11, 89);
 }
 
 function fit(nodes, lo, hi) {
@@ -295,11 +329,15 @@ function fit(nodes, lo, hi) {
     minx = Math.min(minx, n.x); maxx = Math.max(maxx, n.x);
     miny = Math.min(miny, n.y); maxy = Math.max(maxy, n.y);
   }
-  const s = Math.min((hi - lo) / Math.max(1e-3, maxx - minx), (hi - lo) / Math.max(1e-3, maxy - miny));
+  // Each axis fills the plate on its own, but never more than 1.6x the other,
+  // so a long thin layout is not stretched out of recognition.
+  const fx = (hi - lo) / Math.max(1e-3, maxx - minx), fy = (hi - lo) / Math.max(1e-3, maxy - miny);
+  const s = Math.min(fx, fy);
+  const sx = Math.min(fx, s * 1.6), sy = Math.min(fy, s * 1.6);
   const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
   for (const n of nodes) {
-    n.x = 50 + (n.x - cx) * s;
-    n.y = 50 + (n.y - cy) * s;
+    n.x = 50 + (n.x - cx) * sx;
+    n.y = 50 + (n.y - cy) * sy;
   }
 }
 

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "gitCommit": "59b964c6133572f132310c7a6bb3baec80cc2561",
+  "engineSource": "c8ad480e0952628fae3aec6b6b5dccc00667544e960426ea5594e9b181ca5b57",
+  "engineSourceFiles": 96,
+  "wasmBindgen": "0.2.122 (ddd322514)",
+  "wasm": {
+    "bytes": 5848038,
+    "sha256": "8e48ae7bb68dd03880a371eae871d07bce3e2e6154d4cdf2d054929da7b1202c"
+  }
+}

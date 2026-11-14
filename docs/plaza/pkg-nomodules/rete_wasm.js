@@ -38,6 +38,24 @@ let wasm_bindgen = (function(exports) {
             return v1;
         }
         /**
+         * See [`card_and_build`] — the card and the build record of the resident
+         * file, in the same envelope the remote path returns, so one caller
+         * handles both sources.
+         * @returns {string}
+         */
+        card_and_build() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.graph_card_and_build(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
          * See [`file_layout`].
          * @returns {string}
          */
@@ -113,6 +131,37 @@ let wasm_bindgen = (function(exports) {
             return this;
         }
         /**
+         * Plan running `query` as chunks split by the values of `var` — see
+         * `rete_core::partition_plan`. JSON `{var, form, keys_query,
+         * keys_from_where, offset, limit, dedupe}`, or an error saying why the
+         * split would change the answer.
+         * @param {string} query
+         * @param {string} _var
+         * @returns {string}
+         */
+        partition_plan(query, _var) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.graph_partition_plan(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
          * See [`prefix_search`].
          * @param {string} prefix
          * @param {number} limit
@@ -159,6 +208,30 @@ let wasm_bindgen = (function(exports) {
             } finally {
                 wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
             }
+        }
+        /**
+         * A **lazy, resumable cursor** over the quads of this graph — the streaming
+         * export path. See [`QuadCursor`]; `graph` selects one graph (`""` = the
+         * default graph), `None` streams the default graph followed by every named
+         * graph. `s` / `p` / `o` optionally restrict the dump to a triple pattern,
+         * which **prunes tiles** rather than filtering rows.
+         * @param {string | null} [graph]
+         * @param {string | null} [s]
+         * @param {string | null} [p]
+         * @param {string | null} [o]
+         * @returns {QuadCursor}
+         */
+        quads(graph, s, p, o) {
+            var ptr0 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(s) ? 0 : passStringToWasm0(s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            var ptr2 = isLikeNone(p) ? 0 : passStringToWasm0(p, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len2 = WASM_VECTOR_LEN;
+            var ptr3 = isLikeNone(o) ? 0 : passStringToWasm0(o, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len3 = WASM_VECTOR_LEN;
+            const ret = wasm.graph_quads(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+            return QuadCursor.__wrap(ret);
         }
         /**
          * See [`query`].
@@ -215,6 +288,77 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * As [`query`], with explicit opt-in toggles: `reason` (OWL 2 QL
+         * entailment) and `union_default` (union default graph — a pattern
+         * outside `GRAPH` matches the merge of the default graph and every named
+         * graph, the Virtuoso / GraphDB / Jena TDB mode; non-standard, so plain
+         * [`Graph::query`] never does this).
+         * @param {string} query
+         * @param {string} format
+         * @param {boolean} reason
+         * @param {boolean} union_default
+         * @returns {string}
+         */
+        query_opts(query, format, reason, union_default) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.graph_query_opts(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, union_default);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * One chunk of a split query: the solutions whose `var` is one of `keys`
+         * (term tokens, as the plan's keys query returned them), without the
+         * query's top-level OFFSET/LIMIT. Same envelope as [`Graph::query`].
+         * @param {string} query
+         * @param {string} format
+         * @param {boolean} reason
+         * @param {string} _var
+         * @param {string[]} keys
+         * @returns {string}
+         */
+        query_partition(query, format, reason, _var, keys) {
+            let deferred6_0;
+            let deferred6_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ptr2 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len2 = WASM_VECTOR_LEN;
+                const ptr3 = passArrayJsValueToWasm0(keys, wasm.__wbindgen_malloc);
+                const len3 = WASM_VECTOR_LEN;
+                const ret = wasm.graph_query_partition(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, ptr2, len2, ptr3, len3);
+                var ptr5 = ret[0];
+                var len5 = ret[1];
+                if (ret[3]) {
+                    ptr5 = 0; len5 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred6_0 = ptr5;
+                deferred6_1 = len5;
+                return getStringFromWasm0(ptr5, len5);
+            } finally {
+                wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+            }
+        }
+        /**
          * As [`query`], with OWL 2 QL entailment on (`rdfs:subClassOf` /
          * `subPropertyOf` / `domain` / `range` reasoning by query rewriting).
          * @param {string} query
@@ -242,6 +386,23 @@ let wasm_bindgen = (function(exports) {
             } finally {
                 wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
             }
+        }
+        /**
+         * Run a SELECT to a **result handle**: the rows stay dictionary ids and
+         * [`QueryRows::page`] decodes a window on demand. See [`QueryRows`].
+         * @param {string} query
+         * @param {boolean} reason
+         * @param {boolean} union_default
+         * @returns {QueryRows}
+         */
+        query_rows(query, reason, union_default) {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.graph_query_rows(this.__wbg_ptr, ptr0, len0, reason, union_default);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return QueryRows.__wrap(ret[0]);
         }
         /**
          * See [`query_triples`].
@@ -272,6 +433,23 @@ let wasm_bindgen = (function(exports) {
                 return getStringFromWasm0(ptr4, len4);
             } finally {
                 wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+            }
+        }
+        /**
+         * The card's `signals.quoted_triples` for this file, from its header: does
+         * it hold quoted triples, and in which surfaces can an export write them.
+         * @returns {string}
+         */
+        quoted_triples_signal() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.graph_quoted_triples_signal(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
             }
         }
         /**
@@ -377,6 +555,34 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * Byte length of the TEXT_INDEX section, `0` when the file has none — a
+         * header read, never a fault. The UI asks this to decide whether to offer
+         * full-text search at all, and to state the cost before the first one.
+         * `f64` because the section outgrows `u32`: causenet's is 1.88 GB.
+         * @returns {number}
+         */
+        text_index_len() {
+            const ret = wasm.graph_text_index_len(this.__wbg_ptr);
+            return ret;
+        }
+        /**
+         * Byte length of the TEXT_INDEX's leading **token table** — what a first
+         * [`Graph::text_search_one`] actually faults, and therefore the only honest
+         * number to quote as its cost. [`Graph::text_index_len`] is the whole
+         * section, postings blob included, and overstates it 6.5× on
+         * `epfl-infoscience` (195 MB section, 29 MB token table); the postings are
+         * only ever fetched one list at a time. `0` when the file has no text index
+         * or the length could not be read — the caller must then say nothing about
+         * a token table rather than pass the section length off as one.
+         * `f64` for the same reason as the section length: causenet's table is
+         * 1.88 GB.
+         * @returns {number}
+         */
+        text_index_token_table_len() {
+            const ret = wasm.graph_text_index_token_table_len(this.__wbg_ptr);
+            return ret;
+        }
+        /**
          * See [`text_search`].
          * @param {string[]} words
          * @param {string | null | undefined} contains_prefix
@@ -403,6 +609,36 @@ let wasm_bindgen = (function(exports) {
                 return getStringFromWasm0(ptr3, len3);
             } finally {
                 wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * [`Graph::text_search`] from ONE phrase: whitespace splits it into words
+         * and **every** word must match (AND), like `rete search --contains a b`.
+         * One string in, one string out — that is what the remote twin's
+         * hand-marshaled asyncify path can carry (a JS array marshaled raw is what
+         * traps), and the UI is a single text box either way. Same JSON envelope.
+         * @param {string} phrase
+         * @param {number} limit
+         * @returns {string}
+         */
+        text_search_one(phrase, limit) {
+            let deferred3_0;
+            let deferred3_1;
+            try {
+                const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ret = wasm.graph_text_search_one(this.__wbg_ptr, ptr0, len0, limit);
+                var ptr2 = ret[0];
+                var len2 = ret[1];
+                if (ret[3]) {
+                    ptr2 = 0; len2 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred3_0 = ptr2;
+                deferred3_1 = len2;
+                return getStringFromWasm0(ptr2, len2);
+            } finally {
+                wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
             }
         }
         /**
@@ -439,6 +675,230 @@ let wasm_bindgen = (function(exports) {
     }
     if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
     exports.Graph = Graph;
+
+    class QuadCursor {
+        static __wrap(ptr) {
+            const obj = Object.create(QuadCursor.prototype);
+            obj.__wbg_ptr = ptr;
+            QuadCursorFinalization.register(obj, obj.__wbg_ptr, obj);
+            return obj;
+        }
+        __destroy_into_raw() {
+            const ptr = this.__wbg_ptr;
+            this.__wbg_ptr = 0;
+            QuadCursorFinalization.unregister(this);
+            return ptr;
+        }
+        free() {
+            const ptr = this.__destroy_into_raw();
+            wasm.__wbg_quadcursor_free(ptr, 0);
+        }
+        /**
+         * Whether every selected graph has been streamed to its end.
+         * @returns {boolean}
+         */
+        done() {
+            const ret = wasm.quadcursor_done(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * Up to `max` quads as a **flat** `string[]` of `[s, p, o, g, s, p, o, g, …]`
+         * N-Triples term tokens, `g` being `""` for the default graph. Flat because
+         * a nested array would allocate one JS array per quad for no gain — the
+         * caller slices it into tuples as it yields them.
+         *
+         * An empty array means the stream is finished; keep calling until you get
+         * one (that final call is what verifies no range fetch failed mid-dump).
+         * @param {number | null} [max]
+         * @returns {string[]}
+         */
+        next_batch(max) {
+            const ret = wasm.quadcursor_next_batch(this.__wbg_ptr, isLikeNone(max) ? Number.MAX_SAFE_INTEGER : (max) >>> 0);
+            if (ret[3]) {
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+            return v1;
+        }
+        /**
+         * Up to `max` quads already serialized as N-Quads lines in **one** string —
+         * the `.rete` → Oxigraph / N-Quads-file path. One string crossing per batch
+         * instead of four per quad: no per-term JS string, no re-serialization in
+         * JavaScript, and the terms are already canonical N-Triples tokens, so the
+         * lines are emitted verbatim.
+         *
+         * An empty string means the stream is finished.
+         * @param {number | null} [max]
+         * @returns {string}
+         */
+        next_nquads(max) {
+            let deferred2_0;
+            let deferred2_1;
+            try {
+                const ret = wasm.quadcursor_next_nquads(this.__wbg_ptr, isLikeNone(max) ? Number.MAX_SAFE_INTEGER : (max) >>> 0);
+                var ptr1 = ret[0];
+                var len1 = ret[1];
+                if (ret[3]) {
+                    ptr1 = 0; len1 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred2_0 = ptr1;
+                deferred2_1 = len1;
+                return getStringFromWasm0(ptr1, len1);
+            } finally {
+                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+            }
+        }
+        /**
+         * How [`next_nquads`](Self::next_nquads) spells a quoted triple — the
+         * values of `rete export --quoted-triple-syntax`:
+         *
+         * - `"rdf-star"` (or `""`; the cursor's initial state): `<<s p o>>`, the
+         *   stored token, verbatim — what this cursor always wrote.
+         * - `"rdf12"`: the RDF 1.2 triple term `<<( s p o )>>`, nested terms too,
+         *   which current RDF 1.2 parsers (Oxigraph 0.5, Jena 5) load. RDF 1.2
+         *   admits a triple term in object position only, so a quoted triple in a
+         *   statement's subject/predicate (or in another's subject) makes the next
+         *   call fail by name instead of writing a line nothing parses.
+         *
+         * Anything else is refused. A file whose header records no quoted triple
+         * is written byte-for-byte the same under both.
+         * @param {string} syntax
+         */
+        set_quoted_triple_syntax(syntax) {
+            const ptr0 = passStringToWasm0(syntax, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.quadcursor_set_quoted_triple_syntax(this.__wbg_ptr, ptr0, len0);
+            if (ret[1]) {
+                throw takeFromExternrefTable0(ret[0]);
+            }
+        }
+    }
+    if (Symbol.dispose) QuadCursor.prototype[Symbol.dispose] = QuadCursor.prototype.free;
+    exports.QuadCursor = QuadCursor;
+
+    /**
+     * A **lazy, resumable cursor** over the quads of an open `.rete` — the engine
+     * side of `for await (const [s, p, o, g] of graph.dump())` in the JS client.
+     *
+     * # Why a cursor and not a callback
+     *
+     * [`Rete::dump_each`] already streams in constant memory, but a Rust callback
+     * cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
+     * it would have to buffer every quad first, which is exactly the `Vec` that
+     * [`Rete::dump`] builds and that OOMs on a large file. This wraps
+     * [`Rete::query_batch`] instead, so the scan can be suspended between calls and
+     * resumed in place — the whole resume state is one opaque `u64`, never a
+     * whole-graph materialization anywhere in the pipeline.
+     *
+     * # Why batched (and not one call per quad)
+     *
+     * Each wasm→JS call costs far more than decoding a triple, and every returned
+     * `String` becomes a fresh JS string. Pulling one quad per call would make the
+     * boundary the bottleneck; pulling *all* of them would reintroduce the `Vec`.
+     * So the JS wrapper asks for `DUMP_BATCH` quads at a time and yields them one
+     * by one — bounded, amortized, and lazy. Memory is O(batch), not O(graph).
+     *
+     * # Cost model
+     *
+     * The dictionary is **not** prefetched whole: each batch faults only the
+     * chunks its own terms live in, so taking five quads off the front costs five
+     * quads' worth of dictionary rather than all of it. Index tiles fault in as the
+     * scan advances and stay resident, and so do dictionary chunks, so an
+     * **unfiltered** dump driven to the end still ends up fetching essentially the
+     * whole file — that is inherent in exporting a graph.
+     *
+     * A **filtered** cursor (a bound `s` / `p` / `o`) is a different shape: the
+     * scan routes to the one permutation that sorts on the bound prefix and drops
+     * every tile whose synopsis proves it cannot match, from the tile directory,
+     * *without fetching it*. On `cordis.rete` (801 MB, six named graphs) dumping
+     * one predicate of one graph reads 16 MB where the unfiltered dump of that
+     * graph reads 376 MB. Peak memory is O(faulted dictionary + index), never
+     * O(quads), either way.
+     * A SELECT answered to dictionary ids: the **result handle** of
+     * [`Graph::query_rows`] and [`RemoteGraph::query_rows`].
+     *
+     * `query` evaluates a SELECT and decodes every term of every row to JSON; a
+     * page of 25 rows of a 650,000-row result still costs the whole result's
+     * dictionary chunks (181 MB for a class of the nanopub dump). The handle keeps
+     * the rows as ids, with the exact row count, and `page(offset, limit)` decodes
+     * one window, as one batch of chunk reads. What the query itself needs is
+     * decoded as before (the keys of an ORDER BY, the inputs of a FILTER); the
+     * other columns wait for the page. `free()` it when done.
+     */
+    class QueryRows {
+        static __wrap(ptr) {
+            const obj = Object.create(QueryRows.prototype);
+            obj.__wbg_ptr = ptr;
+            QueryRowsFinalization.register(obj, obj.__wbg_ptr, obj);
+            return obj;
+        }
+        __destroy_into_raw() {
+            const ptr = this.__wbg_ptr;
+            this.__wbg_ptr = 0;
+            QueryRowsFinalization.unregister(this);
+            return ptr;
+        }
+        free() {
+            const ptr = this.__destroy_into_raw();
+            wasm.__wbg_queryrows_free(ptr, 0);
+        }
+        /**
+         * The exact number of rows.
+         * @returns {number}
+         */
+        len() {
+            const ret = wasm.queryrows_len(this.__wbg_ptr);
+            return ret;
+        }
+        /**
+         * Rows `offset..offset + limit` (cut at the end), in the envelope of
+         * `query(..., "json")`: `{"kind":"select","vars":[…],"rows":[{var:term}]}`
+         * plus `"offset"` and `"total"`. Calling it again, or for another window,
+         * reuses the dictionary chunks already read.
+         * @param {number} offset
+         * @param {number} limit
+         * @returns {string}
+         */
+        page(offset, limit) {
+            let deferred2_0;
+            let deferred2_1;
+            try {
+                const ret = wasm.queryrows_page(this.__wbg_ptr, offset, limit);
+                var ptr1 = ret[0];
+                var len1 = ret[1];
+                if (ret[3]) {
+                    ptr1 = 0; len1 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred2_0 = ptr1;
+                deferred2_1 = len1;
+                return getStringFromWasm0(ptr1, len1);
+            } finally {
+                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+            }
+        }
+        /**
+         * The projected variables, a JSON array (for `SELECT *`, the variables
+         * some row binds, in name order).
+         * @returns {string}
+         */
+        vars() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.queryrows_vars(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+    }
+    if (Symbol.dispose) QueryRows.prototype[Symbol.dispose] = QueryRows.prototype.free;
+    exports.QueryRows = QueryRows;
 
     /**
      * A remote `.rete` opened **once over HTTP range** and kept resident in the
@@ -478,6 +938,30 @@ let wasm_bindgen = (function(exports) {
                 wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
             }
             return v1;
+        }
+        /**
+         * See [`card_and_build_url`] — card + build record over the resident
+         * handle's reader, still one coalesced range (and served from the block
+         * cache when the header range is already there).
+         * @returns {string}
+         */
+        card_and_build() {
+            let deferred2_0;
+            let deferred2_1;
+            try {
+                const ret = wasm.remotegraph_card_and_build(this.__wbg_ptr);
+                var ptr1 = ret[0];
+                var len1 = ret[1];
+                if (ret[3]) {
+                    ptr1 = 0; len1 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred2_0 = ptr1;
+                deferred2_1 = len1;
+                return getStringFromWasm0(ptr1, len1);
+            } finally {
+                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+            }
         }
         /**
          * The file's content hash (blake3-16, hex). The worker keys its session
@@ -554,6 +1038,35 @@ let wasm_bindgen = (function(exports) {
             return this;
         }
         /**
+         * See [`Graph::partition_plan`]. Reads the dictionary entries of the
+         * query's constants and the resident tile directory — no tile data.
+         * @param {string} query
+         * @param {string} _var
+         * @returns {string}
+         */
+        partition_plan(query, _var) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_partition_plan(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
          * See [`prefix_search`] — over the resident, cached remote handle. Faults the
          * pyramid (where the label index lives) on the first call, then serves the
          * search from memory.
@@ -580,6 +1093,36 @@ let wasm_bindgen = (function(exports) {
             } finally {
                 wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
             }
+        }
+        /**
+         * See [`Graph::quads`] — the SAME lazy cursor, over the lazily range-read
+         * remote handle.
+         *
+         * An **unfiltered** dump is not network-lazy and cannot be: it resolves
+         * every term and visits every tile, so it ends up fetching essentially the
+         * whole file (and what it faults stays resident). A **filtered** one is:
+         * pass `s` / `p` / `o` and the scan routes to one permutation, keeps only
+         * the tiles whose synopsis admits the bound components, and fetches those.
+         * On `cordis.rete` (801 MB) one predicate of one named graph costs 16 MB
+         * instead of 376 MB. To peek at an unfiltered graph, still prefer a `LIMIT`
+         * query. Worker-only in the browser, like every other read here.
+         * @param {string | null} [graph]
+         * @param {string | null} [s]
+         * @param {string | null} [p]
+         * @param {string | null} [o]
+         * @returns {QuadCursor}
+         */
+        quads(graph, s, p, o) {
+            var ptr0 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(s) ? 0 : passStringToWasm0(s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            var ptr2 = isLikeNone(p) ? 0 : passStringToWasm0(p, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len2 = WASM_VECTOR_LEN;
+            var ptr3 = isLikeNone(o) ? 0 : passStringToWasm0(o, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len3 = WASM_VECTOR_LEN;
+            const ret = wasm.remotegraph_quads(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+            return QuadCursor.__wrap(ret);
         }
         /**
          * See [`sparql_url`] — same query, but over the resident, cached handle.
@@ -614,6 +1157,73 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * As [`query`], with explicit opt-in toggles — see [`Graph::query_opts`].
+         * With `union_default` on, a lazy remote read may fault the index tiles of
+         * every named graph the union touches (the merge is strictly opt-in).
+         * @param {string} query
+         * @param {string} format
+         * @param {boolean} reason
+         * @param {boolean} union_default
+         * @returns {string}
+         */
+        query_opts(query, format, reason, union_default) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_query_opts(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, union_default);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * See [`Graph::query_partition`].
+         * @param {string} query
+         * @param {string} format
+         * @param {boolean} reason
+         * @param {string} _var
+         * @param {string[]} keys
+         * @returns {string}
+         */
+        query_partition(query, format, reason, _var, keys) {
+            let deferred6_0;
+            let deferred6_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ptr2 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len2 = WASM_VECTOR_LEN;
+                const ptr3 = passArrayJsValueToWasm0(keys, wasm.__wbindgen_malloc);
+                const len3 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_query_partition(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, ptr2, len2, ptr3, len3);
+                var ptr5 = ret[0];
+                var len5 = ret[1];
+                if (ret[3]) {
+                    ptr5 = 0; len5 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred6_0 = ptr5;
+                deferred6_1 = len5;
+                return getStringFromWasm0(ptr5, len5);
+            } finally {
+                wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+            }
+        }
+        /**
          * As [`query`], with OWL 2 QL entailment on (reason over the ontology while
          * reading only the bytes the rewritten query touches).
          * @param {string} query
@@ -640,6 +1250,40 @@ let wasm_bindgen = (function(exports) {
                 return getStringFromWasm0(ptr3, len3);
             } finally {
                 wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * See [`Graph::query_rows`]. The query's reads happen here; each
+         * [`QueryRows::page`] then reads the dictionary chunks of its own terms.
+         * @param {string} query
+         * @param {boolean} reason
+         * @param {boolean} union_default
+         * @returns {QueryRows}
+         */
+        query_rows(query, reason, union_default) {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.remotegraph_query_rows(this.__wbg_ptr, ptr0, len0, reason, union_default);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return QueryRows.__wrap(ret[0]);
+        }
+        /**
+         * See [`Graph::quoted_triples_signal`] — from the header the open already
+         * holds, so no range read at all.
+         * @returns {string}
+         */
+        quoted_triples_signal() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.remotegraph_quoted_triples_signal(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
             }
         }
         /**
@@ -700,9 +1344,11 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
-         * `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
-         * session opened. The worker diffs successive calls to report a single
-         * query's traffic (a fully cached re-run adds ~0).
+         * `{ fileLength, bytes, requests, base }` — CUMULATIVE physical fetches
+         * since this session opened. The worker diffs successive calls to report a
+         * single query's traffic (a fully cached re-run adds ~0). `fileLength` is
+         * the **graph's** length and `base` the byte offset it starts at: `0` for an
+         * ordinary `.rete`, and the size of the HTML shell for a polyglot file.
          * @returns {string}
          */
         stats() {
@@ -716,6 +1362,34 @@ let wasm_bindgen = (function(exports) {
             } finally {
                 wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
             }
+        }
+        /**
+         * See [`Graph::text_index_len`] — read from the resident header, so it
+         * costs no fetch at all. Worth asking before [`RemoteGraph::text_search`]:
+         * it is the size of the section the first search starts pulling over the
+         * wire, so the UI can warn instead of surprising the user.
+         * @returns {number}
+         */
+        text_index_len() {
+            const ret = wasm.remotegraph_text_index_len(this.__wbg_ptr);
+            return ret;
+        }
+        /**
+         * See [`Graph::text_index_token_table_len`] — the figure to quote before
+         * [`RemoteGraph::text_search`], because it is what that first search pulls
+         * over the wire; the section length would promise the user several times
+         * the real bill.
+         *
+         * Unlike [`RemoteGraph::text_index_len`] this is not free: the token
+         * table's length lives in the section's first bytes, not the header, so it
+         * costs ONE ≤10-byte range read (memoized). Trivial next to the table it
+         * measures — but it *is* IO, so the asyncify path must drive this call
+         * rather than treat it as a header field.
+         * @returns {number}
+         */
+        text_index_token_table_len() {
+            const ret = wasm.remotegraph_text_index_token_table_len(this.__wbg_ptr);
+            return ret;
         }
         /**
          * See [`text_search`] — over the resident remote handle. Faults the TEXT_INDEX
@@ -746,6 +1420,35 @@ let wasm_bindgen = (function(exports) {
                 return getStringFromWasm0(ptr3, len3);
             } finally {
                 wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * See [`Graph::text_search_one`] — over the resident remote handle, with
+         * the same token-table-then-posting-lists fault pattern as
+         * [`RemoteGraph::text_search`]. This is the shape the playground's raw
+         * asyncify glue drives: one string in, one string out, marshaled once.
+         * @param {string} phrase
+         * @param {number} limit
+         * @returns {string}
+         */
+        text_search_one(phrase, limit) {
+            let deferred3_0;
+            let deferred3_1;
+            try {
+                const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_text_search_one(this.__wbg_ptr, ptr0, len0, limit);
+                var ptr2 = ret[0];
+                var len2 = ret[1];
+                if (ret[3]) {
+                    ptr2 = 0; len2 = 0;
+                    throw takeFromExternrefTable0(ret[2]);
+                }
+                deferred3_0 = ptr2;
+                deferred3_1 = len2;
+                return getStringFromWasm0(ptr2, len2);
+            } finally {
+                wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
             }
         }
     }
@@ -794,6 +1497,177 @@ let wasm_bindgen = (function(exports) {
     exports.build = build;
 
     /**
+     * [`build_with_card_syntax`] for input held as **bytes**: any text format
+     * (UTF-8, as `text` would be) or `"jelly"`, the binary Jelly RDF stream
+     * format, which has no text form and so cannot go through the `&str`
+     * builders. Same card and quoted-triple rules, same file out. The Jelly
+     * reader is the one `rete build` uses ([`rete_core::ingest::parse_jelly_bytes`]);
+     * the whole file must be in memory, as every browser build is.
+     * @param {Uint8Array} bytes
+     * @param {string} format
+     * @param {string} card_json
+     * @param {string} quoted_triple_syntax
+     * @returns {Uint8Array}
+     */
+    function build_bytes(bytes, format, card_json, quoted_triple_syntax) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(quoted_triple_syntax, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.build_bytes(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v5 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v5;
+    }
+    exports.build_bytes = build_bytes;
+
+    /**
+     * [`build`], but the file carries a **Dataset Card** written from
+     * `card_json` — the same document `rete build --card-file` takes, validated
+     * by the same rules ([`rete_core::card::validate_curated_card`]), so a card
+     * authored in the browser is one the CLI would also have accepted.
+     *
+     * What the browser can and cannot put in a card, stated plainly because the
+     * difference matters to whoever reads the file afterwards:
+     *
+     * - **Curated fields travel in full** — title, description, licence, source,
+     *   version, creators, publisher, DOI, citation, keywords, theme, the `extra`
+     *   bag, everything on [`rete_core::card::CURATED_CARD_FIELDS`].
+     * - **The four counts are measured, not asserted**: `triple_count`,
+     *   `quad_count`, `named_graph_count` and `term_count` come from the build's
+     *   own [`BuildStats`](rete_core::ingest::BuildStats), and any values supplied
+     *   for them would be ignored (they are not curated fields, so supplying them
+     *   is already an error). `format_version` is stamped by the writer.
+     * - **The derived profile is NOT written.** Predicates, classes,
+     *   vocabularies, datatypes, languages, class links, hubs, signals and the
+     *   tiered starter-query library are absent. Their absence is honest absence:
+     *   the card simply does not carry those keys, exactly as a `rete merge` card
+     *   does not. Call [`build_with_derived_card`] instead to compute them here —
+     *   this function stays curated-only so its bytes never change under a caller
+     *   who did not ask for the extra passes.
+     * - **No build-info section** (kind 7) is written: its cost figures come from
+     *   measuring the starter queries, and there are none to measure.
+     *
+     * Pass an empty string for no card — byte-identical to [`build`].
+     * @param {string} text
+     * @param {string} format
+     * @param {string} card_json
+     * @returns {Uint8Array}
+     */
+    function build_with_card(text, format, card_json) {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.build_with_card(ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v4;
+    }
+    exports.build_with_card = build_with_card;
+
+    /**
+     * [`build_with_card`], reading Turtle/TriG `<< … >>` in the named surface —
+     * the browser half of `rete build --quoted-triple-syntax`, same two values:
+     *
+     * - `"rdf-star"` (or `""`): `<< s p o >>` is a quoted triple. Byte-identical
+     *   to [`build_with_card`].
+     * - `"rdf12"`: the **RDF 1.2** reader. `<<( s p o )>>` is a triple term,
+     *   `<< s p o >>` a reifier (a blank node `rdf:reifies` the triple term),
+     *   `{| … |}` an annotation, `"…"@lang--dir` a directional literal.
+     *
+     * The same Turtle file is two different graphs under the two values, and
+     * nothing in the bytes says which was meant, so the caller chooses. N-Triples
+     * and N-Quads ignore the choice (their reader takes both spellings). Anything
+     * else is refused by name.
+     * @param {string} text
+     * @param {string} format
+     * @param {string} card_json
+     * @param {string} quoted_triple_syntax
+     * @returns {Uint8Array}
+     */
+    function build_with_card_syntax(text, format, card_json, quoted_triple_syntax) {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(quoted_triple_syntax, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.build_with_card_syntax(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v5 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v5;
+    }
+    exports.build_with_card_syntax = build_with_card_syntax;
+
+    /**
+     * [`build_with_card`], but the card also carries the **auto-derived profile**
+     * — the half a browser build used to have to do without (#152).
+     *
+     * Predicates, classes, vocabularies, datatypes, languages, the class-link
+     * quotient, hubs, the affordance signals, and the tiered starter-query
+     * library are all computed here, by exactly the code `rete build --card`
+     * runs ([`rete_core::card::derive_card`]). On the same graph with the same
+     * curated document, the metadata section this writes is **byte-identical** to
+     * the CLI's.
+     *
+     * Two honest differences remain, and neither is derivation:
+     *
+     * - **Sections are uncompressed** (the wasm build has no zstd *encoder*), so
+     *   the file is larger than a CLI build of the same graph. Every reader
+     *   accepts it.
+     * - **The build record has no starter-query costs**: they come from *running*
+     *   the starter queries, which is a benchmark, not a build. Everything else
+     *   in the record is there (see `finish_build`).
+     *
+     * # Why this is a separate function
+     *
+     * Derivation walks the graph twice more. In a browser, on a paste the user is
+     * waiting on, that is a cost they should choose — so [`build_with_card`]
+     * keeps writing exactly the bytes it always has, and this is the opt-in.
+     *
+     * Pass an empty string for `card_json` to derive a profile-only card with no
+     * curated fields (the equivalent of a bare `rete build --card`).
+     * @param {string} text
+     * @param {string} format
+     * @param {string} card_json
+     * @returns {Uint8Array}
+     */
+    function build_with_derived_card(text, format, card_json) {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.build_with_derived_card(ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v4;
+    }
+    exports.build_with_derived_card = build_with_derived_card;
+
+    /**
      * The embedded **Dataset Card** — the file's own self-description (title,
      * description, license, provenance, counts, example queries) as the JSON text
      * it was written with, or `undefined` when the file carries none. Reads the
@@ -816,6 +1690,75 @@ let wasm_bindgen = (function(exports) {
         return v2;
     }
     exports.card = card;
+
+    /**
+     * [`card_and_build_url`] for an image already in memory — no I/O at all.
+     * @param {Uint8Array} bytes
+     * @returns {string}
+     */
+    function card_and_build(bytes) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.card_and_build(ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.card_and_build = card_and_build;
+
+    /**
+     * The Dataset Card **and the build record** of a remote `.rete`, in the same
+     * budget as the card alone: one header read, then **one coalesced range**
+     * covering both sections — the writer lays the kind-7 build-info immediately
+     * after the metadata precisely so this holds
+     * ([`rete_core::range::read_card_and_build_info_ranged`], pinned by a
+     * `rete-core` test). Reading the two separately would have made the CARD tier
+     * cost three requests instead of two, which is why there is one export rather
+     * than a second `build_info_url`.
+     *
+     * JSON envelope:
+     * `{"schemaVersion":1,"card":<text|null>,"build":<text|null>,"text_index":{…}}`.
+     * `card` and `build` are the sections' **own bytes** as text, not a
+     * re-serialization — the card a client displays is the card the file holds.
+     * `text_index` is the one thing the file does *not* store about itself and this
+     * reader measures instead (see the private `text_index_json`). Worker-only
+     * (synchronous XHR).
+     * @param {string} url
+     * @returns {string}
+     */
+    function card_and_build_url(url) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.card_and_build_url(ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.card_and_build_url = card_and_build_url;
 
     /**
      * The embedded **Dataset Card of a remote `.rete`**, in **two small range
@@ -969,6 +1912,55 @@ let wasm_bindgen = (function(exports) {
     exports.file_layout = file_layout;
 
     /**
+     * The **true byte length of a remote `.rete`**, in 1–2 tiny range requests —
+     * derived from the file's *own* header (the issue-#95 probe: sections are
+     * back-to-back and the file ends with the 4-byte `RETE` footer), never from
+     * the transport's numbers, which may describe a compressed representation
+     * (GitHub Pages HEADs a 71 MB file as its 58 MB gzip) or be hidden from
+     * cross-origin JS entirely. This is how a UI can say what "download the whole
+     * file" actually costs **before** committing to it.
+     * JSON: `{ "schemaVersion": 1, "fileLength": <bytes> }`. Worker-only
+     * (synchronous XHR in the sync build).
+     * @param {string} url
+     * @returns {string}
+     */
+    function file_len_url(url) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.file_len_url(ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.file_len_url = file_len_url;
+
+    /**
+     * Drop a registration made by [`register_local_file`]. Releases this wasm
+     * instance's reference to the `Blob`; any open handle over it stops working.
+     * @param {string} url
+     * @returns {boolean}
+     */
+    function forget_local_file(url) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.forget_local_file(ptr0, len0);
+        return ret !== 0;
+    }
+    exports.forget_local_file = forget_local_file;
+
+    /**
      * The named-graph IRIs of a dataset, as a JSON array.
      * @param {Uint8Array} bytes
      * @returns {string}
@@ -1030,6 +2022,20 @@ let wasm_bindgen = (function(exports) {
     exports.header_ranges = header_ranges;
 
     /**
+     * The wasm linear memory's current size in bytes — the engine's high-water
+     * mark, since wasm memory grows but never shrinks. Exposed so a host can
+     * *measure* the streaming-dump memory claim instead of trusting it: sample it
+     * before and after a full [`QuadCursor`] drain and the growth stays flat
+     * however many quads went by, where materializing them all does not.
+     * @returns {number}
+     */
+    function heap_bytes() {
+        const ret = wasm.heap_bytes();
+        return ret;
+    }
+    exports.heap_bytes = heap_bytes;
+
+    /**
      * Header summary as JSON: `{ "quads": N, "terms": N, "pyramidLevels": N }`.
      * @param {Uint8Array} bytes
      * @returns {string}
@@ -1057,10 +2063,21 @@ let wasm_bindgen = (function(exports) {
     exports.info = info;
 
     /**
+     * The memory budget files are opened with, in MiB (0 = no cap): see
+     * [`set_memory_budget_mb`].
+     * @returns {number}
+     */
+    function memory_budget_mb() {
+        const ret = wasm.memory_budget_mb();
+        return ret >>> 0;
+    }
+    exports.memory_budget_mb = memory_budget_mb;
+
+    /**
      * Prefix-search the label index of an embedded `.rete` image: the subjects whose
      * label starts with `prefix` (case-insensitive), as `[{"label":…,"subject":…}]`,
-     * capped at `limit`. Answers from the bounded label-index block in the
-     * pyramid-meta — no literal scan. Empty array when the file has no label index.
+     * capped at `limit`. Answers from the LABEL_INDEX section, else from an older
+     * file's pyramid-meta label block, with no literal scan. Empty array without one.
      * @param {Uint8Array} bytes
      * @param {string} prefix
      * @param {number} limit
@@ -1496,6 +2513,28 @@ let wasm_bindgen = (function(exports) {
     exports.reason_url = reason_url;
 
     /**
+     * Register a local `File`/`Blob` under a `rete-local:…` URL, so every `*_url`
+     * entry point can range-read it.
+     *
+     * **Worker-only** (the read uses `FileReaderSync`), and the caller mints the
+     * URL: a worker can be torn down and rebuilt — the playground does that on a
+     * wasm trap, an engine switch, or a phone memory reclaim — and the page must be
+     * able to re-register the same file under the same URL so a resident session
+     * key stays stable. Re-registering an existing URL replaces the blob.
+     * @param {string} url
+     * @param {Blob} blob
+     */
+    function register_local_file(url, blob) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.register_local_file(ptr0, len0, blob);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    exports.register_local_file = register_local_file;
+
+    /**
      * The ontology profile (the semantic coarse graph), as JSON:
      * `{ "classes": [["<iri>", count], ...],
      *    "relations": [["sClass","pred","oClass", count], ...] }`.
@@ -1586,6 +2625,25 @@ let wasm_bindgen = (function(exports) {
         }
     }
     exports.schema_url = schema_url;
+
+    /**
+     * Set the memory budget of every remote (lazily read) file opened from now
+     * on, in MiB. It caps the caches of decoded dictionary chunks, decoded index
+     * tiles and raw file blocks; what is evicted is read again when a query
+     * touches it, so the budget trades speed for memory and never changes an
+     * answer. `0` removes the cap. The default is 1024.
+     *
+     * A wasm32 heap ends at 4 GiB and never shrinks. Without a cap a query over
+     * ten million rows of a 2.5 GB file kept 2.3 GB of decoded chunks and tiles,
+     * the next one added 1.7 GB of its own, and the engine trapped
+     * (`unreachable`) at the ceiling. The cap does not cover a query's own
+     * working state (a hash join's build side, `GROUP BY` groups).
+     * @param {number} mb
+     */
+    function set_memory_budget_mb(mb) {
+        wasm.set_memory_budget_mb(mb);
+    }
+    exports.set_memory_budget_mb = set_memory_budget_mb;
 
     /**
      * Validate a `.rete` graph against SHACL Core shapes written in Turtle.
@@ -1816,6 +2874,35 @@ let wasm_bindgen = (function(exports) {
     exports.text_search = text_search;
 
     /**
+     * Check a curated card document without building anything — so an editor can
+     * report the **exact** error `rete build --card-file` would report, while the
+     * author is still typing. Returns the empty string when the document is
+     * valid, otherwise the error message.
+     *
+     * Deliberately not a boolean: the wording is the useful part (a free-text
+     * `theme` is told to use `keywords`; a stray top-level key is told about the
+     * `extra` bag), and duplicating that wording in JavaScript is exactly how the
+     * two writers would drift apart again.
+     * @param {string} card_json
+     * @returns {string}
+     */
+    function validate_card(card_json) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.validate_card(ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    exports.validate_card = validate_card;
+
+    /**
      * Explain why each triple-pattern match is present in the `.rete` file.
      *
      * `null`/`undefined` positions are wildcards. The JSON uses browser-facing
@@ -1952,6 +3039,9 @@ let wasm_bindgen = (function(exports) {
             __wbg_error_78ff5b3a29b770e0: function(arg0) {
                 console.error(arg0);
             },
+            __wbg_getRandomValues_3f44b700395062e5: function() { return handleError(function (arg0, arg1) {
+                globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+            }, arguments); },
             __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
                 arg0.getRandomValues(arg1);
             }, arguments); },
@@ -1974,6 +3064,10 @@ let wasm_bindgen = (function(exports) {
                 const ret = arg0.msCrypto;
                 return ret;
             },
+            __wbg_new_0_445c13a750296eb6: function() {
+                const ret = new Date();
+                return ret;
+            },
             __wbg_new_2ee370dca414d926: function() { return handleError(function () {
                 const ret = new XMLHttpRequest();
                 return ret;
@@ -1984,6 +3078,14 @@ let wasm_bindgen = (function(exports) {
             },
             __wbg_new_578aeef4b6b94378: function(arg0) {
                 const ret = new Uint8Array(arg0);
+                return ret;
+            },
+            __wbg_new_a1b9f645bba64f0f: function() { return handleError(function () {
+                const ret = new FileReaderSync();
+                return ret;
+            }, arguments); },
+            __wbg_new_d90091b82fdf5b91: function() {
+                const ret = new Array();
                 return ret;
             },
             __wbg_new_with_length_36a4998e27b014c5: function(arg0) {
@@ -2008,8 +3110,16 @@ let wasm_bindgen = (function(exports) {
             __wbg_prototypesetcall_3249fc62a0fafa30: function(arg0, arg1, arg2) {
                 Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
             },
+            __wbg_push_a6822215aa43e71c: function(arg0, arg1) {
+                const ret = arg0.push(arg1);
+                return ret;
+            },
             __wbg_randomFillSync_6c25eac9869eb53c: function() { return handleError(function (arg0, arg1) {
                 arg0.randomFillSync(arg1);
+            }, arguments); },
+            __wbg_readAsArrayBuffer_f1b8da05559618d9: function() { return handleError(function (arg0, arg1) {
+                const ret = arg0.readAsArrayBuffer(arg1);
+                return ret;
             }, arguments); },
             __wbg_require_b4edbdcf3e2a1ef0: function() { return handleError(function () {
                 const ret = module.require;
@@ -2041,6 +3151,14 @@ let wasm_bindgen = (function(exports) {
             __wbg_set_responseType_cfb49ea8269f8317: function(arg0, arg1) {
                 arg0.responseType = __wbindgen_enum_XmlHttpRequestResponseType[arg1];
             },
+            __wbg_size_9970092b88b1094c: function(arg0) {
+                const ret = arg0.size;
+                return ret;
+            },
+            __wbg_slice_02bb778501725738: function() { return handleError(function (arg0, arg1, arg2) {
+                const ret = arg0.slice(arg1, arg2);
+                return ret;
+            }, arguments); },
             __wbg_static_accessor_GLOBAL_9d53f2689e622ca1: function() {
                 const ret = typeof global === 'undefined' ? null : global;
                 return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
@@ -2063,6 +3181,10 @@ let wasm_bindgen = (function(exports) {
             }, arguments); },
             __wbg_subarray_4aa221f6a4f5ab22: function(arg0, arg1, arg2) {
                 const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+                return ret;
+            },
+            __wbg_toISOString_d485be0388a74494: function(arg0) {
+                const ret = arg0.toISOString();
                 return ret;
             },
             __wbg_versions_276b2795b1c6a219: function(arg0) {
@@ -2104,6 +3226,12 @@ let wasm_bindgen = (function(exports) {
     const GraphFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_graph_free(ptr, 1));
+    const QuadCursorFinalization = (typeof FinalizationRegistry === 'undefined')
+        ? { register: () => {}, unregister: () => {} }
+        : new FinalizationRegistry(ptr => wasm.__wbg_quadcursor_free(ptr, 1));
+    const QueryRowsFinalization = (typeof FinalizationRegistry === 'undefined')
+        ? { register: () => {}, unregister: () => {} }
+        : new FinalizationRegistry(ptr => wasm.__wbg_queryrows_free(ptr, 1));
     const RemoteGraphFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_remotegraph_free(ptr, 1));
@@ -2177,6 +3305,17 @@ let wasm_bindgen = (function(exports) {
         }
         // TODO we could test for more things here, like `Set`s and `Map`s.
         return className;
+    }
+
+    function getArrayJsValueFromWasm0(ptr, len) {
+        ptr = ptr >>> 0;
+        const mem = getDataViewMemory0();
+        const result = [];
+        for (let i = ptr; i < ptr + 4 * len; i += 4) {
+            result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+        }
+        wasm.__externref_drop_slice(ptr, len);
+        return result;
     }
 
     function getArrayU8FromWasm0(ptr, len) {

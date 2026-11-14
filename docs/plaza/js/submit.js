@@ -29,13 +29,15 @@ const mailBtn = $("#mailBtn");
 const note = $("#submitNote");
 
 if (modal && form) {
+  let opener = null;
   const open = (e) => {
     if (e) e.preventDefault();
+    opener = document.activeElement;
     modal.hidden = false;
     compose();
     setTimeout(() => form.elements.name?.focus(), 30);
   };
-  const close = () => { modal.hidden = true; };
+  const close = () => { modal.hidden = true; try { opener?.focus(); } catch (_) {} };
 
   $("#submitBtn")?.addEventListener("click", open);
   $("#submitBtn2")?.addEventListener("click", open);
@@ -69,7 +71,7 @@ function compose() {
     about || "_(no description given)_",
     "",
     "---",
-    "Sent from the rete plaza submission form — https://graphplaza.com",
+    "Sent from the rete plaza submission form: https://graphplaza.com",
   ]
     .filter((line) => line !== null)
     .join("\n");

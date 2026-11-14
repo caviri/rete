@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <!-- og:start (scripts/preview/inject_og.mjs) -->
   <meta name="description" content="Open the gallery → — &quot;a gathering place for self-describing semantic datasets&quot;: a searchable grid of every published .rete graph, each shown as a live-read card rather than a hand-written blurb." />
@@ -21,207 +21,216 @@
   <!-- og:end -->
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>rete plaza — semantic dataset gallery</title>
-  <meta name="description" content="A gallery of self-describing .rete knowledge graphs. Every card is read live from the file itself, over two HTTP range requests." />
-  <script>try{var t=localStorage.getItem('plaza-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;}catch(e){}</script>
+  <title>rete plaza: graphs that describe themselves</title>
+  <meta name="description" content="A gallery of .rete knowledge-graph files that describe themselves. Every card is read live from the file with two HTTP range requests, and any graph can be queried in the browser with SPARQL without downloading it." />
+  <meta name="theme-color" content="#0f1512" />
   <script src="vendor/p5.min.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+<a class="pz-sr" href="#results">Skip to the datasets</a>
 
-<!-- ── funding ticker ──────────────────────────────────────────────────── -->
-<!-- Right-to-left marquee over an ordered-dither band. The dithering is doing
-     real work here: a 1-bit dot ramp reads as texture rather than as another
-     coloured bar, so the eye lands on it once without the strip having to shout
-     in saturated colour. It pauses on hover/focus, honours reduced-motion, and
-     can be dismissed for good — an unstoppable marquee is hostile. -->
-<div class="pz-ticker" id="ticker" role="complementary" aria-label="Project funding">
-  <div class="pz-ticker-track" id="tickerTrack">
-    <span class="pz-ticker-run">
-      <b>rete plaza is an open-source project with no funding behind it.</b>
-      The format, the engine and this gallery are built in spare time and given away under Apache-2.0.
-      <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">Buy me a coffee&nbsp;☕</a>
-      <i aria-hidden="true">◆</i>
-    </span>
+<div class="pz-fund" id="fund" role="note">
+  <div class="pz-marquee" id="fundMarquee">
+    <div class="pz-marquee-track">
+      <p class="pz-marquee-group">
+        <span>rete plaza is open source and has no funding. If it is useful to you, <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">buy me a coffee</a>.</span>
+        <span>Every card on this page is read live from its <code>.rete</code> file.</span>
+        <span>Queries run in your browser and fetch only the bytes they need.</span>
+        <span>Have a graph to share? <a href="#submit" id="fundSubmit">Submit a dataset</a>.</span>
+      </p>
+    </div>
   </div>
-  <button class="pz-ticker-x" id="tickerX" aria-label="Dismiss this message">×</button>
+  <button type="button" id="fundX" aria-label="Dismiss this message">&times;</button>
 </div>
 
-<!-- ── top bar ─────────────────────────────────────────────────────────── -->
 <header class="pz-top">
-  <div class="pz-top-in">
-    <a class="pz-brand" href="./">rete <span class="dot">plaza</span></a>
-
-    <!-- The search owns the top bar, HF-style: one field, suggestions grouped
-         by what they ARE (a dataset opens; a tag/vocabulary/licence filters). -->
-    <div class="pz-search" id="search">
-      <svg class="pz-search-ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 1 1-3.9 9.4A5.5 5.5 0 0 1 8.5 3Zm0 1.6a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8Zm4.9 7.3 3.4 3.4-1.1 1.1-3.4-3.4 1.1-1.1Z" fill="currentColor"/></svg>
-      <input id="q" type="search" autocomplete="off" spellcheck="false"
-             placeholder="Search datasets, ontologies, vocabularies, licences…"
-             role="combobox" aria-expanded="false" aria-controls="ac" aria-autocomplete="list" />
-      <kbd class="pz-kbd">/</kbd>
-      <div class="pz-ac" id="ac" role="listbox" hidden></div>
-    </div>
-
-    <nav class="pz-nav">
-      <button class="pz-btn pz-btn-accent" id="submitBtn">Submit a dataset</button>
-      <a href="https://caviri.github.io/rete/" target="_blank" rel="noopener">docs&nbsp;↗</a>
-      <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub&nbsp;↗</a>
-      <button class="theme-toggle" id="themeBtn" aria-label="Toggle light/dark theme">Light</button>
+  <div class="wrap pz-top-in">
+    <a class="pz-brand" href="./">rete <span>plaza</span></a>
+    <nav class="pz-nav" aria-label="Site">
+      <span class="pz-nav-links">
+        <a href="https://caviri.github.io/rete/docs/" target="_blank" rel="noopener">Docs</a>
+        <a href="https://caviri.github.io/rete/docs/playground.html" target="_blank" rel="noopener">Playground</a>
+        <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub</a>
+      </span>
+      <button type="button" class="pz-btn pz-btn-sm pz-btn-primary" id="submitBtn">Submit a dataset</button>
     </nav>
   </div>
 </header>
 
-<!-- ── hero ────────────────────────────────────────────────────────────── -->
-<section class="pz-hero">
-  <div class="pz-hero-in">
-    <div class="pz-hero-copy">
-      <h1>A gathering place for<br><em>self-describing</em> graphs</h1>
-      <p>
-        Every tile below is read <strong>live from the file itself</strong> —
-        two HTTP range requests fetch the header and the embedded
-        <a href="https://caviri.github.io/rete/dataset-cards.html" target="_blank" rel="noopener">Dataset Card</a>,
-        never the graph. The artwork is a deterministic fingerprint of that card:
-        same file, same constellation, every time.
-      </p>
-      <div class="pz-hero-stats" id="heroStats"></div>
-    </div>
+<main id="top">
+<section class="pz-hero" aria-labelledby="h1">
+  <div class="wrap">
+    <p class="pz-kicker">rete plaza</p>
+    <h1 id="h1">Graphs that <em>describe themselves</em></h1>
+    <p class="pz-lede">
+      A gallery of <code>.rete</code> knowledge-graph files. Each file carries its own
+      card, and this page reads every card <strong>live from the file</strong>. Open any graph and
+      query it with SPARQL in your browser, without downloading it.
+    </p>
 
-    <!-- Spotlight: one dataset at a time, drawn from the manifest, advancing on
-         its own. It is the hero's job to show that these are real graphs. -->
-    <div class="pz-spot" id="spot">
-      <div class="pz-spot-frame"><div class="pz-spot-art" id="spotArt"></div></div>
-      <div class="pz-spot-body">
-        <div class="pz-spot-kicker" id="spotKicker">spotlight</div>
-        <a class="pz-spot-title" id="spotTitle" href="#">—</a>
-        <div class="pz-spot-sub" id="spotSub"></div>
-        <div class="pz-spot-stats" id="spotStats"></div>
+    <div class="pz-search" id="search">
+      <label class="pz-sr" for="q">Search datasets</label>
+      <div class="pz-search-box">
+        <svg class="pz-search-ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 1 1-3.9 9.4A5.5 5.5 0 0 1 8.5 3Zm0 1.6a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8Zm4.9 7.3 3.4 3.4-1.1 1.1-3.4-3.4 1.1-1.1Z" fill="currentColor"/></svg>
+        <input id="q" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search"
+               placeholder="Search by name, topic, vocabulary, licence, class or property" />
+        <div class="pz-search-end">
+          <button type="button" class="pz-search-clear" id="qClear" aria-label="Clear search" hidden>&times;</button>
+          <kbd class="pz-kbd" aria-hidden="true">/</kbd>
+        </div>
       </div>
-      <div class="pz-spot-dots" id="spotDots"></div>
+      <div class="pz-ac" id="ac" hidden></div>
     </div>
-  </div>
+    <div class="pz-hint" id="hint"></div>
 
+    <div class="pz-stats" id="heroStats" aria-label="Catalogue totals"></div>
+  </div>
 </section>
 
-<!-- ── body: sidebar + results ─────────────────────────────────────────── -->
-<div class="pz-shell">
+<section class="pz-how" aria-labelledby="how-h">
+  <div class="wrap">
+    <h2 id="how-h">How it works</h2>
+    <ol class="pz-steps">
+      <li>
+        <h3>A file with its own card</h3>
+        <p>A <code>.rete</code> file embeds a description of itself: counts, classes, properties, vocabularies, licence and example queries.</p>
+      </li>
+      <li>
+        <h3>Two range requests</h3>
+        <p>This page asks the host for the file header, then for the card. The graph itself is never downloaded.</p>
+      </li>
+      <li>
+        <h3>Query it where it lives</h3>
+        <p>Open a dataset and run SPARQL in the browser. Only the bytes a query needs are fetched.</p>
+      </li>
+    </ol>
+  </div>
+</section>
 
-  <aside class="pz-side" id="side">
-    <div class="pz-side-head">
-      <span>Filters</span>
-      <button class="pz-clear" id="clearAll" hidden>Clear all</button>
-    </div>
-    <!-- On a phone the sidebar would push every result below the fold, so there
-         it collapses behind this button. Hidden on wide screens, where the
-         filters are the point of the left column. -->
-    <button class="pz-side-toggle" id="sideToggle" aria-expanded="false" aria-controls="facets">
-      <span class="pz-side-toggle-lab">Filters</span>
-      <span class="pz-side-toggle-n" id="sideToggleN" hidden></span>
-      <span class="pz-side-toggle-ic" aria-hidden="true">▾</span>
+<div class="wrap pz-shell" id="results">
+  <aside class="pz-side" id="side" aria-label="Filters">
+    <button type="button" class="pz-side-toggle" id="sideToggle" aria-expanded="false" aria-controls="sideBody">
+      <span>Filters</span><span class="n" id="sideToggleN" hidden></span><span class="ic" aria-hidden="true">&#9662;</span>
     </button>
-    <div id="facets"></div>
+    <div class="pz-side-body" id="sideBody">
+      <div class="pz-side-head"><span>Filters</span><button type="button" class="pz-link" id="clearAll" hidden>Clear all</button></div>
+      <div id="facets"></div>
+    </div>
   </aside>
 
-  <main class="pz-main">
-    <div class="pz-bar">
-      <div class="pz-active" id="active"></div>
-      <div class="pz-bar-right">
-        <span class="pz-count" id="count"></span>
-        <label class="pz-sort">
-          Sort
-          <select id="sort">
-            <option value="relevance">featured</option>
-            <option value="name">name</option>
-            <option value="triples">triples</option>
-            <option value="size">file size</option>
-            <option value="vocabs">vocabularies</option>
-          </select>
-        </label>
+  <section class="pz-main" aria-label="Datasets">
+    <div class="pz-toolbar">
+      <div class="pz-count" id="count" role="status" aria-live="polite"></div>
+      <label class="pz-sort">Sort
+        <select id="sort" class="pz-input">
+          <option value="relevance">Featured</option>
+          <option value="name">Name</option>
+          <option value="triples">Triples</option>
+          <option value="size">File size</option>
+          <option value="vocabs">Vocabularies</option>
+        </select>
+      </label>
+      <div class="pz-view" role="group" aria-label="Layout">
+        <button type="button" id="viewGrid" aria-pressed="true" aria-label="Grid view" title="Grid view"><svg viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M3 3h6v6H3V3Zm8 0h6v6h-6V3ZM3 11h6v6H3v-6Zm8 0h6v6h-6v-6Z"/></svg></button>
+        <button type="button" id="viewList" aria-pressed="false" aria-label="List view" title="List view"><svg viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M3 4h14v2.4H3V4Zm0 4.8h14v2.4H3V8.8Zm0 4.8h14V16H3v-2.4Z"/></svg></button>
       </div>
     </div>
+    <div class="pz-active" id="active"></div>
 
-    <div id="cats"></div>
-    <div class="empty" id="empty" hidden>Nothing matches these filters.</div>
-  </main>
+    <div class="pz-results" id="cards" data-view="grid"></div>
+
+    <div class="pz-empty" id="empty" hidden>
+      <h2>Nothing matches</h2>
+      <p id="emptyMsg"></p>
+      <button type="button" class="pz-btn" id="emptyClear">Clear search and filters</button>
+    </div>
+
+    <div class="pz-vocabs" id="vocabs" hidden>
+      <h2>Vocabularies in this view</h2>
+      <div class="row" id="vocabRow"></div>
+    </div>
+  </section>
 </div>
 
-<footer class="pz-foot">
-  <div class="pz-foot-in">
+<section class="pz-agents" aria-labelledby="ag-h">
+  <div class="wrap pz-agents-in">
     <div>
-      <strong>rete plaza</strong> — an experiment in datasets that introduce themselves.
-      <br>Cards, counts, licences and vocabularies all come from inside each file.
-      <p class="pz-foot-fund">
-        No grant, no company, no funding — just spare time, released under
-        Apache-2.0. <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">Buy me a coffee&nbsp;☕</a>
-      </p>
+      <h2 id="ag-h">For agents</h2>
+      <p>This page registers <strong>WebMCP</strong> tools for browser agents that support <code>document.modelContext</code>: search the datasets, read a card, and filter the view. Querying happens on a dataset page.</p>
+      <p>The tools run in your tab and call the same functions the page uses. Nothing is sent to a server.</p>
+    </div>
+    <pre class="pz-code" aria-label="The same functions in the console">await plaza.ready
+plaza.search({ query: "chemistry", sort: "triples" })
+await plaza.card("chemotion")
+plaza.applyView({ filters: { vocab: ["OWL"] } })</pre>
+  </div>
+</section>
+</main>
+
+<footer class="pz-foot">
+  <div class="wrap pz-foot-in">
+    <div>
+      <p><strong>rete plaza</strong></p>
+      <p>Every figure on this page comes from inside the files it links to. Open source under Apache-2.0.</p>
     </div>
     <div class="pz-foot-links">
-      <a href="https://caviri.github.io/rete/">Documentation</a>
-      <a href="https://caviri.github.io/rete/playground.html">SPARQL playground</a>
-      <a href="https://github.com/caviri/rete">Source (Apache-2.0)</a>
+      <a href="https://caviri.github.io/rete/docs/" target="_blank" rel="noopener">Documentation</a>
+      <a href="https://caviri.github.io/rete/docs/playground.html" target="_blank" rel="noopener">SPARQL playground</a>
+      <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub</a>
       <a href="#" id="submitBtn2">Submit a dataset</a>
-      <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">Support the project ☕</a>
+      <a href="https://ko-fi.com/caviri" target="_blank" rel="noopener">Support the project</a>
     </div>
   </div>
 </footer>
 
-<!-- ── facet picker ────────────────────────────────────────────────────── -->
-<!-- The sidebar shows only the top few values of a group; this is the rest.
-     Searchable, multi-select, and it applies as you tick rather than on a
-     confirm button — the result count behind it moves with every choice. -->
-<div class="modal" id="facetModal" hidden>
+<div class="modal" id="facetModal" hidden role="dialog" aria-modal="true" aria-labelledby="facetTitle">
   <div class="modal-card pz-picker">
-    <button class="modal-x" id="facetX" aria-label="Close">×</button>
+    <button class="modal-x" id="facetX" aria-label="Close">&times;</button>
     <div class="modal-kicker">Filter by</div>
     <h2 id="facetTitle">Vocabulary</h2>
-    <label class="pz-picker-search">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 1 1-3.9 9.4A5.5 5.5 0 0 1 8.5 3Zm0 1.6a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8Zm4.9 7.3 3.4 3.4-1.1 1.1-3.4-3.4 1.1-1.1Z" fill="currentColor"/></svg>
-      <input id="facetSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search…" />
-    </label>
+    <label class="pz-sr" for="facetSearch">Search values</label>
+    <input class="pz-input" id="facetSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search values" />
     <div class="pz-picker-list" id="facetList"></div>
     <div class="pz-picker-foot">
       <span class="pz-picker-sum" id="facetSummary"></span>
       <span class="pz-picker-btns">
-        <button class="pz-btn" id="facetClear">Clear group</button>
-        <button class="pz-btn pz-btn-accent" id="facetDone">Done</button>
+        <button type="button" class="pz-btn pz-btn-sm" id="facetClear">Clear group</button>
+        <button type="button" class="pz-btn pz-btn-sm pz-btn-primary" id="facetDone">Done</button>
       </span>
     </div>
   </div>
 </div>
 
-<!-- ── submit composer ─────────────────────────────────────────────────── -->
-<div class="modal" id="submitModal" hidden>
+<div class="modal" id="submitModal" hidden role="dialog" aria-modal="true" aria-labelledby="submitTitle">
   <div class="modal-card pz-submit">
-    <button class="modal-x" id="submitX" aria-label="Close">×</button>
+    <button class="modal-x" id="submitX" aria-label="Close">&times;</button>
     <div class="modal-kicker">Add to the plaza</div>
-    <h2>Submit a dataset</h2>
+    <h2 id="submitTitle">Submit a dataset</h2>
     <p class="modal-desc">
-      Anything readable as a <code>.rete</code> file over HTTP — or a graph you
-      think should become one. Write it here; the buttons below carry the text
-      with you, so nothing is retyped.
+      Anything readable as a <code>.rete</code> file over HTTP, or a graph you think should become one.
+      Write it here; the buttons below carry the text with you, so nothing is retyped.
     </p>
-
     <form id="submitForm" class="pz-form">
       <label>Dataset name<input name="name" required placeholder="e.g. Nomisma coinage" /></label>
-      <label>URL<input name="url" type="url" placeholder="https://…/graph.rete — or a source/homepage" /></label>
+      <label>URL<input name="url" type="url" placeholder="https://…/graph.rete, or a source page" /></label>
       <div class="pz-form-row">
-        <label>Licence<input name="license" placeholder="CC0 / CC-BY-4.0 / …" /></label>
+        <label>Licence<input name="license" placeholder="CC0, CC-BY-4.0, …" /></label>
         <label>Your name or handle<input name="who" placeholder="optional" /></label>
       </div>
       <label>What is it?<textarea name="about" rows="5" required placeholder="What the graph contains, roughly how big it is, which vocabularies it uses, and why it belongs here."></textarea></label>
     </form>
-
     <div class="pz-submit-actions">
-      <a class="pz-btn pz-btn-accent" id="ghBtn" href="#" target="_blank" rel="noopener">Open a GitHub issue&nbsp;↗</a>
+      <a class="pz-btn pz-btn-primary" id="ghBtn" href="#" target="_blank" rel="noopener">Open a GitHub issue</a>
       <a class="pz-btn" id="mailBtn" href="#">Send it by email</a>
     </div>
     <p class="pz-submit-note" id="submitNote"></p>
   </div>
 </div>
 
-<script type="module" src="js/theme.js"></script>
 <script type="module" src="js/ticker.js"></script>
 <script type="module" src="js/submit.js"></script>
 <script type="module" src="js/catalog.js"></script>
+<script type="module" src="js/webmcp.js"></script>
 </body>
 </html>
