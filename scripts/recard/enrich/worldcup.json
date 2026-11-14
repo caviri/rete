@@ -2,7 +2,7 @@
   "publisher": {
     "name": "rete"
   },
-  "canonical_url": "https://data.graphplaza.com/worldcup/worldcup.rete",
+  "canonical_url": "https://data.graphplaza.com/worldcup/worldcup-2026-07-12.rete",
   "derived_from": [
     "https://github.com/openfootball/worldcup",
     "https://www.wikidata.org"

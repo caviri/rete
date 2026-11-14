@@ -8,7 +8,7 @@
   },
   "canonical_url": "https://data.graphplaza.com/geoadmin-tiles/geoadmin-tiles.rete",
   "derived_from": [
-    "https://data.graphplaza.com/geoadmin/geoadmin.rete",
+    "https://data.graphplaza.com/geoadmin/geoadmin-2026-06-30.rete",
     "https://www.geoboundaries.org",
     "https://www.naturalearthdata.com"
   ],

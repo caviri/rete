@@ -2,7 +2,7 @@
   "publisher": {
     "name": "rete"
   },
-  "canonical_url": "https://data.graphplaza.com/nidm/nidm.rete",
+  "canonical_url": "https://data.graphplaza.com/nidm/nidm-2026-07-03.rete",
   "derived_from": [
     "https://github.com/incf-nidash/nidm-specs",
     "https://openneuro.org/datasets/ds000030"
