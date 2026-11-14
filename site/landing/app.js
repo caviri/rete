@@ -403,6 +403,7 @@ function renderAbout() {
   if (g.facts?.triples) facts.append(h("span", {}, h("b", {}, g.facts.triples), " triples"));
   if (g.size) facts.append(h("span", {}, h("b", {}, g.size), " file"));
   if (g.facts?.license) facts.append(h("span", {}, g.facts.license));
+  facts.append(h("button", { class: "linkish", type: "button", "aria-haspopup": "dialog", onclick: () => openCard(g) }, "Dataset card"));
   if (!g.custom) facts.append(h("a", { href: `docs/d/${g.key}.html` }, "About this graph →"));
   if (g.inMemory) {
     facts.append(h("a", { href: "#byo", onclick: (e) => { e.preventDefault(); el.byo.hidden = !el.byo.hidden; } }, "Edit the RDF"));
@@ -547,17 +548,34 @@ function showSkeleton() {
   el.table.replaceChildren(sk.cloneNode(true));
 }
 
+/* Opening a new item (an Explore button, an IRI, a node, a crumb, "What
+   links here", a card's query) starts at the top of the explorer: the view
+   bar, then the trail, then the item. A click far down a long list otherwise
+   leaves the new item's top out of sight. Nothing moves when the bar is
+   already in the upper part of the screen. */
+function toExplorerTop() {
+  for (const w of $$(".table-wrap", el.table)) w.scrollTop = 0;
+  const bar = $(".viewbar", $("#console"));
+  if (!bar) return;
+  const head = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+  const top = bar.getBoundingClientRect().top;
+  if (top >= head - 1 && top <= innerHeight * 0.45) return;
+  bar.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" });
+}
+
 /* Explore one IRI: what does the graph say about it? */
 function explore(iri) {
   if (!state.graph) return;
   const q = `SELECT ?p ?o WHERE {\n  <${iri}> ?p ?o .\n} LIMIT 300`;
   setQuery(q);
   if (state.view === "sparql") setView(state.lastView);
+  toExplorerTop();
   restart(q, { explore: true, iri, label: humanize(iri) });
 }
 function exploreIncoming(iri) {
   const q = `SELECT ?s ?p WHERE {\n  ?s ?p <${iri}> .\n} LIMIT 100`;
   setQuery(q);
+  toExplorerTop();
   restart(q, { explore: true, iri: null, label: `links to ${humanize(iri)}` });
 }
 
@@ -574,6 +592,7 @@ function renderCrumbs() {
         state.trail = state.trail.slice(0, i + 1);
         setQuery(c.query);
         showResult(c.result, c.r);
+        toExplorerTop();
       },
     }, c.label));
   });
@@ -1228,6 +1247,246 @@ function setMeter(r) {
 
 /* ───────────────────────── Bring your own graph ───────────────────────── */
 
+/* ───────────────────────── Dataset card ───────────────────────── */
+
+// The card is the file's own description, written when it was built: title,
+// licence, source and a profile of what is inside. Opening a file already
+// reads it (it sits in the first range read), so showing it costs nothing.
+const cardUi = { dlg: $("#cardDialog"), title: $("#cardDialogTitle"), body: $("#cardBody"), for: null };
+const BIG_FILE = 150 * 1024 * 1024;
+
+function cardOfInfo(card) {
+  if (!card || typeof card !== "object") return null;
+  return card.card && typeof card.card === "object" ? card.card : card;
+}
+const unAngle = (s) => String(s ?? "").replace(/^<|>$/g, "");
+const iriLabel = (iri) => { const v = unAngle(iri); return curie(v) || humanize(v); };
+const nameOf = (x) => (x && typeof x === "object" ? x.name || x.title || x.url || "" : String(x ?? ""));
+const yearOf = (v) => { const m = String(v).match(/^-?\d+/); return m ? String(Number(m[0])) : String(v); };
+const extLink = (href, text) => h("a", { href, target: "_blank", rel: "noopener" }, text ?? href);
+
+async function openCard(g) {
+  cardUi.for = g;
+  cardUi.title.textContent = g.name || "Dataset card";
+  cardUi.body.replaceChildren(h("div", { class: "skeleton", "aria-hidden": "true" }, ...Array.from({ length: 4 }, () => h("div"))));
+  if (!cardUi.dlg.open) cardUi.dlg.showModal();
+  try {
+    let info = g.info && g.epoch === engine.epoch ? g.info : null;
+    if (!info) {
+      await engine.start();
+      if (!state.running) { state.gen++; state.spanUrl = g.url; }
+      info = await (g.opener ? g.opener() : engine.call("open", { url: g.url }));
+      g.info = info;
+      g.epoch = engine.epoch;
+      if (!state.running) setStatus(`Card read: ${fmtBytes(info.openBytes || 0)} in ${info.openRequests || 0} request${info.openRequests === 1 ? "" : "s"}`);
+      if (!g.size) { g.size = fmtBytes(info.fileLength); renderGraphChips(); renderAbout(); }
+    }
+    if (cardUi.for === g) renderCard(g, info);
+  } catch (err) {
+    if (cardUi.for !== g) return;
+    cardUi.body.replaceChildren(h("div", { class: "err-box" }, h("b", {}, "The card did not load. "),
+      err.stopped ? "The engine was stopped. Open the card again." : String(err.message || err)));
+  }
+}
+
+function renderCard(g, info) {
+  const c = cardOfInfo(info.card);
+  const url = g.url && /^https?:/.test(g.url) ? g.url : null;
+  const big = (info.fileLength || 0) > BIG_FILE;
+  const out = [];
+  if (!c) {
+    out.push(
+      h("p", { class: "cd-lede" }, "This file carries no dataset card."),
+      h("p", { class: "hint" }, "A card is written when the file is built (", h("code", {}, "rete build --card"),
+        ") or added later with ", h("code", {}, "rete recard"), ". It holds the title, licence, source and a profile of the classes and relations inside."));
+    const meta = [];
+    if (info.fileLength) meta.push(["File", fmtBytes(info.fileLength)]);
+    if (g.facts?.triples) meta.push(["Triples", g.facts.triples]);
+    if (g.facts?.license) meta.push(["Licence", g.facts.license]);
+    if (meta.length) out.push(cardMeta(meta));
+    if (g.facts) out.push(h("p", { class: "hint" }, "The triple count and licence come from this site's catalog, not from the file."));
+  } else {
+    cardUi.title.textContent = c.title || g.name || "Dataset card";
+    if (c.description) {
+      const desc = h("div", { class: `cd-desc${c.description.length > 700 ? " clamp" : ""}` }, ...mdBlocks(c.description));
+      out.push(desc);
+      if (c.description.length > 700) out.push(h("button", { class: "linkish", type: "button", onclick: (e) => { desc.classList.remove("clamp"); e.currentTarget.remove(); } }, "Read more"));
+    }
+    out.push(cardFigures(c, info));
+    out.push(cardMeta(cardFacts(c)));
+    const sig = cardSignals(c);
+    if (sig.length) out.push(h("div", { class: "cd-tags" }, ...sig.map((s) => h("span", { class: "tag" }, s))));
+    out.push(cardBars(c.classes, "Classes", c), cardBars(c.predicates, "Relations", c));
+    if (c.vocabularies?.length) {
+      out.push(h("section", { class: "cd-sec" }, h("h3", {}, "Vocabularies", h("small", {}, ` ${c.vocabularies.length}`)),
+        h("div", { class: "cd-tags" }, ...c.vocabularies.map((v) => h("span", { class: "tag", title: v }, curie(v) || v)))));
+    }
+    out.push(cardQueries(g, c, big));
+    if (c.truncated) out.push(h("p", { class: "hint" }, "Lists in a card are capped, so a long list shows the top entries only."));
+  }
+  out.push(cardFoot(g, url, c));
+  cardUi.body.replaceChildren(...out.filter(Boolean));
+}
+
+function cardFigures(c, info) {
+  const n = (x) => Number(x).toLocaleString();
+  const cap = c.top_n || 100;
+  const more = (list) => (c.truncated && list.length >= cap ? "+" : "");
+  const tiles = [];
+  const statements = c.triple_count ?? c.quad_count;
+  if (statements != null) tiles.push([n(statements), c.named_graph_count ? "statements" : "triples"]);
+  if (c.term_count != null) tiles.push([n(c.term_count), "distinct terms"]);
+  if (Array.isArray(c.classes)) tiles.push([n(c.classes.length) + more(c.classes), "classes"]);
+  if (Array.isArray(c.predicates)) tiles.push([n(c.predicates.length) + more(c.predicates), "relations"]);
+  if (c.named_graph_count) tiles.push([n(c.named_graph_count), "named graphs"]);
+  if (info.fileLength) tiles.push([fmtBytes(info.fileLength), "file"]);
+  return h("div", { class: "cd-stats" }, ...tiles.map(([b, s], i) => h("div", { class: "stat", style: { "--i": i } }, h("b", {}, b), h("span", {}, s))));
+}
+
+function cardFacts(c) {
+  const meta = [];
+  if (c.license) meta.push(["Licence", c.license]);
+  if (c.source) meta.push(["Source", /^https?:/.test(c.source) ? extLink(c.source) : c.source]);
+  const creators = (Array.isArray(c.creators) ? c.creators : c.creators ? [c.creators] : []).map(nameOf).filter(Boolean);
+  if (creators.length) meta.push(["Creators", creators.join(", ")]);
+  if (c.publisher) meta.push(["Publisher", nameOf(c.publisher)]);
+  if (c.version) meta.push(["Version", String(c.version)]);
+  if (c.doi) meta.push(["DOI", extLink(`https://doi.org/${String(c.doi).replace(/^https?:\/\/(dx\.)?doi\.org\//, "")}`, c.doi)]);
+  if (c.citation) meta.push(["Cite as", c.citation]);
+  if (c.keywords?.length) meta.push(["Keywords", c.keywords.join(", ")]);
+  const langs = (c.languages || []).filter(([l]) => l).slice(0, 8).map(([l]) => l);
+  if (langs.length) meta.push(["Languages", langs.join(", ")]);
+  if (c.build?.builder) meta.push(["Built with", `${c.build.builder}${c.build.built_at ? `, ${String(c.build.built_at).slice(0, 10)}` : ""}`]);
+  return meta;
+}
+
+function cardSignals(c) {
+  const s = c.signals || {};
+  const out = [];
+  const te = s.temporal_extent;
+  if (Array.isArray(te) && te.length === 2) out.push(`Dates ${yearOf(te[0])} to ${yearOf(te[1])}`);
+  if (s.geo_latlong || s.geo_wkt) out.push("Coordinates");
+  if (s.text_index?.present) out.push("Full-text index");
+  if (s.label_index?.present) out.push("Label index");
+  if (s.quoted_triples?.present) out.push("Quoted triples");
+  if (s.permutations?.count) out.push(`${s.permutations.count} index orders`);
+  return out;
+}
+
+function cardMeta(rows) {
+  if (!rows.length) return null;
+  return h("dl", { class: "props cd-meta" }, ...rows.map(([k, v]) => h("div", { class: "prop" }, h("dt", {}, k), h("dd", {}, v))));
+}
+
+function cardBars(rows, label, c) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const max = Math.max(...rows.map((r) => Number(r[1]) || 0)) || 1;
+  const make = (list) => list.map(([iri, cnt], i) => h("div", { class: "bar", style: { "--i": Math.min(i, 20), "--w": ((Number(cnt) || 0) / max * 100).toFixed(1) } },
+    h("span", { class: "rank" }, i + 1), h("span", { class: "lbl", title: unAngle(iri) }, iriLabel(iri)), h("span", { class: "val" }, Number(cnt).toLocaleString())));
+  const box = h("div", { class: "bars" }, ...make(rows.slice(0, 8)));
+  const count = `${rows.length.toLocaleString()}${c.truncated && rows.length >= (c.top_n || 100) ? "+" : ""}`;
+  const sec = h("section", { class: "cd-sec" }, h("h3", {}, label, h("small", {}, ` ${count}`)), box);
+  if (rows.length > 8) sec.append(h("button", { class: "linkish", type: "button", onclick: (e) => { box.replaceChildren(...make(rows)); e.currentTarget.remove(); } }, `Show all ${rows.length}`));
+  return sec;
+}
+
+// The card's starter queries were written for this file when it was built.
+// Some count or group the whole graph; on a big file that reads a lot of it,
+// so there they open in the editor and run only when Run is pressed.
+// The publisher's own `example_queries` (plain strings) first, then the
+// library the build generated (`queries`: title, question, sparql).
+function cardQueryList(c) {
+  const own = (c.example_queries || []).map((x, i) => {
+    const sparql = typeof x === "string" ? x : x?.sparql || x?.query || "";
+    const title = (typeof x === "object" && (x.title || x.label)) || sparql.match(/^#\s*(.+)$/m)?.[1] || `Example ${i + 1}`;
+    return { title, sparql, own: true };
+  });
+  return [...own, ...(c.queries || [])].filter((q) => q && q.sparql);
+}
+
+function cardQueries(g, c, big) {
+  const qs = cardQueryList(c);
+  if (!qs.length) return null;
+  const make = (list) => list.map((q) => h("li", {},
+    h("div", { class: "cd-q" }, h("b", {}, q.title || q.question || q.id), q.title && q.question ? h("span", {}, q.question) : q.own ? h("span", {}, "From the publisher") : null),
+    h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => useCardQuery(g, q, big) }, big ? "Edit" : "Run")));
+  const list = h("ol", { class: "cd-queries" }, ...make(qs.slice(0, 6)));
+  const sec = h("section", { class: "cd-sec" }, h("h3", {}, "Starter queries", h("small", {}, ` ${qs.length}`)),
+    big ? h("p", { class: "hint" }, "Some of these count or group the whole graph, which on a file this size reads a lot of it. They open in the editor; press Run when you want one.") : null,
+    list);
+  if (qs.length > 6) sec.append(h("button", { class: "linkish", type: "button", onclick: (e) => { list.replaceChildren(...make(qs)); e.currentTarget.remove(); } }, `Show all ${qs.length}`));
+  return sec;
+}
+
+function useCardQuery(g, q, big) {
+  cardUi.dlg.close();
+  if (state.graph !== g) return;
+  cancel();
+  selectQuestion({ label: q.title || q.question || "Card query", q: q.sparql });
+  toExplorerTop();
+  if (big) { setView("sparql"); setStatus("Loaded from the card. Press Run when you want it."); }
+  else runFromEditor();
+}
+
+function cardFoot(g, url, c) {
+  const foot = h("div", { class: "cd-foot" });
+  if (url) {
+    const cmd = `rete card-url ${url}`;
+    foot.append(h("div", { class: "cd-cmd" }, h("code", {}, cmd),
+      h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: (e) => copy(cmd, e.currentTarget) }, "Copy")));
+  }
+  if (c) {
+    const json = JSON.stringify(c, null, 2);
+    const pre = h("pre", { class: "cd-json" });
+    const raw = h("details", { class: "cd-raw", ontoggle: () => { if (raw.open && !pre.textContent) pre.textContent = json; } },
+      h("summary", {}, `The card as JSON (${fmtBytes(json.length)})`), pre);
+    foot.append(raw);
+  }
+  const links = h("p", { class: "cd-links" });
+  if (c) {
+    links.append(h("button", { class: "linkish", type: "button", onclick: () => {
+      const a = h("a", { href: URL.createObjectURL(new Blob([JSON.stringify(c, null, 2)], { type: "application/json" })), download: `${g.key || "graph"}.card.json` });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } }, "Download JSON"));
+  }
+  if (!g.custom) links.append(h("a", { href: `docs/d/${g.key}.html` }, "About this graph →"));
+  links.append(h("a", { href: "docs/dataset-cards.html" }, "What a card holds →"));
+  foot.append(links);
+  return foot;
+}
+
+// Card descriptions are Markdown. Only the safe, common part is drawn here:
+// paragraphs, bullet lists, links, bold and code, built as DOM nodes.
+function mdInline(text) {
+  const out = [];
+  const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*]+)\*\*|`([^`]+)`|(https?:\/\/[^\s)<>]+)/g;
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m[1]) out.push(extLink(m[2], m[1]));
+    else if (m[3]) out.push(h("b", {}, m[3]));
+    else if (m[4]) out.push(h("code", {}, m[4]));
+    else out.push(extLink(m[5]));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+function mdBlocks(md) {
+  return String(md).trim().split(/\n\s*\n/).map((block) => {
+    const lines = block.split("\n");
+    if (lines.every((l) => /^\s*[-*]\s+/.test(l))) return h("ul", {}, ...lines.map((l) => h("li", {}, ...mdInline(l.replace(/^\s*[-*]\s+/, "")))));
+    const head = lines.length === 1 && block.match(/^#{1,6}\s+(.*)$/);
+    if (head) return h("h4", {}, ...mdInline(head[1]));
+    return h("p", {}, ...mdInline(lines.join(" ")));
+  });
+}
+
+$("#cardClose").addEventListener("click", () => cardUi.dlg.close());
+cardUi.dlg.addEventListener("click", (e) => { if (e.target === cardUi.dlg) cardUi.dlg.close(); });
+cardUi.dlg.addEventListener("close", () => { cardUi.for = null; });
+
 const DEFAULT_QS = (big) => [
   { label: "A first look", q: "SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o .\n} LIMIT 50" },
   { label: "As a graph", view: "graph", q: "SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o .\n} LIMIT 150" },
@@ -1236,15 +1495,13 @@ const DEFAULT_QS = (big) => [
     { label: "Classes by size", q: "SELECT ?class (COUNT(?s) AS ?n) WHERE {\n  ?s a ?class .\n} GROUP BY ?class ORDER BY DESC(?n) LIMIT 25" },
   ]),
 ];
+// A card's starter queries (`queries`: title, question, sparql). Some of them
+// count or group the whole graph, which on a big file reads a lot of it, so a
+// big file gets the bounded defaults and keeps the card's list in the card.
 function questionsFromCard(card, big) {
-  const qs = [];
-  const list = card?.example_queries || card?.examples || [];
-  list.slice(0, 6).forEach((ex, i) => {
-    const q = typeof ex === "string" ? ex : ex.query || ex.q;
-    if (!q) return;
-    const label = (typeof ex === "object" && (ex.label || ex.title)) || (q.match(/^#\s*(.+)$/m)?.[1]) || `Starter query ${i + 1}`;
-    qs.push({ label, q });
-  });
+  const c = cardOfInfo(card);
+  if (big || !c) return DEFAULT_QS(big);
+  const qs = cardQueryList(c).slice(0, 6).map((x) => ({ label: x.title, q: x.sparql }));
   return qs.length ? qs : DEFAULT_QS(big);
 }
 
@@ -1261,7 +1518,8 @@ async function addCustom(g) {
     g.size = fmtBytes(info.fileLength);
     const big = info.fileLength > 150 * 1024 * 1024;
     g.questions = questionsFromCard(info.card, big);
-    if (info.card?.title) g.blurb = `${info.card.title}. ${info.card.description || ""}`.slice(0, 280);
+    const c = cardOfInfo(info.card);
+    if (c?.title) g.blurb = `${c.title}. ${c.description || ""}`.slice(0, 280);
     custom.push(g);
     await selectGraph(g);
     return info;
