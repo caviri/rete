@@ -7140,6 +7140,16 @@ impl SummaryView {
             let at = first.len() as u64;
             first.extend_from_slice(&reader.read_at(at, want_first - at)?);
         }
+        // A root longer than the first read (a large dictionary directory) is
+        // read too: the sparse reader below holds only what is fetched here,
+        // and opening the file through it needs the whole root.
+        let root_end = (crate::v06::HEADER_LEN as u64)
+            .saturating_add(crate::v06::Header06::from_bytes(&first)?.root_len as u64)
+            .min(reader.len());
+        if root_end > first.len() as u64 {
+            let at = first.len() as u64;
+            first.extend_from_slice(&reader.read_at(at, root_end - at)?);
+        }
         let pre = open::Prefixed {
             first: &first,
             r: reader,
