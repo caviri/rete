@@ -12,6 +12,19 @@
   // /index.html used to be the docs overview; "/" is the landing page now.
   if (/\/index\.html$/.test(location.pathname))
     location.replace("docs/" + location.search + location.hash);
+  // The playground lived here until the docs moved under docs/, and its
+  // cross-origin-isolation worker was registered for this whole path. Where a
+  // browser still has it, it serves this page with COEP, and the engine's
+  // module worker is then blocked. Unregister it and load the page once more.
+  if ("serviceWorker" in navigator && navigator.serviceWorker.controller)
+    navigator.serviceWorker.getRegistrations().then(function (rs) {
+      var here = new URL(".", location.href).href, gone = [];
+      rs.forEach(function (r) {
+        var w = r.active || r.waiting || r.installing;
+        if (r.scope === here && w && /\/coi-serviceworker\.js$/.test(w.scriptURL)) gone.push(r.unregister());
+      });
+      if (gone.length) Promise.all(gone).then(function () { location.reload(); });
+    });
   </script>
   <link rel="stylesheet" href="landing/landing.css" />
   <link rel="modulepreload" href="landing/app.js" />
