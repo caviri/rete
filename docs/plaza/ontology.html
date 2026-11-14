@@ -1,30 +1,49 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>rete plaza — ontology</title>
-  <script>try{var t=localStorage.getItem('plaza-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;}catch(e){}</script>
+  <title>Ontology · rete plaza</title>
+  <meta name="description" content="An ontology or vocabulary used by datasets on rete plaza: its terms and the datasets that use it." />
+  <meta name="theme-color" content="#0f1512" />
   <script src="vendor/d3.min.js"></script>
   <script src="vendor/elk.bundled.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="site-top" style="padding-top:18px">
-      <a class="back" href="index.html" style="margin:0">← all datasets</a>
-      <nav class="site-nav">
-        <a href="https://caviri.github.io/rete/" target="_blank" rel="noopener">rete ↗</a>
-        <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub ↗</a>
-        <button class="theme-toggle" id="themeBtn" aria-label="Toggle light/dark theme">Light</button>
-      </nav>
+<header class="pz-top">
+  <div class="wrap pz-top-in">
+    <a class="pz-brand" href="./">rete <span>plaza</span></a>
+    <nav class="pz-nav" aria-label="Site">
+      <span class="pz-nav-links">
+        <a href="https://caviri.github.io/rete/docs/" target="_blank" rel="noopener">Docs</a>
+        <a href="https://caviri.github.io/rete/docs/playground.html" target="_blank" rel="noopener">Playground</a>
+        <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub</a>
+      </span>
+      <a class="pz-btn pz-btn-sm" href="index.html">All datasets</a>
+    </nav>
+  </div>
+</header>
+
+<main id="root" class="dz-main">
+  <div class="wrap"><p class="dz-loading" role="status">Loading the ontology…</p></div>
+</main>
+
+<footer class="pz-foot">
+  <div class="wrap pz-foot-in">
+    <div>
+      <p><strong>rete plaza</strong></p>
+      <p>Every figure on this page comes from inside the files it links to. Open source under Apache-2.0.</p>
     </div>
-    <div id="root">
-      <div class="empty">Loading ontology…</div>
+    <div class="pz-foot-links">
+      <a href="https://caviri.github.io/rete/docs/" target="_blank" rel="noopener">Documentation</a>
+      <a href="https://caviri.github.io/rete/docs/playground.html" target="_blank" rel="noopener">SPARQL playground</a>
+      <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">GitHub</a>
+      <a href="index.html">All datasets</a>
     </div>
   </div>
+</footer>
 
-  <script type="module" src="js/theme.js"></script>
-  <script type="module" src="js/ontology.js"></script>
+<script type="module" src="js/ontology.js"></script>
 </body>
 </html>

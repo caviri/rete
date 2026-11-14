@@ -17,12 +17,37 @@
         "citations"
       ],
       "blurb": "250 papers, 137 authors, 36 venues with power-law citations, field communities and typed literals — a clean playground for SPARQL.",
+      "license": "synthetic",
       "links": [
         {
           "label": "Open in playground",
-          "url": "../playground.html"
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=scholar&mode=sparql"
         }
-      ]
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/scholar/scholar-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "scholar.duckdb",
+          "url": "https://data.graphplaza.com/scholar/scholar.duckdb",
+          "size": "780 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "scholar.sqlite",
+          "url": "https://data.graphplaza.com/scholar/scholar.sqlite",
+          "size": "1.4 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 5,
+      "size": 123652
     },
     {
       "key": "causal",
@@ -36,6 +61,39 @@
         "OWL"
       ],
       "blurb": "~30 typed factors wired by a transitive :causes relation, with planted defects so the coherence reasoner has something to find (it does — watch the fingerprint).",
+      "license": "example",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=causal&mode=sparql"
+        },
+        {
+          "label": "Reasoning docs",
+          "url": "https://caviri.github.io/rete/docs/reasoning.html"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/causal/causal-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "causal.duckdb",
+          "url": "https://data.graphplaza.com/causal/causal.duckdb",
+          "size": "524 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "causal.sqlite",
+          "url": "https://data.graphplaza.com/causal/causal.sqlite",
+          "size": "56 KB",
+          "verified": true
+        }
+      ],
       "ontologies": [
         {
           "name": "OWL"
@@ -44,12 +102,8 @@
           "name": "RDFS"
         }
       ],
-      "links": [
-        {
-          "label": "Reasoning docs",
-          "url": "../reasoning.html"
-        }
-      ]
+      "formatVersion": 5,
+      "size": 28652
     },
     {
       "key": "history",
@@ -63,6 +117,39 @@
         "temporal"
       ],
       "blurb": "Territorial borders at 7 snapshots as GeoSPARQL wktLiterals with integer years — point-in-polygon + temporal filters in the browser.",
+      "license": "GPL-3.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=history&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/aourednik/historical-basemaps"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/history/history-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "history.duckdb",
+          "url": "https://data.graphplaza.com/history/history.duckdb",
+          "size": "18.3 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "history.sqlite",
+          "url": "https://data.graphplaza.com/history/history.sqlite",
+          "size": "19.3 MB",
+          "verified": true
+        }
+      ],
       "geoWkt": true,
       "bbox": [
         -170,
@@ -82,12 +169,8 @@
           "name": "RDFS"
         }
       ],
-      "links": [
-        {
-          "label": "Source",
-          "url": "https://github.com/aourednik/historical-basemaps"
-        }
-      ]
+      "formatVersion": 5,
+      "size": 1601671
     },
     {
       "key": "nomisma",
@@ -101,6 +184,39 @@
         "temporal"
       ],
       "blurb": "7,228 ancient Greek coin types struck 359–65 BC, each linked to mint, authority, material, denomination and region — fully self-describing with English labels.",
+      "license": "ODbL 1.0 + CC-BY 3.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=nomisma&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "http://numismatics.org/pella/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/nomisma/nomisma-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "nomisma.duckdb",
+          "url": "https://data.graphplaza.com/nomisma/nomisma.duckdb",
+          "size": "1.8 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "nomisma.sqlite",
+          "url": "https://data.graphplaza.com/nomisma/nomisma.sqlite",
+          "size": "16.8 MB",
+          "verified": true
+        }
+      ],
       "temporalExtent": [
         "-359",
         "-65"
@@ -121,12 +237,8 @@
           "desc": "Nomisma.org ontology for numismatic concepts (mints, denominations, materials, regions)."
         }
       ],
-      "links": [
-        {
-          "label": "Source",
-          "url": "http://numismatics.org/pella/"
-        }
-      ]
+      "formatVersion": 5,
+      "size": 317915
     },
     {
       "key": "linked-jazz",
@@ -140,6 +252,39 @@
         "DBpedia"
       ],
       "blurb": "54 interviewed musicians fan out to ~1,940 people they mention, with who-knows-whom ties — genuine multi-hop paths (transitive knowsOf / mentorOf).",
+      "license": "CC BY-SA 3.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=linked-jazz&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://linkedjazz.org"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/linked-jazz/linked-jazz-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "linked-jazz.duckdb",
+          "url": "https://data.graphplaza.com/linked-jazz/linked-jazz.duckdb",
+          "size": "1.0 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "linked-jazz.sqlite",
+          "url": "https://data.graphplaza.com/linked-jazz/linked-jazz.sqlite",
+          "size": "2.9 MB",
+          "verified": true
+        }
+      ],
       "connections": [
         {
           "name": "DBpedia",
@@ -157,17 +302,13 @@
           "name": "REL (Relationship)"
         }
       ],
-      "links": [
-        {
-          "label": "Source",
-          "url": "https://linkedjazz.org"
-        }
-      ]
+      "formatVersion": 5,
+      "size": 229403
     },
     {
       "key": "getty-ulan",
       "title": "getty-ulan — artist mentorship lineage (remote, lazy)",
-      "rete": "https://data.graphplaza.com/getty-ulan/getty-ulan.rete",
+      "rete": "https://data.graphplaza.com/getty-ulan/getty-ulan-2026-06-13.rete",
       "kind": "remote-lazy",
       "icon": "🎨",
       "tags": [
@@ -176,19 +317,45 @@
         "Getty"
       ],
       "blurb": "~28,300 artists connected by 'who taught whom' (gvp:teacherOf). Rembrandt has ~369 artistic descendants via teacherOf+. Queried lazily over HTTP range.",
+      "license": "ODC-BY 1.0",
       "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=getty-ulan&mode=sparql"
+        },
         {
           "label": "Getty LOD",
           "url": "https://www.getty.edu/research/tools/vocabularies/ulan/"
         }
-      ]
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/getty-ulan/getty-ulan-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "getty-ulan.duckdb",
+          "url": "https://data.graphplaza.com/getty-ulan/getty-ulan.duckdb",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "getty-ulan.sqlite",
+          "url": "https://data.graphplaza.com/getty-ulan/getty-ulan.sqlite",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 4369184
     },
     {
       "key": "wikidata-100mb",
       "title": "wikidata-100MB — a real 100 MB Wikidata slice (remote, lazy)",
       "rete": "https://data.graphplaza.com/wikidata-100MB/wikidata.rete",
       "kind": "remote-lazy",
-      "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
       "icon": "🌐",
       "tags": [
         "Wikidata",
@@ -196,6 +363,18 @@
         "occupations"
       ],
       "blurb": "~104 MB of Wikidata people & places, queried lazily — a typical selective query faults in ~10 MB, never the whole file. Companion entity tables sit beside it in the bucket.",
+      "license": "CC0",
+      "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=wikidata-100mb&mode=sparql"
+        },
+        {
+          "label": "Wikidata",
+          "url": "https://www.wikidata.org"
+        }
+      ],
       "companions": [
         {
           "kind": "parquet",
@@ -205,12 +384,8 @@
           "note": "directory of <Class>.parquet + _manifest.parquet (served locally)"
         }
       ],
-      "links": [
-        {
-          "label": "Wikidata",
-          "url": "https://www.wikidata.org"
-        }
-      ]
+      "formatVersion": 5,
+      "size": 131170253
     },
     {
       "key": "ohm-full",
@@ -224,17 +399,39 @@
         "temporal"
       ],
       "blurb": "The entire OpenHistoricalMap planet — 1,021,295 named, dated, geolocated features (~6.1M triples, 150 MB) — as one range-queried .rete.",
+      "license": "CC0 1.0",
       "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=ohm-full&mode=sparql"
+        },
         {
           "label": "OpenHistoricalMap",
           "url": "https://www.openhistoricalmap.org"
         }
-      ]
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/ohm-full/ohm-full-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "ohm-full.duckdb",
+          "url": "https://data.graphplaza.com/ohm-full/ohm-full.duckdb",
+          "size": "1053.8 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 5,
+      "size": 176430304
     },
     {
       "key": "chemotion",
       "title": "chemotion — chemistry ELN knowledge graph (remote, lazy)",
-      "rete": "https://data.graphplaza.com/chemotion/chemotion.rete",
+      "rete": "https://data.graphplaza.com/chemotion/chemotion-2025-07-28.rete",
       "kind": "remote-lazy",
       "icon": "🧪",
       "tags": [
@@ -242,6 +439,40 @@
         "ELN",
         "ontology",
         "ChEBI"
+      ],
+      "blurb": "The Chemotion ELN graph (FIZ Karlsruhe) merged with CHMO + RXNO — 1.53M triples, built with `rete build --card`, so its card is rich and read live here. Federates with chebi-full.",
+      "license": "CC BY 4.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=chemotion&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/ISE-FIZKarlsruhe/chemotion-kg"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/chemotion/chemotion-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "chemotion.duckdb",
+          "url": "https://data.graphplaza.com/chemotion/chemotion.duckdb",
+          "size": "48 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "chemotion.sqlite",
+          "url": "https://data.graphplaza.com/chemotion/chemotion.sqlite",
+          "size": "167 MB",
+          "verified": true
+        }
       ],
       "category": "graph",
       "ontologies": [
@@ -254,19 +485,11 @@
           "url": "http://purl.obolibrary.org/obo/rxno.owl"
         }
       ],
-      "blurb": "The Chemotion ELN graph (FIZ Karlsruhe) merged with CHMO + RXNO — 1.53M triples, built with `rete build --card`, so its card is rich and read live here. Federates with chebi-full.",
-      "links": [
-        {
-          "label": "Source",
-          "url": "https://github.com/ISE-FIZKarlsruhe/chemotion-kg"
-        }
-      ]
+      "formatVersion": 8,
+      "size": 7400315
     },
     {
       "key": "chebi-full",
-      "provides": [
-        "ChEBI"
-      ],
       "title": "chebi-full — the complete ChEBI ontology (remote, lazy)",
       "rete": "https://data.graphplaza.com/chebi-full/chebi-full.rete",
       "kind": "remote-lazy",
@@ -279,6 +502,17 @@
         "federation"
       ],
       "blurb": "The entire ChEBI ontology — 8.83M triples, 120 MB — range-queried in the browser. Built with `rete build --card`; lossless Parquet/DuckDB/SQLite table companions sit beside it.",
+      "license": "CC BY 4.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=chebi-full&mode=sparql"
+        },
+        {
+          "label": "ChEBI (EMBL-EBI)",
+          "url": "https://www.ebi.ac.uk/chebi/"
+        }
+      ],
       "companions": [
         {
           "kind": "parquet",
@@ -289,13 +523,18 @@
         {
           "kind": "duckdb",
           "label": "chebi-full.duckdb",
-          "url": "https://data.graphplaza.com/chebi-full/chebi-full.duckdb"
+          "url": "https://data.graphplaza.com/chebi-full/chebi-full.duckdb",
+          "verified": true
         },
         {
           "kind": "sqlite",
           "label": "chebi-full.sqlite",
-          "url": "https://data.graphplaza.com/chebi-full/chebi-full.sqlite"
+          "url": "https://data.graphplaza.com/chebi-full/chebi-full.sqlite",
+          "verified": true
         }
+      ],
+      "provides": [
+        "ChEBI"
       ],
       "connections": [
         {
@@ -318,12 +557,3892 @@
           "url": "https://www.ebi.ac.uk/chebi/"
         }
       ],
+      "formatVersion": 5,
+      "size": 164832053
+    },
+    {
+      "key": "hugging-face",
+      "title": "hugging-face — the whole Hugging Face Hub as one graph: 2.9M models, 1.4M spaces, 1.35M people, and what was finetuned from what",
+      "rete": "https://data.graphplaza.com/hugging-face/hugging-face.rete",
+      "kind": "remote-lazy",
+      "icon": "🤗",
+      "tags": [
+        "Hugging Face",
+        "models",
+        "datasets",
+        "spaces",
+        "ML",
+        "genealogy",
+        "finetuning",
+        "provenance",
+        "PROV",
+        "social-network",
+        "followers",
+        "organizations",
+        "papers",
+        "arXiv",
+        "DOI",
+        "scholar-hub",
+        "federation",
+        "OWL",
+        "reasoning",
+        "companions"
+      ],
+      "blurb": "The public Hugging Face Hub — 85.1 M triples covering 2,932,554 models, 1,428,760 spaces, 972,446 dataset repos, 94,404 arXiv papers and the 1,354,271 accounts behind them (1,315,773 users + 38,498 organizations…",
+      "license": "Apache-2.0 (cfahlgren1/hub-stats backbone) + public Hugging Face Hub metadata (factual profile/repo data; attribution: \"Metadata from the Hugging Face Hub, huggingface.co\")",
       "links": [
         {
-          "label": "ChEBI (EMBL-EBI)",
-          "url": "https://www.ebi.ac.uk/chebi/"
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=hugging-face&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://huggingface.co"
         }
-      ]
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/hugging-face/hugging-face-tables/",
+          "note": "directory of .parquet tables"
+        }
+      ],
+      "size": 1121761510,
+      "formatVersion": 8
+    },
+    {
+      "key": "figshare",
+      "title": "figshare — figshare public research outputs as a DOI-linked scholarly graph, with downloadable file URLs (in progress)",
+      "rete": "https://data.graphplaza.com/figshare/figshare.rete",
+      "kind": "remote-lazy",
+      "icon": "📊",
+      "tags": [
+        "figshare",
+        "research-data",
+        "software",
+        "scholarly",
+        "DOI",
+        "DataCite",
+        "file-downloads",
+        "open-access",
+        "federation",
+        "in-progress"
+      ],
+      "blurb": "The public figshare corpus (Digital Science) — research outputs from figshare.com + ~150 institutional/publisher portals — harvested via OAI-PMH (the oaidatacite DataCite-XML format) and modelled against the rete…",
+      "license": "figshare OAI metadata (open); per-item file licenses vary",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=figshare&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://api.figshare.com/v2/oai"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "figshare.parquet",
+          "url": "https://data.graphplaza.com/figshare/figshare.parquet",
+          "size": "329 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 5,
+      "size": 221861303
+    },
+    {
+      "key": "proteinbase",
+      "title": "proteinbase — Adaptyv Bio's experimentally-validated protein designs, with ESMFold-predicted 3D structures rendered inline",
+      "rete": "https://data.graphplaza.com/proteinbase/proteinbase-2026-01-28.rete",
+      "kind": "remote-lazy",
+      "icon": "🧬",
+      "tags": [
+        "biology",
+        "protein design",
+        "structures",
+        "3D",
+        "ODC-By"
+      ],
+      "blurb": "ProteinBase by Adaptyv Bio — a database of experimentally-validated protein designs.",
+      "license": "ODC-By-1.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=proteinbase&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://proteinbase.com/download"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 10118425
+    },
+    {
+      "key": "ethz-research-collection",
+      "title": "ethz-research-collection — the ETH Zürich institutional repository as a scholarly graph, DOI/ORCID-linked to the hub (306,835 works + a file manifest)",
+      "rete": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
+      "kind": "remote-lazy",
+      "icon": "🎓",
+      "tags": [
+        "ETH Zürich",
+        "institutional-repository",
+        "DSpace",
+        "OAI-PMH",
+        "scholarly",
+        "publications",
+        "research-data",
+        "authors",
+        "ORCID",
+        "DOI",
+        "affiliations",
+        "grants",
+        "file-manifest",
+        "scholar-hub",
+        "federation",
+        "OWL",
+        "reasoning",
+        "CC0"
+      ],
+      "blurb": "The ETH Zürich Research Collection (DSpace 7.6) — the institutional repository of ETH Zürich — as one range-queried scholarly graph.",
+      "license": "CC0-1.0 (metadata harvest); per-item object rights vary (In Copyright / CC BY / CC BY-NC-ND / …)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=ethz-research-collection&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.research-collection.ethz.ch/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "ethz-research-collection.duckdb",
+          "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.duckdb",
+          "size": "207 MB",
+          "verified": true
+        }
+      ],
+      "size": 206054877,
+      "formatVersion": 5
+    },
+    {
+      "key": "swissubase",
+      "title": "swissubase — the Swiss national social-sciences & humanities data catalogue (FORS/DaSCH/UNINE/UZH), DOI-linked to the scholarly hub",
+      "rete": "https://data.graphplaza.com/swissubase/swissubase-2026-07-23.rete",
+      "kind": "remote-lazy",
+      "icon": "🇨🇭",
+      "tags": [
+        "FORS",
+        "Switzerland",
+        "social-sciences",
+        "humanities",
+        "research-data",
+        "DataCite",
+        "DOI",
+        "DDI",
+        "SKOS",
+        "scholar-hub",
+        "versioning",
+        "multilingual",
+        "CC"
+      ],
+      "blurb": "The metadata graph of SWISSUbase — the Swiss national repository for social-sciences & humanities research data, run by FORS with DaSCH, UNINE and UZH's Language Repository.",
+      "license": "Catalogue metadata: SWISSUbase terms of use (swissubase.ch/en/terms-of-use); per-dataset data licences vary — mostly Restricted, 151 Open, 120 Creative Commons",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=swissubase&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.swissubase.ch/en/"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 39785474
+    },
+    {
+      "key": "neuro-showcase",
+      "title": "neuro-showcase — 3D neuron & astrocyte morphology + a fly connectome, with inline 3D previews",
+      "rete": "https://data.graphplaza.com/neuro-showcase/neuro-showcase-2026-07-23.rete",
+      "kind": "remote-lazy",
+      "icon": "🧠",
+      "tags": [
+        "3D",
+        "neuroscience",
+        "connectome",
+        "morphology",
+        "astrocyte",
+        "hemibrain",
+        "RDF-star",
+        "GLB",
+        "EM",
+        "CC-BY",
+        "CC-BY-NC-SA"
+      ],
+      "blurb": "A small demonstrator that puts two harvested neuroscience datasets in one range-queried graph and shows the split between a lossless queryable graph and lossy 3D render previews.",
+      "license": "CC BY-NC-SA 4.0 (NGV astrocytes) / CC BY 4.0 (hemibrain neurons)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=neuro-showcase&mode=sparql"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 56158
+    },
+    {
+      "key": "imaging-plaza",
+      "title": "imaging-plaza — EPFL/SDSC catalogue of research imaging software, with the SHACL shapes that score its FAIR levels",
+      "rete": "https://data.graphplaza.com/imaging-plaza/imaging-plaza-2026-07-22.rete",
+      "kind": "remote-lazy",
+      "icon": "🩻",
+      "tags": [
+        "EPFL",
+        "SDSC",
+        "imaging",
+        "microscopy",
+        "MRI",
+        "research-software",
+        "FAIR",
+        "SHACL",
+        "schema.org",
+        "software-description-ontology",
+        "ORCID",
+        "DOI",
+        "open-pulse",
+        "federation",
+        "notebooks",
+        "Gradio"
+      ],
+      "blurb": "The catalogue of research imaging software and code kept by Imaging Plaza (EPFL & the Swiss Data Science Center) — 76 curated entries, from DeepLabCut, StarDist, Cellpose and CEBRA to MRI reconstruction networks and…",
+      "license": "Metadata: reuse permitted with attribution to the original source of code and data (imaging-plaza.epfl.ch/terms); ontology CC-BY-SA-4.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=imaging-plaza&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://imaging-plaza.epfl.ch/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "imaging-plaza.parquet",
+          "url": "https://data.graphplaza.com/imaging-plaza/imaging-plaza.parquet",
+          "verified": true
+        },
+        {
+          "kind": "duckdb",
+          "label": "imaging-plaza.duckdb",
+          "url": "https://data.graphplaza.com/imaging-plaza/imaging-plaza.duckdb",
+          "size": "780 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "imaging-plaza.sqlite",
+          "url": "https://data.graphplaza.com/imaging-plaza/imaging-plaza.sqlite",
+          "size": "1.9 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 204441
+    },
+    {
+      "key": "c4dt",
+      "title": "c4dt — EPFL's Center for Digital Trust technology showcase",
+      "rete": "https://data.graphplaza.com/c4dt/c4dt-2026-07-20.rete",
+      "kind": "remote-lazy",
+      "icon": "🛡️",
+      "tags": [
+        "EPFL",
+        "C4DT",
+        "research-software",
+        "digital-trust",
+        "privacy",
+        "security",
+        "cryptography",
+        "labs",
+        "open-pulse",
+        "federation",
+        "schema.org",
+        "SKOS",
+        "W3C-Org",
+        "OWL",
+        "reasoning",
+        "AGPL"
+      ],
+      "blurb": "The catalogue the EPFL Center for Digital Trust (C4DT) keeps of the research its affiliated labs produce — 315 projects across 36 labs, built from the c4dt/showcasev2 repository (AGPL-3.0).",
+      "license": "AGPL-3.0-or-later (c4dt/showcase_v2)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=c4dt&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/c4dt/showcase_v2"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "c4dt.parquet",
+          "url": "https://data.graphplaza.com/c4dt/c4dt.parquet",
+          "verified": true
+        },
+        {
+          "kind": "duckdb",
+          "label": "c4dt.duckdb",
+          "url": "https://data.graphplaza.com/c4dt/c4dt.duckdb",
+          "size": "1.6 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "c4dt.sqlite",
+          "url": "https://data.graphplaza.com/c4dt/c4dt.sqlite",
+          "size": "6.5 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 427913
+    },
+    {
+      "key": "enac-it4research",
+      "title": "enac-it4research — EPFL ENAC open science: research software, open data, repositories and student projects",
+      "rete": "https://data.graphplaza.com/enac-it4research/enac-it4research-2026-07-20.rete",
+      "kind": "remote-lazy",
+      "icon": "🏗",
+      "tags": [
+        "EPFL",
+        "ENAC",
+        "research software",
+        "open data",
+        "open science",
+        "GitHub",
+        "GitLab",
+        "Zenodo",
+        "Open Pulse",
+        "Infoscience",
+        "provenance",
+        "CC-BY"
+      ],
+      "blurb": "The open-science output of EPFL ENAC (School of Architecture, Civil and Environmental Engineering), compiled from the school's own public pages: 52 showcase projects, the 40-entry open research scripts & software…",
+      "license": "CC-BY-4.0 (compilation); page text © EPFL, quoted with attribution",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=enac-it4research&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.epfl.ch/schools/enac/about/open-science/open-research-scripts-software/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "enac-it4research.parquet",
+          "url": "https://data.graphplaza.com/enac-it4research/enac-it4research.parquet",
+          "verified": true
+        },
+        {
+          "kind": "duckdb",
+          "label": "enac-it4research.duckdb",
+          "url": "https://data.graphplaza.com/enac-it4research/enac-it4research.duckdb",
+          "size": "2.6 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "enac-it4research.sqlite",
+          "url": "https://data.graphplaza.com/enac-it4research/enac-it4research.sqlite",
+          "size": "2.9 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 302534
+    },
+    {
+      "key": "lombardi",
+      "title": "lombardi — Mark Lombardi's conspiracy network drawings, as one graph",
+      "rete": "https://data.graphplaza.com/lombardi/lombardi-2026-07-20.rete",
+      "kind": "remote-lazy",
+      "icon": "🕸️",
+      "tags": [
+        "Mark Lombardi",
+        "art",
+        "networks",
+        "conspiracy",
+        "drawings",
+        "BCCI",
+        "arms trade",
+        "banking",
+        "scandals",
+        "OWL",
+        "reasoning",
+        "schema.org",
+        "FOAF",
+        "CC-BY-NC-SA"
+      ],
+      "blurb": "The network drawings of Mark Lombardi (1951-2000) — the artist who drew the financial and political scandals of the late 20th century as hand-drawn node-link diagrams — digitized node by node and arc by arc by Robert…",
+      "license": "CC BY-NC-SA 4.0 — digitization © Robert Tolksdorf (FU Berlin), lombardinetworks.net",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=lombardi&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://lombardinetworks.net/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/lombardi/lombardi-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "lombardi.duckdb",
+          "url": "https://data.graphplaza.com/lombardi/lombardi.duckdb",
+          "size": "3.4 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "lombardi.sqlite",
+          "url": "https://data.graphplaza.com/lombardi/lombardi.sqlite",
+          "size": "23.7 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 813036
+    },
+    {
+      "key": "davidrumsey",
+      "title": "davidrumsey — the David Rumsey Map Collection: 150,017 maps with images, dates and places",
+      "rete": "https://data.graphplaza.com/davidrumsey/davidrumsey.rete",
+      "kind": "remote-lazy",
+      "icon": "🗺️",
+      "tags": [
+        "maps",
+        "cartography",
+        "atlases",
+        "David Rumsey",
+        "IIIF",
+        "GLAM",
+        "history",
+        "GeoSPARQL",
+        "EDM",
+        "OWL",
+        "reasoning",
+        "text index",
+        "CC-BY-NC-SA"
+      ],
+      "blurb": "The COMPLETE online catalog of the <a href=\"https://www.davidrumsey.com\" target=\"blank\" rel=\"noopener\">David Rumsey Historical Map Collection</a> — 150,017 items spanning the 1470s to the 2020s: 71,320 atlas maps…",
+      "license": "CC BY-NC-SA 3.0 (Cartography Associates)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=davidrumsey&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.davidrumsey.com"
+        }
+      ],
+      "size": 77319608,
+      "formatVersion": 8
+    },
+    {
+      "key": "farmacos-es",
+      "title": "farmacos-es — todos los medicamentos autorizados en España (CIMA/AEMPS)",
+      "rete": "https://data.graphplaza.com/farmacos-es/farmacos-es.rete",
+      "kind": "remote-lazy",
+      "icon": "💊",
+      "tags": [
+        "medicamentos",
+        "España",
+        "AEMPS",
+        "CIMA",
+        "ATC",
+        "SNOMED-CT",
+        "prospectos",
+        "interacciones",
+        "excipientes",
+        "schema.org",
+        "SKOS",
+        "salud"
+      ],
+      "blurb": "Grafo de conocimiento del catálogo completo de medicamentos autorizados en España, construido a partir de la API REST pública del CIMA (AEMPS) y el Nomenclátor de Prescripción.",
+      "license": "Reutilización de información del sector público (Ley 37/2007); datos de la AEMPS · CIMA",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=farmacos-es&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://cima.aemps.es/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 291675828
+    },
+    {
+      "key": "open-pulse",
+      "title": "open-pulse — EPFL/SDSC research-software knowledge graph",
+      "rete": "https://data.graphplaza.com/open-pulse/open-pulse-2026-06.rete",
+      "kind": "remote-lazy",
+      "icon": "💓",
+      "tags": [
+        "EPFL",
+        "SDSC",
+        "research-software",
+        "GitHub",
+        "open-source",
+        "contributors",
+        "organizations",
+        "ROR",
+        "ORCID",
+        "schema.org",
+        "org-ontology",
+        "Switzerland"
+      ],
+      "blurb": "The Open-Pulse graph of research software in and around EPFL and the Swiss Data Science Center.",
+      "license": "GitHub public metadata (facts); Open-Pulse ontology © SDSC-ORDES",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=open-pulse&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/sdsc-ordes/open-pulse-ontology"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/open-pulse/open-pulse-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "open-pulse.duckdb",
+          "url": "https://data.graphplaza.com/open-pulse/open-pulse.duckdb",
+          "size": "543 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 50243642
+    },
+    {
+      "key": "oss-github-benchmark",
+      "title": "oss-github-benchmark — the open-source footprint of 235 Swiss institutions on GitHub",
+      "rete": "https://data.graphplaza.com/oss-github-benchmark/oss-github-benchmark-2026-07-20.rete",
+      "kind": "remote-lazy",
+      "icon": "🇨🇭",
+      "tags": [
+        "Switzerland",
+        "GitHub",
+        "open-source",
+        "digital-sustainability",
+        "institutions",
+        "repositories",
+        "developers",
+        "sectors",
+        "SPDX",
+        "schema.org",
+        "org-ontology",
+        "open-pulse",
+        "federation",
+        "GPL"
+      ],
+      "blurb": "The Digital Sustainability OSS GitHub Benchmark (Bern University of Applied Sciences) — the open-source footprint of 235 Swiss institutions on GitHub, as one range-queried .rete.",
+      "license": "GPL-3.0 (benchmark code); GitHub public metadata (facts)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=oss-github-benchmark&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://ossbenchmark.com"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/oss-github-benchmark/oss-github-benchmark-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "oss-github-benchmark.duckdb",
+          "url": "https://data.graphplaza.com/oss-github-benchmark/oss-github-benchmark.duckdb",
+          "size": "76 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 31293028
+    },
+    {
+      "key": "epfl-infoscience",
+      "title": "epfl-infoscience — EPFL Infoscience research repository, with full text",
+      "rete": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience.rete",
+      "kind": "remote-lazy",
+      "icon": "🎓",
+      "tags": [
+        "EPFL",
+        "Infoscience",
+        "DSpace-CRIS",
+        "publications",
+        "researchers",
+        "theses",
+        "ORCID",
+        "DOI",
+        "full-text",
+        "schema.org",
+        "Dublin-Core",
+        "Switzerland"
+      ],
+      "blurb": "The complete metadata of EPFL Infoscience — the institutional research repository (DSpace-CRIS) of the École Polytechnique Fédérale de Lausanne, all CC0.",
+      "license": "CC0 1.0 (EPFL Infoscience metadata)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=epfl-infoscience&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://infoscience.epfl.ch"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 1642708129
+    },
+    {
+      "key": "wikidata",
+      "title": "wikidata",
+      "rete": "https://data.graphplaza.com/wikidata-1GB/wikidata.rete",
+      "kind": "remote-lazy",
+      "icon": "🌐",
+      "tags": [
+        "Wikidata",
+        "people",
+        "places"
+      ],
+      "blurb": "A real ~1.04 GB slice of Wikidata, queried entirely in the browser over HTTP range requests - the point is that a GIGABYTE-scale knowledge graph stays interactive because a selective SPARQL query only faults in the…",
+      "license": "CC0",
+      "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=wikidata&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.wikidata.org"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/wikidata-1GB/parquet/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "wikidata.duckdb",
+          "url": "https://data.graphplaza.com/wikidata-1GB/wikidata.duckdb",
+          "size": "214 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "wikidata.sqlite",
+          "url": "https://data.graphplaza.com/wikidata-1GB/wikidata.sqlite",
+          "size": "475 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 5,
+      "size": 1490440535
+    },
+    {
+      "key": "wikidata-zenodo",
+      "title": "wikidata-zenodo",
+      "rete": "https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo.rete",
+      "kind": "remote-lazy",
+      "icon": "🏛️",
+      "tags": [
+        "Wikidata",
+        "Zenodo",
+        "DOI",
+        "citable-data",
+        "HTTP-range",
+        "people",
+        "places"
+      ],
+      "blurb": "The same ~1.49 GB Wikidata graph deposited as the citable Zenodo record 21168821 (DOI 10.5281/zenodo.21168821), served here as its stable-format R2 twin for browser range queries.",
+      "license": "CC0",
+      "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=wikidata-zenodo&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://zenodo.org/records/21168821"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 1490440535
+    },
+    {
+      "key": "wikidata-ontology",
+      "title": "wikidata-ontology — every Wikidata class: the ontology without the instances",
+      "rete": "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology.rete",
+      "kind": "remote-lazy",
+      "icon": "🌳",
+      "tags": [
+        "Wikidata",
+        "ontology",
+        "taxonomy",
+        "classes",
+        "subClassOf",
+        "instance-counts",
+        "GeoSPARQL",
+        "text-index",
+        "Croissant",
+        "CC0"
+      ],
+      "blurb": "The complete class ontology of Wikidata, extracted from the full truthy dump — the file Wikidata itself never publishes.",
+      "license": "CC0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=wikidata-ontology&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.wikidata.org"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 2182498038
+    },
+    {
+      "key": "scholar-noisy",
+      "title": "scholar-noisy",
+      "rete": "https://data.graphplaza.com/scholar-noisy/scholar-noisy-2026-07-14.rete",
+      "kind": "remote-lazy",
+      "icon": "🎓",
+      "tags": [
+        "synthetic",
+        "data-quality",
+        "noisy"
+      ],
+      "blurb": "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos.",
+      "license": "synthetic",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=scholar-noisy&mode=sparql"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/scholar-noisy/scholar-noisy-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "scholar-noisy.duckdb",
+          "url": "https://data.graphplaza.com/scholar-noisy/scholar-noisy.duckdb",
+          "size": "780 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "scholar-noisy.sqlite",
+          "url": "https://data.graphplaza.com/scholar-noisy/scholar-noisy.sqlite",
+          "size": "1.4 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 112526
+    },
+    {
+      "key": "causalgraph",
+      "title": "causalgraph",
+      "rete": "https://data.graphplaza.com/causalgraph/causalgraph-2026-06-29.rete",
+      "kind": "remote-lazy",
+      "icon": "⛓️",
+      "tags": [
+        "causal",
+        "ontology",
+        "OWL",
+        "Industry-4.0",
+        "provenance"
+      ],
+      "blurb": "The causalgraph ontology (github.com/causalgraph/causalgraph, MIT - a Python package for modelling, persisting and visualising causal graphs as RDF) brought to rete: the full OWL schema (converted from OWL/XML with…",
+      "license": "MIT",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=causalgraph&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/causalgraph/causalgraph"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/causalgraph/causalgraph-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "causalgraph.duckdb",
+          "url": "https://data.graphplaza.com/causalgraph/causalgraph.duckdb",
+          "size": "524 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "causalgraph.sqlite",
+          "url": "https://data.graphplaza.com/causalgraph/causalgraph.sqlite",
+          "size": "132 KB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 42909
+    },
+    {
+      "key": "ontoneurolog",
+      "title": "ontoneurolog",
+      "rete": "https://data.graphplaza.com/ontoneurolog/ontoneurolog-v2.2.rete",
+      "kind": "remote-lazy",
+      "icon": "🧠",
+      "tags": [
+        "neuroimaging",
+        "ontology",
+        "OWL",
+        "MRI",
+        "DOLCE",
+        "provenance"
+      ],
+      "blurb": "OntoNeuroLOG v2.2 - the application ontology of the NeuroLOG project (Temal, Dojat, Kassel & Gibaud, J. Biomed. Inform.",
+      "license": "Public download; licence unstated — attribute B. Gibaud / IRISA-VISAGES, cite Temal et al. 2008",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=ontoneurolog&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://neurolog.i3s.unice.fr/public_namespace/ontology"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/ontoneurolog/ontoneurolog-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "ontoneurolog.duckdb",
+          "url": "https://data.graphplaza.com/ontoneurolog/ontoneurolog.duckdb",
+          "size": "1.8 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "ontoneurolog.sqlite",
+          "url": "https://data.graphplaza.com/ontoneurolog/ontoneurolog.sqlite",
+          "size": "8.0 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 289031
+    },
+    {
+      "key": "nidm",
+      "title": "nidm",
+      "rete": "https://data.graphplaza.com/nidm/nidm-2026-07-03.rete",
+      "kind": "remote-lazy",
+      "icon": "🧬",
+      "tags": [
+        "neuroimaging",
+        "PROV",
+        "provenance",
+        "cohort",
+        "OpenNeuro",
+        "federation"
+      ],
+      "blurb": "NIDM (the Neuroimaging Data Model, INCF NIDASH / BIRN) - the RDF + W3C PROV standard for describing the neuroimaging data lifecycle - carrying a REAL cohort: OpenNeuro ds000030, the UCLA Consortium for Neuropsychiatric…",
+      "license": "NIDM specs: open community standard (INCF NIDASH); ds000030 phenotype data CC0 (OpenNeuro/UCLA CNP)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=nidm&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/incf-nidash/nidm-specs"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/nidm/nidm-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "nidm.duckdb",
+          "url": "https://data.graphplaza.com/nidm/nidm.duckdb",
+          "size": "524 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "nidm.sqlite",
+          "url": "https://data.graphplaza.com/nidm/nidm.sqlite",
+          "size": "1.2 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 64394
+    },
+    {
+      "key": "mira-wikidata",
+      "title": "mira-wikidata",
+      "rete": "https://data.graphplaza.com/mira-wikidata/mira-wikidata-2026-06-29.rete",
+      "kind": "remote-lazy",
+      "icon": "🔗",
+      "tags": [
+        "mappings",
+        "SSSOM",
+        "linkset",
+        "Wikidata",
+        "federation"
+      ],
+      "blurb": "A MAPPING LINKSET, not a dataset: the 13 skos:exactMatch links reconciling MIrA's manuscript-culture entities (people, texts) to Wikidata - re-expressed from MIrA's owl:sameAs and shared the way the community does it…",
+      "license": "CC BY-NC-SA 4.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=mira-wikidata&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.mira.ie"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/mira-wikidata/mira-wikidata-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "mira-wikidata.duckdb",
+          "url": "https://data.graphplaza.com/mira-wikidata/mira-wikidata.duckdb",
+          "size": "524 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "mira-wikidata.sqlite",
+          "url": "https://data.graphplaza.com/mira-wikidata/mira-wikidata.sqlite",
+          "size": "60 KB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 30847
+    },
+    {
+      "key": "mira",
+      "title": "mira",
+      "rete": "https://data.graphplaza.com/mira/mira-v1.0.rete",
+      "kind": "remote-lazy",
+      "icon": "☘️",
+      "tags": [
+        "manuscripts",
+        "medieval",
+        "Irish",
+        "IIIF",
+        "Wikidata"
+      ],
+      "blurb": "MIrA - Manuscripts with Irish Associations (Pádraic Moran, University of Galway): a catalogue of c.",
+      "license": "CC BY-NC-SA 4.0",
+      "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=mira&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.mira.ie"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/mira/mira-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "mira.duckdb",
+          "url": "https://data.graphplaza.com/mira/mira.duckdb",
+          "size": "524 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "mira.sqlite",
+          "url": "https://data.graphplaza.com/mira/mira.sqlite",
+          "size": "1.5 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 113336
+    },
+    {
+      "key": "bioexplora",
+      "title": "bioexplora",
+      "rete": "https://data.graphplaza.com/bioexplora/bioexplora-2026-06-30.rete",
+      "kind": "remote-lazy",
+      "icon": "🦴",
+      "tags": [
+        "natural-history",
+        "biodiversity",
+        "Darwin Core",
+        "GBIF",
+        "Barcelona",
+        "IIIF",
+        "3D",
+        "audio"
+      ],
+      "blurb": "The OPEN natural-history collections of the Museu de Ciencies Naturals de Barcelona (bioexplora.cat) as one queryable graph - 207,163 SPECIMENS in Darwin Core across the museum's six collections: arthropods (MCNB-Art…",
+      "license": "CC BY 4.0 (specimens/images; audio CC BY-NC-ND)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=bioexplora&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.bioexplora.cat"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/bioexplora/bioexplora-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "bioexplora.duckdb",
+          "url": "https://data.graphplaza.com/bioexplora/bioexplora.duckdb",
+          "size": "142.8 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 46411898
+    },
+    {
+      "key": "tree-city-inventory",
+      "title": "tree-city-inventory — every tree in Geneva: 239,116 georeferenced trees with species, height & crown",
+      "rete": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory-2026-07-31.rete",
+      "kind": "remote-lazy",
+      "icon": "🌳",
+      "tags": [
+        "trees",
+        "urban forest",
+        "Geneva",
+        "Switzerland",
+        "SITG",
+        "GeoSPARQL",
+        "species",
+        "taxonomy",
+        "SKOS",
+        "biodiversity",
+        "municipalities",
+        "multi-city",
+        "open-data",
+        "opendata.swiss"
+      ],
+      "blurb": "Every recorded street and park tree in the canton of Geneva — 239,116 individual trees, each one georeferenced, identified to a taxon and measured.",
+      "license": "opendata.swiss Open use (free use incl. commercial, attribution not required); attribute SITG anyway — the services carry © 2026 SITG",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=tree-city-inventory&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://sitg.ge.ch/donnees/sipv-ica-web-public-tot"
+        }
+      ],
+      "size": 22582456,
+      "formatVersion": 8
+    },
+    {
+      "key": "geoadmin",
+      "title": "geoadmin",
+      "rete": "https://data.graphplaza.com/geoadmin/geoadmin-2026-06-30.rete",
+      "kind": "remote-lazy",
+      "icon": "🗺",
+      "tags": [
+        "geo",
+        "GeoSPARQL",
+        "boundaries",
+        "Natural Earth",
+        "federation",
+        "CC0"
+      ],
+      "blurb": "World administrative boundaries with GeoSPARQL geometries, built for FEDERATED geospatial joins — 52k OSM-derived polygons (simplified to ~1 km), a lean 40.3 MB range-queried lazily.",
+      "license": "CC-BY 4.0 (geoBoundaries) + CC0 (Natural Earth places)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=geoadmin&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.geoboundaries.org"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/geoadmin/geoadmin-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "geoadmin.duckdb",
+          "url": "https://data.graphplaza.com/geoadmin/geoadmin.duckdb",
+          "size": "292.5 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "geoadmin.sqlite",
+          "url": "https://data.graphplaza.com/geoadmin/geoadmin.sqlite",
+          "size": "364.2 MB",
+          "verified": true
+        }
+      ],
+      "pmtiles": {
+        "url": "https://data.graphplaza.com/geoadmin/geoadmin.pmtiles",
+        "label": "geoadmin (OSM admin areas)",
+        "size": "113 MB",
+        "embedded": false
+      },
+      "formatVersion": 8,
+      "size": 39867367
+    },
+    {
+      "key": "geoadmin-tiles",
+      "title": "geoadmin-tiles",
+      "rete": "https://data.graphplaza.com/geoadmin-tiles/geoadmin-tiles.rete",
+      "kind": "remote-lazy",
+      "icon": "🧱",
+      "tags": [
+        "geo",
+        "GeoSPARQL",
+        "PMTiles",
+        "tiles-in-rete",
+        "vector tiles",
+        "option-C"
+      ],
+      "blurb": "The SAME world-admin graph as geoadmin, but with a PMTiles vector-tile archive EMBEDDED as a section inside the one .rete file (geo-LOD 'option C').",
+      "license": "CC-BY 4.0 (geoBoundaries) + CC0 (Natural Earth places)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=geoadmin-tiles&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.geoboundaries.org"
+        }
+      ],
+      "pmtiles": {
+        "url": "https://data.graphplaza.com/geoadmin-tiles/geoadmin-tiles.rete",
+        "label": "embedded in geoadmin-tiles.rete",
+        "size": "113 MB section",
+        "embedded": true
+      },
+      "formatVersion": 5,
+      "size": 157834156
+    },
+    {
+      "key": "z-anatomy",
+      "title": "z-anatomy",
+      "rete": "https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete",
+      "kind": "remote-lazy",
+      "icon": "🫀",
+      "tags": [
+        "3D",
+        "anatomy",
+        "medicine",
+        "GeoSPARQL",
+        "geo3",
+        "HPO",
+        "disease-ontology",
+        "CC-BY-SA"
+      ],
+      "blurb": "The human body as a queryable 3D knowledge graph. 4,884 anatomical STRUCTURES - bones, muscles, nerves, arteries, veins, viscera, lymphoid organs, joints and body regions - each carrying its real mesh GEOMETRY in an…",
+      "license": "CC BY-SA 4.0 (Z-Anatomy); HPO CC BY 4.0; DO CC0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=z-anatomy&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/LluisV/Z-Anatomy"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 5623830
+    },
+    {
+      "key": "fzk-haus",
+      "title": "fzk-haus",
+      "rete": "https://data.graphplaza.com/cad/fzk-haus-2016-12-21.rete",
+      "kind": "remote-lazy",
+      "icon": "🏠",
+      "tags": [
+        "3D",
+        "CAD",
+        "BIM",
+        "IFC",
+        "BOT",
+        "GeoSPARQL",
+        "geo3",
+        "architecture"
+      ],
+      "blurb": "A CAD/BIM building turned into a queryable 3D knowledge graph. The model is AC20-FZK-Haus, an openly-licensed IFC4 sample building (a small two-storey detached house) from KIT / the IBPSA Project 1.",
+      "license": "Model: KIT/IBPSA sample (open); BOT (W3C); geo3 by rete",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=fzk-haus&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/ibpsa/project1-wp-2-2-bim"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 67110
+    },
+    {
+      "key": "gni-bim",
+      "title": "gni-bim",
+      "rete": "https://data.graphplaza.com/gni-bim/gni-bim-2026-07-22.rete",
+      "kind": "remote-lazy",
+      "icon": "🏗️",
+      "tags": [
+        "BIM",
+        "IFC",
+        "corpus",
+        "architecture",
+        "structural",
+        "TUM",
+        "CC-BY"
+      ],
+      "blurb": "A whole CORPUS of BIM models as one queryable graph - the wide sibling to the single, deep fzk-haus building.",
+      "license": "CC BY 4.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=gni-bim&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/ZijianWang-ZW/GNI-BIM-Dataset"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 108705
+    },
+    {
+      "key": "smithsonian3d",
+      "title": "smithsonian3d",
+      "rete": "https://data.graphplaza.com/smithsonian3d/smithsonian3d-2026-06-29.rete",
+      "kind": "remote-lazy",
+      "icon": "🗿",
+      "tags": [
+        "3D",
+        "museum",
+        "Smithsonian",
+        "CC0",
+        "natural-history"
+      ],
+      "blurb": "2,199 interactive 3D MODELS from the Smithsonian Open Access program (CC0, public domain) - every object streams a Draco-compressed .glb you can rotate, zoom and inspect right in the results table (the 🧊 3D viewer).",
+      "license": "CC0 1.0 (public domain)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=smithsonian3d&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://3d.si.edu"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/smithsonian3d/smithsonian3d-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "smithsonian3d.duckdb",
+          "url": "https://data.graphplaza.com/smithsonian3d/smithsonian3d.duckdb",
+          "size": "1.3 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "smithsonian3d.sqlite",
+          "url": "https://data.graphplaza.com/smithsonian3d/smithsonian3d.sqlite",
+          "size": "1.2 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 363129
+    },
+    {
+      "key": "lineara",
+      "title": "lineara",
+      "rete": "https://data.graphplaza.com/lineara/lineara-2025-11-23.rete",
+      "kind": "remote-lazy",
+      "icon": "🏺",
+      "tags": [
+        "Linear A",
+        "Minoan",
+        "epigraphy",
+        "undeciphered",
+        "Aegean"
+      ],
+      "blurb": "The complete surviving corpus of LINEAR A - the still-undeciphered script of Bronze-Age Minoan Crete (c. 1800-1450 BC), used for palace administration and religious dedications.",
+      "license": "No explicit license (scholarly; attribute GORILA/Douros/mwenge/INSCRIBE/PAITO)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=lineara&mode=sparql"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/lineara/lineara-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "lineara.duckdb",
+          "url": "https://data.graphplaza.com/lineara/lineara.duckdb",
+          "size": "1.3 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "lineara.sqlite",
+          "url": "https://data.graphplaza.com/lineara/lineara.sqlite",
+          "size": "8.5 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 329374
+    },
+    {
+      "key": "mimotext",
+      "title": "mimotext",
+      "rete": "https://data.graphplaza.com/mimotext/mimotext-2026-06-13.rete",
+      "kind": "remote-lazy",
+      "icon": "📖",
+      "tags": [
+        "literature",
+        "Enlightenment",
+        "stylometry"
+      ],
+      "blurb": "MiMoTextBase, a Wikibase of French Enlightenment novels (c. 1751-1800) from the Trier Center for Digital Humanities.",
+      "license": "CC0",
+      "typePredicate": "<http://data.mimotext.uni-trier.de/prop/direct/P2>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=mimotext&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.mimotext.uni-trier.de"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/mimotext/mimotext-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "mimotext.duckdb",
+          "url": "https://data.graphplaza.com/mimotext/mimotext.duckdb",
+          "size": "1.3 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "mimotext.sqlite",
+          "url": "https://data.graphplaza.com/mimotext/mimotext.sqlite",
+          "size": "9.9 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 272013
+    },
+    {
+      "key": "mmm",
+      "title": "mmm",
+      "rete": "https://data.graphplaza.com/mmm/mmm.rete",
+      "kind": "remote-lazy",
+      "icon": "📜",
+      "tags": [
+        "manuscripts",
+        "provenance",
+        "CIDOC-CRM"
+      ],
+      "blurb": "The ENTIRE Mapping Manuscript Migrations (MMM) graph as one range-queried .rete: 23,349,356 triples over CIDOC-CRM / FRBRoo, unifying the Schoenberg Database (SDBM), Bibale (IRHT) and Medieval Manuscripts in Oxford…",
+      "license": "CC BY-NC 4.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=mmm&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://mappingmanuscriptmigrations.org"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 147120711
+    },
+    {
+      "key": "openalex-astrocytes",
+      "title": "openalex-astrocytes",
+      "rete": "https://data.graphplaza.com/openalex-astrocytes/openalex-astrocytes-2026-06-13.rete",
+      "kind": "remote-lazy",
+      "icon": "🧠",
+      "tags": [
+        "OpenAlex",
+        "neuroscience",
+        "citations"
+      ],
+      "blurb": "The 500 most-cited works on astrocytes (the star-shaped glial cells of the brain) from OpenAlex (CC0), as a connected citation core: 4,113 cito:cites edges linking 500 papers to 2,074 authors, 537 institutions and 875…",
+      "license": "CC0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=openalex-astrocytes&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://openalex.org"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/openalex-astrocytes/openalex-astrocytes-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "openalex-astrocytes.duckdb",
+          "url": "https://data.graphplaza.com/openalex-astrocytes/openalex-astrocytes.duckdb",
+          "size": "1.3 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "openalex-astrocytes.sqlite",
+          "url": "https://data.graphplaza.com/openalex-astrocytes/openalex-astrocytes.sqlite",
+          "size": "5.6 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 389228
+    },
+    {
+      "key": "antarctic-expeditions",
+      "title": "antarctic-expeditions",
+      "rete": "https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions-2026-06-13.rete",
+      "kind": "remote-lazy",
+      "icon": "🧭",
+      "tags": [
+        "history",
+        "exploration",
+        "Wikidata"
+      ],
+      "blurb": "Heroic-Age Antarctic exploration as an explorable social graph: 6 landmark expeditions (Discovery, Nimrod, Terra Nova, Endurance, Australasian, Belgian, 1897-1917) linked by ex:participant to ~76 crew, by ex:vessel to…",
+      "license": "CC0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=antarctic-expeditions&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.wikidata.org"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "antarctic-expeditions.duckdb",
+          "url": "https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions.duckdb",
+          "size": "524 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "antarctic-expeditions.sqlite",
+          "url": "https://data.graphplaza.com/antarctic-expeditions/antarctic-expeditions.sqlite",
+          "size": "92 KB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 33897
+    },
+    {
+      "key": "factgrid-illuminati",
+      "title": "factgrid-illuminati",
+      "rete": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati-2026-06-13.rete",
+      "kind": "remote-lazy",
+      "icon": "🕯️",
+      "tags": [
+        "prosopography",
+        "history",
+        "FactGrid"
+      ],
+      "blurb": "The 18th-century secret society as a prosopographical graph from FactGrid (CC0), an independent historical Wikibase: ~1,300 members of the Order of the Illuminati (Q10677) with their FactGrid properties and English…",
+      "license": "CC0",
+      "typePredicate": "<https://database.factgrid.de/prop/direct/P2>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=factgrid-illuminati&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://database.factgrid.de"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "factgrid-illuminati.duckdb",
+          "url": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati.duckdb",
+          "size": "1.5 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "factgrid-illuminati.sqlite",
+          "url": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati.sqlite",
+          "size": "11.2 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 571230
+    },
+    {
+      "key": "theographic-graph",
+      "title": "theographic-graph",
+      "rete": "https://data.graphplaza.com/theographic-graph/theographic-graph-2026-06-13.rete",
+      "kind": "remote-lazy",
+      "icon": "✝️",
+      "tags": [
+        "bible",
+        "genealogy",
+        "narrative"
+      ],
+      "blurb": "Theographic Bible (CC BY-SA) as a narrative/genealogy graph (distinct from the atlas geo-events layer): ~3,000 people linked by tg:father/mother/child/sibling/partner, born/died places, group memberships, and events…",
+      "license": "CC BY-SA",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=theographic-graph&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/robertrouse/theographic-bible-metadata"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/theographic-graph/theographic-graph-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "theographic-graph.duckdb",
+          "url": "https://data.graphplaza.com/theographic-graph/theographic-graph.duckdb",
+          "size": "1.3 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "theographic-graph.sqlite",
+          "url": "https://data.graphplaza.com/theographic-graph/theographic-graph.sqlite",
+          "size": "8.2 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 362438
+    },
+    {
+      "key": "monarch",
+      "title": "monarch",
+      "rete": "https://data.graphplaza.com/monarch/monarch-2026-06-13.rete",
+      "kind": "remote-lazy",
+      "icon": "🧬",
+      "tags": [
+        "biomedical",
+        "genes",
+        "Biolink"
+      ],
+      "blurb": "A bounded slice of the Monarch Initiative biomedical KG (CC-BY): a disease neighbourhood linking genes (biolink:Gene), phenotypes (biolink:hasphenotype), gene-gene interactions (biolink:interactswith) and taxa, with…",
+      "license": "CC-BY",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=monarch&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://monarchinitiative.org"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/monarch/monarch-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "monarch.duckdb",
+          "url": "https://data.graphplaza.com/monarch/monarch.duckdb",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "monarch.sqlite",
+          "url": "https://data.graphplaza.com/monarch/monarch.sqlite",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 183665
+    },
+    {
+      "key": "opencitations",
+      "title": "opencitations — OpenCitations Meta: 135.4M scholarly works with their authors and venues",
+      "rete": "https://data.graphplaza.com/opencitations/opencitations.rete",
+      "kind": "remote-lazy",
+      "icon": "🔗",
+      "tags": [
+        "OpenCitations",
+        "citations"
+      ],
+      "blurb": "The complete OpenCitations Meta v13.1.0 corpus (CC0) as one range-queryable graph — 5,184,588,893 triples (33.4 GB) covering 135.4 million bibliographic records: journal articles, book chapters, proceedings papers…",
+      "license": "CC0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=opencitations&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://opencitations.net/meta"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/opencitations/opencitations-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "opencitations.duckdb",
+          "url": "https://data.graphplaza.com/opencitations/opencitations.duckdb",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "opencitations.sqlite",
+          "url": "https://data.graphplaza.com/opencitations/opencitations.sqlite",
+          "verified": true
+        }
+      ],
+      "formatVersion": 5,
+      "size": 35852509508
+    },
+    {
+      "key": "opencitations-meta",
+      "title": "opencitations-meta",
+      "rete": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete",
+      "kind": "remote-lazy",
+      "icon": "📚",
+      "tags": [
+        "OpenCitations",
+        "OpenCitations Meta",
+        "OCDM",
+        "SPAR",
+        "bibliographic metadata",
+        "DOI",
+        "ORCID",
+        "full-text index",
+        "CC0"
+      ],
+      "blurb": "OpenCitations Meta (September 2026, RDF dump v9.2.1, CC0) exactly as OpenCitations' own RDF states it, in the OpenCitations Data Model (OCDM): 5,710,689,940 statements in one file.",
+      "license": "CC0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=opencitations-meta&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://doi.org/10.5281/zenodo.23059736"
+        }
+      ],
+      "size": 62288523062,
+      "formatVersion": 6
+    },
+    {
+      "key": "opencitations-index",
+      "title": "opencitations-index",
+      "rete": "https://data.graphplaza.com/opencitations-index/opencitations-index.rete",
+      "kind": "remote-lazy",
+      "icon": "🔗",
+      "tags": [
+        "OpenCitations",
+        "OpenCitations Index",
+        "OCDM",
+        "CiTO",
+        "OCI",
+        "OMID",
+        "citations",
+        "scholarly communication",
+        "billion-triples",
+        "CC0"
+      ],
+      "blurb": "The OpenCitations Index (Index CSV v8, 2026-09-08, with the source-info dump v7) exactly as OpenCitations' own RDF states it, in the OpenCitations Data Model (OCDM): 2,556,381,540 citations and 15,821,719,427 statements…",
+      "license": "CC0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=opencitations-index&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://doi.org/10.6084/m9.figshare.24356626.v8"
+        }
+      ],
+      "size": 111022809006,
+      "formatVersion": 6
+    },
+    {
+      "key": "nanopubs",
+      "title": "nanopubs — Nanopublications 2018: 10.8M nanopublications as 43.2M named graphs",
+      "rete": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete",
+      "kind": "remote-lazy",
+      "icon": "🔬",
+      "tags": [
+        "nanopublications",
+        "provenance",
+        "named graphs",
+        "scientific linked data",
+        "life sciences",
+        "BEL",
+        "DrugBank",
+        "WikiPathways",
+        "2018",
+        "Zenodo",
+        "CC BY-NC-SA"
+      ],
+      "blurb": "10,803,231 nanopublications, as the Zenodo dump Nanopublication dump from server network (Tobias Kuhn, VU Amsterdam, version 20180405) states them: every nanopublication the decentralised server network held on…",
+      "license": "CC BY-NC-SA 4.0 (Tobias Kuhn, VU Amsterdam; share-alike, non-commercial)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=nanopubs&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://doi.org/10.5281/zenodo.1213293"
+        }
+      ],
+      "size": 3882041979,
+      "formatVersion": 6
+    },
+    {
+      "key": "orkg",
+      "title": "orkg",
+      "rete": "https://data.graphplaza.com/orkg/orkg-2026-08-05.rete",
+      "kind": "remote-lazy",
+      "icon": "🔬",
+      "tags": [
+        "research",
+        "contributions",
+        "scholarly"
+      ],
+      "blurb": "A slice of the Open Research Knowledge Graph (CC-BY): papers (orkg:Paper) and their structured contributions (orkg:Contribution), research problems, methods and results, with rdfs:labels - scholarly knowledge as data…",
+      "license": "CC-BY",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=orkg&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://orkg.org"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/orkg/orkg-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "orkg.duckdb",
+          "url": "https://data.graphplaza.com/orkg/orkg.duckdb",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "orkg.sqlite",
+          "url": "https://data.graphplaza.com/orkg/orkg.sqlite",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 734234
+    },
+    {
+      "key": "wikidata-xxl",
+      "title": "wikidata-xxl",
+      "rete": "https://data.graphplaza.com/wikidata-xxl/shard_0000.rete",
+      "kind": "remote-lazy",
+      "icon": "⛓",
+      "tags": [
+        "Wikidata",
+        "sharded",
+        "federation",
+        "XXL",
+        "600M",
+        "CC0"
+      ],
+      "blurb": "The SHARDED-RETE model at scale: one logical Wikidata graph too big to build as a single file, split into 6 INDEPENDENT --no-pyramid .rete shards (100M triples / ~906 MB each, ~5.4 GB total) that the playground…",
+      "license": "CC0",
+      "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
+      "shards": [
+        "https://data.graphplaza.com/wikidata-xxl/shard_0000.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0001.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0002.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0003.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0004.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0005.rete"
+      ],
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=wikidata-xxl&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.wikidata.org"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 4872958617
+    },
+    {
+      "key": "deps-dev",
+      "title": "deps-dev",
+      "rete": "https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete",
+      "kind": "remote-lazy",
+      "icon": "📦",
+      "tags": [
+        "dependencies",
+        "software",
+        "supply-chain",
+        "sharded",
+        "federation",
+        "npm",
+        "PyPI",
+        "Maven",
+        "2.5B",
+        "CC-BY"
+      ],
+      "blurb": "Google's deps.dev (Open Source Insights) as a queryable knowledge graph: the version-pinned dependency AND dependents network of SEVEN package ecosystems — npm, PyPI, Maven, Go, Cargo, NuGet, RubyGems — 2,555,320,067…",
+      "license": "CC-BY 4.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "shards": [
+        "https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-npm-1.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-go.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-maven.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-nuget.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-pypi.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-rubygems.rete"
+      ],
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=deps-dev&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://deps.dev/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 12844234514
+    },
+    {
+      "key": "mirbase",
+      "title": "mirbase",
+      "rete": "https://data.graphplaza.com/mirbase/mirbase-v22.1.rete",
+      "kind": "remote-lazy",
+      "icon": "🧬",
+      "tags": [
+        "biology",
+        "genomics",
+        "microRNA",
+        "FALDO",
+        "Sequence-Ontology",
+        "NCBITaxon",
+        "OWL",
+        "public-domain"
+      ],
+      "blurb": "miRBase release 22.1 - the reference catalogue of published microRNA sequences - as one range-queryable .rete.",
+      "license": "Public domain",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=mirbase&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.mirbase.org/"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 37321160
+    },
+    {
+      "key": "causenet",
+      "title": "causenet",
+      "rete": "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed.rete",
+      "kind": "remote-lazy",
+      "icon": "⛓️",
+      "tags": [
+        "causality",
+        "provenance",
+        "web-extraction",
+        "NLP",
+        "reach"
+      ],
+      "blurb": "CauseNet-Full (Heindorf et al., CIKM 2020): the complete causality graph mined from Wikipedia and ClueWeb12 - 11,609,890 cause->effect relations over 12,186,310 concepts, with full extraction provenance.",
+      "license": "CC BY 4.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=causenet&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://causenet.org/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/causenet-full/causenet-full-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "causenet-full.duckdb",
+          "url": "https://data.graphplaza.com/causenet-full/causenet-full.duckdb",
+          "size": "8.95 GB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "causenet-full.sqlite",
+          "url": "https://data.graphplaza.com/causenet-full/causenet-full.sqlite",
+          "size": "13.9 GB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 5,
+      "size": 6386313839
+    },
+    {
+      "key": "jonas",
+      "title": "jonas",
+      "rete": "https://data.graphplaza.com/jonas/jonas-2026-06-25.rete",
+      "kind": "remote-lazy",
+      "icon": "📜",
+      "tags": [
+        "medieval",
+        "manuscripts",
+        "philology",
+        "witnesses",
+        "stemmata"
+      ],
+      "blurb": "A knowledge graph of medieval European texts and the manuscripts that transmit them, built from the LostMa-ERC Heurist database derived from Jonas (IRHT-CNRS, the repertory of texts and manuscripts in langue d'oc and…",
+      "license": "CC0 1.0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=jonas&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://jonas.irht.cnrs.fr/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/jonas/jonas-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "jonas.duckdb",
+          "url": "https://data.graphplaza.com/jonas/jonas.duckdb",
+          "size": "14.5 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "jonas.sqlite",
+          "url": "https://data.graphplaza.com/jonas/jonas.sqlite",
+          "size": "82.6 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 2065026
+    },
+    {
+      "key": "postscriptum",
+      "title": "postscriptum",
+      "rete": "https://data.graphplaza.com/postscriptum/postscriptum-2026-06-29.rete",
+      "kind": "remote-lazy",
+      "icon": "✉️",
+      "tags": [
+        "letters",
+        "correspondence",
+        "Portuguese",
+        "Spanish",
+        "TEI"
+      ],
+      "blurb": "Post Scriptum (CLUL, Universidade de Lisboa), via the TEITOK TEI-P5 edition: 3,649 everyday letters in Portuguese & Spanish, 1500-1800 - a historical correspondence network.",
+      "license": "Free (CLUL/ELRA)",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=postscriptum&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "http://teitok.clul.ul.pt/postscriptum"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/postscriptum/postscriptum-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "postscriptum.duckdb",
+          "url": "https://data.graphplaza.com/postscriptum/postscriptum.duckdb",
+          "size": "30.0 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "postscriptum.sqlite",
+          "url": "https://data.graphplaza.com/postscriptum/postscriptum.sqlite",
+          "size": "39.3 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 4648071
+    },
+    {
+      "key": "databnf",
+      "title": "databnf",
+      "rete": "https://data.graphplaza.com/databnf-full/databnf-full.rete",
+      "kind": "remote-lazy",
+      "icon": "🇫🇷",
+      "tags": [
+        "BnF",
+        "authorities",
+        "VIAF",
+        "RAMEAU",
+        "single-file"
+      ],
+      "blurb": "The COMPLETE data.bnf.fr - the Bibliothèque nationale de France's linked open data (CC0) - as ONE range-queryable .rete (it was 10 federated shards).",
+      "license": "CC0 1.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=databnf&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://data.bnf.fr/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 7685945189
+    },
+    {
+      "key": "bne",
+      "title": "bne",
+      "rete": "https://data.graphplaza.com/bne-full/bne-full.rete",
+      "kind": "remote-lazy",
+      "icon": "🇪🇸",
+      "tags": [
+        "BNE",
+        "Spain",
+        "authorities",
+        "VIAF",
+        "books"
+      ],
+      "blurb": "The COMPLETE datos.bne.es - the Biblioteca Nacional de España's linked open data (CC0) - as ONE range-queryable .rete: 267,052,840 triples (the three official RDF dumps merged - autoridades 47M, bibliográficos 208M…",
+      "license": "CC0 1.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=bne&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://datos.bne.es/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 3653583413
+    },
+    {
+      "key": "biblissima",
+      "title": "biblissima",
+      "rete": "https://data.graphplaza.com/biblissima-full/biblissima-full.rete",
+      "kind": "remote-lazy",
+      "icon": "🗝️",
+      "tags": [
+        "Biblissima",
+        "manuscripts",
+        "Wikibase",
+        "heritage",
+        "single-file"
+      ],
+      "blurb": "Biblissima+, the French aggregator of medieval & early-modern written heritage, as ONE range-queryable .rete (it was 3 federated shards): 254,203,131 triples over 867,838 Wikibase entities - manuscripts, works, persons…",
+      "license": "CC-BY 4.0",
+      "typePredicate": "<https://data.biblissima.fr/prop/direct/P2>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=biblissima&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://data.biblissima.fr/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 699899183
+    },
+    {
+      "key": "albala",
+      "title": "albala",
+      "rete": "https://data.graphplaza.com/albala/albala-2026-06-28.rete",
+      "kind": "remote-lazy",
+      "icon": "⛪",
+      "tags": [
+        "Seville",
+        "archives",
+        "ISAD",
+        "Colombina",
+        "Spain"
+      ],
+      "blurb": "The archival catalogue (ISAD) of the Institución Colombina, Seville: 69,900 records from the Archivo Catedral de Sevilla (ACS, 27,970) and the Archivo General del Arzobispado de Sevilla (AGAS, 41,930) - the Seville…",
+      "license": "© Inst. Colombina",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=albala&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://albala.icolombina.es/albala"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/albala/albala-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "albala.duckdb",
+          "url": "https://data.graphplaza.com/albala/albala.duckdb",
+          "size": "32.0 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "albala.sqlite",
+          "url": "https://data.graphplaza.com/albala/albala.sqlite",
+          "size": "314.6 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 12702854
+    },
+    {
+      "key": "memoria",
+      "title": "memoria",
+      "rete": "https://data.graphplaza.com/memoria/memoria-2026-06-28.rete",
+      "kind": "remote-lazy",
+      "icon": "🕯️",
+      "tags": [
+        "Spain",
+        "Civil War",
+        "memoria histórica",
+        "victims",
+        "open data"
+      ],
+      "blurb": "An aggregation of openly-licensed Spanish Civil War 'memoria histórica' datasets into ONE knowledge graph: 99,542 named victims/repressed persons and 2,872 mass graves (fosas), tied together through provinces.",
+      "license": "CC-BY (regional)",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=memoria&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://datos.gob.es"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/memoria/memoria-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "memoria.duckdb",
+          "url": "https://data.graphplaza.com/memoria/memoria.duckdb",
+          "size": "24.3 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "memoria.sqlite",
+          "url": "https://data.graphplaza.com/memoria/memoria.sqlite",
+          "size": "346.7 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 11087223
+    },
+    {
+      "key": "bph",
+      "title": "bph",
+      "rete": "https://data.graphplaza.com/bph/bph-2026-07-01.rete",
+      "kind": "remote-lazy",
+      "icon": "📜",
+      "tags": [
+        "hermetica",
+        "alchemy",
+        "esoterica",
+        "rare-books",
+        "Amsterdam",
+        "multilingual",
+        "IIIF"
+      ],
+      "blurb": "The digitized core of the Bibliotheca Philosophica Hermetica - the Ritman Library / Embassy of the Free Mind in Amsterdam, the world's foremost collection on Hermetica, alchemy, Rosicrucianism, Kabbalah, mysticism and…",
+      "license": "CC BY-SA 4.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=bph&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.embassyofthefreemind.com/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/bph/bph-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "bph.duckdb",
+          "url": "https://data.graphplaza.com/bph/bph.duckdb",
+          "size": "310.8 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 57511947
+    },
+    {
+      "key": "ustc",
+      "title": "ustc",
+      "rete": "https://data.graphplaza.com/ustc/ustc-2026-07-01.rete",
+      "kind": "remote-lazy",
+      "icon": "📖",
+      "tags": [
+        "bibliography",
+        "early-modern-print",
+        "rare-books",
+        "holdings",
+        "federation",
+        "St-Andrews"
+      ],
+      "blurb": "A bounded, federation-ready extract of the Universal Short Title Catalogue (ustc.ac.uk, University of St Andrews) - the authoritative bibliography of early-modern European print.",
+      "license": "© USTC / Univ. of St Andrews (research subset)",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=ustc&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.ustc.ac.uk/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/ustc/ustc-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "ustc.duckdb",
+          "url": "https://data.graphplaza.com/ustc/ustc.duckdb",
+          "size": "4.8 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "ustc.sqlite",
+          "url": "https://data.graphplaza.com/ustc/ustc.sqlite",
+          "size": "28.1 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 1066929
+    },
+    {
+      "key": "fuero_juzgo",
+      "title": "fuero_juzgo",
+      "rete": "https://data.graphplaza.com/fuero_juzgo/fuero_juzgo-2026-07-06.rete",
+      "kind": "remote-lazy",
+      "icon": "📜",
+      "tags": [
+        "Fuero-Juzgo",
+        "Liber-Iudiciorum",
+        "manuscripts",
+        "medieval",
+        "legal-history",
+        "philology",
+        "leonés",
+        "PhiloBiblon",
+        "IIIF",
+        "Wikidata",
+        "Biblissima"
+      ],
+      "blurb": "The manuscript tradition of the FUERO JUZGO — the 13th-century Romance (Castilian / Leonese / Asturian) translation of the Visigothic Liber Iudiciorum, made c. 1260 under Fernando III.",
+      "license": "Scholarly compilation (see sources); BSB Cod.hisp. 28 images CC Public Domain Mark 1.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=fuero_juzgo&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://people.unil.ch/monicacastillolluch/indice-de-fueros/fuero-juzgo/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/fuero_juzgo/fuero_juzgo-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "fuero_juzgo.duckdb",
+          "url": "https://data.graphplaza.com/fuero_juzgo/fuero_juzgo.duckdb",
+          "size": "524 KB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "fuero_juzgo.sqlite",
+          "url": "https://data.graphplaza.com/fuero_juzgo/fuero_juzgo.sqlite",
+          "size": "536 KB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 80503
+    },
+    {
+      "key": "ramon_llull",
+      "title": "ramon_llull",
+      "rete": "https://data.graphplaza.com/ramon_llull/ramon_llull-2026-07-01.rete",
+      "kind": "remote-lazy",
+      "icon": "🗝️",
+      "tags": [
+        "Ramón-Llull",
+        "manuscripts",
+        "rare-books",
+        "medieval",
+        "Mallorca",
+        "Latin-Catalan",
+        "BVPB",
+        "OCR",
+        "full-text",
+        "IIIF"
+      ],
+      "blurb": "The complete Ramón Llull collection of the Biblioteca Virtual del Patrimonio Bibliográfico (BVPB, Spanish Ministry of Culture): 142 digitised works by the Mallorcan polymath Ramón Llull (Doctor Illuminatus, ca.",
+      "license": "CC BY 4.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=ramon_llull&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://bvpb.mcu.es/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/ramon_llull/ramon_llull-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "ramon_llull.duckdb",
+          "url": "https://data.graphplaza.com/ramon_llull/ramon_llull.duckdb",
+          "size": "0.80 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "ramon_llull.sqlite",
+          "url": "https://data.graphplaza.com/ramon_llull/ramon_llull.sqlite",
+          "size": "0.20 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 25286852
+    },
+    {
+      "key": "peirce",
+      "title": "peirce",
+      "rete": "https://data.graphplaza.com/peirce/peirce-2026-07-03.rete",
+      "kind": "remote-lazy",
+      "icon": "🖋️",
+      "tags": [
+        "Peirce",
+        "philosophy",
+        "logic",
+        "pragmatism",
+        "manuscripts",
+        "correspondence",
+        "Houghton-Harvard",
+        "IIIF"
+      ],
+      "blurb": "The complete finding aid of the Charles S. Peirce papers at Houghton Library, Harvard (MS Am 1632, finding aid hou02614): the working papers of the philosopher, logician, scientist and founder of pragmatism (1839-1914)…",
+      "license": "Metadata CC0 (Harvard Library open-metadata policy); finding aid © Harvard",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=peirce&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://hollisarchives.lib.harvard.edu/catalog/hou02614"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/peirce/peirce-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "peirce.duckdb",
+          "url": "https://data.graphplaza.com/peirce/peirce.duckdb",
+          "size": "2.0 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "peirce.sqlite",
+          "url": "https://data.graphplaza.com/peirce/peirce.sqlite",
+          "size": "14.2 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 592815
+    },
+    {
+      "key": "boe",
+      "title": "boe",
+      "rete": "https://data.graphplaza.com/boe/boe-2026-07-07.rete",
+      "kind": "remote-lazy",
+      "icon": "⚖️",
+      "tags": [
+        "Spain",
+        "law",
+        "legislation",
+        "ELI",
+        "BOE",
+        "consolidated",
+        "citation-network",
+        "derogation",
+        "OWL",
+        "reasoning",
+        "SKOS",
+        "open-data",
+        "government"
+      ],
+      "blurb": "The ENTIRE consolidated-legislation corpus of Spain's Boletín Oficial del Estado — every actively-maintained norm in force (State + the autonomous communities + the foral regimes), 12,330 in all, as a…",
+      "license": "Ley 37/2007 + BOE standard reuse licence (Res. 27-jun-2024)",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=boe&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.boe.es/datosabiertos/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/boe/boe-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "boe.duckdb",
+          "url": "https://data.graphplaza.com/boe/boe.duckdb",
+          "size": "26.0 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "boe.sqlite",
+          "url": "https://data.graphplaza.com/boe/boe.sqlite",
+          "size": "178.8 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 6376685
+    },
+    {
+      "key": "openaire-2021",
+      "title": "openaire-2021",
+      "rete": "https://data.graphplaza.com/openaire-2021/openaire-2021.rete",
+      "kind": "remote-lazy",
+      "icon": "🇪🇺",
+      "tags": [
+        "OpenAIRE",
+        "open science",
+        "scholar",
+        "publications",
+        "funding",
+        "projects",
+        "DOI",
+        "ORCID",
+        "full-text",
+        "2021",
+        "CC-BY"
+      ],
+      "blurb": "The OpenAIRE Research Graph as one range-queryable .rete file — 8,353,117,004 triples in 113.1 GB: 148,062,669 research outputs (124,852,030 publications, 14,228,362 research datasets, 8,760,460 other research products…",
+      "license": "CC-BY-4.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=openaire-2021&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://graph.openaire.eu"
+        }
+      ],
+      "size": 113059009353,
+      "formatVersion": 6
+    },
+    {
+      "key": "cordis",
+      "title": "cordis",
+      "rete": "https://data.graphplaza.com/cordis/cordis.rete",
+      "kind": "remote-lazy",
+      "icon": "🇪🇺",
+      "tags": [
+        "EU",
+        "research",
+        "funding",
+        "projects",
+        "EURIO",
+        "Horizon",
+        "named-graphs",
+        "open-data",
+        "scholar"
+      ],
+      "blurb": "Every research project the European Union has funded, as one range-queryable .rete: the CORDIS EURIO knowledge graph — 26,363,545 quads across 6 NAMED GRAPHS covering projects, their grants, participants, funding…",
+      "license": "CC BY 4.0 — © European Union, 1995-2026. Reuse authorised.",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=cordis&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://cordis.europa.eu/about/archive"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 791123584
+    },
+    {
+      "key": "wikiart",
+      "title": "wikiart",
+      "rete": "https://data.graphplaza.com/wikiart.rete",
+      "kind": "remote-lazy",
+      "icon": "🎨",
+      "tags": [
+        "art",
+        "painting",
+        "images",
+        "embedded-media",
+        "base64",
+        "WebP",
+        "museum",
+        "culture",
+        "WikiArt"
+      ],
+      "blurb": "The WikiArt corpus as one range-queryable .rete with the paintings themselves inside it: 223,094 artworks by 5,755 artists, and 223,082 of them carry their own image as an inline WebP (xsd:base64Binary on wa:imageData…",
+      "license": "WikiArt terms; individual works carry their own rights. Metadata assembled for research use.",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=wikiart&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.wikiart.org/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 25409575263
+    },
+    {
+      "key": "switzerland-fedlex",
+      "title": "switzerland-fedlex",
+      "rete": "https://data.graphplaza.com/switzerland-fedlex.rete",
+      "kind": "remote-lazy",
+      "icon": "🇨🇭",
+      "tags": [
+        "Switzerland",
+        "law",
+        "legislation",
+        "JOLux",
+        "ELI",
+        "Fedlex",
+        "named-graphs",
+        "multilingual",
+        "citation-network",
+        "SKOS",
+        "JURIVOC",
+        "government",
+        "open-data"
+      ],
+      "blurb": "The metadata layer of Swiss federal law as one range-queryable .rete: 56,321,446 quads spread over 497,905 NAMED GRAPHS — one per act, consolidated version and language — harvested from Fedlex, the official publication…",
+      "license": "Fedlex terms — Swiss federal legislation is free to use and reproduce",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=switzerland-fedlex&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://fedlex.data.admin.ch/sparqlendpoint"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 1043524612
+    },
+    {
+      "key": "scrolls",
+      "title": "scrolls",
+      "rete": "https://data.graphplaza.com/scrolls/scrolls-2026-07-05.rete",
+      "kind": "remote-lazy",
+      "icon": "📜",
+      "tags": [
+        "Vesuvius-Challenge",
+        "Herculaneum",
+        "papyri",
+        "X-ray-CT",
+        "virtual-unwrapping",
+        "ink-detection",
+        "machine-learning",
+        "provenance",
+        "OME-Zarr",
+        "downloads"
+      ],
+      "blurb": "The open-data registry that powers the scrollprize.org Data Browser, turned into a provenance graph: the carbonised Herculaneum papyri buried by Vesuvius in AD 79 and now read by X-ray CT + machine learning (the…",
+      "license": "CC BY-NC 4.0 (some EduceLab volumes: EduceLab Data License)",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=scrolls&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://scrollprize.org/data_browser"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/scrolls/scrolls-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "scrolls.duckdb",
+          "url": "https://data.graphplaza.com/scrolls/scrolls.duckdb",
+          "size": "1.76 MB",
+          "verified": true
+        },
+        {
+          "kind": "sqlite",
+          "label": "scrolls.sqlite",
+          "url": "https://data.graphplaza.com/scrolls/scrolls.sqlite",
+          "size": "10.95 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 237915
+    },
+    {
+      "key": "bcul",
+      "title": "bcul — BCU Lausanne: a digital twin of the whole library, incl. where every book is held",
+      "rete": "https://data.graphplaza.com/bcul/bcul.rete",
+      "kind": "remote-lazy",
+      "icon": "🏛️",
+      "tags": [
+        "library",
+        "catalogue",
+        "MARC",
+        "holdings",
+        "IIIF",
+        "manuscripts",
+        "Switzerland",
+        "Lausanne",
+        "schema.org"
+      ],
+      "blurb": "A range-queryable graph twin of the Bibliothèque cantonale et universitaire de Lausanne, aggregating four of its public interfaces into one 117.5M-triple graph.",
+      "license": "Metadata; rights vary per source",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=bcul&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.bcu-lausanne.ch/"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/bcul/bcul-tables/",
+          "note": "directory of .parquet tables"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 1984739965
+    },
+    {
+      "key": "vidy",
+      "title": "vidy — Archives de la Ville de Lausanne (the city archive, on AtoM)",
+      "rete": "https://data.graphplaza.com/vidy/vidy-2026-07-14.rete",
+      "kind": "remote-lazy",
+      "icon": "🏛️",
+      "tags": [
+        "archives",
+        "Lausanne",
+        "Switzerland",
+        "AtoM",
+        "EAD",
+        "ISAD(G)",
+        "PDF",
+        "schema.org",
+        "open data",
+        "city archive"
+      ],
+      "blurb": "The Lausanne city archive (Archives de la Ville de Lausanne), running the open-source AtoM platform, harvested via EAD export into a schema.org archival graph: 39,723 archival descriptions across 6 collections…",
+      "license": "Descriptions open (Archives de la Ville de Lausanne, archives@lausanne.ch); digitised PDFs © Ville de Lausanne",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=vidy&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://vidy-archives.lausanne.ch"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 4224592
+    },
+    {
+      "key": "bcn",
+      "title": "bcn — Arxiu Municipal de Barcelona (the whole city archive)",
+      "rete": "https://data.graphplaza.com/bcn/bcn.rete",
+      "kind": "remote-lazy",
+      "icon": "🏙️",
+      "tags": [
+        "archives",
+        "Barcelona",
+        "Catalonia",
+        "photographs",
+        "city archive",
+        "schema.org",
+        "ISAD(G)",
+        "open data",
+        "public domain"
+      ],
+      "blurb": "The complete Arxiu Municipal de Barcelona — the Barcelona city archive — harvested from its open JSON catalogue API into a schema.org archival graph: 529,614 archival descriptions across 12 archives (the Arxiu…",
+      "license": "Descriptions largely public domain (De domini públic / Lliure accés, Ajuntament de Barcelona); digital objects © respective archives",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=bcn&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://catalegarxiumunicipal.bcn.cat"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 134613753
+    },
+    {
+      "key": "ecal",
+      "title": "ecal — ECAL: the art & design school library, as a graph",
+      "rete": "https://data.graphplaza.com/ecal/ecal-2026-07-11.rete",
+      "kind": "remote-lazy",
+      "icon": "🎨",
+      "tags": [
+        "art",
+        "design",
+        "photography",
+        "cinema",
+        "ECAL",
+        "Lausanne",
+        "covers",
+        "schema.org"
+      ],
+      "blurb": "A range-queryable graph twin of the ECAL Library — the library of the École cantonale d'art de Lausanne, one of the world's leading art & design schools.",
+      "license": "Metadata; ECAL catalogue data",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=ecal&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://library.ecal.ch/"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 14678321
+    },
+    {
+      "key": "gbif-birds",
+      "title": "gbif-birds",
+      "rete": "https://data.graphplaza.com/gbif-birds/gbif-birds.rete",
+      "kind": "remote-lazy",
+      "icon": "🐦",
+      "tags": [
+        "GBIF",
+        "birds",
+        "Aves",
+        "biodiversity",
+        "occurrences",
+        "taxonomy",
+        "semantic-zoom",
+        "GeoSPARQL",
+        "Spain",
+        "Switzerland",
+        "citizen-science",
+        "RDF-star",
+        "multilingual",
+        "IUCN",
+        "conservation",
+        "provenance"
+      ],
+      "blurb": "Fifty MILLION georeferenced bird (Aves) occurrences — Spain 47.9M, Switzerland 2.26M, 1,104 species — from the GBIF Open Data snapshot (2026-07-01), as one 334M-triple range-queryable file (1.53 GB, remote-lazy over…",
+      "license": "CC BY-NC 4.0 (GBIF)",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=gbif-birds&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.gbif.org"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 1532501192
+    },
+    {
+      "key": "worldcup",
+      "title": "worldcup — FIFA World Cup 2022: stats, player careers & multi-source predictions",
+      "rete": "https://data.graphplaza.com/worldcup/worldcup-2026-07-12.rete",
+      "kind": "remote-lazy",
+      "icon": "⚽",
+      "tags": [
+        "football",
+        "soccer",
+        "World Cup",
+        "Qatar 2022",
+        "predictions",
+        "FiveThirtyEight",
+        "provenance",
+        "GeoSPARQL",
+        "schema.org"
+      ],
+      "blurb": "The 2022 FIFA World Cup as one queryable knowledge graph, weaving together three things you rarely see in the same place.",
+      "license": "Open data (OpenFootball PD, 538 CC-BY, Wikidata CC0)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=worldcup&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/openfootball/worldcup"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 199231
+    },
+    {
+      "key": "worldcup2026",
+      "title": "worldcup2026 — FIFA World Cup 2026: a LIVE snapshot, cross-checked vs live sources (results + player careers)",
+      "rete": "https://data.graphplaza.com/worldcup2026/worldcup2026-2026-07-12.rete",
+      "kind": "remote-lazy",
+      "icon": "🔴",
+      "tags": [
+        "football",
+        "soccer",
+        "World Cup 2026",
+        "live",
+        "USA",
+        "Canada",
+        "Mexico",
+        "48 teams",
+        "OpenFootball",
+        "GeoSPARQL"
+      ],
+      "blurb": "The 2026 FIFA World Cup (Canada · USA · Mexico; 48 teams, 12 groups, Round of 32) as a LIVE, IN-PROGRESS knowledge graph. ⚠ Snapshot: the group stage, Round of 32, Round of 16 and quarter-finals are played (100 matches)…",
+      "license": "Open data (OpenFootball PD, Wikidata CC0) — LIVE, unverified",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=worldcup2026&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/openfootball/worldcup"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 252098
+    },
+    {
+      "key": "tracking",
+      "title": "tracking — a full match as a spatiotemporal graph (player + ball 2D positions over time)",
+      "rete": "https://data.graphplaza.com/tracking/tracking-2026-07-13.rete",
+      "kind": "remote-lazy",
+      "icon": "🎥",
+      "tags": [
+        "football",
+        "tracking",
+        "spatiotemporal",
+        "movement",
+        "Metrica",
+        "x/y",
+        "replay"
+      ],
+      "blurb": "A full football match as a SPATIOTEMPORAL graph: the 2D position of every player and the ball, ~5 frames/second across ~94 minutes, on a 105x68 m pitch — 2.55M triples, ~637k position rows.",
+      "license": "Metrica Sports open sample data",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=tracking&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://github.com/metrica-sports/sample-data"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 16108247
+    },
+    {
+      "key": "dance",
+      "title": "dance — salsa duets as a motion knowledge graph: partner-relative steps + hand contact (CoMPAS3D)",
+      "rete": "https://data.graphplaza.com/dance/dance-2026-07-18.rete",
+      "kind": "remote-lazy",
+      "icon": "💃",
+      "tags": [
+        "dance",
+        "salsa",
+        "motion capture",
+        "SMPL-X",
+        "movement",
+        "OWL 2 QL",
+        "reasoning",
+        "robotics",
+        "CC-BY-NC"
+      ],
+      "blurb": "Partnered social DANCE as a motion knowledge graph — the 'movement over time' idea with limbs, roles and a partner.",
+      "license": "CC-BY-NC-4.0 (audio excluded)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=dance&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://huggingface.co/datasets/Rosie-Lab/compas3d"
+        }
+      ],
+      "companions": [
+        {
+          "kind": "parquet",
+          "label": "per-table Parquet",
+          "url": "https://data.graphplaza.com/dance/dance-tables/",
+          "note": "directory of .parquet tables"
+        },
+        {
+          "kind": "duckdb",
+          "label": "dance.duckdb",
+          "url": "https://data.graphplaza.com/dance/dance.duckdb",
+          "size": "11 MB",
+          "verified": true
+        }
+      ],
+      "formatVersion": 8,
+      "size": 367527
+    },
+    {
+      "key": "subtitles",
+      "title": "subtitles — one film, 20 languages, over time (Tears of Steel · CC-BY)",
+      "rete": "https://data.graphplaza.com/subtitles/tears_of_steel-2026-07-13.rete",
+      "kind": "remote-lazy",
+      "icon": "💬",
+      "tags": [
+        "subtitles",
+        "multilingual",
+        "20 languages",
+        "temporal",
+        "translation",
+        "film",
+        "Tears of Steel",
+        "CC-BY",
+        "RTL",
+        "CJK"
+      ],
+      "blurb": "Tears of Steel — the Blender Foundation's open sci-fi short — subtitled in TWENTY languages, as one temporal + multilingual knowledge graph (14,376 triples). It's the 'over time' idea applied to language.",
+      "license": "CC BY 3.0 (Blender Foundation)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=subtitles&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://media.xiph.org/mango/subtitles/"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 176578
+    },
+    {
+      "key": "mtg",
+      "title": "mtg — Magic: The Gathering: the whole card pool as a graph (34,633 cards, with images)",
+      "rete": "https://data.graphplaza.com/mtg/mtg-v5.3.0-20260712.rete",
+      "kind": "remote-lazy",
+      "icon": "🃏",
+      "tags": [
+        "Magic: The Gathering",
+        "MTG",
+        "cards",
+        "games",
+        "MTGJSON",
+        "Scryfall",
+        "OWL types",
+        "text search",
+        "card images",
+        "34k cards"
+      ],
+      "blurb": "The entire Magic: The Gathering card pool as a queryable knowledge graph — 34,633 unique cards (Oracle-level concepts, from MTGJSON's AtomicCards, MIT-licensed) richly interlinked with their colors, card types…",
+      "license": "Card data MIT (MTGJSON); images © WotC via Scryfall; ontology GPL-3.0 (cmdoret)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=mtg&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://mtgjson.com/"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 16287048
+    },
+    {
+      "key": "mtg-game",
+      "title": "mtg-game — a live Magic game state as OWL + SPARQL (no engine)",
+      "rete": "https://data.graphplaza.com/mtg-game/mtg_game-2026-07-13.rete",
+      "kind": "remote-lazy",
+      "icon": "🎴",
+      "tags": [
+        "Magic: The Gathering",
+        "game state",
+        "OWL",
+        "runtime ontology",
+        "abilities",
+        "stack",
+        "SPARQL",
+        "no engine",
+        "cmdoret"
+      ],
+      "blurb": "The DECLARATIVE half of the semantic-MTG-engine plan, in miniature: a runtime OWL ontology (GameState, Player, Zone, ZoneMembership, CardInstance, SpellInstance, the Stack), a handful of cards modelled with their real…",
+      "license": "CC BY 4.0; builds on cmdoret/mtg_ontology (GPL-3.0)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=mtg-game&mode=sparql"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 42103
+    },
+    {
+      "key": "arxiu",
+      "title": "arxiu — Arxius en Línia: complete Catalan archives, with scanned documents",
+      "rete": "https://data.graphplaza.com/arxiu/arxiu-2026-07-14.rete",
+      "kind": "remote-lazy",
+      "icon": "🗃️",
+      "tags": [
+        "archives",
+        "Arxiu Nacional",
+        "Catalonia",
+        "Generalitat",
+        "manuscripts",
+        "scanned documents",
+        "WebP",
+        "schema.org",
+        "open data",
+        "complete archive"
+      ],
+      "blurb": "Complete Catalan archives from the Generalitat de Catalunya's online archives (Arxius en Línia), harvested one whole archive at a time and merged into a single graph.",
+      "license": "Descriptions: Llicència oberta / CC0 (Llei 37/2007); images © holding archives",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=arxiu&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://arxiusenlinia.cultura.gencat.cat/"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 75048860
+    },
+    {
+      "key": "zenodo-records",
+      "title": "zenodo-records — every Zenodo record (7.76M) as a DataCite scholarly graph",
+      "rete": "https://data.graphplaza.com/zenodo-records/zenodo-records.rete",
+      "kind": "remote-lazy",
+      "icon": "🔬",
+      "tags": [
+        "Zenodo",
+        "DataCite",
+        "DOI",
+        "ORCID",
+        "scholarly",
+        "research-data",
+        "open-access",
+        "citations",
+        "versions",
+        "federation",
+        "CERN",
+        "CC-BY"
+      ],
+      "blurb": "Every published record on Zenodo — CERN's open research repository — as one 215M-triple range-queryable graph (2.09 GB, remote-lazy over HTTP range on Cloudflare R2).",
+      "license": "CC-BY-4.0 (Zenodo metadata export)",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=zenodo-records&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://zenodo.org/api/exporter"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 2094612808
+    },
+    {
+      "key": "biosyslit",
+      "title": "biosyslit — Zenodo Biodiversity Literature Repository: taxonomic treatments with Darwin Core taxonomy + IIIF",
+      "rete": "https://data.graphplaza.com/biosyslit/biosyslit.rete",
+      "kind": "remote-lazy",
+      "icon": "🦋",
+      "tags": [
+        "Zenodo",
+        "biodiversity",
+        "taxonomy",
+        "Darwin-Core",
+        "treatments",
+        "Plazi",
+        "BLR",
+        "IIIF",
+        "DOI",
+        "scholarly",
+        "federation",
+        "CC-BY"
+      ],
+      "blurb": "The Biodiversity Literature Repository (BLR) community on Zenodo — curated by Plazi / Pensoft — as one 106M-triple range-queryable graph (1.65 GB, remote-lazy over HTTP range).",
+      "license": "CC-BY-4.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=biosyslit&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://zenodo.org/communities/biosyslit"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 1648408878
+    },
+    {
+      "key": "gotriple",
+      "title": "gotriple — GoTriple: 2.7M Social-Sciences & Humanities publications, DOI-federated",
+      "rete": "https://data.graphplaza.com/gotriple/gotriple.rete",
+      "kind": "remote-lazy",
+      "icon": "📚",
+      "tags": [
+        "SSH",
+        "social-sciences",
+        "humanities",
+        "GoTriple",
+        "OPERAS",
+        "DOI",
+        "scholarly",
+        "open-access",
+        "disciplines",
+        "SSH-LCSH",
+        "subjects",
+        "multilingual",
+        "federation",
+        "CC0"
+      ],
+      "blurb": "The GoTriple metadata corpus — the EU-funded discovery platform for the Social Sciences & Humanities (gotriple.eu / TRIPLE / OPERAS) — as one 57.7M-triple range-queryable graph (832 MB, remote-lazy over HTTP range on…",
+      "license": "CC0-1.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=gotriple&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://zenodo.org/records/18185971"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 832172325
+    },
+    {
+      "key": "orcid",
+      "title": "orcid — every public ORCID profile: 25M researchers, 150M works, ONE 1.3-billion-triple file",
+      "rete": "https://data.graphplaza.com/orcid/orcid.rete",
+      "kind": "remote-lazy",
+      "icon": "🧑‍🔬",
+      "tags": [
+        "ORCID",
+        "researchers",
+        "works",
+        "affiliations",
+        "DOI",
+        "ROR",
+        "scholarly",
+        "career",
+        "billion-triples",
+        "external-build",
+        "federation",
+        "CC0"
+      ],
+      "blurb": "The ORCID Public Data File 2025 (CC0) as ONE range-queryable graph — 1,296,338,454 triples / 397M terms / 17.5 GB, the largest single .rete published, and the first built with the memory-bounded external build (rete…",
+      "license": "CC0-1.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=orcid&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://orcid.org"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 17533421230
+    },
+    {
+      "key": "gharchive",
+      "title": "gharchive — a full month of GitHub: every public event of July 2025, 1.64 BILLION triples with RDF-star provenance",
+      "rete": "https://data.graphplaza.com/gharchive/gharchive-2025-07.rete",
+      "kind": "remote-lazy",
+      "icon": "🐙",
+      "tags": [
+        "GitHub",
+        "events",
+        "PROV",
+        "RDF-star",
+        "provenance",
+        "time-series",
+        "stars",
+        "commits",
+        "billion-triples",
+        "external-build",
+        "federation",
+        "open-pulse"
+      ],
+      "blurb": "One full UTC month of the public GitHub event stream (GH Archive, July 2025) as ONE range-queryable graph — 1,644,492,596 triples / 334.5M terms / 17.1 GB, the LARGEST single .rete published (it passes orcid's 1.30B).…",
+      "license": "Public GitHub timeline (gharchive.org); content © its authors",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=gharchive&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.gharchive.org/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 17100087870
+    },
+    {
+      "key": "gharchive-2026-06",
+      "title": "gharchive-2026-06 — GitHub's public timeline AFTER the cut: June 2026, 730M triples",
+      "rete": "https://data.graphplaza.com/gharchive/gharchive-2026-06.rete",
+      "kind": "remote-lazy",
+      "icon": "📉",
+      "tags": [
+        "GitHub",
+        "events",
+        "PROV",
+        "RDF-star",
+        "post-cut",
+        "pushes",
+        "branches",
+        "time-series",
+        "external-build",
+        "federation",
+        "gharchive-pair"
+      ],
+      "blurb": "The most recent complete month of the public GitHub event stream (June 2026, 729,745,084 triples / 163.5M terms / 6.49 GB) — and the measured AFTER of the sibling gharchive dataset's before.",
+      "license": "Public GitHub timeline (gharchive.org); content © its authors",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=gharchive-2026-06&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.gharchive.org/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 6486757065
+    },
+    {
+      "key": "ror",
+      "title": "ror — the Research Organization Registry: 111k organizations, the org authority of the scholarly web",
+      "rete": "https://data.graphplaza.com/ror/ror-v1.54.rete",
+      "kind": "remote-lazy",
+      "icon": "🏛️",
+      "tags": [
+        "ROR",
+        "organizations",
+        "institutions",
+        "authority",
+        "crosswalk",
+        "GRID",
+        "ISNI",
+        "Wikidata",
+        "FundRef",
+        "hierarchy",
+        "scholarly",
+        "federation",
+        "CC0"
+      ],
+      "blurb": "ROR v1.54 (CC0) — all 111,068 registered research organizations as one 1.87M-triple graph (30 MB, remote-lazy).",
+      "license": "CC0-1.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=ror&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://ror.org"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 30719845
+    },
+    {
+      "key": "dblp",
+      "title": "dblp — the DBLP computer-science bibliography, with the author co-authorship graph",
+      "rete": "https://data.graphplaza.com/dblp/dblp.rete",
+      "kind": "remote-lazy",
+      "icon": "💻",
+      "tags": [
+        "DBLP",
+        "computer-science",
+        "bibliography",
+        "co-authorship",
+        "authors",
+        "DOI",
+        "ORCID",
+        "scholarly",
+        "publications",
+        "conferences",
+        "federation",
+        "CC0"
+      ],
+      "blurb": "The complete DBLP computer-science bibliography (dblp.org, CC0) as one 196.8M-triple range-queryable graph (2.27 GB, remote-lazy over HTTP range on Cloudflare R2).",
+      "license": "CC0-1.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=dblp&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://dblp.org"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 2265161556
+    },
+    {
+      "key": "aifdb-open",
+      "title": "aifdb-open — QT30: argument & conflict in BBC Question Time, as a graph",
+      "rete": "https://data.graphplaza.com/aifdb-open/aifdb-open-2026-07-20.rete",
+      "kind": "remote-lazy",
+      "icon": "🗣️",
+      "tags": [
+        "argumentation",
+        "AIF",
+        "Argument Web",
+        "debate",
+        "BBC Question Time",
+        "QT30",
+        "conflict",
+        "rhetoric",
+        "politics",
+        "OWL 2 QL",
+        "text-index",
+        "CC0"
+      ],
+      "blurb": "QT30 — the largest corpus of analysed broadcast political debate — as a queryable argument graph in the Argument Interchange Format.",
+      "license": "CC0-1.0 (QT30 annotation metadata; underlying material is public BBC broadcast)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=aifdb-open&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://corpora.aifdb.org/qt30"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 14145534
+    },
+    {
+      "key": "plantatlas",
+      "title": "plantatlas — Digital Plant Atlas: archaeobotany seed/fruit & geolocated field photos, each with its picture",
+      "rete": "https://data.graphplaza.com/plantatlas/plantatlas-2026-07-23.rete",
+      "kind": "remote-lazy",
+      "icon": "🌱",
+      "tags": [
+        "archaeobotany",
+        "plants",
+        "seeds",
+        "fruits",
+        "botany",
+        "taxonomy",
+        "Darwin-Core",
+        "GeoSPARQL",
+        "images",
+        "WebP",
+        "specimens",
+        "reference-collection",
+        "GIA",
+        "DAI",
+        "CC-BY-NC-SA"
+      ],
+      "blurb": "The Digital Plant Atlas (plantatlas.eu, GIA-Groningen + DAI Berlin, CC BY-NC-SA 3.0 NL) — an archaeobotany reference collection of high-quality photos of plant seeds, fruits and vegetative parts with verified scientific…",
+      "license": "CC BY-NC-SA 3.0 NL (© Digital Plant Atlas — RUG & DAI; commercial use → info@plantatlas.eu)",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=plantatlas&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.plantatlas.eu/"
+        }
+      ],
+      "formatVersion": 8,
+      "size": 10192878
+    },
+    {
+      "key": "datacite",
+      "title": "datacite — the whole DataCite corpus + the PID Graph: 10.18B triples, 109.3M records, 613M provenance-bearing events",
+      "rete": "https://data.graphplaza.com/datacite/datacite.rete",
+      "kind": "remote-lazy",
+      "icon": "🔑",
+      "tags": [
+        "DataCite",
+        "DOI",
+        "PID graph",
+        "datasets",
+        "software",
+        "provenance",
+        "billion-triples",
+        "full-text",
+        "CC0",
+        "scholarly"
+      ],
+      "blurb": "The complete DataCite Public Data Files (2023, 2024, 2025; CC0) and both PID Links files as ONE range-queryable graph — 10,184,067,429 unique triples in 67.6 GB over a 1.959-billion-term dictionary.",
+      "license": "CC0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=datacite&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://datacite.org"
+        }
+      ],
+      "size": 67592002016,
+      "formatVersion": 5
+    },
+    {
+      "key": "epfl-graph",
+      "title": "epfl-graph — the EPFL GraphOntology: 6.2M Wikipedia concepts linked by embedding similarity",
+      "rete": "https://data.graphplaza.com/epfl-graph/epfl-graph.rete",
+      "kind": "remote-lazy",
+      "icon": "🧠",
+      "tags": [
+        "EPFL",
+        "Wikipedia",
+        "concepts",
+        "SKOS",
+        "embeddings",
+        "RDF-star",
+        "similarity",
+        "OpenAlex",
+        "Apache-2.0"
+      ],
+      "blurb": "EPFL’s GraphOntology (Apache-2.0) as one range-queryable graph — 427 million triples (6.8 GB): a Wikipedia-derived concept network modelled on SKOS.",
+      "license": "Apache-2.0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=epfl-graph&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.epfl.ch/about/data/epfl-graph/"
+        }
+      ],
+      "formatVersion": 5,
+      "size": 6843941172
+    },
+    {
+      "key": "crossref",
+      "title": "crossref — the Crossref Public Data File (March 2026): 179.5M works with their authors, funding, licences and relations",
+      "rete": "https://data.graphplaza.com/crossref/crossref.rete",
+      "kind": "remote-lazy",
+      "icon": "📑",
+      "tags": [
+        "Crossref",
+        "DOI",
+        "ORCID",
+        "ROR",
+        "funders",
+        "scholarly",
+        "works",
+        "publications",
+        "retractions",
+        "federation",
+        "CC0"
+      ],
+      "blurb": "The Crossref Public Data File (March 2026) as one range-queryable graph: 179,536,192 DOI-registered works in 8,271,040,725 statements (66.4 GB), rebuilt in October 2026 from the original dump with a converter that…",
+      "license": "CC0",
+      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=crossref&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.crossref.org/learning/public-data-file/"
+        }
+      ],
+      "size": 66405569188,
+      "formatVersion": 5
+    },
+    {
+      "key": "crossref-citations",
+      "title": "crossref-citations — the Crossref citation graph: 1.97B cx:cites edges between DOIs",
+      "rete": "https://data.graphplaza.com/crossref/crossref-citations.rete",
+      "kind": "remote-lazy",
+      "icon": "🔗",
+      "tags": [
+        "Crossref",
+        "citations",
+        "citation-graph",
+        "DOI",
+        "RDF 1.2",
+        "reification",
+        "scholarly",
+        "federation",
+        "CC0"
+      ],
+      "blurb": "The citation edges of the Crossref Public Data File (March 2026): 1,981,904,784 statements (34.3 GB).",
+      "license": "CC0",
+      "links": [
+        {
+          "label": "Open in playground",
+          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=crossref-citations&mode=sparql"
+        },
+        {
+          "label": "Source",
+          "url": "https://www.crossref.org/learning/public-data-file/"
+        }
+      ],
+      "size": 34343675161,
+      "formatVersion": 5
     }
   ]
 }
