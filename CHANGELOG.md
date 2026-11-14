@@ -5,6 +5,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The ISWC demo's agent extension is the 0.7.4 `rete.mcpb`.** The old
+  three-dataset build (engine 0.3.0) could not read format `0x08` and still
+  named open-pulse's old address. The agent page now describes the extension
+  it serves, and its table gives the published files' counts and sizes.
+
 ## [0.7.4] - 2026-11-14
 
 0.7.4 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
