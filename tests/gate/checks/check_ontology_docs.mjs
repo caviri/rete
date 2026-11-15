@@ -2,7 +2,7 @@
 // an embedded OWL ontology renders a documentation of its classes and
 // object/datatype properties WITH their definitions — and it works over the
 // remote async reader, independent of the schema pyramid. c4dt has a rich hand-
-// written TBox; dblp ships --no-pyramid but still carries dblp.ttl, so its
+// written TBox; dblp carries dblp.ttl, so its
 // ontology must document even though the schema diagram is empty.
 // Usage: node check_ontology_docs.mjs
 import { launchBrowser } from "./_browser.mjs";
@@ -38,14 +38,14 @@ const main = async () => {
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 160)));
 
   const c4dt = await readDocs(page, "c4dt");     // rich TBox with definitions (+ pyramid)
-  const dblp = await readDocs(page, "dblp");     // --no-pyramid, but carries dblp.ttl
+  const dblp = await readDocs(page, "dblp");     // carries dblp.ttl
   const worldcup = await readDocs(page, "worldcup"); // NO formal ontology — effective schema from data
 
   // class-centric explorer: classes, per-class properties, class-to-class range
   // links (connections), definitions, and the Turtle toggle
   const c4dtOk = c4dt.terms >= 10 && c4dt.props >= 10 && c4dt.defs >= 5 &&
     c4dt.links >= 1 && c4dt.ttlBtn >= 1;
-  const dblpOk = dblp.terms >= 5 && dblp.props >= 5;   // ontology docs despite no pyramid
+  const dblpOk = dblp.terms >= 5 && dblp.props >= 5;   // ontology docs from dblp.ttl
   // "available for ALL datasets": a dataset with no formal OWL ontology still
   // gets a reference derived from its rdf:type classes + predicate usage
   const worldcupOk = worldcup.terms >= 5 && worldcup.props >= 5;

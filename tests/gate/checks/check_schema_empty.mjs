@@ -1,5 +1,5 @@
 // Regression for the "stale scholar schema" bug: opening a dataset that has NO
-// schema pyramid (dblp ships --no-pyramid) must show an honest "no ontology
+// schema pyramid (opencitations-index ships without one) must show an honest "no ontology
 // schema" message AND must NOT leave the previously-viewed dataset's classes,
 // relations or ontology diagram in the schema panels.
 // Usage: node check_schema_empty.mjs
@@ -12,12 +12,13 @@ const main = async () => {
   page.on("pageerror", (e) => errs.push(String(e).slice(0, 200)));
   const PORT = process.env.PGPORT || "8090";
 
-  // dblp ships --no-pyramid (repyramid OOMs at 197M triples). Opening its Schema
+  // opencitations-index (15.8 billion triples) ships without a pyramid. dblp was
+  // the example until its 2026-07-01 file, which carries one. Opening the Schema
   // tab must show the honest "no ontology schema" message, with every schema
   // panel — summary, classes, relations, ontology diagram — empty. Before the
   // fix, the no-pyramid path only rewrote schemaOut, leaving the previously
   // rendered dataset's classes and ontology diagram sitting in the panels.
-  await page.goto(`http://localhost:${PORT}/playground.html#dataset=dblp&load=lazy&mode=schema`,
+  await page.goto(`http://localhost:${PORT}/playground.html#dataset=opencitations-index&load=lazy&mode=schema`,
     { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.PlaygroundEditor && document.getElementById("schemaOut"),
     { timeout: 60000 });
