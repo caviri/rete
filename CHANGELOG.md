@@ -5,6 +5,11 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The ISWC demo's agent extension is the 0.7.5 `rete.mcpb`.** The 0.7.4
+  bundle still named the old addresses of the 36 catalog files moved in 0.7.5.
+
 ## [0.7.5] - 2026-11-15
 
 0.7.5 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
