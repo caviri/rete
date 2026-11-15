@@ -102,6 +102,16 @@ the server (`graph_view_edit`, app-only), so `graph_view_state` reports them,
 and `graph_view_update` can aggregate a type and ungroup too. The ◐ button
 switches the view between Claude's theme, light and dark (`options.theme`).
 
+What a view holds and how query results become its nodes and edges is
+`src/view-model.mjs`, plain JavaScript shared with the
+[rete file explorer](../../experiments/rete-file-explorer), which hosts the
+same page itself and answers its tool calls from the file it has open.
+`build-explorer.mjs` writes the explorer's copy (the page, and the model with the
+MCP Apps host bridge); regenerate it after changing `src/view/` or the model, as
+CI checks (`node build-explorer.mjs --check`). Samples and expansions are
+`SELECT … LIMIT` queries: the engine does not apply `LIMIT` to a `CONSTRUCT`, so
+expanding a hub that way read every link it has.
+
 ### Version, credits and links
 
 `build.mjs` stamps every build with its version (from the workspace

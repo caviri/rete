@@ -1,14 +1,21 @@
-// app.js — the archive window: catalog, view tabs, lazy tree, preview, extract.
+// app.js — the explorer's window: the home (your files, your catalogs), and an
+// open archive's view tabs, lazy tree, preview, graph and extract.
 //
 // All graph knowledge lives in rete-fs.js; all engine access goes through
-// fs-worker.js. This file is only chrome: it draws a tree, opens files into a
-// preview pane, and keeps the traffic meter honest.
+// fs-worker.js (or the desktop app's commands). The graph view is the rete
+// extension's own page, hosted by graph-host.js. This file is the chrome: it
+// draws, opens files into panes, and keeps the traffic meter honest.
 
 import {
   VIEWS, VIEW_BY_ID, makeContext, openFile, extract, candidateLabelPredicates,
-  readSelfDescription, parseHeader, humanBytes, humanCount, localName, parseTerm,
-  seedQuery, runSparql, resultToFile, searchGraph,
+  readSelfDescription, parseHeader, cardFromBytes, rangeFetch, humanBytes, humanCount, localName,
+  formatLabel, seedQuery, runSparql, resultToFile, searchGraph,
 } from "./rete-fs.js";
+import {
+  recentFiles, rememberFile, forgetFile, subscriptions, subscribe, unsubscribe, refresh,
+  cardSummary, cachedCard, cacheCard, pictureInfo, hostOf, webUrl,
+} from "./library.js";
+import { proceduralSVG } from "./procgen.js";
 import { isTauri, makeTauriWorkerShim, pickReteFile } from "./tauri-bridge.js";
 import { initTicker } from "./ticker.js";
 
@@ -20,34 +27,6 @@ const el = (tag, cls, text) => {
   return n;
 };
 
-// ------------------------------------------------------------------ catalog
-
-// A spread of real archives on R2, chosen to make the metaphor sweat: a tiny one
-// that opens instantly, mid-size ones with rich class structure, and a few far
-// too large to download — the whole point of browsing in place.
-//
-// Every entry here carries a baked schema pyramid (a nonzero schemaMetaLen in
-// its header), because that is what the Types and Predicates views read. Files
-// built with `--no-pyramid` — gharchive, orcid, dblp, the wikidata-xxl shards —
-// still open and still browse under Namespace and Sections, but their class
-// list cannot be had without scanning, so they are not what to open first.
-const CATALOG = [
-  { key: "worldcup", name: "World Cup 2022", url: "https://data.graphplaza.com/worldcup/worldcup-2026-07-12.rete", size: 206195, blurb: "tiny — opens instantly" },
-  { key: "lombardi", name: "Lombardi networks", url: "https://data.graphplaza.com/lombardi/lombardi-2026-07-20.rete", size: 826686, blurb: "art + conspiracy diagrams" },
-  { key: "z-anatomy", name: "Z-Anatomy", url: "https://data.graphplaza.com/z-anatomy/z-anatomy-2026-07-18.rete", size: 6220771, blurb: "human anatomy, 3D" },
-  { key: "boe", name: "BOE (Spanish law)", url: "https://data.graphplaza.com/boe/boe-2026-07-07.rete", size: 9394230, blurb: "12,330 laws, ELI" },
-  { key: "mtg", name: "Magic: The Gathering", url: "https://data.graphplaza.com/mtg/mtg-v5.3.0-20260712.rete", size: 19529175, blurb: "34,633 cards, images, rulings" },
-  { key: "ror", name: "ROR organizations", url: "https://data.graphplaza.com/ror/ror-v1.54.rete", size: 44132712, blurb: "111,068 research orgs" },
-  { key: "bioexplora", name: "Bioexplora (MCNB)", url: "https://data.graphplaza.com/bioexplora/bioexplora-2026-06-30.rete", size: 49573498, blurb: "natural history specimens" },
-  { key: "arxiu", name: "Arxius en Línia", url: "https://data.graphplaza.com/arxiu/arxiu-2026-07-14.rete", size: 121654358, blurb: "629,875 archival units" },
-  { key: "farmacos-es", name: "Medicines (Spain)", url: "https://data.graphplaza.com/farmacos-es/farmacos-es-2026-07-18.rete", size: 291680000, blurb: "25,485 medicines" },
-  { key: "wikidata", name: "Wikidata (1 GB slice)", url: "https://data.graphplaza.com/wikidata-1GB/wikidata-2025-11-07.rete", size: 1490440000, blurb: "1.4 GB · 120M quads" },
-  { key: "gbif-birds", name: "GBIF birds", url: "https://data.graphplaza.com/gbif-birds/gbif-birds-2026-07-01.rete", size: 1532500000, blurb: "334M quads of occurrences" },
-  { key: "bne", name: "Biblioteca Nacional (BNE)", url: "https://data.graphplaza.com/bne-full/bne-full-2026-06-29.rete", size: 3653580000, blurb: "3.4 GB · 267M quads" },
-  { key: "causenet", name: "CauseNet", url: "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed.rete", size: 6386310000, blurb: "5.9 GB of claimed causality" },
-  { key: "databnf", name: "data.bnf.fr", url: "https://data.graphplaza.com/databnf-full/databnf-full.rete", size: 7685950000, blurb: "7.2 GB · 673M quads — the stress test" },
-];
-
 // -------------------------------------------------------------------- state
 
 const state = {
@@ -55,7 +34,8 @@ const state = {
   ctx: null,
   meta: null,
   view: "types",
-  layout: "tree", // "tree" = nested and expandable, "icons" = one folder as tiles
+  layout: "tree", // "tree" = nested, "icons" = one folder as tiles, "graph" = drawn
+  lastLayout: "tree", // where a view tab returns to from the graph
   path: [],       // icons mode: the folder chain from the view root
   expanded: new Set(),
   selected: null,
@@ -67,6 +47,9 @@ const state = {
   thumbActive: 0,
   results: null,   // search results currently replacing the tree, or null
   lastQuery: null, // survives switching views, so a draft is never lost
+  graph: null,     // the GraphHost of the open archive, made on first use
+  seed: null,      // what the graph last showed
+  home: { catalog: "all", filter: "", shown: 120 },
 };
 
 // ------------------------------------------------------------------- engine
@@ -127,87 +110,108 @@ const engine = {
 
 // --------------------------------------------------------------------- open
 
+const baseName = (p) => decodeURIComponent(String(p).split(/[?#]/)[0].split(/[\\/]/).pop() || String(p));
+const shortName = (name) => String(name).replace(/\.rete$/i, "");
+
 /**
  * Desktop open: one path for both local files and URLs, because the native side
  * reads them through the same `RangeReader`. It hands back the raw 1 KB header
  * so `parseHeader` — the browser's own — stays the single implementation.
  */
 async function openNative(source, name) {
-  if (state.opening) return;
+  if (state.opening) return null;
   state.opening = true;
   setStatus(`opening ${name}…`);
   resetPanes();
   try {
     bootWorker();
     const r = await send({ type: "open", source });
-    finishOpen({
-      source: name,
-      url: source,
-      size: r.size,
-      header: parseHeader(new Uint8Array(r.head)),
-      card: r.cardText ? JSON.parse(r.cardText) : null,
-      schema: r.schema,
-      schemaError: r.schemaError,
-    });
+    let header = parseHeader(new Uint8Array(r.head));
+    // A URL's section table is one more small read; a local file's stays as
+    // its header's regions (the native side hands over the first 1 KB only).
+    if (/^https?:/i.test(source) && !header.sectionsComplete) {
+      header = (await readSelfDescription(source).catch(() => null))?.header ?? header;
+    }
+    let card = null;
+    try { card = r.cardText ? JSON.parse(r.cardText) : null; } catch (_) { /* not fatal */ }
+    const meta = {
+      source: shortName(name), url: /^https?:/i.test(source) ? source : null, path: /^https?:/i.test(source) ? null : source,
+      size: r.size, header, card, schema: r.schema, schemaError: r.schemaError,
+    };
+    finishOpen(meta);
+    return { statements: header.quadCount };
   } catch (err) {
-    setStatus(`could not open: ${err.message}`, true);
+    setStatus(`could not open ${name}: ${err.message}`, true);
+    return null;
   } finally {
     state.opening = false;
   }
 }
 
 async function openRemote(entry) {
-  if (isTauri()) return openNative(entry.url, entry.name);
-  if (state.opening) return;
+  if (isTauri()) return openNative(entry.url, entry.name || baseName(entry.url));
+  if (state.opening) return null;
   state.opening = true;
-  setStatus(`opening ${entry.name}…`);
+  const name = shortName(entry.name || baseName(entry.url));
+  setStatus(`opening ${name}…`);
   resetPanes();
   try {
-    // Two range requests learn what the archive is, whatever it weighs.
+    // Three small range requests learn what the archive is, whatever it weighs.
     const desc = await readSelfDescription(entry.url);
     bootWorker();
     const opened = await send({ type: "open", mode: "remote", url: entry.url });
     finishOpen({
-      source: entry.name, url: entry.url, size: desc.size || entry.size,
+      source: name, url: entry.url, size: desc.size || entry.size || 0,
       header: desc.header, card: desc.card,
       schema: opened.schema, schemaError: opened.schemaError,
     });
+    return { statements: desc.header.quadCount };
   } catch (err) {
-    setStatus(`could not open: ${err.message}`, true);
+    setStatus(`could not open ${name}: ${err.message}`, true);
+    return null;
   } finally {
     state.opening = false;
   }
 }
 
 async function openLocal(file) {
-  if (state.opening) return;
+  if (state.opening) return null;
   state.opening = true;
   setStatus(`reading ${file.name}…`);
   resetPanes();
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const header = parseHeader(bytes);
-    let card = null;
-    const metaSection = header.sections.find((s) => s.kind === 1);
-    if (metaSection && metaSection.length) {
-      try {
-        card = JSON.parse(new TextDecoder().decode(
-          bytes.subarray(metaSection.offset, metaSection.offset + metaSection.length)
-        ));
-      } catch (_) { /* unparseable card is not fatal */ }
-    }
+    const card = cardFromBytes(bytes, header);
     bootWorker();
     const copy = bytes.slice();
     const opened = await send({ type: "open", mode: "local", bytes: copy.buffer, transfer: [copy.buffer] });
     finishOpen({
-      source: file.name, url: null, size: bytes.byteLength,
+      source: shortName(file.name), fileName: file.name, url: null, size: bytes.byteLength,
       header, card, schema: opened.schema, schemaError: opened.schemaError,
     });
+    return { statements: header.quadCount };
   } catch (err) {
-    setStatus(`could not open: ${err.message}`, true);
+    setStatus(`could not open ${file.name}: ${err.message}`, true);
+    return null;
   } finally {
     state.opening = false;
   }
+}
+
+/** A link from the omnibox: a .rete opens, a catalog is subscribed to. */
+async function openLink(raw) {
+  const text = raw.trim();
+  if (!text) return;
+  if (isTauri() && !/^https?:/i.test(text)) return openNative(text, baseName(text));
+  const url = webUrl(text);
+  if (!url) return setStatus("that is not a link — paste an http(s) address of a .rete file or a catalog", true);
+  if (/\.rete([?#]|$)/i.test(url)) return openRemote({ url, name: baseName(url) });
+  // Not obviously either: the first bytes say. A .rete starts with RETE.
+  let head = null;
+  try { head = await rangeFetch(url, 0, 3); } catch (_) { /* let the catalog fetch say why */ }
+  if (head && new TextDecoder().decode(head) === "RETE") return openRemote({ url, name: baseName(url) });
+  await addCatalog(url);
 }
 
 function finishOpen(meta) {
@@ -215,14 +219,37 @@ function finishOpen(meta) {
   state.ctx = makeContext({ engine, meta });
   state.expanded = new Set();
   state.selected = null;
+  dropGraph();
 
+  const h = meta.header;
   $("#archive-name").textContent = meta.source;
+  $("#archive-name").title = meta.card?.title || meta.url || meta.path || meta.source;
   $("#archive-facts").textContent = [
     humanBytes(meta.size),
-    `${humanCount(meta.header.quadCount)} quads`,
-    `${humanCount(meta.header.termCount)} terms`,
-    `format 0x${meta.header.version.toString(16).padStart(2, "0")}`,
+    `${humanCount(h.quadCount)} statements`,
+    `${humanCount(h.termCount)} terms`,
+    `format ${formatLabel(h.version)}`,
+    meta.url ? hostOf(meta.url) : meta.path ? "this computer" : "local file",
   ].join(" · ");
+
+  // Remembered on the home, with what its picture needs.
+  const summary = cardSummary(meta.card, h);
+  if (meta.url) cacheCard(meta.url, summary);
+  rememberFile({
+    name: meta.source,
+    title: meta.card?.title ?? null,
+    url: meta.url,
+    path: meta.path ?? null,
+    local: !meta.url && !meta.path,
+    fileName: meta.fileName ?? null,
+    size: meta.size,
+    statements: h.quadCount,
+    format: formatLabel(h.version),
+    summary: meta.url ? null : summary,
+  });
+  const thumb = $("#archive-thumb");
+  thumb.innerHTML = proceduralSVG(pictureInfo(summary, { key: meta.source }), { theme: "dark", labels: false });
+
   $("#window").hidden = false;
   $("#empty").hidden = true;
   paintTraffic();
@@ -233,7 +260,8 @@ function finishOpen(meta) {
   } else {
     setStatus("opened");
   }
-  selectView(meta.header.hasQuads ? state.view : state.view === "graphs" ? "types" : state.view);
+  if (state.layout === "graph") setLayout(state.lastLayout);
+  selectView(h.hasQuads ? state.view : state.view === "graphs" ? "types" : state.view);
 }
 
 function resetPanes() {
@@ -251,19 +279,283 @@ function resetPanes() {
   paintExtractBar({});
 }
 
+// --------------------------------------------------------------------- home
+
+/** A picture for a file: drawn from its card's classes and links (js/procgen.js). */
+function picture(summary, entry, labels = true) {
+  return proceduralSVG(pictureInfo(summary, entry), { theme: "dark", labels });
+}
+
+function paintHome() {
+  paintFiles();
+  paintCatalogs();
+}
+
+function paintFiles() {
+  const box = $("#files");
+  box.innerHTML = "";
+  const files = recentFiles();
+  $("#files-note").textContent = files.length ? `${files.length} opened here, most recent first` : "";
+  if (!files.length) {
+    box.append(el("div", "empty-note", "Files you open — from a catalog, a link or this computer — show up here."));
+    return;
+  }
+  for (const f of files) {
+    const summary = f.url ? cachedCard(f.url) : f.summary;
+    const card = makeCard({
+      title: f.title || f.name,
+      blurb: f.title && f.title !== f.name ? f.name : null,
+      meta: [
+        f.size ? humanBytes(f.size) : null,
+        f.statements != null ? `${humanCount(f.statements)} statements` : null,
+        f.url ? hostOf(f.url) : f.path ? "this computer" : "local file",
+        when(f.openedAt),
+      ],
+      kind: f.url ? "remote" : "local",
+      svg: picture(summary, { key: f.name, url: f.url }),
+    });
+    const x = el("button", "card-x", "×");
+    x.title = "Remove from your files";
+    x.onclick = (e) => {
+      e.stopPropagation();
+      forgetFile(f.id);
+      paintFiles();
+    };
+    card.append(x);
+    card.onclick = () => reopen(f);
+    box.append(card);
+  }
+}
+
+/** Open a remembered file again: a link or a desktop path directly, a browser's local file by asking for it. */
+async function reopen(f) {
+  if (f.url) return openRemote({ url: f.url, name: f.name });
+  if (f.path && isTauri()) return openNative(f.path, f.name);
+  setStatus(`choose ${f.fileName || f.name} again — a browser cannot reopen a local file by itself`);
+  $("#file").click();
+}
+
+function paintCatalogs() {
+  const subs = subscriptions();
+  const chips = $("#cat-chips");
+  chips.innerHTML = "";
+  if (state.home.catalog !== "all" && !subs.some((s) => s.url === state.home.catalog)) state.home.catalog = "all";
+  if (subs.length > 1) {
+    const all = el("button", "chip all" + (state.home.catalog === "all" ? " on" : ""));
+    all.append(document.createTextNode("All"), el("span", "n", String(subs.reduce((n, s) => n + s.datasets.length, 0))));
+    all.onclick = () => ((state.home.catalog = "all"), (state.home.shown = 120), paintCatalogs());
+    chips.append(all);
+  }
+  for (const sub of subs) {
+    const on = state.home.catalog === sub.url || (subs.length === 1 && state.home.catalog === "all");
+    const chip = el("span", "chip" + (on ? " on" : ""));
+    chip.setAttribute("role", "tab");
+    chip.tabIndex = 0;
+    chip.append(document.createTextNode(sub.name), el("span", "n", sub.fetchedAt ? String(sub.datasets.length) : "…"));
+    const again = el("button", "chip-act", "↻");
+    again.title = "Fetch this catalog again";
+    again.onclick = async (e) => {
+      e.stopPropagation();
+      again.disabled = true;
+      await refresh(sub.url);
+      paintCatalogs();
+    };
+    const off = el("button", "chip-act", "×");
+    off.title = "Unsubscribe";
+    off.onclick = (e) => {
+      e.stopPropagation();
+      unsubscribe(sub.url);
+      setStatus(`unsubscribed from ${sub.name}`);
+      paintCatalogs();
+    };
+    chip.append(again, off);
+    chip.onclick = () => ((state.home.catalog = sub.url), (state.home.shown = 120), paintCatalogs());
+    chips.append(chip);
+  }
+
+  const picked = state.home.catalog === "all" ? subs : subs.filter((s) => s.url === state.home.catalog);
+  const about = $("#cat-about");
+  about.innerHTML = "";
+  if (!subs.length) {
+    about.textContent = "No catalogs. Paste the link of one above — any JSON list of .rete links will do.";
+  } else if (picked.length === 1) {
+    const s = picked[0];
+    about.append(document.createTextNode(`${s.description ? `${s.description} · ` : ""}from `));
+    const a = el("a", null, hostOf(s.url));
+    a.href = s.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    about.append(a);
+    if (s.error) about.append(el("span", "bad", ` · last fetch failed: ${s.error}`));
+  }
+
+  // One list across the catalogs picked: the same file listed twice shows once.
+  const seen = new Set();
+  const rows = [];
+  for (const s of picked) {
+    for (const d of s.datasets) {
+      if (seen.has(d.url)) continue;
+      seen.add(d.url);
+      rows.push({ d, from: s.name });
+    }
+  }
+  const q = state.home.filter.trim().toLowerCase();
+  const shown = q
+    ? rows.filter(({ d }) => [d.name, d.key, d.blurb, d.license, ...(d.tags ?? []), cachedCard(d.url)?.title].some((v) => v && String(v).toLowerCase().includes(q)))
+    : rows;
+
+  const box = $("#catalog");
+  box.innerHTML = "";
+  if (!shown.length) {
+    box.append(el("div", "empty-note", q ? `Nothing in ${picked.length > 1 ? "these catalogs" : "this catalog"} matches “${q}”.` : subs.some((s) => !s.fetchedAt) ? "Fetching the catalog…" : "This catalog lists no .rete files."));
+    return;
+  }
+  for (const { d, from } of shown.slice(0, state.home.shown)) box.append(catalogCard(d, picked.length > 1 ? from : null));
+  if (shown.length > state.home.shown) {
+    const more = el("button", "btn empty-note", `Show ${Math.min(120, shown.length - state.home.shown)} more of ${shown.length - state.home.shown}`);
+    more.onclick = () => ((state.home.shown += 120), paintCatalogs());
+    box.append(more);
+  }
+}
+
+function catalogCard(d, from) {
+  const summary = cachedCard(d.url);
+  const card = makeCard({
+    title: summary?.title || d.name,
+    blurb: d.blurb,
+    meta: [d.sizeText, d.triples ? `${d.triples} triples` : null, d.license, from],
+    sizeFirst: true,
+    icon: d.icon,
+    svg: d.thumbnail ? null : picture(summary, d),
+    img: d.thumbnail,
+  });
+  card.title = d.url;
+  card.onclick = () => openRemote({ url: d.url, name: d.key || d.name });
+  if (!summary && !d.thumbnail) watchCard(card, d);
+  return card;
+}
+
+function makeCard({ title, blurb, meta, kind, svg, img, icon, sizeFirst }) {
+  const card = el("article", "card");
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), card.click()));
+  const thumb = el("div", "thumb");
+  if (img) {
+    const i = new Image();
+    i.alt = "";
+    i.loading = "lazy";
+    i.src = img;
+    thumb.append(i);
+  } else thumb.innerHTML = svg || "";
+  if (icon) thumb.append(el("span", "icon-badge", icon));
+  if (kind) thumb.append(el("span", "kind", kind));
+  const body = el("div", "card-body");
+  body.append(el("h3", "card-title", title));
+  if (blurb) body.append(el("p", "card-blurb", blurb));
+  const m = el("div", "card-meta");
+  meta.filter(Boolean).forEach((t, i) => m.append(el("span", i === 0 && sizeFirst ? "sz" : null, t)));
+  body.append(m);
+  body.querySelector(".card-title").title = title;
+  card.append(thumb, body);
+  return card;
+}
+
+// Pictures for catalog entries: each needs the file's card (two small range
+// requests), so they are read only for cards that scroll into view, a few at a
+// time, and kept — a published file's name changes with its contents.
+const cardQueue = [];
+let cardActive = 0;
+const CARD_CONCURRENCY = 4;
+const cardObserver = "IntersectionObserver" in window
+  ? new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        cardObserver.unobserve(e.target);
+        const job = e.target.__cardJob;
+        if (job) cardQueue.push(job), pumpCards();
+      }
+    }, { rootMargin: "200px" })
+  : null;
+
+function watchCard(card, d) {
+  card.__cardJob = { card, d };
+  if (cardObserver) cardObserver.observe(card);
+}
+
+function pumpCards() {
+  while (cardActive < CARD_CONCURRENCY && cardQueue.length) {
+    const { card, d } = cardQueue.shift();
+    if (cachedCard(d.url)) continue;
+    cardActive++;
+    readSelfDescription(d.url, { sections: false, picture: true })
+      .then(({ header, card: c }) => {
+        const summary = cardSummary(c, header);
+        cacheCard(d.url, summary);
+        if (!card.isConnected) return;
+        card.querySelector(".thumb").firstChild?.remove();
+        card.querySelector(".thumb").insertAdjacentHTML("afterbegin", picture(summary, d));
+        if (summary.title) {
+          const t = card.querySelector(".card-title");
+          t.textContent = summary.title;
+          t.title = summary.title;
+        }
+      })
+      .catch(() => cacheCard(d.url, { none: true, failed: true }))
+      .finally(() => {
+        cardActive--;
+        pumpCards();
+      });
+  }
+}
+
+async function addCatalog(url) {
+  setStatus(`reading the catalog at ${hostOf(url)}…`);
+  try {
+    const sub = await subscribe(url);
+    state.home.catalog = sub.url;
+    state.home.shown = 120;
+    setStatus(`subscribed to ${sub.name}: ${sub.datasets.length} files`);
+    goHome();
+  } catch (err) {
+    setStatus(`could not subscribe: ${err.message}`, true);
+  }
+}
+
+/** Catalogs not fetched for a while are fetched again, in the background. */
+async function freshenCatalogs() {
+  const stale = subscriptions().filter((s) => !s.fetchedAt || Date.now() - s.fetchedAt > 6 * 3600_000);
+  for (const s of stale) {
+    await refresh(s.url);
+    if (!$("#empty").hidden) paintCatalogs();
+  }
+}
+
+const when = (t) => {
+  if (!t) return null;
+  const s = (Date.now() - t) / 1000;
+  if (s < 90) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  if (s < 86400 * 30) return `${Math.round(s / 86400)} d ago`;
+  return new Date(t).toISOString().slice(0, 10);
+};
+
 // -------------------------------------------------------------------- views
 
 function paintViewTabs() {
   const bar = $("#views");
   bar.innerHTML = "";
   for (const v of VIEWS) {
-    const b = el("button", "viewtab" + (v.id === state.view ? " on" : ""));
+    const b = el("button", "viewtab" + (v.id === state.view && state.layout !== "graph" ? " on" : ""));
     b.append(el("span", "vi", v.icon), document.createTextNode(v.label));
     b.title = v.hint;
     b.onclick = () => selectView(v.id);
     bar.append(b);
   }
-  $("#view-hint").textContent = VIEW_BY_ID.get(state.view).hint;
+  $("#view-hint").textContent = state.layout === "graph"
+    ? "Double-click a node to bring in its links; right-click for more."
+    : VIEW_BY_ID.get(state.view).hint;
 }
 
 async function selectView(id) {
@@ -271,12 +563,14 @@ async function selectView(id) {
   state.expanded = new Set();
   state.path = [];
   state.results = null; // a view change is a fresh start, not a filtered one
+  if (state.layout === "graph") setLayout(state.lastLayout);
   paintViewTabs();
   await renderPane();
 }
 
 /** Draw whichever layout is active, from scratch. */
 async function renderPane() {
+  if (state.layout === "graph") return;
   const pane = $("#tree");
   // Abandon thumbnails queued for the folder we are leaving; in-flight ones
   // finish harmlessly against detached nodes.
@@ -310,6 +604,89 @@ async function renderPane() {
   }
 }
 
+function setLayout(mode) {
+  if (mode !== "graph") state.lastLayout = mode;
+  state.layout = mode;
+  $("#layout").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.mode === mode));
+  const graph = mode === "graph";
+  $("#panes").hidden = graph;
+  $("#stage").hidden = !graph;
+  $("#extract").hidden = graph;
+  paintViewTabs();
+}
+
+// -------------------------------------------------------------------- graph
+
+/**
+ * What the graph shows for a selection: the entity, a sample of the class, of
+ * the predicate, of the named graph — or, with nothing selected, the schema
+ * (a sample when the file has none).
+ */
+function seedFor(item) {
+  if (item?.iri && (item.resource || item.kind === "file") && !item.special) return { iri: item.iri, label: item.label || item.name };
+  if (item?.iri && item.kind === "dir" && item.view === "types") return { cls: item.iri, label: item.label || item.name };
+  if (item?.iri && item.kind === "dir" && item.view === "predicates") return { predicate: item.iri, label: item.name };
+  if (item?.iri && item.kind === "dir" && item.view === "graphs") return { graph: item.iri, label: item.name };
+  return state.meta?.schema?.classes?.length ? { schema: true } : { sample: true };
+}
+
+const sameSeed = (a, b) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+
+async function showGraph(seed) {
+  if (!state.meta) return;
+  setLayout("graph");
+  if (!state.graph) {
+    const { GraphHost } = await import("./graph-host.js");
+    state.graph = new GraphHost({
+      frame: $("#graph-frame"),
+      ctx: state.ctx,
+      dataset: state.meta.source,
+      onOpenFile: (file) => openLocal(file),
+      onStatus: (t) => setStatus(t),
+    });
+  }
+  const host = state.graph;
+  state.seed = seed;
+  paintSeeds(seed, "");
+  try {
+    const note = await host.show(seed);
+    if (state.graph !== host) return; // another archive was opened meanwhile
+    paintSeeds(seed, note);
+    setStatus("graph ready");
+  } catch (err) {
+    if (state.graph !== host) return;
+    paintSeeds(seed, "");
+    setStatus(`graph: ${err.message}`, true);
+  }
+}
+
+function paintSeeds(current, note) {
+  const bar = $("#seeds");
+  bar.innerHTML = "";
+  bar.append(el("span", null, "Draw:"));
+  const chip = (label, seed, title) => {
+    const b = el("button", "seed" + (sameSeed(seed, current) ? " on" : ""), label);
+    if (title) b.title = title;
+    b.onclick = () => showGraph(seed);
+    bar.append(b);
+  };
+  if (state.meta?.schema?.classes?.length) chip("◇ Schema", { schema: true }, "The classes and how they connect, as boxes listing their properties");
+  chip("◌ Sample", { sample: true }, "A few hundred statements from the start of the file");
+  const sel = seedFor(state.selected);
+  if (!sel.schema && !sel.sample) {
+    const what = sel.iri ? "◉" : sel.cls ? "▣ instances of" : sel.predicate ? "≡" : "⬒";
+    chip(`${what} ${sel.label}`, sel, "The item selected in the tree");
+  }
+  if (current?.query) chip("⌘ query", current, "The last query shown as a graph");
+  bar.append(el("span", "seed-note", note || ""));
+}
+
+function dropGraph() {
+  state.graph?.destroy();
+  state.graph = null;
+  state.seed = null;
+}
+
 // ------------------------------------------------------------ sparql panel
 
 function renderQueryPanel(host) {
@@ -338,7 +715,7 @@ function renderQueryPanel(host) {
     const started = performance.now();
     try {
       const result = await runSparql(state.ctx, q);
-      showQueryResult(result, Math.round(performance.now() - started));
+      showQueryResult(result, Math.round(performance.now() - started), q);
       setStatus("query ok");
     } catch (err) {
       // A SPARQL error is the normal case while writing one — show it where the
@@ -362,7 +739,7 @@ function renderQueryPanel(host) {
   ta.focus();
 }
 
-function showQueryResult(result, ms) {
+function showQueryResult(result, ms, query) {
   const pane = $("#preview");
   pane.innerHTML = "";
   $("#downloads").innerHTML = "";
@@ -377,6 +754,13 @@ function showQueryResult(result, ms) {
     pane.append(renderTable(result));
   }
 
+  // SELECT and CONSTRUCT results draw as a graph; a lone ASK boolean does not.
+  if (!/^\s*(?:#[^\n]*\n\s*)*(?:(?:PREFIX|BASE)[^\n]*\n\s*)*ASK\b/i.test(query)) {
+    const g = el("button", "dl graphit", "◉ Graph");
+    g.title = "Draw these results in the graph view";
+    g.onclick = () => showGraph({ query, title: "query results" });
+    $("#downloads").append(g);
+  }
   for (const fmt of result.kind === "text" ? ["ttl"] : ["csv", "json"]) {
     const f = resultToFile(result, fmt);
     const b = el("button", "dl", `↓ ${f.ext.toUpperCase()}`);
@@ -425,6 +809,7 @@ function renderSearchResults(host) {
 async function doSearch(term) {
   if (!state.ctx) return;
   const q = term.trim();
+  if (state.layout === "graph") setLayout(state.lastLayout);
   if (!q) {
     state.results = null;
     await renderPane();
@@ -695,6 +1080,13 @@ function rowFor(item, depth) {
     }
     await toggle();
   };
+  // Double-click draws it.
+  row.ondblclick = (e) => {
+    if (!item.iri || item.special) return;
+    e.preventDefault();
+    state.selected = item;
+    showGraph(seedFor(item));
+  };
 
   return wrap;
 }
@@ -733,15 +1125,16 @@ function paintLabelPicker() {
 }
 
 /**
- * Back to the welcome screen. The open archive is deliberately left resident —
- * the worker keeps its handle and its warmed block cache, so re-opening the
- * same file from the catalog costs nothing and the traffic meter keeps counting
- * from where it was.
+ * Back to the home. The open archive is deliberately left resident — the
+ * worker keeps its handle and its warmed block cache, so re-opening the same
+ * file costs nothing and the traffic meter keeps counting from where it was.
  */
 function goHome() {
   $("#window").hidden = true;
   $("#empty").hidden = false;
-  setStatus(state.meta ? `${state.meta.source} still open — pick another, or reopen it` : "pick an archive, drop a .rete, or paste a URL");
+  paintHome();
+  window.scrollTo(0, 0);
+  setStatus(state.meta ? `${state.meta.source} is still open — pick another, or reopen it` : "pick a file, drop a .rete, or paste a link");
 }
 
 function wireHome() {
@@ -749,6 +1142,17 @@ function wireHome() {
     const b = $(`#${id}`);
     if (b) b.addEventListener("click", goHome);
   }
+  $("#cat-filter").addEventListener("input", (e) => {
+    state.home.filter = e.target.value;
+    state.home.shown = 120;
+    paintCatalogs();
+  });
+  $("#cat-add").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const url = $("#cat-url").value.trim();
+    if (!url) return;
+    addCatalog(url).then(() => ($("#cat-url").value = ""));
+  });
 }
 
 function wireToolbar() {
@@ -773,8 +1177,18 @@ function wireToolbar() {
   $("#layout").addEventListener("click", async (e) => {
     const b = e.target.closest("button[data-mode]");
     if (!b || b.dataset.mode === state.layout) return;
-    state.layout = b.dataset.mode;
-    $("#layout").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    if (b.dataset.mode === "graph") {
+      if (!state.ctx) return;
+      // The graph keeps what it shows until something else is asked for.
+      const seed = seedFor(state.selected);
+      if (state.graph && state.seed && (sameSeed(seed, state.seed) || seed.schema || seed.sample)) {
+        setLayout("graph");
+        paintSeeds(state.seed, "");
+        return;
+      }
+      return showGraph(seed);
+    }
+    setLayout(b.dataset.mode);
     state.path = [];
     if (state.ctx) await renderPane();
   });
@@ -805,6 +1219,17 @@ async function showFile(item) {
   $("#preview-title").textContent = file.title;
   $("#preview-sub").textContent = file.subtitle || "";
 
+  // Anything with an IRI draws: an entity with its links, a class or a
+  // predicate as a sample.
+  if (item.iri && !item.special) {
+    const g = el("button", "dl graphit", "◉ Graph");
+    g.title = "Draw it in the graph view";
+    g.onclick = () => {
+      state.selected = item;
+      showGraph(seedFor(item));
+    };
+    $("#downloads").append(g);
+  }
   for (const d of file.downloads || []) {
     const b = el("button", "dl", `↓ ${d.label}`);
     b.onclick = () => download(`${slug(file.title)}.${d.ext}`, d.mime, d.body());
@@ -1007,27 +1432,18 @@ function paintTraffic() {
 
 // --------------------------------------------------------------------- boot
 
-function paintCatalog() {
-  const list = $("#catalog");
-  for (const entry of CATALOG) {
-    const b = el("button", "cat");
-    b.append(el("span", "cat-name", entry.name));
-    b.append(el("span", "cat-size", humanBytes(entry.size)));
-    b.append(el("span", "cat-blurb", entry.blurb));
-    b.onclick = () => openRemote(entry);
-    list.append(b);
-  }
-}
-
 const showVeil = (on) => {
   $("#dropveil").hidden = !on;
   const dz = $("#drop");
   if (dz) dz.classList.toggle("over", on);
 };
 
-const baseName = (p) => String(p).split(/[\\/]/).pop() || String(p);
+function wireOpeners() {
+  $("#omnibox").addEventListener("submit", (e) => {
+    e.preventDefault();
+    openLink($("#url").value);
+  });
 
-function wireDrop() {
   // Desktop: the OS owns file picking, and a dropped file arrives as a *path*
   // rather than a Blob — Tauri intercepts the webview's HTML5 drag events and
   // re-emits them, so both routes go through the native open.
@@ -1058,18 +1474,12 @@ function wireDrop() {
         openNative(path, baseName(path));
       });
     }
-
-    $("#url-open").addEventListener("click", () => {
-      const url = $("#url").value.trim();
-      if (url) openNative(url, baseName(url));
-    });
-    $("#url").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#url-open").click(); });
     return;
   }
 
-  // Browser. The listeners sit on the window rather than the landing-screen
-  // dropzone, because that element is hidden once an archive is open and
-  // dropping a second file has to keep working.
+  // Browser. The listeners sit on the window rather than the home's dropzone,
+  // because that element is hidden once an archive is open and dropping a
+  // second file has to keep working.
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
   let depth = 0; // dragenter/leave fire per element crossed; count to avoid flicker
 
@@ -1103,12 +1513,8 @@ function wireDrop() {
   $("#file").addEventListener("change", (e) => {
     const f = e.target.files && e.target.files[0];
     if (f) openLocal(f);
+    e.target.value = "";
   });
-  $("#url-open").addEventListener("click", () => {
-    const url = $("#url").value.trim();
-    if (url) openRemote({ name: baseName(url), url, size: 0 });
-  });
-  $("#url").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#url-open").click(); });
 }
 
 // A handle for poking at an open archive from the console — this is an
@@ -1116,10 +1522,11 @@ function wireDrop() {
 // more than the purity of not leaking a global.
 window.reteFs = state;
 
-paintCatalog();
+paintHome();
 paintViewTabs();
-wireDrop();
+wireOpeners();
 wireToolbar();
 wireHome();
 initTicker();
-setStatus("pick an archive, drop a .rete, or paste a URL");
+setStatus("pick a file, drop a .rete, or paste a link");
+freshenCatalogs();

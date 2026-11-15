@@ -5,6 +5,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **File explorer: a home, catalogs, and the graph view.** The home lists the
+  files you opened and the files of the catalogs you subscribe to, each with a
+  picture drawn from its card; paste a catalog's link (any JSON list of `.rete`
+  links) to subscribe. rete's own catalog is subscribed by default and replaces
+  the old hard-coded list. A third layout, Graph, is the Claude Desktop
+  extension's graph view hosted in the explorer: it draws the schema, a sample,
+  a class, an entity and its links, or query results.
+
 ### Changed
 
 - **36 more catalog files have new addresses.** The large single files and the
@@ -19,6 +29,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **File explorer: format `0x06`–`0x08` files.** Its header reader knew only
+  the `0x05` layout: on a current file it showed the file's length as its
+  statement count, no card, and no sections. It reads `0x05` to `0x08` now.
+- **Desktop extension: expanding a node in the graph view read all its links.**
+  The engine does not apply `LIMIT` to a `CONSTRUCT`, so expanding a hub, or
+  the 300-statement sample of an opened file, read everything. Both are
+  `SELECT … LIMIT` queries now.
+- **Desktop extension: a schema with parallel relations drew half.** Two
+  predicates between the same two classes (the MTG schema has three from
+  Battle to Color) made the layered layout throw.
 - **Playground: the ontology reference of a file with no schema and no
   ontology.** The live sample of classes and predicates was passed to the
   renderer in an old shape and threw; the panel stayed empty.
