@@ -10,6 +10,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - **The ISWC demo's agent extension is the 0.7.5 `rete.mcpb`.** The 0.7.4
   bundle still named the old addresses of the 36 catalog files moved in 0.7.5.
 
+### Fixed
+
+- **The plaza runs the 0.7.5 engine.** It ran 0.3.0, which reads no current
+  catalog file, and its card reader knew only the `0x05` header, so its five
+  remote datasets (all format `0x08`) did not open. It reads `0x05` to `0x08`
+  now, including the zstd-compressed cards of `0x06` on.
+
 ## [0.7.5] - 2026-11-15
 
 0.7.5 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).

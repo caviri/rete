@@ -7,16 +7,27 @@
 // with two tiny HTTP range requests (header, then card), never touching the
 // index or downloading the file. That is the whole premise of the plaza.
 //
-// Mirrors crates/rete-core/src/header.rs (little-endian on disk). Handles both
-// the legacy 128-byte header (v1/v2) and the current 1024-byte section-directory
-// header (v3/v4), so it reads old remote files and freshly-built local ones.
+// Mirrors crates/rete-core/src/header.rs (little-endian on disk). Reads the
+// formats the bundled engine reads, 0x05 to 0x08: 0x05 is a 1024-byte header
+// with a section directory and a plain JSON card; 0x06 to 0x08 are a 128-byte
+// header that places the card in its region, stored with zstd (docs/SPEC.md §4).
+// The file explorer's reader (experiments/rete-file-explorer/js/rete-fs.js)
+// makes the same checks and also keeps every section.
+
+import { decompress as zstdDecompress } from "../vendor/fzstd.mjs";
 
 export const HEADER_LEN = 1024; // fetch this many header bytes (covers both layouts)
 const MAGIC = "RETE";
+const OLDEST = 0x05;
+const NEWEST = 0x08;
+const V2_HEADER = 128;
+const CODEC_ZSTD = 1;
+const MAX_CARD = 16 << 20; // a stored card; rete-core caps it at 64 MiB decoded
 
 const dec = new TextDecoder();
 const hex = (bytes) =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+const formatLabel = (v) => `0x${Number(v).toString(16).padStart(2, "0")}`;
 
 /** Decode a .rete header (version-aware) into the offsets/counts we care about. */
 export function parseHeader(buf) {
@@ -25,10 +36,37 @@ export function parseHeader(buf) {
   if (dec.decode(b.subarray(0, 4)) !== MAGIC) throw new Error("not a .rete file (bad magic)");
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   const u16 = (o) => dv.getUint16(o, true);
+  const u32 = (o) => dv.getUint32(o, true);
   const u64 = (o) => Number(dv.getBigUint64(o, true)); // offsets never exceed 2^53
   const version = b[4], flags = b[5];
+  if (version > NEWEST) throw new Error(`format ${formatLabel(version)} is newer than the plaza reads (up to ${formatLabel(NEWEST)})`);
+  if (version < OLDEST) throw new Error(`format ${formatLabel(version)} is older than the plaza reads (from ${formatLabel(OLDEST)})`);
 
-  if (version >= 3) {
+  if (version >= 6) {
+    // 128-byte header: file length, root and region lengths, data offset, counts,
+    // and the card's place inside the region that follows the root block.
+    if (b.length < V2_HEADER) throw new Error(`${formatLabel(version)} header truncated: ${b.length} bytes`);
+    const fileLength = u64(24), rootLen = u32(32), regionLen = u32(36), dataOffset = u64(40);
+    const cardAt = u32(80), cardLen = u32(84);
+    if (u16(6) !== V2_HEADER || V2_HEADER + rootLen + regionLen > dataOffset || dataOffset > fileLength) {
+      throw new Error("the header's regions are not in order — a damaged or truncated file");
+    }
+    if (cardLen && cardAt + cardLen > regionLen) throw new Error("the header puts the card outside its region — a damaged file");
+    const namedGraphCount = u64(64);
+    return {
+      version, flags, hasQuads: (flags & 1) !== 0,
+      metadataOffset: cardLen ? V2_HEADER + rootLen + cardAt : 0,
+      metadataLen: cardLen,
+      cardCodec: b[75],
+      fileLength,
+      contentHash: hex(b.subarray(8, 24)),
+      quadCount: u64(48), termCount: u64(56),
+      namedGraphCount,
+      hasNamedGraphs: namedGraphCount > 0,
+    };
+  }
+
+  {
     // 1024-byte core (64B) + 24B section-directory entries from offset 64.
     const quadCount = u64(24), termCount = u64(32);
     const contentHash = hex(b.subarray(8, 24));
@@ -41,17 +79,16 @@ export function parseHeader(buf) {
       if (kind === 1) { metadataOffset = off; metadataLen = len; } // Metadata
       else if (kind === 5 && len > 0) hasNamedGraphs = true; // NamedGraphs
     }
-    return { version, flags, hasQuads: (flags & 1) !== 0, metadataOffset, metadataLen, contentHash, quadCount, termCount, hasNamedGraphs };
+    return { version, flags, hasQuads: (flags & 1) !== 0, metadataOffset, metadataLen, cardCodec: 0, fileLength: null, contentHash, quadCount, termCount, hasNamedGraphs };
   }
+}
 
-  // Legacy 128-byte header (v1/v2).
-  return {
-    version, flags, hasQuads: (flags & 1) !== 0,
-    metadataOffset: u64(8), metadataLen: u64(16),
-    contentHash: hex(b.subarray(92, 108)),
-    quadCount: u64(76), termCount: u64(84),
-    hasNamedGraphs: u64(116) > 0,
-  };
+/** The card's JSON from its stored bytes: zstd from 0x06 on, plain in 0x05. */
+function decodeCard(raw, codec) {
+  let bytes = raw;
+  if (codec === CODEC_ZSTD) bytes = zstdDecompress(raw);
+  else if (codec !== 0) throw new Error(`card codec ${codec} is not one the plaza reads`);
+  return JSON.parse(dec.decode(bytes));
 }
 
 /**
@@ -79,9 +116,9 @@ export async function readReteCard(source) {
     const b = source instanceof Uint8Array ? source : new Uint8Array(source);
     const header = parseHeader(b);
     let card = null;
-    if (header.metadataLen > 0) {
+    if (header.metadataLen > 0 && header.metadataOffset + header.metadataLen <= b.length) {
       const slice = b.subarray(header.metadataOffset, header.metadataOffset + header.metadataLen);
-      card = JSON.parse(dec.decode(slice));
+      card = decodeCard(slice, header.cardCodec);
     }
     return { header, card, size: b.length };
   }
@@ -97,12 +134,14 @@ export async function readReteCard(source) {
   if (size == null && res.status === 200) size = full.length; // whole body returned
   const head = res.status === 206 ? full : full.subarray(0, HEADER_LEN);
   const header = parseHeader(head);
+  if (header.fileLength) size = header.fileLength; // 0x06 on: the header says
   let card = null;
-  if (header.metadataLen > 0) {
+  // A card past MAX_CARD is not read: the tile falls back to the header's counts.
+  if (header.metadataLen > 0 && header.metadataLen <= MAX_CARD) {
     const start = header.metadataOffset;
     const end = start + header.metadataLen - 1;
     const metaBytes = await rangeFetch(url, start, end);
-    card = JSON.parse(dec.decode(metaBytes.subarray(0, header.metadataLen)));
+    card = decodeCard(metaBytes.subarray(0, header.metadataLen), header.cardCodec);
   }
   return { header, card, size };
 }
@@ -130,7 +169,7 @@ export function liteCardFromHeader(header, entry = {}) {
     source: entry.source || null,
     triple_count: header.quadCount,
     quad_count: header.quadCount,
-    named_graph_count: header.hasNamedGraphs ? 1 : 0,
+    named_graph_count: header.namedGraphCount ?? (header.hasNamedGraphs ? 1 : 0),
     term_count: header.termCount,
     predicates: [],
     classes: [],
