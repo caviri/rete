@@ -9,6 +9,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 0.7.5 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
 
+### Added
+
+- **File explorer: a home, catalogs, and the graph view** (#492). The home
+  lists the files you opened and the files of the catalogs you subscribe to,
+  each with a picture drawn from its card; paste a catalog's link (any JSON
+  list of `.rete` links) to subscribe. rete's own catalog is subscribed by
+  default and replaces the old hard-coded list. A third layout, Graph, is the
+  Claude Desktop extension's graph view hosted in the explorer: it draws the
+  schema, a sample, a class, an entity and its links, or query results.
+
 ### Changed
 
 - **36 more catalog files have new addresses** (#488). The large single files
@@ -25,9 +35,21 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   three-dataset build (engine 0.3.0) could not read format `0x08` and still
   named open-pulse's old address. The agent page now describes the extension
   it serves, and its table gives the published files' counts and sizes.
+- **The landing page's How it works draws live figures, and a section says
+  what hosting costs** (#491).
 
 ### Fixed
 
+- **File explorer: format `0x06`–`0x08` files** (#492). Its header reader knew
+  only the `0x05` layout: on a current file it showed the file's length as its
+  statement count, no card, and no sections. It reads `0x05` to `0x08` now.
+- **Desktop extension: expanding a node in the graph view read all its links**
+  (#492). The engine does not apply `LIMIT` to a `CONSTRUCT`, so expanding a
+  hub, or the 300-statement sample of an opened file, read everything. Both
+  are `SELECT … LIMIT` queries now.
+- **Desktop extension: a schema with parallel relations drew half** (#492).
+  Two predicates between the same two classes (the MTG schema has three from
+  Battle to Color) made the layered layout throw.
 - **Catalog sizes of the 62 files moved in 0.7.4** (#486). 45 of them still
   showed the size of an earlier conversion, not of the file that is published
   (open-pulse said 57.8 MB for a 50.2 MB file). The playground, the relay

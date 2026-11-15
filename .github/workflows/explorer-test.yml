@@ -1,8 +1,9 @@
 name: File explorer tests
 
-# The file explorer's rete-fs.js is shared by the browser explorer and the
-# Tauri desktop app, and nothing else exercised it. Its tests are plain Node
-# (no wasm, no browser), so this runs only when the explorer changes.
+# The file explorer's rete-fs.js and library.js are shared by the browser
+# explorer and the Tauri desktop app, and nothing else exercised them. Their
+# tests are plain Node (no wasm, no browser), so this runs only when the
+# explorer changes.
 on:
   push:
     branches: [main, "release-*"]
@@ -24,7 +25,7 @@ concurrency:
 
 jobs:
   test:
-    name: node --test (rete-fs.js)
+    name: node --test (rete-fs.js, library.js)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -34,4 +35,4 @@ jobs:
           node-version: 22
       - name: Unit tests
         working-directory: experiments/rete-file-explorer
-        run: node --test test/rete-fs.test.mjs
+        run: node --test test/*.test.mjs

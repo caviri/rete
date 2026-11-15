@@ -69,6 +69,7 @@
   <nav class="nav" aria-label="Sections">
     <a href="#try">Try it</a>
     <a href="#how">How it works</a>
+    <a href="#cost">Cost</a>
     <a href="#use">Use it</a>
     <a href="#apps">Apps</a>
     <a href="#support">Support</a>
@@ -231,93 +232,141 @@
       <h2 id="how-title">Build once, host it, query from anywhere</h2>
     </div>
 
-    <ol class="steps">
-      <li class="step reveal">
-        <div class="step-text">
+    <div class="feats">
+      <article class="feat reveal">
+        <div class="feat-text">
           <span class="step-n">1</span>
           <h3>Build</h3>
-          <p>Turn Turtle, N-Triples, N-Quads or Jelly into one <code>.rete</code> file. It holds the
-            triples, the indexes that find them and a Dataset Card that says what is inside.</p>
+          <p>Turn Turtle, N-Triples, N-Quads, TriG, RDF/XML, JSON-LD or Jelly into one <code>.rete</code>
+            file. It holds the triples, the indexes that find them and a Dataset Card that says what is inside.</p>
+          <p>The parts are laid out so a reader can find its way from the front of the file alone. The
+            figure is a real file from the demo, drawn to scale.</p>
           <pre class="cmd"><code>rete build data.ttl -o data.rete --card</code></pre>
         </div>
-        <div class="step-art" data-parallax="-0.08">
-          <svg viewBox="0 0 360 240" class="art art-build" role="img" aria-label="Triples flow into one file">
-            <g class="triples">
-              <g class="t t1"><rect x="14" y="40" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="40" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="40" width="40" height="18" rx="9" class="pill o"/></g>
-              <g class="t t2"><rect x="14" y="80" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="80" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="80" width="40" height="18" rx="9" class="pill o"/></g>
-              <g class="t t3"><rect x="14" y="120" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="120" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="120" width="40" height="18" rx="9" class="pill o"/></g>
-              <g class="t t4"><rect x="14" y="160" width="40" height="18" rx="9" class="pill s"/><rect x="58" y="160" width="40" height="18" rx="9" class="pill p"/><rect x="102" y="160" width="40" height="18" rx="9" class="pill o"/></g>
-            </g>
-            <path class="flow" d="M150 110 C 180 110, 190 120, 222 120"/>
-            <g class="file">
-              <path d="M232 34h70l30 30v142a10 10 0 0 1-10 10h-90a10 10 0 0 1-10-10V44a10 10 0 0 1 10-10Z" class="file-body"/>
-              <path d="M302 34v30h30" class="file-fold"/>
-              <rect x="238" y="74" width="84" height="10" rx="3" class="blk hdr"/>
-              <g class="grid">
-                <rect x="238" y="92" width="26" height="22" rx="3" class="blk"/><rect x="267" y="92" width="26" height="22" rx="3" class="blk"/><rect x="296" y="92" width="26" height="22" rx="3" class="blk"/>
-                <rect x="238" y="118" width="26" height="22" rx="3" class="blk"/><rect x="267" y="118" width="26" height="22" rx="3" class="blk"/><rect x="296" y="118" width="26" height="22" rx="3" class="blk"/>
-                <rect x="238" y="144" width="26" height="22" rx="3" class="blk"/><rect x="267" y="144" width="26" height="22" rx="3" class="blk"/><rect x="296" y="144" width="26" height="22" rx="3" class="blk"/>
-              </g>
-              <rect x="238" y="174" width="84" height="16" rx="3" class="blk card"/>
-              <text x="280" y="206" class="file-label">data.rete</text>
-            </g>
-          </svg>
-        </div>
-      </li>
+        <figure class="fig fig-file" id="figFile"></figure>
+      </article>
 
-      <li class="step reveal">
-        <div class="step-text">
+      <article class="feat reveal">
+        <div class="feat-text">
           <span class="step-n">2</span>
           <h3>Host</h3>
-          <p>Upload the file anywhere that serves byte ranges: object storage, GitHub Pages,
-            Zenodo, your own web server. There is no database to run or keep up.</p>
+          <p>Upload the file anywhere that serves byte ranges: object storage, GitHub Pages, Zenodo, your
+            own web server. There is no database to run or keep up.</p>
+          <p>The engine runs where you query, in the browser tab, the notebook or the command line. The
+            host only hands out the bytes it is asked for.</p>
           <pre class="cmd"><code>curl -r 0-1023 https://…/data.rete   # 206 Partial Content</code></pre>
         </div>
-        <div class="step-art" data-parallax="-0.08">
-          <svg viewBox="0 0 360 240" class="art art-host" role="img" aria-label="The file sits on a web host">
-            <path class="cloud" d="M96 150a42 42 0 0 1 8-83 56 56 0 0 1 106-10 44 44 0 0 1 60 46 34 34 0 0 1-4 67H104a26 26 0 0 1-8-20Z"/>
-            <g class="mini-file">
-              <path d="M160 92h34l14 14v50a6 6 0 0 1-6 6h-42a6 6 0 0 1-6-6v-58a6 6 0 0 1 6-6Z" class="file-body"/>
-              <rect x="162" y="112" width="40" height="6" rx="2" class="blk"/><rect x="162" y="122" width="40" height="6" rx="2" class="blk"/><rect x="162" y="132" width="40" height="6" rx="2" class="blk"/><rect x="162" y="142" width="26" height="6" rx="2" class="blk"/>
-            </g>
-            <g class="hosts">
-              <text x="40" y="214" class="host-l">S3 / R2</text>
-              <text x="132" y="214" class="host-l">GitHub Pages</text>
-              <text x="252" y="214" class="host-l">Zenodo</text>
-            </g>
-            <g class="pings"><circle cx="184" cy="126" r="10"/><circle cx="184" cy="126" r="10"/></g>
-          </svg>
-        </div>
-      </li>
+        <figure class="fig fig-host" role="img" aria-label="Where you work, the rete engine sends HTTP range requests straight to any static host: Cloudflare R2, Amazon S3, GitHub Pages, Zenodo or your own web server. Nothing of rete's runs in between.">
+          <figcaption class="fig-cap"><b>No server in between</b><span>Only the file, and whoever reads it</span></figcaption>
+          <div class="fh">
+            <div class="fh-box fh-you">
+              <span class="fh-title">Where you work</span>
+              <span class="fh-sub">the engine runs inside your program</span>
+              <span class="fh-chips"><span>Browser</span><span>Python</span><span>JavaScript</span><span>R</span><span>Java</span><span>CLI</span><span>Claude</span></span>
+            </div>
+            <div class="fh-wire" aria-hidden="true">
+              <span class="fh-line"></span>
+              <span class="fh-pk fh-req" style="--i:0"></span><span class="fh-pk fh-req" style="--i:1"></span>
+              <span class="fh-pk fh-res" style="--i:0"></span><span class="fh-pk fh-res" style="--i:1"></span>
+              <code class="fh-l fh-l1">Range: bytes=…</code>
+              <code class="fh-l fh-l2">206 Partial Content</code>
+            </div>
+            <div class="fh-box fh-hosts">
+              <span class="fh-title">Any host that serves byte ranges</span>
+              <span class="fh-list"><span>Cloudflare R2</span><span>Amazon S3</span><span>GitHub Pages</span><span>Zenodo</span><span>your web server</span></span>
+              <span class="fh-file"><span class="fh-doc" aria-hidden="true"></span>data.rete</span>
+            </div>
+          </div>
+        </figure>
+      </article>
 
-      <li class="step reveal">
-        <div class="step-text">
+      <article class="feat feat-wide reveal">
+        <div class="feat-text">
           <span class="step-n">3</span>
           <h3>Query</h3>
-          <p>A client opens the file over HTTP, reads the header, then fetches only the dictionary
-            chunks and index tiles the query touches. Selective queries stay small; a scan over
-            everything still has to read everything.</p>
+          <p>A client opens the file with one read of its front, then fetches only the dictionary chunks
+            and index tiles the query touches. Pick a graph and a question: the marks are the ranges this
+            page really fetched for it, set against a plain download on the same link.</p>
+          <p>Selective questions stay small. A question that scans the whole graph still has to read the
+            whole graph.</p>
           <pre class="cmd"><code>rete sparql-url https://…/data.rete "SELECT …"</code></pre>
         </div>
-        <div class="step-art" data-parallax="-0.08">
-          <svg viewBox="0 0 360 240" class="art art-query" role="img" aria-label="A query reads a few blocks of the file">
-            <g class="bigfile">
-              <rect x="14" y="30" width="170" height="180" rx="12" class="file-body"/>
-              <g class="cells"></g>
-            </g>
-            <g class="beams"><path d="M184 76 L 236 96"/><path d="M184 132 L 236 116"/><path d="M184 180 L 236 136"/></g>
-            <g class="browser">
-              <rect x="236" y="70" width="112" height="100" rx="10" class="file-body"/>
-              <circle cx="248" cy="82" r="3" class="dot"/><circle cx="258" cy="82" r="3" class="dot"/><circle cx="268" cy="82" r="3" class="dot"/>
-              <rect x="246" y="96" width="92" height="12" rx="3" class="row r1"/>
-              <rect x="246" y="114" width="92" height="12" rx="3" class="row r2"/>
-              <rect x="246" y="132" width="92" height="12" rx="3" class="row r3"/>
-              <rect x="246" y="150" width="60" height="10" rx="3" class="row r4"/>
-            </g>
-          </svg>
+        <figure class="fig fig-reads" id="figReads"></figure>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-text">
+          <span class="step-n step-n-any" aria-hidden="true">∞</span>
+          <h3>Any size</h3>
+          <p>The first read is the same whether the file is a few megabytes or a hundred gigabytes, and a
+            lookup grows with what it finds, not with the file.</p>
+          <p>The biggest file in the catalog, the OpenCitations Index, holds 15.8 billion statements in
+            111 GB. Asking who cites one paper reads about 17 MB of it.</p>
         </div>
-      </li>
-    </ol>
+        <figure class="fig fig-ladder" id="figLadder"></figure>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Cost ───────────────────────── -->
+<section class="cost" id="cost" aria-labelledby="cost-title">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="kicker">Cost</p>
+      <h2 id="cost-title">What it costs to publish a graph</h2>
+      <p>A <code>.rete</code> file is storage. You pay to keep it and, on some hosts, for each byte a
+        reader fetches. A SPARQL server is a machine that runs all month, whether anyone asks it anything.</p>
+    </div>
+
+    <div class="cost-box reveal" id="costBox"></div>
+
+    <div class="cost-more">
+      <div class="cost-fair reveal">
+        <h3>When a server is the better choice</h3>
+        <ul>
+          <li><b>Questions that read most of the graph, often.</b> Counting everything or scanning every
+            statement is cheap for a server with the index on its own disk. A reader of a file has to fetch
+            what it touches.</li>
+          <li><b>Data that changes all the time.</b> A <code>.rete</code> file is not edited in place. You
+            build it again and upload it.</li>
+          <li><b>Private data.</b> A file in a public bucket is public. A host with signed links or access
+            rules can limit who reads it.</li>
+        </ul>
+      </div>
+      <details class="cost-how reveal">
+        <summary>How these numbers are worked out</summary>
+        <div class="cost-how-body">
+          <p><b>A reader</b> opens the file and asks one of the demo's questions. Bytes and requests are
+            what this page's reader fetched from R2 on 2026-11-14, averaged over each graph's questions.
+            A GB here is 2<sup>30</sup> bytes.</p>
+          <p><b>Prices</b>, checked 2026-11-14:</p>
+          <ul>
+            <li><a href="https://developers.cloudflare.com/r2/pricing/">Cloudflare R2</a>: $0.015 per GB a
+              month after 10 GB free, reads $0.36 per million after 10 million free, no charge for data
+              out. The free allowance is per account; here nothing else is assumed to use it.</li>
+            <li><a href="https://aws.amazon.com/s3/pricing/">Amazon S3</a> Standard, us-east-1: $0.023 per
+              GB a month, $0.0004 per 1,000 GET requests, data out $0.09 per GB after the first 100 GB a
+              month, less past 10 TB.</li>
+            <li><a href="https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits">GitHub Pages</a>:
+              free for a public repository, a 1 GB site and a soft limit of 100 GB of traffic a month. Git
+              refuses files over 100 MB.</li>
+            <li><a href="https://help.zenodo.org/docs/deposit/manage-files/">Zenodo</a>: free, up to 50 GB
+              per record.</li>
+            <li><b>The server</b> runs <a href="https://docs.qlever.dev/use-cases/">QLever</a>, chosen
+              because it needs little memory, so this is a low estimate. Its RAM comes from QLever's own
+              table: about 1 GB for small graphs, 5 GB at 240 million triples, 20 GB from 1.5 billion up.
+              The machine is the smallest <a href="https://aws.amazon.com/ec2/pricing/on-demand/">AWS
+              Graviton</a> instance with that much memory, on demand, 730 hours a month ($0.0168 an hour
+              for 2 GiB up to $0.2142 for 32 GiB). Disk is 8 GB plus 24 bytes per statement, QLever's
+              Wikidata ratio, at $0.08 per GB a month. Hetzner's shared machines cost about the same
+              (CPX12 with 2 GB, €9.99 a month; CPX62 with 32 GB, €110.99, in Helsinki).</li>
+          </ul>
+          <p>Not counted: the time it takes someone to run a server, backups, and the data its answers
+            send out.</p>
+        </div>
+      </details>
+    </div>
   </div>
 </section>
 
@@ -493,5 +542,6 @@ and tell me who Mary Lou Williams played with.</code></pre>
 </footer>
 
 <script type="module" src="landing/app.js"></script>
+<script type="module" src="landing/illustrated.js"></script>
 </body>
 </html>

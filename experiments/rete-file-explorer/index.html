@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rete file explorer — browse a graph like an archive</title>
+<title>rete explorer — browse a graph like a folder</title>
 <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
 
 <div id="dropveil" class="dropveil" hidden>
   <div class="dv-card">
-    <span class="dv-icon">▤</span>
+    <span class="dv-icon" aria-hidden="true">⬇</span>
     <p class="dv-big">Drop to open</p>
     <p class="dv-small">any <code>.rete</code> file</p>
   </div>
@@ -34,17 +34,22 @@
 </div>
 
 <header class="topbar">
-  <div class="brand">
-    <button class="logo" id="home" title="Back to the welcome screen" aria-label="Back to the welcome screen">▤</button>
-    <div>
-      <h1>rete file explorer</h1>
-      <p>an archive browser for <code>.rete</code> graphs — folders, files, and extract</p>
-    </div>
-  </div>
-  <div class="opener">
-    <input id="url" type="text" placeholder="https://data.graphplaza.com/…/x.rete" spellcheck="false">
-    <button id="url-open">Open URL</button>
-    <label class="filebtn">Open file…<input id="file" type="file" accept=".rete" hidden></label>
+  <button class="brand" id="home" title="Home: your files and catalogs" aria-label="Home">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+      <circle cx="8" cy="9" r="3.2"/><circle cx="24" cy="7" r="2.6"/><circle cx="17" cy="17" r="3.6"/>
+      <circle cx="7" cy="24" r="2.4"/><circle cx="25" cy="24" r="3"/>
+      <path d="M8 9 17 17 24 7M17 17 7 24M17 17 25 24M8 9 7 24"/>
+    </svg>
+    <span class="wordmark">rete <em>explorer</em></span>
+  </button>
+  <form class="omnibox" id="omnibox" autocomplete="off">
+    <input id="url" type="text" spellcheck="false"
+           placeholder="Paste a link to a .rete file, or to a catalog of them"
+           aria-label="A .rete file or catalog link">
+    <button id="url-open" type="submit">Open</button>
+  </form>
+  <div class="topactions">
+    <label class="btn filebtn" title="Open a .rete file from this computer">Open file…<input id="file" type="file" accept=".rete" hidden></label>
     <!-- Permanent, because the marquee above can be dismissed for good. -->
     <a class="iconlink" href="https://github.com/caviri/rete" target="_blank" rel="noopener" title="The project on GitHub" aria-label="The project on GitHub">
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
@@ -55,12 +60,48 @@
   </div>
 </header>
 
-<section id="empty" class="empty">
-  <div id="drop" class="dropzone">
-    <p class="dz-big">Drop a <code>.rete</code> here</p>
-    <p class="dz-small">or pick one below — the remote ones are never downloaded, only range-read</p>
+<!-- The welcome screen: the files opened here, and the catalogs subscribed to. -->
+<section id="empty" class="home">
+  <div class="hero">
+    <div class="hero-text">
+      <h1>Browse a graph like a folder.</h1>
+      <p>
+        Open a <code>.rete</code> file the way an archive tool opens a zip: folders, files, a preview,
+        a graph you can draw and rearrange, and extract to CSV. Remote files are never downloaded —
+        only the bytes you look at are read.
+      </p>
+    </div>
+    <div id="drop" class="dropzone">
+      <span class="dz-icon" aria-hidden="true">⬇</span>
+      <p class="dz-big">Drop a <code>.rete</code> here</p>
+      <p class="dz-small">or anywhere on the window, at any time</p>
+    </div>
   </div>
-  <div id="catalog" class="catalog"></div>
+
+  <section class="shelf" id="files-shelf" aria-labelledby="files-h">
+    <div class="shelf-head">
+      <h2 id="files-h">Your files</h2>
+      <span class="shelf-note" id="files-note"></span>
+    </div>
+    <div id="files" class="cards"></div>
+  </section>
+
+  <section class="shelf" aria-labelledby="cats-h">
+    <div class="shelf-head">
+      <h2 id="cats-h">Catalogs</h2>
+      <div class="shelf-tools">
+        <input id="cat-filter" class="filterbox" type="search" placeholder="Filter by name, tag or licence…" spellcheck="false" aria-label="Filter the catalogs">
+        <form id="cat-add" class="cat-add" autocomplete="off">
+          <input id="cat-url" type="url" placeholder="https://…/catalog.json" spellcheck="false" aria-label="A catalog link">
+          <button type="submit" class="btn">Subscribe</button>
+        </form>
+      </div>
+    </div>
+    <div id="cat-chips" class="chips" role="tablist" aria-label="Subscribed catalogs"></div>
+    <p id="cat-about" class="cat-about"></p>
+    <div id="catalog" class="cards"></div>
+  </section>
+
   <details class="explain">
     <summary>What this is</summary>
     <p>
@@ -74,6 +115,13 @@
       several, and you switch between them: <b>Types</b> (classes as folders),
       <b>Namespace</b> (the IRI's own path), <b>Predicates</b> (one table per relation),
       <b>Graphs</b> (named graphs as volumes), and <b>Sections</b> (the actual bytes on disk).
+      <b>Graph</b> draws what you select — the schema, a class, an entity and its links — as
+      the same interactive graph the rete extension shows in Claude.
+    </p>
+    <p>
+      A <b>catalog</b> is a JSON list of <code>.rete</code> links that anyone can publish.
+      Subscribe to one by pasting its link; the pictures are drawn from each file's own card
+      (its classes and how they connect), read with two small requests.
     </p>
     <p class="warn">
       Experiment. The tree is lazy and paginated because a class can hold fifty million
@@ -84,9 +132,12 @@
 
 <main id="window" class="window" hidden>
   <div class="archivebar">
-    <button class="ab-back" id="back" title="Back to the welcome screen">← Archives</button>
-    <span id="archive-name" class="ab-name"></span>
-    <span id="archive-facts" class="ab-facts"></span>
+    <button class="ab-back" id="back" title="Back to your files and catalogs">← Home</button>
+    <span id="archive-thumb" class="ab-thumb" aria-hidden="true"></span>
+    <div class="ab-text">
+      <span id="archive-name" class="ab-name"></span>
+      <span id="archive-facts" class="ab-facts"></span>
+    </div>
   </div>
 
   <div id="views" class="views"></div>
@@ -99,13 +150,14 @@
         <select id="labelpred" title="which predicate supplies the display name"></select>
       </label>
       <div class="seg" id="layout">
-        <button data-mode="tree" class="on" title="nested tree">☰ Tree</button>
-        <button data-mode="icons" title="one folder at a time, as tiles">▦ Icons</button>
+        <button data-mode="tree" class="on" title="Nested folders">☰ Tree</button>
+        <button data-mode="icons" title="One folder at a time, as tiles">▦ Icons</button>
+        <button data-mode="graph" title="Draw it: the schema, a class, an entity and its links">◉ Graph</button>
       </div>
     </div>
   </div>
 
-  <div class="panes">
+  <div class="panes" id="panes">
     <div class="treepane">
       <div id="crumbs" class="crumbs" hidden></div>
       <div id="tree" class="tree"></div>
@@ -120,6 +172,12 @@
       </div>
       <div id="preview" class="preview"></div>
     </div>
+  </div>
+
+  <!-- The graph view: the same page the rete extension shows in Claude, hosted here (js/graph-host.js). -->
+  <div class="stage" id="stage" hidden>
+    <div class="seeds" id="seeds"></div>
+    <iframe id="graph-frame" class="graph-frame" title="Graph view" sandbox="allow-scripts allow-downloads"></iframe>
   </div>
 
   <div id="extract" class="extractbar"></div>
