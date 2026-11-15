@@ -7,6 +7,22 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **36 more catalog files have new addresses.** The large single files and the
+  shards of `deps-dev` and `wikidata-xxl` are format `0x08` with a full card,
+  under `<name>-<version or source date>.rete`. `web/datasets.moved.json` lists
+  each old and new address. Sizes in the catalog are those of the published
+  files: `switzerland-fedlex` went from 1.04 GB to 232 MB (its 497,905 named
+  graphs are one quad index now) and `nanopubs` from 3.88 GB to 2.52 GB.
+- **`opencitations` is no longer a catalog dataset.** `opencitations-meta` has
+  the same works in the OpenCitations Data Model. The README's remote example
+  and the playground guide's link use it now.
+
+### Fixed
+
+- **Playground: the ontology reference of a file with no schema and no
+  ontology.** The live sample of classes and predicates was passed to the
+  renderer in an old shape and threw; the panel stayed empty.
+
 - **The ISWC demo's agent extension is the 0.7.4 `rete.mcpb`.** The old
   three-dataset build (engine 0.3.0) could not read format `0x08` and still
   named open-pulse's old address. The agent page now describes the extension

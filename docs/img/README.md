@@ -271,7 +271,7 @@ Docker against a real published file.
 
 ```bash
 # section byte ranges, counts, permutation mask — straight from the 1 KiB header
-curl -s -r 0-1023 https://data.graphplaza.com/dblp/dblp.rete -o /tmp/h
+curl -s -r 0-1023 https://data.graphplaza.com/dblp/dblp-2026-07-01.rete -o /tmp/h
 #   offset 24 u64 quad_count · 32 u64 term_count · 44 u16 section_count
 #   50 u8 permutation mask (0 = all six) · directory at 64 + i*24
 

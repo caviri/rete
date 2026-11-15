@@ -186,7 +186,7 @@
     {
       "key": "wikidata-100mb",
       "title": "wikidata-100MB — a real 100 MB Wikidata slice (remote, lazy)",
-      "rete": "https://data.graphplaza.com/wikidata-100MB/wikidata.rete",
+      "rete": "https://data.graphplaza.com/wikidata-100MB/wikidata-2025-11-07.rete",
       "kind": "remote-lazy",
       "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
       "icon": "🌐",
@@ -215,7 +215,7 @@
     {
       "key": "ohm-full",
       "title": "ohm-full — all of OpenHistoricalMap (remote, lazy)",
-      "rete": "https://data.graphplaza.com/ohm-full/ohm-full.rete",
+      "rete": "https://data.graphplaza.com/ohm-full/ohm-full-2026-06-14.rete",
       "kind": "remote-lazy",
       "icon": "🗺️",
       "tags": [
@@ -268,7 +268,7 @@
         "ChEBI"
       ],
       "title": "chebi-full — the complete ChEBI ontology (remote, lazy)",
-      "rete": "https://data.graphplaza.com/chebi-full/chebi-full.rete",
+      "rete": "https://data.graphplaza.com/chebi-full/chebi-full-v252.rete",
       "kind": "remote-lazy",
       "icon": "⚗️",
       "tags": [

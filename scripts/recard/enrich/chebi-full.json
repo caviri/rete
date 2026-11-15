@@ -2,7 +2,7 @@
   "publisher": {
     "name": "rete"
   },
-  "canonical_url": "https://data.graphplaza.com/chebi-full/chebi-full.rete",
+  "canonical_url": "https://data.graphplaza.com/chebi-full/chebi-full-v252.rete",
   "derived_from": [
     "https://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi.owl"
   ],

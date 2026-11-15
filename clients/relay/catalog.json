@@ -84,7 +84,7 @@
    "description": "The public [figshare](https://figshare.com) corpus (Digital Science) — research outputs from figshare.com + ~150 institutional/publisher portals — harvested via OAI-PMH (the `oai_datacite` DataCite-XML format) and modelled against the rete **DataCite ontology** (`dcite:`, https://w3id.org/rete/datacite#). **IN PROGRESS**: this preview is **444,230 resources / 16.0 M triples** from 24 of 28 item types (peer review, software, thesis, preprint, media, physical object, online resource, book, chapter, conference-contribution, report, poster, presentation, model, event…); the three giant types **figure, dataset and journal-contribution are still harvesting** and will be folded in. Each resource sits at its canonical DOI IRI (`https://doi.org/{doi}`) and carries `dcite:doi`/`prefix`, its DataCite type + figshare `dcite:resourceType` label, title, `dcite:creator` agents (with ORCID + affiliation when given), subjects, publisher, rights, dates and — distinctively — **downloadable file URLs** (`dcite:hasPart` → `ndownloader.figshare.com/files/…`, on 92% of resources). Because works are keyed by DOI, this AUTO-MERGES with the DataCite / Zenodo / OpenAIRE / OpenCitations / DBLP datasets on the shared DOI — figshare is the research-DATA-and-software vertex of the scholarly graph. DOI prefixes span main figshare (`10.6084`) plus publisher/institutional portals (ACS `10.1021`, arXiv `10.48550`, Frontiers `10.3389`, Taylor & Francis, universities…). Built by data/figshare/scripts/{harvest_oai,oai_datacite_to_nt}.py → rete build --pyramid-algo types --card, embedding the dcite: ontology. Metadata is open (figshare OAI-PMH); each item's own file license varies. Remote-lazy on Cloudflare R2.",
    "kind": "remote-lazy",
    "triples": "16.0 M",
-   "size": "212 MB",
+   "size": "211.3 MB",
    "license": "figshare OAI metadata (open); per-item file licenses vary",
    "source": "https://api.figshare.com/v2/oai",
    "tags": [
@@ -125,7 +125,7 @@
      "sparql": "PREFIX dcite: <https://w3id.org/rete/datacite#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?title ?year ?subject WHERE {\n  ?r dcite:resourceType \"thesis\" ;\n     dcite:title ?title ;\n     dcite:publicationYear ?year ;\n     dcterms:subject ?subject .\n} ORDER BY DESC(?year) LIMIT 40"
     }
    ],
-   "url": "https://data.graphplaza.com/figshare/figshare.rete"
+   "url": "https://data.graphplaza.com/figshare/figshare-2026-07-25.rete"
   },
   {
    "key": "proteinbase",
@@ -171,7 +171,7 @@
    "description": "The [ETH Zürich Research Collection](https://www.research-collection.ethz.ch/) (DSpace 7.6) — the institutional repository of ETH Zürich — as one range-queried scholarly graph. **306,835 items** (293,270 live + 13,565 deleted-tombstone records): **289,592 publications** and **3,678 research-data** items, typed by publication type (`ethz:JournalArticle` 143k, `ethz:ConferencePaper` 39k, `ethz:DoctoralThesis` 32k, book chapters, reports, working papers, datasets…). Each work carries title, abstract, dates, publisher, licence, availability (**36% open access**) and external IDs — DOI, arXiv, Web of Science, Scopus, ISSN, ISBN. **434,635 author nodes** link via `ethz:creator`; the **6,402 ORCID-identified** ones are minted at `https://orcid.org/{orcid}` so they MERGE with the ORCID dataset, and the **122,711 works with a DOI** are minted at `https://doi.org/{doi}` so they federate for free with OpenAIRE, DataCite, Crossref and OpenCitations on the shared DOI. The ETH affiliation **Leitzahl tree** is a `org:Organization` hierarchy (1,881 units, `org:subOrganizationOf`) you walk with a property path to roll up a whole department's output. The DSpace **entity-relationship graph** is preserved — version chains, citations, has-part, supplements. And the **ORIGINAL-file MANIFEST is a first-class layer**: **158,339 deposited bitstreams** (`ethz:File`) with MIME, byte size, MD5 checksum and a download URL — cataloguing **10.23 TB WITHOUT storing any bytes**. Harvested via OAI-PMH (the xoai complete-dump format), modelled by data/ethz-research-collection/scripts/xoai_to_nt.py against the `ethz:` OWL 2 QL ontology and aligned to the rete scholar hub, then rete build --pyramid-algo types --card. 11.6 M triples, remote-lazy on Cloudflare R2. Per-class Parquet/DuckDB companions (works, persons, files, journals, grants, units) + JSON Schema + Croissant + the OWL ontology travel beside it. CC0 metadata harvest; each item's own dc:rights governs its files.",
    "kind": "remote-lazy",
    "triples": "11.6 M",
-   "size": "206 MB",
+   "size": "220.9 MB",
    "license": "CC0-1.0 (metadata harvest); per-item object rights vary (In Copyright / CC BY / CC BY-NC-ND / …)",
    "source": "https://www.research-collection.ethz.ch/",
    "tags": [
@@ -226,7 +226,7 @@
      "sparql": "PREFIX ethz: <https://w3id.org/rete/ethz#>\nSELECT ?avail (COUNT(?w) AS ?n) WHERE {\n  ?w ethz:availability ?avail .\n} GROUP BY ?avail ORDER BY DESC(?n)"
     }
    ],
-   "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete"
+   "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-2026-07-23.rete"
   },
   {
    "key": "swissubase",
@@ -815,7 +815,7 @@
    "description": "Grafo de conocimiento del catálogo completo de medicamentos autorizados en España, construido a partir de la API REST pública del CIMA (AEMPS) y el Nomenclátor de Prescripción. 25,485 medicamentos (fmc:Medicamento ⊑ schema:Drug) con su condición de prescripción, fecha de autorización y flags (genérico/EFG, huérfano, biosimilar, triángulo negro, receta); 33,184 ingredientes reificados con dosis y unidad; 42,283 presentaciones (código nacional); principios activos, laboratorios (⊑ schema:MedicalOrganization), excipientes de declaración obligatoria, vías y formas farmacéuticas como skos:Concept. La clasificación ATC de la OMS está modelada como jerarquía SKOS completa (skos:broader + skos:exactMatch a BioPortal + rdfs:seeAlso a WHOCC), y las sustancias enlazan a SNOMED CT (http://snomed.info/id/) por la VTM del medicamento y por los códigos DCSA/DCP/DCPF de la extensión española de fármacos. Extracción médica estructurada: 48,997 interacciones farmacológicas a nivel ATC (fmc:Interaccion con efecto, recomendación y gravedad derivada — contraindicada / no recomendada / precaución / informativa) tomadas del Nomenclátor, y 761,945 secciones de prospecto y ficha técnica troceadas según la plantilla QRD europea (indicaciones, posología, efectos adversos, contraindicaciones, conservación, composición) con el texto completo indexado (TEXT_INDEX → CONTAINS) y las bandas de frecuencia de efectos adversos etiquetadas. Incluye además los problemas de suministro activos (desabastecimientos, con tipo, fechas y motivo) y los materiales informativos de seguridad dirigidos a paciente o profesional. 9.5 M triples, pirámide por tipos y Dataset Card embebida. scripts/farmacos-es/harvest.py (API oficial, sin scraping) + to_rdf.py → rete build --pyramid-algo types --text-index --card. Reutilización de información del sector público (Ley 37/2007); datos de la AEMPS. Remote-lazy en Cloudflare R2.",
    "kind": "remote-lazy",
    "triples": "9.48 M",
-   "size": "278 MB",
+   "size": "252.0 MB",
    "license": "Reutilización de información del sector público (Ley 37/2007); datos de la AEMPS · CIMA",
    "source": "https://cima.aemps.es/",
    "tags": [
@@ -898,7 +898,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix fmc: <https://w3id.org/rete/farmacos#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix schema: <https://schema.org/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\nfmc:SeccionDocumentoShape\n  a sh:NodeShape ;\n  sh:targetClass fmc:SeccionDocumento ;\n  sh:property [\n    sh:path fmc:medicamento ;\n    sh:class fmc:Medicamento ;\n    sh:maxCount 1 ;\n  ] ;\n  sh:property [\n    sh:path rdfs:label ;\n    sh:datatype xsd:string ;\n  ] ;\n  sh:property [\n    sh:path schema:text ;\n    sh:datatype xsd:string ;\n  ] ;\n  sh:property [\n    sh:path fmc:texto ;\n    sh:datatype xsd:string ;\n  ] ;\n  sh:property [\n    sh:path fmc:seccionTitulo ;\n    sh:datatype xsd:string ;\n  ] ;\n  sh:property [\n    sh:path fmc:seccionNumero ;\n    sh:datatype xsd:string ;\n  ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/farmacos-es/farmacos-es.rete"
+   "url": "https://data.graphplaza.com/farmacos-es/farmacos-es-2026-07-18.rete"
   },
   {
    "key": "open-pulse",
@@ -1104,7 +1104,7 @@
    "description": "The complete metadata of EPFL Infoscience — the institutional research repository (DSpace-CRIS) of the École Polytechnique Fédérale de Lausanne, all CC0. Every entity type of the CRIS: 192,451 publications (infs:Publication, incl. 11,322 theses), 22,663 researcher profiles (infs:Person ⊑ schema:Person, carrying the EPFL sciperId and, for 1,112, an ORCID), 1,422 organizational units (infs:OrgUnit — labs/institutes/schools, in a parent/child hierarchy), 14,735 journals, 29,262 events, 1,896 patents, plus products and fundings — 263,284 items in all. They form a connected graph: 333k authorship edges (infs:hasAuthor, publication→person), affiliations (infs:affiliatedWith, person→unit), advisors and the org hierarchy (infs:parentOrg). Modelled with an ontology that REUSES the standard vocabularies DSpace's own metadata-schema registry declares — schema.org for person/organization/journal, Dublin Core for the dc.* fields, DataCite, OpenAIRE — minting infs: terms only for EPFL-specific fields (sciper, thesis metadata, unit codes). Entity IRIs follow the canonical scholarly-graph policy: a person with an ORCID IS https://orcid.org/{orcid}, a publication with a DOI IS https://doi.org/{doi} (130k of them) — so this graph AUTO-JOINS DataCite, Crossref, OpenAIRE, OpenCitations and ORCID on the shared IRI, no owl:sameAs. And the open-access research is here in full: 64,028 publications carry infs:fullText — the text DSpace extracted from their PDFs — with the whole corpus TEXT_INDEX'd (SPARQL CONTAINS / rete search --contains searches inside the papers). 10.08 M triples, a types pyramid and embedded Dataset Card. scripts/epfl-infoscience/{harvest_rest.py, harvest_fulltext.py, jsonl_to_parquet.py, parquet_to_nt.py} → rete build --pyramid-algo types --text-index --card. Remote-lazy on Cloudflare R2.",
    "kind": "remote-lazy",
    "triples": "10.08 M",
-   "size": "1.57 GB",
+   "size": "1.42 GB",
    "license": "CC0 1.0 (EPFL Infoscience metadata)",
    "source": "https://infoscience.epfl.ch",
    "tags": [
@@ -1176,7 +1176,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix infs: <https://w3id.org/rete/infoscience#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\ninfs:LabeledEntityShape a sh:NodeShape ;\n    sh:targetClass infs:Journal, infs:Thesis, infs:Patent, infs:OrgUnit, infs:Product, infs:Funding, infs:Event ;\n    sh:property [ sh:path rdfs:label ; sh:nodeKind sh:Literal ; sh:minCount 1 ; sh:maxCount 1 ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience.rete"
+   "url": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience-2026-07-18.rete"
   },
   {
    "key": "scholar",
@@ -1300,7 +1300,7 @@
    "label": "wikidata-1GB.rete - a real 1 GB Wikidata graph (remote, lazy)",
    "description": "A real ~1.04 GB slice of Wikidata, queried entirely in the browser over HTTP range requests - the point is that a GIGABYTE-scale knowledge graph stays interactive because a selective SPARQL query only faults in the bytes it needs (a typical query reads ~40 MB of the 1.04 GB, never the whole file). Holds both PLACES (e.g. wd:Q100001 Bemelen, with multilingual schema:description) and PEOPLE (wd:Q5 humans with wdt:P106 occupation, wdt:P569 birth date, wdt:P737 influenced-by). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Use bound subjects/objects and occupation intersections for snappy reads; avoid full scans. CC0 (Wikidata). See also the dedicated 100 MB / 1 GB explorer.",
    "kind": "remote-lazy",
-   "size": "1.04 GB",
+   "size": "1.54 GB",
    "license": "CC0",
    "source": "https://www.wikidata.org",
    "tags": [
@@ -1410,14 +1410,14 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix wdt: <http://www.wikidata.org/prop/direct/> .\n\n[] a sh:NodeShape ;\n  sh:targetSubjectsOf wdt:P19 ;\n  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;\n    sh:message \"Person with a birthplace has no label.\" ] ."
     }
    ],
-   "url": "https://data.graphplaza.com/wikidata-1GB/wikidata.rete"
+   "url": "https://data.graphplaza.com/wikidata-1GB/wikidata-2025-11-07.rete"
   },
   {
    "key": "wikidata-zenodo",
    "label": "wikidata with Zenodo DOI (1 GB) - citable source, stable R2 delivery",
    "description": "The same ~1.49 GB Wikidata graph deposited as the citable Zenodo record 21168821 (DOI 10.5281/zenodo.21168821), served here as its stable-format R2 twin for browser range queries. The deposited pre-1.0 artifact (format byte 0x04, which current readers refuse) remains the provenance record; this release copy carries stable format generation 1. A selective query faults ~27 MB rather than downloading the whole file. CC0 (Wikidata).",
    "kind": "remote-lazy",
-   "size": "1.49 GB",
+   "size": "1.54 GB",
    "license": "CC0",
    "source": "https://zenodo.org/records/21168821",
    "tags": [
@@ -1455,7 +1455,7 @@
      "sparql": "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\nSELECT ?occ (COUNT(?p) AS ?n) WHERE {\n  ?p wdt:P106 ?occ\n}\nGROUP BY ?occ\nORDER BY DESC(?n)\nLIMIT 15"
     }
    ],
-   "url": "https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo.rete"
+   "url": "https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo-2025-11-07.rete"
   },
   {
    "key": "wikidata-ontology",
@@ -1463,7 +1463,7 @@
    "description": "The complete class ontology of Wikidata, extracted from the full truthy dump — the file Wikidata itself never publishes. All 4,420,121 classes (every item that is a wdt:P279 subject or object, or the target of any of the 120.8M wdt:P31 statements) with their FULL multilingual stars — labels, aliases and descriptions in every language (4.27M carry English labels) plus every other truthy statement whose subject is a class — the 5,144,945-edge subclass hierarchy, and all ~13k property entities. wdt:P279 is dual-emitted as rdfs:subClassOf and wdt:P31 as rdf:type, so the types pyramid, plain SPARQL tooling and reasoning work out of the box alongside Wikidata-native wdt: queries. Each of the 109,558 instantiated classes carries rete:instanceCount — its direct-instance census in the full ~8B-statement dump (scholarly article 45.2M, human 12.7M, taxon 3.8M, star 3.3M…), so you can weigh any branch of the taxonomy without touching a single instance. GeoSPARQL on board: place-anchored classes carry wdt:P625 geo:wktLiteral points (off-world geometries — lakes on Mars — carry a <wd:Q111> CRS prefix, which is valid GeoSPARQL). A full-text index covers all labels. 185.5M triples / 53.7M terms in 2.18 GB, remote-lazy over HTTP range on Cloudflare R2, with the whole metadata bundle beside it: wikidata-taxonomy.ttl (a 13.9M-statement compact Turtle — class + English label + subClassOf + census — for Protégé/reasoners), croissant.json (MLCommons Croissant 1.0), JSON Schemas, and the classes / class_counts / p279 Parquet side-tables. Built by scripts/wikidata_ontology_to_nt.py (two DuckDB passes over the piebro/wikidata-extraction Parquet of the official truthy dump, authoritative property datatypes) → rete build --pyramid-algo types --card --text-index. CC0 (Wikidata).",
    "kind": "remote-lazy",
    "triples": "185.5 M",
-   "size": "2.18 GB",
+   "size": "2.29 GB",
    "license": "CC0",
    "source": "https://www.wikidata.org",
    "tags": [
@@ -1532,7 +1532,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix wd: <http://www.wikidata.org/entity/> .\n@prefix wdt: <http://www.wikidata.org/prop/direct/> .\n@prefix schema: <http://schema.org/> .\n@prefix rete: <https://w3id.org/rete/> .\n\nrete:Q113145171MetaClassShape\n  a sh:NodeShape ;\n  sh:targetClass wd:Q113145171 ;\n  sh:property [\n    sh:path wdt:P31 ;\n    sh:minCount 1 ;\n    sh:hasValue wd:Q19478619 ;\n  ] ;\n  sh:property [\n    sh:path schema:name ;\n    sh:minCount 1 ;\n    sh:nodeKind sh:Literal ;\n  ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology.rete"
+   "url": "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology-2025-11-07.rete"
   },
   {
    "key": "scholar-noisy",
@@ -3074,7 +3074,7 @@
    "description": "The ENTIRE Mapping Manuscript Migrations (MMM) graph as one range-queried .rete: 23,349,356 triples over CIDOC-CRM / FRBRoo, unifying the Schoenberg Database (SDBM), Bibale (IRHT) and Medieval Manuscripts in Oxford (Bodleian) into one provenance graph of medieval and Renaissance manuscripts. Each manuscript is an frbroo:F4_Manifestation_Singleton with its production event (E12, with time-span and place), former/current owners (crm:P51 -> E21 persons and E40 organisations), the works/expressions it carries (mmm:manuscript_work), physical detail (material, folios, lines), a shelfmark (mmm:catalog_or_lot_number) and the catalogue/source records that document it (crm:P70i). Places are TGN entities carrying WGS84 coordinates. The MMM metadata ontology is merged in (class/property labels for the Schema view) and a type pyramid + Dataset Card are embedded. Queried lazily over HTTP range - the browser fetches only the dictionary chunks and index tiles each query touches, never the 141 MB whole. Featured here: Cambridge, University Library, MS Gg.1.1 (SDBM entry 212926), the 14th-century trilingual compendium ('A large collection of poetry', parchment, 633 folios). CC BY-NC 4.0 - non-commercial, attribute MMM (seco.cs.aalto.fi). Pick SELECTIVE shapes (a bound manuscript, a bound owner/collection, a shelfmark) for snappy lazy reads; whole-predicate aggregates over 23M triples scan far more.",
    "kind": "remote-lazy",
    "triples": "23.3 M",
-   "size": "141 MB",
+   "size": "148.0 MB",
    "license": "CC BY-NC 4.0",
    "source": "https://mappingmanuscriptmigrations.org",
    "tags": [
@@ -3184,7 +3184,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix crm: <http://erlangen-crm.org/current/> .\n@prefix wgs: <http://www.w3.org/2003/01/geo/wgs84_pos#> .\n\ncrm:PlaceGeoShape a sh:NodeShape ;\n  sh:targetClass crm:E53_Place ;\n  sh:property [ sh:path wgs:lat ; sh:minCount 1 ] ;\n  sh:property [ sh:path wgs:long ; sh:minCount 1 ;\n    sh:message \"Place has no coordinates.\" ] ."
     }
    ],
-   "url": "https://data.graphplaza.com/mmm/mmm.rete"
+   "url": "https://data.graphplaza.com/mmm/mmm-v2.1.0.rete"
   },
   {
    "key": "openalex-astrocytes",
@@ -3525,69 +3525,6 @@
    "url": "https://data.graphplaza.com/monarch/monarch-2026-06-13.rete"
   },
   {
-   "key": "opencitations",
-   "label": "opencitations.rete — OpenCitations Meta: 135.4M scholarly works with their authors and venues (remote, lazy)",
-   "description": "The complete **OpenCitations Meta v13.1.0** corpus (CC0) as one range-queryable graph — **5,184,588,893 triples (33.4 GB)** covering **135.4 million bibliographic records**: journal articles, book chapters, proceedings papers, datasets, theses and reference entries, each with its title, publication year and date, type, volume/issue/pages, and its venue. Every work sits at its **canonical `https://doi.org/{doi}` IRI** when it has a DOI (else its native `w3id.org/oc/meta/{omid}`), and carries its other identifiers as literals — `oc:pmid`, `oc:openalex`, `oc:issn`, `oc:isbn`, `oc:omid`. **Authorship is reified**, not flattened: a work `oc:hasContributor` an `oc:AgentRole` that carries `oc:agentOrder` (first author, second author …) and `oc:withRole`, and `oc:isHeldBy` an `oc:Agent` with `oc:agentName` and, where OpenCitations knows it, `oc:orcidId` — so you can ask for a person’s papers *in author position*, which a flat creator string cannot answer. Venues are first-class nodes (`oc:partOf`) with their own titles and ISSNs, and publishers hang off `oc:publishedBy`. Because works key by DOI and people by ORCID, this graph **auto-merges** with crossref, datacite, dblp, openaire, zenodo and the 25M-researcher orcid graph — no `owl:sameAs` needed. Ontology `oc:` = `w3id.org/rete/opencitations#` travels inside the file. Built by `data/opencitations/scripts/parquet_to_nt.py` → `rete build --memory-budget-mb` (bounded-RAM external build) from the 14.7 GB Meta Parquet, which is **published beside it** for SQL comparison. **No pyramid at this scale** — keep queries SELECTIVE (one DOI, one ORCID, one venue; each reads a few MB over HTTP range); a whole-corpus aggregate scans 33 GB. CC0.",
-   "kind": "remote-lazy",
-   "triples": 5184588893,
-   "size": "33.4 GB",
-   "license": "CC0",
-   "source": "https://opencitations.net/meta",
-   "tags": [
-    "OpenCitations",
-    "citations"
-   ],
-   "examples": [
-    {
-     "title": "One paper, fully unfolded — venue and every author in order",
-     "tip": "Authorship is REIFIED here, so every author arrives with the position they hold on the paper (oc:agentOrder) and, where OpenCitations knows it, an ORCID linking to that researcher's record — something a flat creator string cannot express. The seed DOI and each ORCID are clickable. Swap the DOI in VALUES for any of the 135.4M works; keeping one bound subject is what makes this read a few MB instead of scanning 33 GB.",
-     "reason": null,
-     "sparql": "PREFIX oc: <https://w3id.org/rete/opencitations#>\nSELECT ?work ?title ?year ?venue ?pos ?author ?orcid WHERE {\n  VALUES ?work { <https://doi.org/10.4204/eptcs.181.2> }\n  ?work oc:title ?title ;\n        oc:publicationYear ?year ;\n        oc:hasContributor ?role .\n  OPTIONAL { ?work oc:partOf ?v . ?v oc:title ?venue }\n  ?role oc:isHeldBy ?agent ; oc:agentOrder ?pos .\n  ?agent oc:agentName ?author .\n  OPTIONAL { ?agent oc:orcidId ?orcid }\n}\nORDER BY ?pos"
-    },
-    {
-     "title": "Everything one researcher published (by ORCID)",
-     "tip": "Start from a person, not a paper: bind the ORCID and walk back through the reified role to every work that person holds a contributor role on, with its title, year, type and venue. Swap in any ORCID (they are the same IRIs crossref, datacite, dblp and the 25M-researcher orcid graph use, so this query works unchanged against those files too).",
-     "reason": null,
-     "sparql": "PREFIX oc: <https://w3id.org/rete/opencitations#>\nSELECT ?work ?title ?year ?type ?venue WHERE {\n  ?agent oc:orcidId \"0000-0002-9061-3921\" .\n  ?role oc:isHeldBy ?agent .\n  ?work oc:hasContributor ?role ;\n        oc:title ?title ;\n        oc:publicationYear ?year ;\n        oc:resourceType ?type .\n  OPTIONAL { ?work oc:partOf ?v . ?v oc:title ?venue }\n}\nLIMIT 25"
-    },
-    {
-     "title": "A journal's papers, with identifiers you can follow",
-     "tip": "Venues are first-class nodes here, not strings — so you can pin one and list what it published, each row carrying the DOI (clickable), the PubMed id and the OpenAlex id. That triple of identifiers is what makes this graph a join table for the rest of the scholarly constellation.",
-     "reason": null,
-     "sparql": "PREFIX oc: <https://w3id.org/rete/opencitations#>\nSELECT ?work ?title ?year ?pmid ?openalex WHERE {\n  ?v oc:title \"Mathematical Structures In Computer Science\" .\n  ?work oc:partOf ?v ;\n        oc:title ?title ;\n        oc:publicationYear ?year .\n  OPTIONAL { ?work oc:pmid ?pmid }\n  OPTIONAL { ?work oc:openalex ?openalex }\n}\nLIMIT 25"
-    },
-    {
-     "title": "What kinds of works are in the corpus",
-     "tip": "A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter how many records it scans; it is the query that proved bounded-memory aggregation at billion-triple scale. It still reads a lot of the file over HTTP, so give it a moment.",
-     "reason": null,
-     "sparql": "PREFIX oc: <https://w3id.org/rete/opencitations#>\nSELECT ?type (COUNT(*) AS ?works) WHERE {\n  ?w oc:resourceType ?type .\n}\nGROUP BY ?type ORDER BY DESC(?works)"
-    }
-   ],
-   "shacl_shapes": [
-    {
-     "title": "Articles carry bibliographic metadata",
-     "tip": "FRBR/Dublin-Core completeness: every fabio:JournalArticle should carry a title, a date, a creator and a container (dct:isPartOf). The citation neighbourhood conforms.",
-     "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix fabio: <http://purl.org/spar/fabio/> .\n@prefix dct: <http://purl.org/dc/terms/> .\n\nfabio:ArticleShape a sh:NodeShape ;\n  sh:targetClass fabio:JournalArticle ;\n  sh:property [ sh:path dct:title ; sh:minCount 1 ] ;\n  sh:property [ sh:path dct:date ; sh:minCount 1 ] ;\n  sh:property [ sh:path dct:creator ; sh:minCount 1 ;\n    sh:message \"Every journal article should record at least one creator.\" ] ;\n  sh:property [ sh:path dct:isPartOf ; sh:minCount 1 ] ."
-    },
-    {
-     "title": "Book chapters carry metadata",
-     "tip": "A second FRBR class: every fabio:BookChapter should carry a title and a date.",
-     "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix fabio: <http://purl.org/spar/fabio/> .\n@prefix dct: <http://purl.org/dc/terms/> .\n\nfabio:ChapterShape a sh:NodeShape ;\n  sh:targetClass fabio:BookChapter ;\n  sh:property [ sh:path dct:title ; sh:minCount 1 ] ;\n  sh:property [ sh:path dct:date ; sh:minCount 1 ;\n    sh:message \"Every book chapter should carry a date.\" ] ."
-    },
-    {
-     "title": "Reference entries have a creator",
-     "tip": "Every fabio:ReferenceEntry should record at least one dct:creator.",
-     "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix fabio: <http://purl.org/spar/fabio/> .\n@prefix dct: <http://purl.org/dc/terms/> .\n\nfabio:RefEntryShape a sh:NodeShape ;\n  sh:targetClass fabio:ReferenceEntry ;\n  sh:property [ sh:path dct:creator ; sh:minCount 1 ;\n    sh:message \"Reference entry has no creator.\" ] ."
-    },
-    {
-     "title": "Creators are named people",
-     "tip": "Every value of dct:creator should carry a foaf:name.",
-     "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n\n[] a sh:NodeShape ;\n  sh:targetObjectsOf dct:creator ;\n  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:message \"Creator has no name.\" ] ."
-    }
-   ],
-   "url": "https://data.graphplaza.com/opencitations/opencitations.rete"
-  },
-  {
    "key": "opencitations-meta",
    "label": "opencitations-meta — OpenCitations Meta in the OpenCitations Data Model: 147.4M works, their identifiers, venues, pages and ordered authors (one file, remote, lazy)",
    "description": "**OpenCitations Meta** (September 2026, RDF dump v9.2.1, CC0) **exactly as OpenCitations' own RDF states it, in the OpenCitations Data Model (OCDM)**: 5,710,689,940 statements in one file. **147,369,100 bibliographic resources** (`fabio:Expression`, typed `fabio:JournalArticle` 88.4M, `BookChapter`, `Book`, `JournalIssue`, `Journal` and 20 more) with `dcterms:title`, `prism:publicationDate` and `frbr:partOf` up through issue, volume and journal; **541,544,508 agent roles** (`pro:RoleInTime`: `pro:withRole` author / editor / publisher, `pro:isHeldBy`, and `oco:hasNext` for the author order); **390,541,098 agents** (`foaf:Agent`); **251,954,118 identifiers** (`datacite:Identifier` with `datacite:usesIdentifierScheme` and `literal:hasLiteralValue`: DOI, OpenAlex, PMID, PMCID, ISSN, ISBN, ORCID, Crossref member …); **82,546,126 embodiments** with their pages — all at OpenCitations' own IRIs (`https://w3id.org/oc/meta/{br,ar,ra,id,re}/{omid}`), so the OpenCitations Index's citations land on these nodes. **One link is added**: `oc:doiLink` from every resource with a DOI to its `https://doi.org/` IRI (114.6M, the hub's shared DOI rule), so `?work oc:doiLink <https://doi.org/10.…>` finds a work and joins `crossref`, `datacite` and `openaire` by DOI (`orcid` through the iD literals); it is not `owl:sameAs`, because Meta keeps several resources for one DOI. v9.2.1 fixes the references to deleted agent roles and agents of v9.2.0 and merges the 7.4M identifier nodes that repeated a scheme and value. Single-valued properties OpenCitations states more than once on one node (`frbr:partOf` on 573,466 resources, two publication dates on 8,746, …) are kept as stated; Meta's provenance snapshots are counted in the card, not included. **TEXT_INDEX on for full-text search** over the titles, agent and publisher names, dates, pages and volume and issue numbers (`CONTAINS`, `rete search --contains`); identifier values are left out of it and found exactly by their literal or by `oc:doiLink`. **A label index** answers `rete search <prefix>` over every title and agent name. **Start queries from a constant** — a DOI's doi.org IRI, a work or agent IRI, an iD literal: they read a few tiles of the file. Built from the five 7z archives of Zenodo 10.5281/zenodo.23059736 by caviri/rete-datasets `opencitations/ocdm_to_nt.py` (scan, plan, emit) → `rete build --strict --memory-budget-mb 12000` (rete 0.4.0 + 8f1a634a: #354, #355), guarded, then re-carded in place by rete 0.4.1 (`rete recard --in-place`); **No pyramid.** CC0 1.0.",
@@ -3732,7 +3669,7 @@
    "description": "**10,803,231 nanopublications**, as the Zenodo dump *Nanopublication dump from server network* (Tobias Kuhn, VU Amsterdam, version 20180405) states them: every nanopublication the decentralised server network held on 2018-04-05, as **378,654,287 quads in 43,212,923 named graphs**. Each nanopublication is four named graphs — head, assertion, provenance and publication info — linked by the `np:` vocabulary (`np:hasAssertion`, `np:hasProvenance`, `np:hasPublicationInfo`), so the graph a triple sits in says which nanopublication it belongs to. The default graph is empty. A mix of many sources (BEL Framework, Bio2RDF DrugBank, WikiPathways …), not one schema. Statements, graph names and IRIs are the dump's own. Use `GRAPH` patterns and start from a graph or a constant: a count or a scan over all 10.8M nanopublications takes minutes over HTTP range (the full count took over ten minutes on a home line). No full-text index, no label index. **CC BY-NC-SA 4.0** (non-commercial, share-alike): Kuhn, T. (2018), DOI 10.5281/zenodo.1213293; this `.rete` is an adaptation of the dump (format and card only) under the same licence. Format 0x06, built with rete 0.5.3; its directories rewritten into 16 KiB leaves by rete 0.5.6 `rete convert` (data, card and build record unchanged).",
    "kind": "remote-lazy",
    "triples": "378.7 M",
-   "size": "3.88 GB",
+   "size": "2.52 GB",
    "license": "CC BY-NC-SA 4.0 (Tobias Kuhn, VU Amsterdam; share-alike, non-commercial)",
    "source": "https://doi.org/10.5281/zenodo.1213293",
    "tags": [
@@ -3780,7 +3717,7 @@
      "sparql": "PREFIX pav: <http://purl.org/pav/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?np ?created WHERE {\n  GRAPH ?pubinfo {\n    ?np pav:createdBy <http://orcid.org/0000-0002-1267-0234> ;\n        dct:created ?created\n  }\n} LIMIT 10"
     }
    ],
-   "url": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete"
+   "url": "https://data.graphplaza.com/nanopubs/nanopubs-2018-04-05.rete"
   },
   {
    "key": "orkg",
@@ -3846,7 +3783,7 @@
    "description": "The ENTIRE current OpenHistoricalMap planet (daily snapshot, 2026-06-14) as one range-queried .rete: 1,021,295 named + dated + geolocated historical features (~6.1M triples, 150 MB), queried lazily over HTTP - only the dictionary chunks and index tiles each query touches are fetched, never the whole file. Each feature is openhistoricalmap.org/{node,way,relation}/<id> with rdfs:label, ex:startYear/ex:endYear (signed integers, -10000..2100; 2100 = still present) and GeoSPARQL geometry (176k points, 690k lines, 155k polygons; admin boundaries assembled from multipolygon/boundary relations, simplified to ~50 m). Built from planet.openhistoricalmap.org with PyOsmium (scripts/fetch_ohm_planet.sh). CC0 1.0 - credit OpenHistoricalMap contributors. Pick selective shapes (a bound subject, a name, a point-in-polygon) for snappy lazy reads.",
    "kind": "remote-lazy",
    "triples": "~6.1 M",
-   "size": "150 MB",
+   "size": "168.4 MB",
    "license": "CC0 1.0",
    "source": "https://www.openhistoricalmap.org",
    "tags": [
@@ -3932,14 +3869,14 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix ex: <http://ex/> .\n\n[] a sh:NodeShape ;\n  sh:targetSubjectsOf ex:startYear ;\n  sh:property [ sh:path ex:endYear ; sh:minCount 1 ;\n    sh:message \"A dated feature has no end year.\" ] ."
     }
    ],
-   "url": "https://data.graphplaza.com/ohm-full/ohm-full.rete"
+   "url": "https://data.graphplaza.com/ohm-full/ohm-full-2026-06-14.rete"
   },
   {
    "key": "wikidata-100mb",
    "label": "wikidata-100MB.rete - a real 100 MB Wikidata slice (remote, lazy)",
    "description": "A real ~104 MB slice of Wikidata, range-queried directly from Cloudflare R2 - the browser fetches only the dictionary chunks and index tiles each query touches (a typical selective query reads ~10 MB of the 104 MB), never the whole file. People (wd:Q5 humans) carry rdfs:label (multilingual), occupation (wdt:P106 -> e.g. physicist Q169470, philosopher Q4964182, writer Q36180, politician Q82955), date of birth (wdt:P569), place of birth (wdt:P19), citizenship (wdt:P27) and 'influenced by' (wdt:P737). Entity/property IRIs stay as wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. Pick SELECTIVE shapes (a bound subject/object, an occupation intersection) for snappy reads; aggregates over a whole predicate scan more. CC0 (Wikidata). The 1 GB version (key: wikidata) is the same idea at 10x the data.",
    "kind": "remote-lazy",
-   "size": "104 MB",
+   "size": "142.1 MB",
    "license": "CC0",
    "source": "https://www.wikidata.org",
    "tags": [
@@ -4007,7 +3944,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix wdt: <http://www.wikidata.org/prop/direct/> .\n\n[] a sh:NodeShape ;\n  sh:targetSubjectsOf wdt:P19 ;\n  sh:property [ sh:path rdfs:label ; sh:minCount 1 ;\n    sh:message \"Person with a birthplace has no label.\" ] ."
     }
    ],
-   "url": "https://data.graphplaza.com/wikidata-100MB/wikidata.rete"
+   "url": "https://data.graphplaza.com/wikidata-100MB/wikidata-2025-11-07.rete"
   },
   {
    "key": "wikidata-xxl",
@@ -4015,7 +3952,7 @@
    "description": "The SHARDED-RETE model at scale: one logical Wikidata graph too big to build as a single file, split into 6 INDEPENDENT --no-pyramid .rete shards (100M triples / ~906 MB each, ~5.4 GB total) that the playground AUTO-FEDERATES — every query fans across all 6 shards (UNION) and the rows merge, so you query it like one dataset. A genuine cross-section of the Wikidata truthy dump (people, places, works, taxa, properties) streamed partition-by-partition from the piebro/wikidata-extraction Parquet (DuckDB httpfs, no full download) and built shard-by-shard with bounded RAM/disk (stream → rete build --no-pyramid → drop the 10 GB N-Triples → next). Each entity carries multilingual rdfs:label / skos:prefLabel / schema:name + schema:description, rdf:type / wdt:P31, and truthy wdt:* statements (occupation P106, etc.); IRIs stay wikidata.org/{entity,prop/direct}/* so nodes round-trip to live Wikidata. This proves the .rete format + client-side federation scale to a dataset BIGGER THAN ANY SINGLE FILE — the path to full Wikidata (~80 shards, ~80 GB) is just more shards. Datatypes are heuristic (typed dateTime + WKT; numbers plain) since WDQS rate-limits the property-datatype map. The fed bar shows '⛓ 6 shards'. Built by scripts/build_wikidata_xxl.sh. CC0 (Wikidata).",
    "kind": "remote-lazy",
    "triples": "600 M",
-   "size": "5.4 GB (6 shards)",
+   "size": "4.75 GB (6 shards)",
    "license": "CC0",
    "source": "https://www.wikidata.org",
    "tags": [
@@ -4053,12 +3990,12 @@
     }
    ],
    "shards": [
-    "https://data.graphplaza.com/wikidata-xxl/shard_0000.rete",
-    "https://data.graphplaza.com/wikidata-xxl/shard_0001.rete",
-    "https://data.graphplaza.com/wikidata-xxl/shard_0002.rete",
-    "https://data.graphplaza.com/wikidata-xxl/shard_0003.rete",
-    "https://data.graphplaza.com/wikidata-xxl/shard_0004.rete",
-    "https://data.graphplaza.com/wikidata-xxl/shard_0005.rete"
+    "https://data.graphplaza.com/wikidata-xxl/shard_0000-2025-11-07.rete",
+    "https://data.graphplaza.com/wikidata-xxl/shard_0001-2025-11-07.rete",
+    "https://data.graphplaza.com/wikidata-xxl/shard_0002-2025-11-07.rete",
+    "https://data.graphplaza.com/wikidata-xxl/shard_0003-2025-11-07.rete",
+    "https://data.graphplaza.com/wikidata-xxl/shard_0004-2025-11-07.rete",
+    "https://data.graphplaza.com/wikidata-xxl/shard_0005-2025-11-07.rete"
    ]
   },
   {
@@ -4067,7 +4004,7 @@
    "description": "Google's deps.dev (Open Source Insights) as a queryable knowledge graph: the version-pinned dependency AND dependents network of SEVEN package ecosystems — npm, PyPI, Maven, Go, Cargo, NuGet, RubyGems — 2,555,320,067 triples over 8 auto-federated .rete shards (one logical graph; the playground UNIONs every query across all shards). Every package version is a node at https://deps.dev/<system>/<name>/<version> carrying its licenses (SPDX IRIs), advisories, SLSA provenance and registry links, with deps:purl (pkg:npm/lodash@4.17.21) as the cross-registry / cross-dataset join key. deps:dependsOn is the resolved, version-pinned direct edge (570M+ of them); DEPENDENTS come free as the reverse traversal, so 'what depends on X@v?' is just ?x deps:dependsOn <X@v>. Also source projects (deps:Project — GitHub/GitLab stars, forks, OSS-Fuzz) linked by deps:hasProject, and security advisories (deps:Advisory — GHSA/OSV, CVSS, CVE aliases). npm is the giant, split into 2 shards by package-name hash; projects/advisories live in the first shard of each ecosystem. Model is a small deps: ontology reusing schema.org + Dublin Core + SPDX. Built from the deps.dev BigQuery public dataset (snapshot 2026-07-13) via a DuckDB→N-Triples streaming converter piped into rete build --memory-budget-mb external builds (bounded RAM, gzip-streamed to fit disk). CC-BY 4.0 (Google).",
    "kind": "remote-lazy",
    "triples": "2.55 B",
-   "size": "~12 GB (8 shards)",
+   "size": "12.32 GB (8 shards)",
    "license": "CC-BY 4.0",
    "source": "https://deps.dev/",
    "tags": [
@@ -4115,14 +4052,14 @@
     }
    ],
    "shards": [
-    "https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete",
-    "https://data.graphplaza.com/deps-dev/deps-dev-npm-1.rete",
-    "https://data.graphplaza.com/deps-dev/deps-dev-go.rete",
-    "https://data.graphplaza.com/deps-dev/deps-dev-maven.rete",
-    "https://data.graphplaza.com/deps-dev/deps-dev-nuget.rete",
-    "https://data.graphplaza.com/deps-dev/deps-dev-pypi.rete",
-    "https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete",
-    "https://data.graphplaza.com/deps-dev/deps-dev-rubygems.rete"
+    "https://data.graphplaza.com/deps-dev/deps-dev-npm-0-2026-07-13.rete",
+    "https://data.graphplaza.com/deps-dev/deps-dev-npm-1-2026-07-13.rete",
+    "https://data.graphplaza.com/deps-dev/deps-dev-go-2026-07-13.rete",
+    "https://data.graphplaza.com/deps-dev/deps-dev-maven-2026-07-13.rete",
+    "https://data.graphplaza.com/deps-dev/deps-dev-nuget-2026-07-13.rete",
+    "https://data.graphplaza.com/deps-dev/deps-dev-pypi-2026-07-13.rete",
+    "https://data.graphplaza.com/deps-dev/deps-dev-cargo-2026-07-13.rete",
+    "https://data.graphplaza.com/deps-dev/deps-dev-rubygems-2026-07-13.rete"
    ]
   },
   {
@@ -4221,7 +4158,7 @@
    "description": "The ENTIRE ChEBI ontology (Chemical Entities of Biological Interest, EMBL-EBI) as one range-queried .rete: 8.83M triples over ~205k chemical classes, their rdfs:subClassOf classification DAG (380k edges), textual definitions (obo:IAO_0000115), exact/related synonyms, ~900k database cross-references (as reified owl:Axiom annotations), and the structural data chemistry needs - molecular formula, charge, average & monoisotopic mass, InChI, InChIKey and SMILES, all under the ChemROF vocabulary (chemrof: https://w3id.org/chemrof/). Queried lazily over HTTP range: the browser fetches only the dictionary chunks and index tiles each query touches, never the 164.8 MB whole. CC BY 4.0 (EMBL-EBI). It shares its CHEBI_* class IRIs and rdfs:label / rdfs:subClassOf structure with the chemotion dataset, so the two FEDERATE: pick chebi-full, add chemotion as a second source (the 'Federation' example does this for you), and one SPARQL query resolves terms across both ontologies. Lossless Parquet / DuckDB / SQLite table companions sit beside it in the bucket. Pick selective shapes (a bound molecule, a formula, a subClassOf path) for snappy lazy reads; whole-predicate aggregates scan more.",
    "kind": "remote-lazy",
    "triples": "8.83 M",
-   "size": "164.8 MB",
+   "size": "159.3 MB",
    "license": "CC BY 4.0",
    "source": "https://www.ebi.ac.uk/chebi/",
    "tags": [
@@ -4303,7 +4240,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix obo: <http://purl.obolibrary.org/obo/> .\n\n[] a sh:NodeShape ;\n  sh:targetSubjectsOf rdfs:subClassOf ;\n  sh:property [ sh:path obo:IAO_0000115 ; sh:minCount 1 ;\n    sh:message \"Class has no definition.\" ] ."
     }
    ],
-   "url": "https://data.graphplaza.com/chebi-full/chebi-full.rete"
+   "url": "https://data.graphplaza.com/chebi-full/chebi-full-v252.rete"
   },
   {
    "key": "mirbase",
@@ -4623,7 +4560,7 @@
    "description": "The COMPLETE datos.bne.es - the Biblioteca Nacional de España's linked open data (CC0) - as ONE range-queryable .rete: 267,052,840 triples (the three official RDF dumps merged - autoridades 47M, bibliográficos 208M, materias 6M), 84M terms, 3.4 GB. The Spanish counterpart of data.bnf.fr. Entities at datos.bne.es/resource/* over the BNE's own ontology (datos.bne.es/def/C* classes, P* properties) plus the RDA registry; subjects are SKOS. The authority layer (persons, corporate bodies, works) carries owl:sameAs alignments to VIAF, ISNI, GND, LoC, IdRef, DBpedia AND data.bnf.fr - so it FEDERATES with the databnf dataset: add databnf as a second source ('+ Add source') and one query joins Spanish to French authorities on their shared VIAF / data.bnf.fr ids. Carries a types pyramid + planner query_stats, so summary / schema / community queries are answered index-free. Built as a single file with the low-RAM pipeline (peak ~25.6 GiB); the dump's ~64k malformed lines (IRIs with a stray '>' or a trailing space) were dropped. Entity IRIs stay datos.bne.es/resource/* so nodes round-trip to the live BNE. Queried lazily over HTTP range. CC0 1.0 (BNE).",
    "kind": "remote-lazy",
    "triples": "267 M",
-   "size": "3.4 GB",
+   "size": "3.74 GB",
    "license": "CC0 1.0",
    "source": "https://datos.bne.es/",
    "tags": [
@@ -4671,7 +4608,7 @@
      "sparql": "PREFIX bne: <https://datos.bne.es/def/>\nPREFIX owl: <http://www.w3.org/2002/07/owl#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?link WHERE {\n  ?s bne:P5001 \"Cervantes Saavedra, Miguel de\" .\n  { ?s owl:sameAs ?link } UNION { ?s rdfs:seeAlso ?link }\n} LIMIT 50"
     }
    ],
-   "url": "https://data.graphplaza.com/bne-full/bne-full.rete"
+   "url": "https://data.graphplaza.com/bne-full/bne-full-2026-06-29.rete"
   },
   {
    "key": "biblissima",
@@ -4679,7 +4616,7 @@
    "description": "Biblissima+, the French aggregator of medieval & early-modern written heritage, as ONE range-queryable .rete (it was 3 federated shards): 254,203,131 triples over 867,838 Wikibase entities - manuscripts, works, persons, places, printed editions, iconography - harvested from its open per-entity RDF export (Special:EntityData; Biblissima has no bulk dump and its SPARQL is gated). The manuscript / authority hub of this whole constellation; it overlaps the BnF, MMM and Jonas on persons & places. Wikibase model: entities at data.biblissima.fr/entity/Q*, truthy statements via prop/direct/P*, P2 = 'instance of', multilingual rdfs:label / skos:prefLabel. Now a single 667 MB file with a P2-keyed types pyramid (4 semantic-zoom levels) + planner query_stats, so it answers summary / schema / community queries index-free - built with the low-RAM pipeline that made the monolith feasible (it was sharded because the 254M build OOM'd a 62 GB host). Queried lazily over HTTP range. CC-BY 4.0 (Biblissima+, Campus Condorcet).",
    "kind": "remote-lazy",
    "triples": "254 M",
-   "size": "667 MB",
+   "size": "688.3 MB",
    "license": "CC-BY 4.0",
    "source": "https://data.biblissima.fr/",
    "tags": [
@@ -4727,7 +4664,7 @@
      "sparql": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nSELECT ?label ?altLabel WHERE {\n  ?e rdfs:label ?label ; skos:altLabel ?altLabel .\n  FILTER(LANG(?label) = \"fr\")\n} LIMIT 100"
     }
    ],
-   "url": "https://data.graphplaza.com/biblissima-full/biblissima-full.rete"
+   "url": "https://data.graphplaza.com/biblissima-full/biblissima-full-2026-06-27.rete"
   },
   {
    "key": "albala",
@@ -5330,7 +5267,7 @@
    "description": "Every research project the European Union has funded, as one range-queryable .rete: the CORDIS EURIO knowledge graph — 26,363,545 quads across 6 NAMED GRAPHS covering projects, their grants, participants, funding schemes, topics and the results they produced (publications, datasets, software, patents), each under its canonical cordis.europa.eu IRI so a row links straight back to the project page. EURIO (the EUropean Research Information Ontology) is the official model, so this federates with the other EU-vocabulary datasets here — and with the Spanish BOE and Swiss Fedlex law graphs, which share the EU publication lineage. Covers the Framework Programmes through Horizon Europe. QUERY THE DEFAULT GRAPH, NOT NAMED ONES: this entry used to say the opposite — that the default graph was empty and every query needed GRAPH ?g { … } — and all three of its examples were written that way and answered NOTHING (#212). The published object says otherwise, at the byte level: its NamedGraphs section is offset 0, length 0, and SELECT (COUNT(*)) WHERE { ?s ?p ?o } returns 26,187,112 while GRAPH ?g { ?s ?p ?o } returns no solutions at all. The six EURIO source graphs are folded into the default graph of this build; write plain patterns. Published by the Publications Office of the European Union under CC BY 4.0. 801 MB, remote-lazy on Cloudflare R2.",
    "kind": "remote-lazy",
    "triples": "26.4 M",
-   "size": "791 MB",
+   "size": "854.8 MB",
    "license": "CC BY 4.0 — © European Union, 1995-2026. Reuse authorised.",
    "source": "https://cordis.europa.eu/about/archive",
    "tags": [
@@ -5364,7 +5301,7 @@
      "sparql": "PREFIX s66: <http://data.europa.eu/s66#>\nSELECT ?project ?id ?title WHERE {\n  ?project s66:identifier ?id ; s66:title ?title .\n} LIMIT 50"
     }
    ],
-   "url": "https://data.graphplaza.com/cordis/cordis.rete"
+   "url": "https://data.graphplaza.com/cordis/cordis-2026-04-02.rete"
   },
   {
    "key": "wikiart",
@@ -5426,7 +5363,7 @@
    "description": "The metadata layer of Swiss federal law as one range-queryable .rete: 56,321,446 quads spread over 497,905 NAMED GRAPHS — one per act, consolidated version and language — harvested from Fedlex, the official publication platform of the Swiss Confederation. Modelled with JOLux (the Luxembourg-origin legislation ontology Fedlex reuses) plus ELI and SKOS, whose TBox travels inside the file. It is FRBR-shaped: a jolux:Work (the act) isRealizedBy one jolux:Expression per language (de/fr/it/rm/en, 4.5M language links) isEmbodiedBy jolux:Manifestation files, so the same law carries its German, French and Italian titles side by side. On top of that sits a 3.12-million-edge CITATION NETWORK (jolux:citationFromLegalResource / citationToLegalResource) whose endpoints are jolux:LegalResourceSubdivision IRIs (…/text/…) that reach their act through legalResourceSubdivisionIsPartOf — so 'which acts are cited most' is a four-hop join, and the answer is led by the Aktienrecht revision and the Code des obligations. 2.66M SKOS concepts carry the JURIVOC and legal-taxonomy subject vocabularies. Harvested by data/switzerland-fedlex/scripts/fetch_sparql.py, which works around two hard Virtuoso limits — ORDER BY capped at 10k rows and every response silently truncated at 100k — with index-backed graph enumeration and COUNT-guarded batches; the harvest reaches 2026-07-30. THE NAMED GRAPHS ARE THE POINT: a single `GRAPH ?g { … }` block binds every pattern to ONE graph, so a cross-act join needs one graph variable per block (every example below does this). This is the queryable INDEX of the law; the article text lives separately as Akoma Ntoso (OASIS LegalDocML) XML. Legal-domain sibling of the Spanish BOE graph — both ELI-based, so they federate. Swiss federal legislation is free to use and reproduce.",
    "kind": "remote-lazy",
    "triples": "56.3 M",
-   "size": "1.04 GB",
+   "size": "232.1 MB",
    "license": "Fedlex terms — Swiss federal legislation is free to use and reproduce",
    "source": "https://fedlex.data.admin.ch/sparqlendpoint",
    "tags": [
@@ -5476,7 +5413,7 @@
      "sparql": "SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }\nGROUP BY ?p ORDER BY DESC(?n) LIMIT 30"
     }
    ],
-   "url": "https://data.graphplaza.com/switzerland-fedlex.rete"
+   "url": "https://data.graphplaza.com/switzerland-fedlex-2026-07-30.rete"
   },
   {
    "key": "scrolls",
@@ -5574,7 +5511,7 @@
    "description": "A range-queryable graph twin of the Bibliothèque cantonale et universitaire de Lausanne, aggregating four of its public interfaces into one 117.5M-triple graph. The ENTIRE Renouvaud catalogue — 3.55M bibliographic records mirrored from the Alma SRU endpoint of the Vaud library network (zone 41BCULAUSA_LIB) — carries full physical HOLDINGS: every book resolves to WHICH library holds it (BCUL sites Unithèque / Riponne / Internef, the Archives cantonales vaudoises, the Musée des beaux-arts, and dozens of faculty, gymnasium and municipal libraries), its shelving location, call number and live availability (available / unavailable / check_holdings) via 4.9M b:heldAt edges to shared Library nodes. Plus the Patrinum digital-heritage repository (332k digitized books, archives, iconography, Fonds Roud, Personnalités Vaudoises — OAI-PMH), the 15 medieval manuscripts BCUL has on e-codices (IIIF + TEI + DOI), and 331 digitized-press titles from Scriptorium (24 Heures & the Feuille d'avis de Lausanne back to 1762). Modelled with schema.org + Dublin Core and connected through 2.7M author/agent nodes, 2.44M subject concepts, places and the Library nodes; 334k items link to a digitized thumbnail, 15 to a IIIF manifest. Harvested entirely from the library's public APIs (no scraping); rights vary per source (dcterms:rights per record). Engineering: Alma SRU caps every query at 10,000 records → a recursive mms_id-space bisection (594 leaves) yields a provably-complete mirror; ~3s SRU latency → a 12-way concurrent harvest.",
    "kind": "remote-lazy",
    "triples": "117 M",
-   "size": "1.98 GB",
+   "size": "2.19 GB",
    "license": "Metadata; rights vary per source",
    "source": "https://www.bcu-lausanne.ch/",
    "tags": [
@@ -5680,7 +5617,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix schema: <http://schema.org/> .\n@prefix b: <https://data.bcu-lausanne.ch/> .\n\nschema:BookHoldingShape a sh:NodeShape ;\n  sh:targetClass schema:Book ;\n  sh:property [\n    sh:path b:heldAt ;\n    sh:name \"holding library\" ;\n    sh:class schema:Library ;\n  ] ;\n  sh:property [\n    sh:path b:shelvingLocation ;\n    sh:name \"shelving location / section\" ;\n    sh:nodeKind sh:Literal ;\n  ] ;\n  sh:property [\n    sh:path b:availability ;\n    sh:name \"loan availability status\" ;\n    sh:nodeKind sh:Literal ;\n  ] ;\n  sh:property [\n    sh:path b:callNumber ;\n    sh:name \"shelf call number\" ;\n    sh:nodeKind sh:Literal ;\n  ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/bcul/bcul.rete"
+   "url": "https://data.graphplaza.com/bcul/bcul-2026-07-07.rete"
   },
   {
    "key": "vidy",
@@ -5748,7 +5685,7 @@
    "description": "The complete Arxiu Municipal de Barcelona — the Barcelona city archive — harvested from its open JSON catalogue API into a schema.org archival graph: 529,614 archival descriptions across 12 archives (the Arxiu Fotogràfic AFB, the Arxiu Històric de la Ciutat AHCB, the Arxiu Municipal Contemporani AMCB, and the ten district archives) and their fonds → series → unit hierarchy, with dates, scope summaries, producers and access conditions (largely public domain — 'De domini públic'). 214,115 records are digitised, carrying 597,138 digital-object references (mostly historical photographs, plus PDFs) with each object's format and exact byte size (schema:associatedMedia + schema:contentSize); the objects live behind the archive's own OpenSeadragon deep-zoom viewer, so each record's schema:url opens its /detail page there. Full-text searchable (TEXT_INDEX) over titles and summaries — the whole photographic memory of Barcelona, from the Somorrostro shanty-beach to the 1992 Olympics. Modelled on w3id.org/rete/bcn; the Barcelona city-archive companion to the Gencat comarcal `arxiu`.",
    "kind": "remote-lazy",
    "triples": "10.4 M",
-   "size": "136 MB",
+   "size": "147.9 MB",
    "license": "Descriptions largely public domain (De domini públic / Lliure accés, Ajuntament de Barcelona); digital objects © respective archives",
    "source": "https://catalegarxiumunicipal.bcn.cat",
    "tags": [
@@ -5805,7 +5742,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix schema: <http://schema.org/> .\n\nschema:ArchiveOrganizationShape a sh:NodeShape ;\n    sh:targetClass schema:ArchiveOrganization ;\n    sh:property [\n        sh:path schema:name ;\n        sh:minCount 1 ;\n        sh:nodeKind sh:Literal ;\n    ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/bcn/bcn.rete"
+   "url": "https://data.graphplaza.com/bcn/bcn-2026-07-14.rete"
   },
   {
    "key": "ecal",
@@ -5912,7 +5849,7 @@
    "description": "Fifty MILLION georeferenced bird (Aves) occurrences — Spain 47.9M, Switzerland 2.26M, 1,104 species — from the GBIF Open Data snapshot (2026-07-01), as one 334M-triple range-queryable file (1.53 GB, remote-lazy over HTTP range). This is the SEMANTIC-ZOOM dataset: every occurrence is rdf:type its species, and each species carries a full taxonomic subClassOf chain Species ⊑ Genus ⊑ Family ⊑ Order ⊑ Aves ⊑ Chordata ⊑ Animalia — so the schema pyramid rolls the 50M sightings up into a 6-LEVEL zoom you can read WITHOUT touching the triple index (open the Schema tab): level 3 = Orders (Passeriformes 29.7M, Charadriiformes 5.1M, Accipitriformes/raptors 2.9M, Anseriformes 2.2M …), level 4 = Families (Fringillidae, Muscicapidae, Accipitridae, Laridae …), level 5 = the 1,104 species. Ask a question about birds at the Order or Family level and you never descend to a single record — the abstraction is the point. ENRICHED build: every species now also carries its COMMON NAME in up to 47 European languages (27,922 language-tagged dwc:vernacularName — French, Catalan, Basque, Welsh, Breton … all present), its IUCN Red List category (967 species; 165 flagged v:sensitive as near-threatened or worse), and precomputed occurrence stats (recordCount, estimatedIndividuals, first/last year). And it is an RDF-STAR showcase: each ADDED fact is a quoted triple annotated with its provenance — << species dwc:vernacularName '…' >> dct:source 'Catalogue of Life' ; prov:generatedAtTime '2026-07-11' — statements about statements, the natural home for who-said-it-and-when. Every occurrence also carries a GeoSPARQL POINT (map view), its country, year, basis-of-record (mostly citizen-science HUMAN_OBSERVATION — eBird & friends), source dataset and its dwc:individualCount where the observer recorded one (33.4M records). IRIs round-trip to live GBIF: occurrence = gbif.org/occurrence/<id>, species owl:sameAs gbif.org/species/<key>. Built KEYLESS from the GBIF AWS Parquet snapshot via DuckDB (scripts/gbif_birds_extract.py + gbif_birds_to_nt.py); names from the GBIF vernacular API, conservation from the IUCN Red List via Wikidata; enrichment emitted as N-Triples-star (scripts/gbif_birds_enrich_nt.py). CC BY-NC 4.0 (GBIF); cite GBIF.org. Selective queries (a species, a small area), the Schema pyramid, and every enrichment lookup are cheap over HTTP range; a full 50M-row aggregate scans the file, so lean on the pyramid for the big picture.",
    "kind": "remote-lazy",
    "triples": "334 M",
-   "size": "1.53 GB",
+   "size": "1.56 GB",
    "license": "CC BY-NC 4.0 (GBIF)",
    "source": "https://www.gbif.org",
    "tags": [
@@ -6073,7 +6010,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix dwc: <http://rs.tdwg.org/dwc/terms/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix v: <https://w3id.org/rete/gbif/vocab#> .\n\nv:TaxonNodeShape\n  a sh:NodeShape ;\n  sh:targetSubjectsOf dwc:taxonRank ;\n  sh:property [\n    sh:path dwc:taxonRank ;\n    sh:nodeKind sh:Literal ;\n    sh:minCount 1 ;\n    sh:maxCount 1 ;\n  ] ;\n  sh:property [\n    sh:path rdfs:label ;\n    sh:nodeKind sh:Literal ;\n    sh:minCount 1 ;\n  ] ;\n  sh:property [\n    sh:path rdfs:subClassOf ;\n    sh:nodeKind sh:IRI ;\n  ] ;\n  sh:property [\n    sh:path owl:sameAs ;\n    sh:nodeKind sh:IRI ;\n  ] ;\n  sh:property [\n    sh:path v:recordCount ;\n    sh:nodeKind sh:Literal ;\n  ] ;\n  sh:property [\n    sh:path v:firstYear ;\n    sh:nodeKind sh:Literal ;\n  ] ;\n  sh:property [\n    sh:path v:lastYear ;\n    sh:nodeKind sh:Literal ;\n  ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/gbif-birds/gbif-birds.rete"
+   "url": "https://data.graphplaza.com/gbif-birds/gbif-birds-2026-07-01.rete"
   },
   {
    "key": "worldcup",
@@ -6809,7 +6746,7 @@
    "description": "Every published record on Zenodo — CERN's open research repository — as one 215M-triple range-queryable graph (2.09 GB, remote-lazy over HTTP range on Cloudflare R2). Built from the OFFICIAL Zenodo exporter dump (the site-wide records-xml snapshot: 7,759,325 records, each DataCite kernel-4.5 metadata) — essentially ALL of Zenodo's descriptive metadata: datasets, software, preprints, journal articles, images, presentations, theses… Each record sits at its CANONICAL DOI IRI (https://doi.org/10.5281/zenodo.8435696) and is typed both zen:Record and its DataCite resource class (dcite:Dataset, dcite:Software, dcite:JournalArticle, dcite:Image, dcite:Preprint …) — so the type-pyramid communities ARE the kinds of research output: JournalArticle 2.41M, Text 1.40M, Image 1.23M, Dataset 875k, Software 645k. It carries dcite:title, dcite:publisherName, dcite:publicationYear, dcite:landingPage, the license, dcterms:subject keywords, and — the connective tissue — the DataCite RELATION NETWORK mined from relatedIdentifiers: dcite:isVersionOf (every version → its concept DOI), dcite:isPartOf, dcite:cites / dcite:references / dcite:isSupplementTo, mapped as edges between DOIs so version chains and citation/derivation links are all traversable. 877,926 CREATOR nodes carry an ORCID and mint at their canonical https://orcid.org/{orcid} IRI. Because works are keyed by DOI and people by ORCID, this graph AUTO-MERGES with the DataCite / OpenAIRE / OpenCitations / ORCID / DBLP scholarly datasets on the shared identifiers — the same node, no owl:sameAs (see the scholar ontology). Built by scripts/zenodo/records_to_nt.py (Parquet → N-Triples honoring the scholar-alignment canonical-IRI policy) → rete build --pyramid-algo types --card. CC-BY 4.0 (Zenodo metadata export). Selective queries — one DOI's neighbourhood, an author's works, a keyword — are cheap over HTTP range; a full 215M-triple aggregate scans the file, so lean on the Schema pyramid for the big picture.",
    "kind": "remote-lazy",
    "triples": "215 M",
-   "size": "2.09 GB",
+   "size": "2.38 GB",
    "license": "CC-BY-4.0 (Zenodo metadata export)",
    "source": "https://zenodo.org/api/exporter",
    "tags": [
@@ -6886,7 +6823,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix dcite: <https://w3id.org/rete/datacite#> .\n@prefix shp: <https://w3id.org/rete/zenodo/shapes#> .\n\nshp:ImageTextWorkShape a sh:NodeShape ;\n  sh:targetClass dcite:Image, dcite:Text ;\n  sh:property [\n    sh:path dct:subject ;\n    sh:minCount 1 ;\n  ] ;\n  sh:property [\n    sh:path dct:creator ;\n    sh:minCount 1 ;\n  ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/zenodo-records/zenodo-records.rete"
+   "url": "https://data.graphplaza.com/zenodo-records/zenodo-records-2026-07-10.rete"
   },
   {
    "key": "biosyslit",
@@ -6973,7 +6910,7 @@
    "description": "The GoTriple metadata corpus — the EU-funded discovery platform for the Social Sciences & Humanities (gotriple.eu / TRIPLE / OPERAS) — as one 57.7M-triple range-queryable graph (832 MB, remote-lazy over HTTP range on Cloudflare R2). Built from the CC0 Zenodo dump (18185971): 6,074,813 discipline-placements that DEDUPLICATE, under rete's canonical-IRI policy, into 2,712,267 DISTINCT publications — a multi-disciplinary paper (same GoTriple id across several discipline files) and a paper indexed from several providers (same DOI) MERGE into one gtr:Document node that carries all its gtr:inDiscipline tags (so 855,688 distinct DOIs come from 2.46M DOI-bearing records, ~2.9 copies each). Each document carries a multilingual gtr:title, its GoTriple discipline(s) (a 26-term SKOS scheme: History, Sociology, Law, Psychology, Economics, Linguistics, Philosophy, Art…), authors, keywords, source provider/publisher, language, access status and its full-text URL — and, the connective tissue, gtr:knowsAbout → shared SSH-LCSH subject-authority nodes (semantics.gr, with multilingual labels) that DEDUPE across the whole corpus into a real subject graph (Education links 288k docs, Economics 229k, 'State, The' 219k…). The 855,688 documents WITH a DOI mint at their canonical https://doi.org/{doi} IRI, so this graph AUTO-MERGES with the DataCite / Zenodo / OpenAIRE / OpenCitations scholarly datasets on the shared DOI — and it brings the SSH breadth those STEM-heavy sources lack (see the scholar ontology). The go-triple.ttl ontology (gtr:) travels INSIDE the file. Built by scripts/gotriple/{jsonl_to_parquet,gotriple_to_nt}.py → rete build --no-pyramid + rete repyramid --pyramid-algo types. CC0. Selective queries — one DOI, a subject's documents, an open-access slice of one discipline — are cheap over HTTP range; a full-corpus aggregate scans the file, so lean on the Schema pyramid for the big picture.",
    "kind": "remote-lazy",
    "triples": "57.7 M",
-   "size": "832 MB",
+   "size": "977.3 MB",
    "license": "CC0-1.0",
    "source": "https://zenodo.org/records/18185971",
    "tags": [
@@ -7052,7 +6989,7 @@
      "shape": "@prefix sh:   <http://www.w3.org/ns/shacl#> .\n@prefix gtr:  <https://w3id.org/rete/gotriple#> .\n@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n\ngtr:AuthorShape a sh:NodeShape ;\n    sh:targetClass gtr:Author ;\n    sh:property [\n        sh:path gtr:authorName ;\n        sh:datatype xsd:string ;\n        sh:minCount 1 ;\n    ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/gotriple/gotriple.rete"
+   "url": "https://data.graphplaza.com/gotriple/gotriple-2026-01-08.rete"
   },
   {
    "key": "orcid",
@@ -7339,7 +7276,7 @@
    "description": "The complete DBLP computer-science bibliography (dblp.org, CC0) as one 196.8M-triple range-queryable graph (2.27 GB, remote-lazy over HTTP range on Cloudflare R2). 12.74M records: 8,608,631 PUBLICATIONS (dblp:Publication + a subtype — dblp:Article 4.36M, dblp:Inproceedings/conference-paper 3.91M, dblp:Incollection, dblp:Book, dblp:Thesis 156k…) plus 4.14M dblp:PersonPage author home-pages, wired to 5.79M CREATOR nodes by 33.76M dblp:authoredBy edges — the CO-AUTHORSHIP graph (ask for an author's collaborators, ranked by shared papers). Each publication carries dblp:title, dblp:year, dblp:venue (journal/booktitle), volume/number/pages/publisher, and sits at its CANONICAL DOI IRI when it has one (7,257,488 do → https://doi.org/{doi}) else its real DBLP page https://dblp.org/rec/{key}. Authors mint at https://orcid.org/{orcid} when known (1,542,309 ORCID'd creators) else a DBLP-disambiguated name IRI (DBLP's own '… 0001' homonym suffixes keep distinct people apart). Because works are keyed by DOI and people by ORCID, this graph AUTO-MERGES with the DataCite / Zenodo / OpenAIRE / OpenCitations datasets on the DOI and with the 25M-researcher orcid.rete on the ORCID — DBLP is the COMPUTER-SCIENCE vertex of the scholarly graph, and the one that brings a dense author collaboration network. Built by scripts/dblp/dblp_to_nt.py → rete build --memory-budget-mb 6000 (bounded-RAM external build); embeds the dblp.ttl ontology, itself aligned to DBLP's own official https://dblp.org/rdf/schema#. CC0. No Schema pyramid yet (repyramid OOMs at this scale on a shared box) — keep queries SELECTIVE (one author's papers, their co-authors, a specific paper); each reads a few MB over HTTP range, while a full-corpus aggregate scans the file.",
    "kind": "remote-lazy",
    "triples": "196.8 M",
-   "size": "2.27 GB",
+   "size": "2.21 GB",
    "license": "CC0-1.0",
    "source": "https://dblp.org",
    "tags": [
@@ -7416,7 +7353,7 @@
      "shape": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix dblp: <https://w3id.org/rete/dblp#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\ndblp:ArticleShape a sh:NodeShape ;\n    sh:targetClass dblp:Article ;\n    sh:property [\n        sh:path dblp:venue ;\n        sh:datatype xsd:string ;\n        sh:minCount 1 ;\n    ] ;\n    sh:property [\n        sh:path dblp:year ;\n        sh:datatype xsd:gYear ;\n        sh:minCount 1 ;\n    ] .\n"
     }
    ],
-   "url": "https://data.graphplaza.com/dblp/dblp.rete"
+   "url": "https://data.graphplaza.com/dblp/dblp-2026-07-01.rete"
   },
   {
    "key": "aifdb-open",
