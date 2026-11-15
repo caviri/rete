@@ -2,7 +2,7 @@
   "publisher": {
     "name": "rete"
   },
-  "canonical_url": "https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete",
+  "canonical_url": "https://data.graphplaza.com/deps-dev/deps-dev-cargo-2026-07-13.rete",
   "source_date": "2026-07-13",
   "derived_from": [
     "https://docs.deps.dev/bigquery/v1/"

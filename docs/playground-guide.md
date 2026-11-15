@@ -15,7 +15,7 @@ downloads the whole file into IndexedDB for later local use; remove it under
 one logical graph, with queries fanning out across its shards.
 
 <a id="what-it-looks-like"></a>
-[![The playground with a SPARQL editor, fetched-byte counter and results table.](img/playground-sparql.png)](playground.html#dataset=opencitations&load=lazy&ex=2)
+[![The playground with a SPARQL editor, fetched-byte counter and results table.](img/playground-sparql.png)](playground.html#dataset=opencitations-meta&load=lazy&ex=2)
 
 <a id="card"></a>
 Before querying an unfamiliar graph, open **Card** beside the source. The

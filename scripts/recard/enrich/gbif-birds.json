@@ -3,7 +3,7 @@
   "publisher": {
     "name": "rete"
   },
-  "canonical_url": "https://data.graphplaza.com/gbif-birds/gbif-birds.rete",
+  "canonical_url": "https://data.graphplaza.com/gbif-birds/gbif-birds-2026-07-01.rete",
   "source_date": "2026-07-01",
   "derived_from": [
     "https://registry.opendata.aws/gbif/"

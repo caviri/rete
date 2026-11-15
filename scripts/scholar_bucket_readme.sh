@@ -206,7 +206,7 @@ Each dataset carries its own licence, stated in the Dataset Card embedded in the
 source `.rete`. Read it without downloading the file:
 
 ```sh
-rete card-url https://data.graphplaza.com/dblp/dblp.rete
+rete card-url https://data.graphplaza.com/dblp/dblp-2026-07-01.rete
 ```
 
 The dumps are byte-for-byte derivable from those `.rete` files, and the `.rete`
