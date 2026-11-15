@@ -6,9 +6,10 @@
 // Claude reads with graph_view_state. It also takes a file from the user — the
 // way a chat attachment, which Claude keeps in its own sandbox, reaches the
 // extension: chosen or dropped here, sent to the server in parts.
-import { layout as dagreLayout, graphlib } from "@dagrejs/dagre";
 import { App } from "@modelcontextprotocol/ext-apps/app-with-deps";
 import cytoscape from "cytoscape";
+
+import { layeredPositions } from "./layout.js";
 
 const PALETTE = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#2f4b7c", "#a05195", "#5fa2ce"];
 const OTHER = "#a8a8a8";
@@ -91,7 +92,13 @@ const iriLine = (iri) =>
 const local = (iri) => {
   const s = String(iri ?? "");
   const cut = Math.max(s.lastIndexOf("#"), s.lastIndexOf("/"));
-  return cut >= 0 && cut < s.length - 1 ? s.slice(cut + 1) : s;
+  const tail = cut >= 0 && cut < s.length - 1 ? s.slice(cut + 1) : s;
+  // Percent-encoded names (…/%C3%81lvaro_Morata) read as what they encode.
+  try {
+    return decodeURIComponent(tail);
+  } catch {
+    return tail;
+  }
 };
 const namespace = (iri) => {
   const s = String(iri ?? "");
@@ -102,6 +109,8 @@ const trunc = (s, n) => (String(s).length > n ? `${String(s).slice(0, n - 1)}…
 const nodeLabel = (n) => trunc(n.label || (n.iri ? local(n.iri) : n.id), 48);
 const shortName = (p) => (String(p).startsWith("?") ? p : local(p)); // a predicate, or a SELECT column
 const diagramOf = () => S.options.diagram || "graph";
+/** Whether the host takes a message for the conversation (Claude does; the file explorer has no chat). */
+const chatty = () => !!S.app?.getHostCapabilities()?.message;
 /** A diagram's own look, as the server gives it: boxes and classes in layers with square lines. */
 const diagramLook = (diagram) =>
   diagram === "graph" ? { diagram, layout: "cose", edge_style: "curved" } : { diagram, layout: "layered", edge_style: "square" };
@@ -245,7 +254,7 @@ function applyPatch(p) {
         if (before.layout !== S.options.layout) runLayout(true);
       }
       showTab(S.options.view);
-      setNote("Claude changed the view");
+      setNote(chatty() ? "Claude changed the view" : "the view changed");
       break;
     }
     case "highlight":
@@ -776,52 +785,13 @@ function runLayout(randomize) {
  * not linked is packed in rows underneath rather than strung along one rank.
  */
 function layered(eles, animate) {
-  const nodes = eles.nodes().filter((n) => !n.isParent());
-  const size = new Map(nodes.map((n) => [n.id(), n.layoutDimensions({ nodeDimensionsIncludeLabels: true })]));
-  const linked = new Set();
-  const edges = eles.edges().filter((e) => {
-    const [a, b] = [e.source().id(), e.target().id()];
-    if (a === b || !size.has(a) || !size.has(b)) return false;
-    linked.add(a).add(b);
-    return true;
-  });
-  const pos = {};
-  let right = 0;
-  let bottom = 0;
-  if (linked.size) {
-    const g = new graphlib.Graph({ multigraph: true });
-    g.setGraph({ rankdir: "TB", nodesep: 30, ranksep: 64, edgesep: 14 });
-    g.setDefaultEdgeLabel(() => ({}));
-    for (const id of linked) g.setNode(id, { width: size.get(id).w, height: size.get(id).h });
-    edges.forEach((e) => g.setEdge(e.source().id(), e.target().id(), {}, e.id()));
-    dagreLayout(g);
-    for (const id of linked) {
-      const p = g.node(id);
-      pos[id] = { x: p.x, y: p.y };
-      right = Math.max(right, p.x + p.width / 2);
-      bottom = Math.max(bottom, p.y + p.height / 2);
-    }
-  }
-  const loose = nodes.filter((n) => !linked.has(n.id()));
-  if (loose.length) {
-    const gap = 24;
-    const area = loose.reduce((a, n) => a + (size.get(n.id()).w + gap) * (size.get(n.id()).h + gap), 0);
-    const width = Math.max(right, Math.sqrt(area) * 1.6, 360);
-    let x = 0;
-    let y = linked.size ? bottom + 64 : 0;
-    let rowH = 0;
-    loose.forEach((n) => {
-      const { w, h } = size.get(n.id());
-      if (x > 0 && x + w > width) {
-        x = 0;
-        y += rowH + gap;
-        rowH = 0;
-      }
-      pos[n.id()] = { x: x + w / 2, y: y + h / 2 };
-      x += w + gap;
-      rowH = Math.max(rowH, h);
-    });
-  }
+  const nodes = eles
+    .nodes()
+    .filter((n) => !n.isParent())
+    .map((n) => ({ id: n.id(), ...n.layoutDimensions({ nodeDimensionsIncludeLabels: true }) }));
+  const edges = eles.edges().map((e) => ({ id: e.id(), source: e.source().id(), target: e.target().id() }));
+  const { pos, error } = layeredPositions(nodes, edges);
+  if (error) setNote(`layers: ${error.message} — packed in rows instead`);
   eles.layout({ name: "preset", positions: (n) => pos[n.id()] ?? n.position(), fit: true, padding: 30, animate, animationDuration: 350 }).run();
 }
 
@@ -907,9 +877,9 @@ function renderDetails() {
   if (picked.length > 1) {
     body.innerHTML =
       `<p class="title">${picked.length} nodes selected</p>` +
-      `<div class="actions"><button type="button" data-act="aggregate">Aggregate</button><button type="button" data-act="send">Send to chat</button>` +
+      `<div class="actions"><button type="button" data-act="aggregate">Aggregate</button>${chatty() ? `<button type="button" data-act="send">Send to chat</button>` : ""}` +
       `<button type="button" data-act="hide">Hide</button><button type="button" data-act="remove">Remove</button>` +
-      `<button type="button" data-act="ask">Ask Claude</button></div>` +
+      `${chatty() ? `<button type="button" data-act="ask">Ask Claude</button>` : ""}</div>` +
       `<p class="hint">${picked.slice(0, 12).map((s) => esc(s.label)).join(" · ")}${picked.length > 12 ? " …" : ""}</p>`;
     return;
   }
@@ -922,7 +892,7 @@ function renderDetails() {
   if (a) {
     body.innerHTML =
       `<p class="title">${esc(a.label)}</p><div class="types">an aggregate of ${a.members.length} nodes</div>` +
-      `<div class="actions"><button type="button" data-act="ungroup">Ungroup</button><button type="button" data-act="send">Send to chat</button>` +
+      `<div class="actions"><button type="button" data-act="ungroup">Ungroup</button>${chatty() ? `<button type="button" data-act="send">Send to chat</button>` : ""}` +
       `<button type="button" data-act="remove">Remove</button></div>` +
       `<p class="hint">${a.members.slice(0, 20).map((m) => esc(nameOf(m))).join(" · ")}${a.members.length > 20 ? " …" : ""}</p>`;
     return;
@@ -938,7 +908,7 @@ function renderDetails() {
     (n.kind === "class" && n.count != null ? `<div class="types">${n.count.toLocaleString("en-US")} instance${n.count === 1 ? "" : "s"}</div>` : "") +
     `<div class="actions">` +
     (n.kind === "iri" ? `<button type="button" data-act="expand">Expand</button>` : "") +
-    `<button type="button" data-act="hide">Hide</button><button type="button" data-act="ask">Ask Claude</button></div>` +
+    `<button type="button" data-act="hide">Hide</button>${chatty() ? `<button type="button" data-act="ask">Ask Claude</button>` : ""}</div>` +
     `<p class="hint">${degree} link(s) in the view${n.props.length > MAX_PROPS ? ` · ${n.props.length} properties, first ${MAX_PROPS} shown` : ""}</p>` +
     (props ? `<dl>${props}</dl>` : "");
 }
@@ -953,7 +923,7 @@ function classDetails(c) {
   return (
     `<p class="title">${esc(c.label)}</p>` +
     (c.iri ? iriLine(c.iri) : "") +
-    `<div class="actions"><button type="button" data-act="members">Show members</button><button type="button" data-act="ask">Ask Claude</button></div>` +
+    `<div class="actions"><button type="button" data-act="members">Show members</button>${chatty() ? `<button type="button" data-act="ask">Ask Claude</button>` : ""}</div>` +
     `<p class="hint">${c.members.length} in the view: ${c.members.slice(0, 12).map((m) => esc(nodeLabel(m))).join(" · ")}${c.members.length > 12 ? " …" : ""}</p>` +
     (props ? `<dl>${props}</dl>` : "")
   );
@@ -1005,12 +975,12 @@ function nodeMenu(el) {
   const one = many ? null : ids[0];
   const c = one && S.classBoxes.get(one);
   if (c) {
-    return [
+    return tidy([
       { label: "Show members", hint: `${c.members.length}`, run: () => showMembers(c) },
-      { label: "Send to chat", run: () => sendToChat(ids) },
+      chatty() && { label: "Send to chat", run: () => sendToChat(ids) },
       "-",
       { label: "Hide", run: () => hide(ids) },
-    ];
+    ]);
   }
   const a = one && S.aggregates.get(one);
   const n = one && S.nodes.get(one);
@@ -1024,7 +994,7 @@ function nodeMenu(el) {
     { label: `Compress${count}`, hint: "drop what hangs only off it", run: () => compress(ids) },
     { label: many ? "Select their neighbours" : "Select neighbours", run: () => selectNeighbours(ids) },
     n && (n.label || n.iri) && { label: "Search its name", hint: "in the dataset", run: () => searchDataset(n.label || local(n.iri)) },
-    { label: `Send${count} to chat`, run: () => sendToChat(ids) },
+    chatty() && { label: `Send${count} to chat`, run: () => sendToChat(ids) },
     { label: "Select several…", hint: "click to add", run: () => selectMode(true, ids) },
     "-",
     a
@@ -1081,7 +1051,7 @@ function renderAbout() {
   $("about-open").textContent = `rete ${version}`;
   $("about").innerHTML =
     `<p class="title">rete graph view <span class="v">${esc(version)}</span></p>` +
-    `<p class="muted">build ${esc(build.commit ?? "of unknown commit")}${build.date ? ` · ${esc(build.date)}` : ""}${build.label ? ` · ${esc(build.label)}` : ""}</p>` +
+    `<p class="muted">${esc([build.commit ? `build ${build.commit}` : build.label ? null : "build of unknown commit", build.date, build.label].filter(Boolean).join(" · "))}</p>` +
     `<p>By ${link(author.orcid, author.name)} · ${esc(license)}</p>` +
     `<p class="links">${link(links.documentation, "Documentation")} · ${link(links.playground, "Playground")} · ` +
     `${link(links.repository, "Source")} · ${link(links.issues, "Report an issue")} · ${link(links.releases, "Releases")}` +
@@ -1432,7 +1402,7 @@ function applyHost(ctx = {}) {
   S.cy?.resize();
 }
 
-const THEMES = { auto: ["◐", "Theme: follows Claude"], light: ["☀", "Theme: light"], dark: ["☾", "Theme: dark"] };
+const THEMES = { auto: ["◐", "Theme: follows the app"], light: ["☀", "Theme: light"], dark: ["☾", "Theme: dark"] };
 
 /** Light or dark: the user's choice, or else Claude's theme, or else the system's. */
 function applyTheme(redraw = true) {

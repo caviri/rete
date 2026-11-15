@@ -125,9 +125,9 @@ CATALOG = [
     },
     {
         "name": "wikidata-100MB — a bigger bite",
-        "url": f"{R2}/wikidata-100MB/wikidata.rete",
-        "size": "100 MB file",
-        "blurb": "A 100 MB Wikidata slice — watch the stats line: a pointed query touches kilobytes of it.",
+        "url": f"{R2}/wikidata-100MB/wikidata-2025-11-07.rete",
+        "size": "142 MB file",
+        "blurb": "A slice of Wikidata — watch the stats line: a pointed query touches kilobytes of it.",
     },
 ]
 

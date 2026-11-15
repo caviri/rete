@@ -19,13 +19,28 @@
 // listing is paginated, because a class can hold 50M instances and a folder
 // pane cannot.
 
+import { decompress as zstdDecompress } from "../vendor/fzstd.mjs";
+
 // ---------------------------------------------------------------- constants
 
+// The first read. Every layout's header fits in it: generation 1 (0x05) is a
+// 1 KB header with a typed section directory; generation 2 (0x06–0x08) a
+// 128-byte header, then the root block with the section table (docs/SPEC.md §4).
+// The range is the engine's own (rete-core's MIN_STABLE_READ_VERSION up).
 export const HEADER_LEN = 1024;
-const SECTION_DIR_OFFSET = 64;
-const SECTION_ENTRY_LEN = 24;
+const OLDEST = 0x05;
+const NEWEST = 0x08;
+const V1_DIR_AT = 64;
+const V1_ENTRY = 24;
+const V2_HEADER = 128;
+const V2_ROOT_ENTRY = 38;
+// Every length below comes from the file, so none sizes a read on its own.
+const MAX_ROOT = 16 << 20; // the engine's own cap on the root units
+const MAX_CARD = 16 << 20; // a stored card; rete-core caps it at 64 MiB decoded
+const PICTURE_CARD = 2 << 20; // a card read only for a picture: past this, no picture
+const CODEC_ZSTD = 1;
 
-// SectionKind, mirroring crates/rete-core/src/header.rs.
+// Generation 1 section kinds, mirroring crates/rete-core/src/header.rs.
 const SECTION_KINDS = {
   1: { name: "METADATA", blurb: "The Dataset Card: the file's own description, in JSON." },
   2: { name: "DICTIONARY", blurb: "Front-coded term table. Every IRI and literal, stored once." },
@@ -33,6 +48,29 @@ const SECTION_KINDS = {
   4: { name: "PYRAMID META", blurb: "Community summary + the baked schema this browser reads." },
   5: { name: "NAMED GRAPHS", blurb: "Per-graph permutation containers, sharing the dictionary." },
   6: { name: "TEXT INDEX", blurb: "Token table + posting lists for word/CONTAINS search." },
+  7: { name: "BUILD RECORD", blurb: "When, how and how fast the file was built. Outside the content hash." },
+  8: { name: "LABEL INDEX", blurb: "Labels in key order, for name search by prefix." },
+  9: { name: "SCHEMA", blurb: "Planner statistics and the schema: classes, predicates, how they connect." },
+  10: { name: "QUAD INDEX", blurb: "The named graphs' quads, tiled by graph." },
+};
+
+// Generation 2 section kinds: the root block's table (docs/SPEC.md §4.2). Kinds
+// under 16 sit in the front region, the rest in the data region.
+const ROOT_KINDS = {
+  1: { name: "SCHEMA", blurb: "Planner statistics and the schema: classes, predicates, how they connect. Compressed." },
+  2: { name: "DICTIONARY LEAVES", blurb: "The dictionary's chunk directory, in leaves read on demand." },
+  3: { name: "INDEX LEAVES", blurb: "Every permutation's tile directory, in leaves read on demand." },
+  4: { name: "QUAD LEAVES", blurb: "The quad index's graph directory, then its tile directories." },
+  5: { name: "LABEL LEAVES", blurb: "The label index's directory nodes." },
+  6: { name: "TEXT LEAVES", blurb: "The text index's token table, in leaves." },
+  7: { name: "LABEL ROOT", blurb: "The label index's root node, read only when a name search runs." },
+  16: { name: "DICTIONARY", blurb: "Dictionary chunks: every IRI and literal, stored once, front-coded." },
+  17: { name: "INDEX", blurb: "Permutation tiles: SPO, POS, OSP, and the merge-join orders the file stores." },
+  18: { name: "QUAD INDEX", blurb: "Quad tiles: the named graphs' statements." },
+  19: { name: "LABELS", blurb: "Label data blocks, in key order, for name search." },
+  20: { name: "TEXT", blurb: "Postings of the full-text index, in token order." },
+  21: { name: "PYRAMID", blurb: "The community pyramid: the cold overview, read only by the overview." },
+  22: { name: "CARD ANNEX", blurb: "Card fields too big for the hot card. Cold, read on request." },
 };
 
 // Predicates whose object is worth showing as a thumbnail in the icon view.
@@ -79,28 +117,41 @@ export const PAGE_SIZE = 200;
 
 // ------------------------------------------------------------------ header
 
+const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+export const formatLabel = (v) => `0x${Number(v).toString(16).padStart(2, "0")}`;
+
 /**
- * Parse the fixed 1 KB header into the full section directory. Unlike the
- * plaza's reader (which only wants the card) this keeps every entry, because
- * the section directory *is* the archive's table of contents — the `sections`
+ * Parse a .rete header into the archive's table of contents. Unlike the
+ * plaza's reader (which only wants the card) this keeps every section, because
+ * the section table *is* the archive's table of contents — the `sections`
  * view renders it directly.
+ *
+ * Generation 1 lists its sections in the first 1 KB. Generation 2 lists them
+ * in the root block after the 128-byte header; when `buf` does not reach the
+ * root's end, the sections are the header's regions only (`header.rootEnd`
+ * says how many bytes the full table needs).
  */
 export function parseHeader(buf) {
   const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-  if (b.length < HEADER_LEN) throw new Error(`header too small: ${b.length} bytes`);
-  const dec = new TextDecoder();
-  if (dec.decode(b.subarray(0, 4)) !== "RETE") throw new Error("not a .rete file (bad magic)");
+  if (b.length < 24) throw new Error(`header too small: ${b.length} bytes`);
+  if (new TextDecoder().decode(b.subarray(0, 4)) !== "RETE") throw new Error("not a .rete file (bad magic)");
+  const version = b[4];
+  if (version > NEWEST) throw new Error(`format ${formatLabel(version)} is newer than this explorer reads (up to ${formatLabel(NEWEST)})`);
+  if (version < OLDEST) throw new Error(`format ${formatLabel(version)} is older than this explorer reads (from ${formatLabel(OLDEST)})`);
+  return version >= 6 ? parseHeader2(b) : parseHeader1(b);
+}
 
+function parseHeader1(b) {
+  if (b.length < HEADER_LEN) throw new Error(`header too small: ${b.length} bytes`);
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   const u16 = (o) => dv.getUint16(o, true);
-  const u32 = (o) => dv.getUint32(o, true);
   const u64 = (o) => Number(dv.getBigUint64(o, true)); // offsets never exceed 2^53
 
   const sectionCount = u16(44);
   const sections = [];
   for (let i = 0; i < sectionCount; i++) {
-    const p = SECTION_DIR_OFFSET + i * SECTION_ENTRY_LEN;
-    if (p + SECTION_ENTRY_LEN > b.length) break;
+    const p = V1_DIR_AT + i * V1_ENTRY;
+    if (p + V1_ENTRY > b.length) break;
     const kind = u16(p);
     const known = SECTION_KINDS[kind];
     sections.push({
@@ -112,57 +163,244 @@ export function parseHeader(buf) {
       length: u64(p + 16),
     });
   }
-
+  const meta = sections.find((s) => s.kind === 1 && s.length > 0);
+  const build = sections.find((s) => s.kind === 7 && s.length > 0);
   return {
+    generation: 1,
     version: b[4],
     flags: b[5],
     hasQuads: (b[5] & 1) !== 0,
-    contentHash: Array.from(b.subarray(8, 24), (x) => x.toString(16).padStart(2, "0")).join(""),
+    quoted: (b[5] & 0b100) !== 0,
+    headerLen: HEADER_LEN,
+    contentHash: hex(b.subarray(8, 24)),
     quadCount: u64(24),
     termCount: u64(32),
     pyramidLevels: u16(40),
     dictCodec: b[42],
     blockCodec: b[43],
-    schemaMetaLen: u32(46),
+    schemaMetaLen: dv.getUint32(46, true),
+    fileLength: null, // generation 1 does not say; the reader asks the host
+    card: meta ? { offset: meta.offset, length: meta.length, codec: 0 } : null,
+    build: build ? { offset: build.offset, length: build.length } : null,
+    rootEnd: HEADER_LEN,
+    sectionsComplete: true,
     sections,
   };
 }
 
-/** Fetch [start, end] inclusive over HTTP Range, tolerating a server that ignores it. */
+function parseHeader2(b) {
+  if (b.length < V2_HEADER) throw new Error(`${formatLabel(b[4])} header truncated: ${b.length} bytes`);
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const u16 = (o) => dv.getUint16(o, true);
+  const u32 = (o) => dv.getUint32(o, true);
+  const big = (o) => dv.getBigUint64(o, true);
+
+  // The structural checks rete-core makes before it trusts a single offset
+  // (docs/SPEC.md §4.1): the regions in order, the card inside its region.
+  const fileLength = big(24);
+  const rootLen = u32(32);
+  const regionLen = u32(36);
+  const dataOffset = big(40);
+  const cardAt = u32(80);
+  const cardLen = u32(84);
+  const buildAt = u32(104);
+  const buildLen = u32(108);
+  const frontBase = BigInt(V2_HEADER + rootLen + regionLen);
+  if (u16(6) !== V2_HEADER || frontBase > dataOffset || dataOffset > fileLength || fileLength > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("the header's regions are not in order — a damaged or truncated file");
+  }
+  if ((cardLen && cardAt + cardLen > regionLen) || (buildLen && buildAt + buildLen > regionLen)) {
+    throw new Error("the header puts the card outside its region — a damaged file");
+  }
+  const flags = b[5];
+  const presence = u16(78);
+  const regionAt = V2_HEADER + rootLen;
+  const header = {
+    generation: 2,
+    version: b[4],
+    flags,
+    hasQuads: (flags & 1) !== 0,
+    quoted: (flags & 0b10) !== 0,
+    headerLen: V2_HEADER,
+    contentHash: hex(b.subarray(8, 24)),
+    fileLength: Number(fileLength),
+    rootLen,
+    regionLen,
+    frontBase: Number(frontBase),
+    dataOffset: Number(dataOffset),
+    quadCount: Number(big(48)),
+    termCount: Number(big(56)),
+    namedGraphCount: Number(big(64)),
+    permutations: b[72],
+    dictCodec: b[73],
+    blockCodec: b[74],
+    internalCodec: b[75],
+    pyramidLevels: b[76],
+    presence: {
+      text: (presence & 1) !== 0,
+      textPartial: (presence & 2) !== 0,
+      labels: (presence & 4) !== 0,
+      schema: (presence & 8) !== 0,
+      pyramid: (presence & 16) !== 0,
+      quads: (presence & 32) !== 0,
+    },
+    card: cardLen ? { offset: regionAt + cardAt, length: cardLen, codec: b[75] } : null,
+    build: buildLen ? { offset: regionAt + buildAt, length: buildLen } : null,
+    rootEnd: regionAt,
+  };
+  const regions = regionSections(header);
+  const table = b.length >= header.rootEnd ? rootSections(b, header) : null;
+  header.sectionsComplete = !!table;
+  // With the table, its sections replace the two coarse FRONT / DATA regions.
+  header.sections = table ? [...regions.filter((s) => s.kind < 0), ...table] : regions;
+  return header;
+}
+
+/** The parts of a generation 2 file its header alone places. */
+function regionSections(h) {
+  const out = [
+    { kind: -1, name: "ROOT BLOCK", offset: V2_HEADER, length: h.rootLen,
+      blurb: "The section table (kind, offset, length, digest of every section) and the first level of every directory." },
+  ];
+  if (h.card) out.push({ kind: -2, name: "CARD", offset: h.card.offset, length: h.card.length,
+    blurb: `The Dataset Card: the file's own description, JSON${h.card.codec === CODEC_ZSTD ? " compressed with zstd" : ""}.` });
+  if (h.build) out.push({ kind: -3, name: "BUILD RECORD", offset: h.build.offset, length: h.build.length,
+    blurb: "When, how and how fast the file was built. Outside the content hash." });
+  if (h.dataOffset > h.frontBase) out.push({ kind: 100, name: "FRONT SECTIONS", offset: h.frontBase, length: h.dataOffset - h.frontBase,
+    blurb: "Statistics, schema and every leaf directory: what a reader needs to plan a query, at the front of the file." });
+  if (h.fileLength - 8 > h.dataOffset) out.push({ kind: 101, name: "DATA SECTIONS", offset: h.dataOffset, length: h.fileLength - 8 - h.dataOffset,
+    blurb: "Dictionary chunks, index tiles, labels, text postings: read a range at a time, only where a query goes." });
+  return out;
+}
+
+/** The root block's section table, as absolute byte ranges (docs/SPEC.md §4.2); null when it does not hold together. */
+function rootSections(b, h) {
+  const at = V2_HEADER;
+  if (h.rootLen < 2) return [];
+  const n = b[at + 1];
+  if (2 + n * V2_ROOT_ENTRY > h.rootLen) return null;
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const p = at + 2 + i * V2_ROOT_ENTRY;
+    const kind = b[p];
+    const offset = dv.getBigUint64(p + 6, true);
+    const length = dv.getBigUint64(p + 14, true);
+    const base = BigInt(kind < 16 ? h.frontBase : h.dataOffset);
+    if (base + offset + length > BigInt(h.fileLength)) return null;
+    const known = ROOT_KINDS[kind];
+    out.push({
+      kind,
+      name: known ? known.name : `UNKNOWN (${kind})`,
+      blurb: known ? known.blurb : "A section this build does not recognize — forward compatibility.",
+      maxBlock: dv.getUint32(p + 2, true),
+      offset: Number(base + offset),
+      length: Number(length),
+      digest: hex(b.subarray(p + 22, p + 38)),
+    });
+  }
+  return out;
+}
+
+/** The card's JSON from its stored bytes: zstd in generation 2, plain before. */
+export function decodeCard(raw, codec = 0) {
+  let bytes = raw;
+  if (codec === CODEC_ZSTD) bytes = zstdDecompress(raw);
+  else if (codec !== 0) throw new Error(`card codec ${codec} is not one this explorer reads`);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+/** The card of a file held in memory: no I/O. Null when it has none or it will not parse. */
+export function cardFromBytes(bytes, header) {
+  const c = header.card;
+  if (!c || c.offset + c.length > bytes.length) return null;
+  try {
+    return decodeCard(bytes.subarray(c.offset, c.offset + c.length), c.codec);
+  } catch (_) {
+    return null; // a card that won't parse is not worth failing the open over
+  }
+}
+
+/**
+ * The first `n` bytes of a response body, cancelling the transfer as soon as
+ * they have arrived — so a host that ignores Range and answers 200 with the
+ * whole file costs one slice, not the file.
+ */
+async function bodyUpTo(res, n) {
+  if (!res.body || !res.body.getReader) return new Uint8Array(await res.arrayBuffer()).subarray(0, n);
+  const reader = res.body.getReader();
+  const chunks = [];
+  let got = 0;
+  while (got < n) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+  }
+  if (got >= n) await reader.cancel().catch(() => {});
+  const out = new Uint8Array(Math.min(got, n));
+  let o = 0;
+  for (const c of chunks) {
+    const take = Math.min(c.length, out.length - o);
+    if (take <= 0) break;
+    out.set(c.subarray(0, take), o);
+    o += take;
+  }
+  return out;
+}
+
+/** Fetch [start, end] inclusive over HTTP Range; a host that ignores Range is cut off at `end`. */
 export async function rangeFetch(url, start, end) {
+  if (!(Number.isSafeInteger(start) && Number.isSafeInteger(end) && end >= start)) throw new Error(`bad range ${start}-${end}`);
   const res = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
-  if (!res.ok && res.status !== 206) throw new Error(`HTTP ${res.status} for ${url}`);
-  const body = new Uint8Array(await res.arrayBuffer());
-  return res.status === 206 ? body : body.subarray(start, end + 1);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  if (res.status === 206) return bodyUpTo(res, end - start + 1);
+  // 200: the whole file. Only its start is any use, and only for a range at 0.
+  if (start !== 0) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`${url} ignores HTTP Range requests`);
+  }
+  return bodyUpTo(res, end + 1);
 }
 
 /** Total byte length of a remote file, from the Content-Range of a 1-byte probe. */
 export async function remoteSize(url) {
   const res = await fetch(url, { headers: { Range: "bytes=0-0" } });
+  await res.body?.cancel().catch(() => {});
   const cr = res.headers.get("Content-Range");
-  if (cr) {
-    const m = /\/(\d+)$/.exec(cr);
-    if (m) return Number(m[1]);
-  }
+  const m = cr && /\/(\d+)$/.exec(cr);
+  if (m) return Number(m[1]);
   const len = res.headers.get("Content-Length");
-  return len ? Number(len) : 0;
+  return len && res.status === 200 ? Number(len) : 0;
 }
 
 /**
- * Read a .rete's self-description without touching its index: the 1 KB header,
- * then the metadata section it points at. Two range requests, whatever the file
- * weighs — this is what lets the browser open a 17 GB archive instantly.
+ * What a remote .rete is, without touching its index: the header, then the
+ * card it points at — two small range requests, whatever the file weighs. With
+ * `sections`, the root block too (one more), for the Sections view. `picture`
+ * reads a card only when it is small (one published 0x05 file's metadata
+ * range is 117 MB).
  */
-export async function readSelfDescription(url) {
+export async function readSelfDescription(url, { sections = true, picture = false } = {}) {
   const head = await rangeFetch(url, 0, HEADER_LEN - 1);
-  const header = parseHeader(head);
-  const size = await remoteSize(url);
-  let card = null;
-  const meta = header.sections.find((s) => s.kind === 1);
-  if (meta && meta.length > 0) {
+  let header = parseHeader(head);
+  if (sections && header.generation === 2 && header.rootEnd > head.length && header.rootLen <= MAX_ROOT) {
     try {
-      const raw = await rangeFetch(url, meta.offset, meta.offset + meta.length - 1);
-      card = JSON.parse(new TextDecoder().decode(raw));
+      const rest = await rangeFetch(url, head.length, header.rootEnd - 1);
+      const all = new Uint8Array(header.rootEnd);
+      all.set(head, 0);
+      all.set(rest, head.length);
+      header = parseHeader(all);
+    } catch (_) {
+      /* the regions alone still describe the file */
+    }
+  }
+  const size = header.fileLength ?? (await remoteSize(url));
+  let card = null;
+  const c = header.card;
+  if (c && c.length <= (picture ? PICTURE_CARD : MAX_CARD) && (!size || c.offset + c.length <= size)) {
+    try {
+      card = decodeCard(await rangeFetch(url, c.offset, c.offset + c.length - 1), c.codec);
     } catch (_) {
       card = null; // a card that won't parse is not worth failing the open over
     }
@@ -720,23 +958,25 @@ const sectionsView = {
   id: "sections",
   label: "Sections",
   icon: "▮",
-  hint: "The physical archive: the header's typed section directory, with real byte offsets. Costs zero queries — it is the first 1 KB of the file.",
+  hint: "The physical archive: every section with its real byte range, from the header and the section table. Costs no query.",
 
   async list(ctx, node) {
     if (node) return { items: [] };
     const { header, size } = ctx.meta;
+    const headBlurb = header.generation === 2
+      ? "The 128-byte header: counts, codecs, which indexes the file has, where the root block and the card are, and the content hash."
+      : "The directory itself: format version, counts, content hash, and the offset+length of every section below.";
     const items = [
       fileNode("sections", "sect:header", "HEADER", {
         special: "section",
-        section: { name: "HEADER", offset: 0, length: HEADER_LEN, kind: 0,
-          blurb: "The directory itself: format version, counts, content hash, and the offset+length of every section below." },
-        detail: `0 – ${HEADER_LEN} · ${humanBytes(HEADER_LEN)}`,
+        section: { name: "HEADER", offset: 0, length: header.headerLen, kind: 0, blurb: headBlurb },
+        detail: `0 – ${header.headerLen} · ${humanBytes(header.headerLen)}`,
       }),
     ];
     for (const s of [...header.sections].sort((a, b) => a.offset - b.offset)) {
       if (!s.length) continue;
       items.push(
-        fileNode("sections", `sect:${s.kind}`, s.name, {
+        fileNode("sections", `sect:${s.kind}:${s.offset}`, s.name, {
           special: "section",
           section: s,
           detail: `${humanBytes(s.length)} · ${((s.length / (size || 1)) * 100).toFixed(1)}% of file`,
@@ -746,7 +986,8 @@ const sectionsView = {
     if (ctx.meta.card) {
       items.push(fileNode("sections", "sect:card", "_README.md", { special: "card", detail: "the Dataset Card, rendered" }));
     }
-    return { items, note: `${items.length} sections · ${humanBytes(size)} total` };
+    const partial = header.sectionsComplete ? "" : " · the section table was not read, so the front and data regions show whole";
+    return { items, note: `${items.length} sections · ${humanBytes(size)} total${partial}` };
   },
 };
 
@@ -999,7 +1240,8 @@ function sectionFile(ctx, node) {
           ["offset", `${humanCount(s.offset)} bytes`],
           ["length", `${humanCount(s.length)} bytes (${humanBytes(s.length)})`],
           ["share of file", `${((s.length / (size || 1)) * 100).toFixed(2)}%`],
-          ["format version", `0x${header.version.toString(16).padStart(2, "0")}`],
+          ...(s.digest ? [["digest", `${s.digest} (BLAKE3, first 16 bytes)`]] : []),
+          ["format version", formatLabel(header.version)],
           ["content hash", header.contentHash],
         ],
       },
@@ -1022,7 +1264,7 @@ function cardFile(ctx) {
   if (facts.length) lines.push("## Facts", "", ...facts, "");
   return {
     title: card.title || "Dataset Card",
-    subtitle: "the file's own description, read from the METADATA section",
+    subtitle: "the file's own description, read from its card",
     downloads: [
       { label: "JSON", ext: "json", mime: "application/json", body: () => JSON.stringify(card, null, 2) },
       { label: "Markdown", ext: "md", mime: "text/markdown", body: () => lines.join("\n") },

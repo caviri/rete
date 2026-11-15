@@ -1,14 +1,14 @@
 # File explorer — browse a `.rete` like an archive
 
 Open a `.rete` the way an archive tool opens a `.zip`: folders, files, a preview
-pane, and **extract**. It runs in a browser and ships as a desktop app for macOS
-and Windows.
+pane, a graph you can draw, and **extract**. It runs in a browser and ships as a
+desktop app for macOS and Windows.
 
 SPARQL is the wall most people hit; folders are the one interface everybody
 already knows. Nothing here is a new engine feature — it projects what a `.rete`
-already carries (the 1 KB section directory, the baked schema pyramid, the
-Dataset Card, its permutation indexes) onto a metaphor a non-specialist can walk
-into.
+already carries (its header and section table, the baked schema, the Dataset
+Card, its permutation indexes) onto a metaphor a non-specialist can walk into.
+It reads every format the engine reads, `0x05` to `0x08`.
 
 > **Status: experiment.** It lives in `experiments/rete-file-explorer/` and is not
 > part of the released surface. The desktop builds are unsigned.
@@ -27,8 +27,30 @@ python3 -m http.server 8901
 It loads the WASM build from `web/pkg-nomodules/`, so run `scripts/build_wasm.sh`
 first if that directory is stale.
 
-Open one of the catalogued datasets, paste any `.rete` URL, or **drag a file onto
-the window** — anywhere, at any time.
+Open a file from a catalog, paste any `.rete` link, or **drag a file onto the
+window** — anywhere, at any time.
+
+## Your files and your catalogs
+
+The home has two shelves. **Your files** lists what you opened here, newest
+first: a link reopens with a click, the desktop app reopens a path, and a browser
+asks for a local file again (it cannot reopen one by itself). **Catalogs** lists
+the files of every catalog you subscribe to, with a filter over names, tags and
+licences.
+
+A catalog is a JSON list of `.rete` links that anyone can publish next to their
+graphs. Paste its link in the box at the top, or in the Catalogs shelf, to
+subscribe; a link to a `.rete` file opens it instead. The explorer reads rete's
+own catalog shape (`{"datasets": [{"key", "label", "url", "size", …}]}`, as in
+`clients/relay/catalog.json`), the plaza's (`docs/plaza/plaza.json`, links
+relative to the catalog), a list of entries, or a plain list of links. rete's
+catalog is subscribed by default. Subscriptions and your files are kept in the
+browser (or the desktop app's webview); nothing is sent anywhere.
+
+Each picture is drawn from the file's own card — its classes as discs sized by
+their instances, the links between them, coloured by vocabulary — the same
+picture the plaza draws. The card is read with two small range requests, only for
+files that scroll into view, and kept.
 
 ## Install the desktop app
 
@@ -96,12 +118,13 @@ defensible ones, each true in its own way, so you switch between them.
 | **Namespace** | the IRI's own path segments | a bounded sample per class |
 | **Predicates** | one relation each; files are two-column tables | the schema pyramid only |
 | **Graphs** | named graphs, as volumes | one `DISTINCT ?g` |
-| **Sections** | the actual bytes on disk | nothing — it *is* the first 1 KB |
+| **Sections** | the actual bytes on disk | the header and the section table: a few KB |
 
-**Sections** is the one that makes the metaphor land. It renders the header's
-typed section directory with real offsets, so you can see that the INDEX is 47%
-of a file and the DICTIONARY 9%, and click a section to see its extent drawn
-against the whole file. See [the format spec](SPEC.md) for what each section holds.
+**Sections** is the one that makes the metaphor land. It renders the file's
+section table with real offsets (the root block's table in `0x06`–`0x08`, the
+1 KB directory in `0x05`), so you can see that the INDEX is 47% of a file and
+the DICTIONARY 9%, and click a section to see its extent drawn against the whole
+file. See [the format spec](SPEC.md) for what each section holds.
 
 A "file" is a resource's Concise Bounded Description, previewable as a property
 table, JSON-LD, or Turtle, with its incoming references underneath.
@@ -118,13 +141,34 @@ travel with each node, so a link back to something already on your path is marke
 `↺` rather than pretending to be new. Literals are deliberately *not* children —
 they are the contents of the file, shown in the preview.
 
-## Two layouts
+## Three layouts
 
 - **Tree** — nested and expandable. The twisty expands; clicking the name opens
   the preview. They are separate targets on purpose: a resource is both a folder
   and a file, so clicking its name must not collapse it.
 - **Icons** — one folder at a time as tiles with a breadcrumb, like a file
   manager. Tiles show a real thumbnail wherever the data has one.
+- **Graph** — draws what is selected: an entity and its links, a sample of a
+  class, a predicate or a named graph, or, with nothing selected, the schema as
+  boxes of classes listing their properties. The **◉ Graph** button on a preview
+  or on query results does the same, and double-clicking a row too.
+
+## The graph
+
+The Graph layout is the graph view of the [Claude Desktop extension](agents.md#the-desktop-extension-retemcpb):
+the same page, which the explorer hosts the way Claude does (it is an
+[MCP App](https://github.com/modelcontextprotocol/ext-apps)) and answers from the
+open file instead of from the extension. Everything the view does in Claude works
+here: double-click a node to bring in its links, search for a name, group nodes
+into coloured layers, draw dots, boxes or a class diagram, change the layout,
+hide, remove and aggregate nodes, switch to a table and save it as CSV. What
+needs a conversation (sending a selection to the chat) is left out.
+
+An entity adds to the picture, so walking from one thing to the next builds it
+up; a schema, a sample or a query replaces it. The copy lives in
+`experiments/rete-file-explorer/graph/`, generated from `clients/mcpb/src/view/`
+by `clients/mcpb/build-explorer.mjs`; the extension's CI fails when it is out of
+date.
 
 ## Naming things
 
@@ -191,13 +235,13 @@ range.
 
 ## Files without a pyramid have no class list
 
-`gharchive`, `orcid`, `dblp` and the `wikidata-xxl` shards carry
-`schemaMetaLen = 0`. Types and Predicates are empty for them, because deriving
-classes would mean scanning the whole file — the page says so rather than
-appearing broken, and Namespace and Sections still work.
+`gharchive`, `orcid`, `dblp` and the `wikidata-xxl` shards were built without
+one. Types and Predicates are empty for them, because deriving classes would mean
+scanning the whole file — the page says so rather than appearing broken, and
+Namespace and Sections still work.
 
-Check before you wonder: a nonzero `schemaMetaLen` in the header means the views
-will populate.
+Check before you wonder: the header says whether a file has one (the schema
+presence bit in `0x06`–`0x08`, a nonzero `schemaMetaLen` in `0x05`).
 
 ---
 
@@ -211,6 +255,10 @@ The split is deliberate:
   self-description.
 - **`js/fs-worker.js`** — owns one `Graph` / `RemoteGraph`. A classic worker,
   because remote reads use synchronous XHR, which browsers allow only there.
+- **`js/library.js`** — your files and catalogs: what is kept, and how a catalog
+  of any shape is read.
+- **`js/graph-host.js`** — hosts the graph view and answers its tool calls with
+  the view model shared with the extension (`clients/mcpb/src/view-model.mjs`).
 - **`js/app.js`** — chrome only.
 
 Exactly one line differs between the web and desktop builds:

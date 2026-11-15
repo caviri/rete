@@ -1,13 +1,14 @@
 # rete file explorer — browse a `.rete` like an archive
 
 An experiment: open a `.rete` graph the way an archive tool opens a `.zip`.
-Folders, files, a preview pane, and — the verb that matters — **extract**.
+Folders, files, a preview pane, a graph you can draw, and — the verb that
+matters — **extract**.
 
 The premise is that SPARQL is the wall most people hit, and folders are the one
 interface everybody already knows. Nothing here is a new engine feature; it is a
-projection of what a `.rete` already carries (a 1 KB section directory, a baked
-schema pyramid, a Dataset Card, its permutation indexes) onto a metaphor a
-non-specialist can walk into.
+projection of what a `.rete` already carries (its header and section table, a
+baked schema, a Dataset Card, its permutation indexes) onto a metaphor a
+non-specialist can walk into. It reads formats `0x05` to `0x08`, as the engine does.
 
 ## Run it
 
@@ -21,8 +22,30 @@ python3 -m http.server 8901
 It loads the WASM build from `../../../web/pkg-nomodules/`, so run
 `scripts/build_wasm.sh` (in Docker) first if that directory is stale.
 
-Open one of the catalogued R2 archives, paste any `.rete` URL, or **drag a
-`.rete` onto the window** — anywhere, at any time. The drop target is the whole
+Open a file from a catalog, paste any `.rete` URL, or **drag a `.rete` onto the
+window** — anywhere, at any time.
+
+## The home: your files, your catalogs
+
+**Your files** are the ones opened here, newest first, each with a picture drawn
+from its card (`js/procgen.js`, the plaza's: classes as discs sized by their
+instances, linked as the card's `class_links` say). **Catalogs** are JSON lists of
+`.rete` links; paste one's link to subscribe. `js/library.js` reads rete's own
+shape (`clients/relay/catalog.json`, subscribed by default), the plaza's
+(`docs/plaza/plaza.json`, relative links), a list of entries or a list of URLs,
+and keeps everything in `localStorage`. A catalog card's picture needs that
+file's card: two range requests, made only once the card scrolls into view.
+
+## The graph
+
+The **◉ Graph** layout is the graph view of the Claude Desktop extension, hosted
+here: `graph/graph-view.html` is the extension's page, and `js/graph-host.js`
+plays Claude's part — an MCP Apps host (the SDK's `AppBridge`, in
+`graph/host-lib.js`) that answers the page's tool calls from the open file, with
+the extension's own view model (`clients/mcpb/src/view-model.mjs`). Both files
+under `graph/` are generated; after changing the view, regenerate them with
+`node clients/mcpb/build-explorer.mjs` (the extension's CI runs it with
+`--check`). The drop target is the whole
 window rather than the dashed zone on the landing screen, because that zone is
 gone once an archive is open and dropping a second file has to keep working.
 Anything that is not a `.rete` is named and refused in the status bar.
@@ -52,7 +75,7 @@ defensible ones, each true in its own way, so you switch between them:
 | **Namespace** | the IRI's own path segments | a bounded sample per class |
 | **Predicates** | one relation each; files are 2-column tables | schema pyramid only |
 | **Graphs** | named graphs, as volumes | one `DISTINCT ?g` |
-| **Sections** | the actual bytes on disk | zero queries — it *is* the first 1 KB |
+| **Sections** | the actual bytes on disk | zero queries — the header and the section table |
 
 `Sections` is the one that makes the metaphor land: it renders the header's
 typed section directory with real offsets, so you can see that the INDEX is 47%
@@ -132,8 +155,12 @@ opens elsewhere in the project.
 - **Labels cannot be on the critical path.** Resolving display names for a page
   of 200 IRIs is expensive on a big remote file, so listings paint local names
   immediately and patch labels in as background chunks land.
-- **Old files are refused.** The current WASM build reads format `0x05` only; a
-  `0x04` file dropped on the page reports that instead of half-working.
+- **Formats outside `0x05`–`0x08` are refused** by name instead of half-working.
+  Until 0.7 the header reader knew only the 1 KB `0x05` directory, and read a
+  `0x08` file's length as its statement count.
+- **`LIMIT` does not bound a `CONSTRUCT`.** The engine builds the whole answer
+  and cuts nothing, so the graph's samples and expansions are `SELECT ?s ?p ?o`
+  queries (a SELECT's limit is honoured) read as triples.
 - **`?p IN (…) || REGEX(…)` does not parse.** The engine rejects the whole query
   with `parse error: expected ENCODE_FOR_URI`, though `FILTER(?p IN (…))` and
   `FILTER(REGEX(STR(?p), …))` each parse fine on their own. The decoration pass
