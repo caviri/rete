@@ -5,39 +5,41 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-11-15
+
+0.7.5 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
 ### Changed
 
-- **36 more catalog files have new addresses.** The large single files and the
-  shards of `deps-dev` and `wikidata-xxl` are format `0x08` with a full card,
-  under `<name>-<version or source date>.rete`. `web/datasets.moved.json` lists
-  each old and new address. Sizes in the catalog are those of the published
-  files: `switzerland-fedlex` went from 1.04 GB to 232 MB (its 497,905 named
-  graphs are one quad index now) and `nanopubs` from 3.88 GB to 2.52 GB.
+- **36 more catalog files have new addresses** (#488). The large single files
+  and the shards of `deps-dev` and `wikidata-xxl` are format `0x08` with a full
+  card, under `<name>-<version or source date>.rete`. `web/datasets.moved.json`
+  lists each old and new address. Sizes in the catalog are those of the
+  published files: `switzerland-fedlex` went from 1.04 GB to 232 MB (its 497,905
+  named graphs are one quad index now) and `nanopubs` from 3.88 GB to 2.52 GB.
+  The relay's catalog has 103 datasets.
 - **`opencitations` is no longer a catalog dataset.** `opencitations-meta` has
   the same works in the OpenCitations Data Model. The README's remote example
   and the playground guide's link use it now.
-
-### Fixed
-
-- **Playground: the ontology reference of a file with no schema and no
-  ontology.** The live sample of classes and predicates was passed to the
-  renderer in an old shape and threw; the panel stayed empty.
-- **The last pages that read old catalog addresses.** The plaza opened
-  `chemotion` and `getty-ulan`, the YASGUI page `wikidata-100MB` and the ISWC
-  demo notebook `zenodo-records` at their old addresses. They use the new
-  files, so the old ones can be deleted.
-
-- **The ISWC demo's agent extension is the 0.7.4 `rete.mcpb`.** The old
+- **The ISWC demo's agent extension is the 0.7.4 `rete.mcpb`** (#485). The old
   three-dataset build (engine 0.3.0) could not read format `0x08` and still
   named open-pulse's old address. The agent page now describes the extension
   it serves, and its table gives the published files' counts and sizes.
 
 ### Fixed
 
-- **Catalog sizes of the 62 moved datasets.** 45 of them still showed the size
-  of an earlier conversion, not of the file that is published (open-pulse said
-  57.8 MB for a 50.2 MB file). The playground, the relay catalog and the share
-  pages and cards now give the published sizes.
+- **Catalog sizes of the 62 files moved in 0.7.4** (#486). 45 of them still
+  showed the size of an earlier conversion, not of the file that is published
+  (open-pulse said 57.8 MB for a 50.2 MB file). The playground, the relay
+  catalog and the share pages and cards now give the published sizes.
+- **Playground: the ontology reference of a file with no schema and no
+  ontology.** The live sample of classes and predicates was passed to the
+  renderer in an old shape and threw; the panel stayed empty.
+- **The last pages that read old catalog addresses** (#489). The YASGUI page
+  opened `wikidata-100MB` and the ISWC demo notebook `zenodo-records` at their
+  old addresses; they open the new files. The plaza's manifest names the new
+  `chemotion` and `getty-ulan` files too, but the live plaza still runs the
+  0.3.0 engine, which reads no current catalog file, until its redesign ships.
 
 ## [0.7.4] - 2026-11-14
 
@@ -45,7 +47,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
-- **62 catalog files have new addresses.** They are format 0x08 with a full card, named `<name>-<version or source date>.rete` (#473). `web/datasets.moved.json` lists each old and new address. The relay's catalog is exported again from the playground catalog (104 datasets, all on their current addresses), and the pages that still ran a reader older than 0.7.0 now run the current engine: the ISWC demo's playground (now the current playground), the historical atlas, the Lombardi drawings and the plaza.
+- **62 catalog files have new addresses.** They are format 0x08 with a full card, named `<name>-<version or source date>.rete` (#473). `web/datasets.moved.json` lists each old and new address. The relay's catalog is exported again from the playground catalog (104 datasets, all on their current addresses), and the pages that still ran a reader older than 0.7.0 now run the current engine: the ISWC demo's playground (now the current playground), the historical atlas and the Lombardi drawings. The plaza still runs the 0.3.0 engine.
 
 ### Fixed
 
