@@ -17,6 +17,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   the same works in the OpenCitations Data Model. The README's remote example
   and the playground guide's link use it now.
 
+### Fixed
+
+- **Playground: the ontology reference of a file with no schema and no
+  ontology.** The live sample of classes and predicates was passed to the
+  renderer in an old shape and threw; the panel stayed empty.
+
 - **The ISWC demo's agent extension is the 0.7.4 `rete.mcpb`.** The old
   three-dataset build (engine 0.3.0) could not read format `0x08` and still
   named open-pulse's old address. The agent page now describes the extension

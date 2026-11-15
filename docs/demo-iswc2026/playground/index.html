@@ -23605,7 +23605,10 @@ self.onmessage = function (e) {
           '<div class="note">No vocabulary could be read from this graph.</div>';
         return;
       }
-      el.innerHTML = buildOntologyDocsHtml(classes, props, []);
+      const eff = { classes, obj: props, data: [], derived: true };
+      state.ontoData = eff;
+      bindOntoDocs(el);
+      el.innerHTML = buildOntologyDocsHtml(eff, state.ontoView || "ref");
     });
   }
 
