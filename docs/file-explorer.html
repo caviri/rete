@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>File explorer — browse like an archive · rete docs</title>
-  <meta name="description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <meta name="description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, a graph you can draw, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
   <link rel="canonical" href="https://caviri.github.io/rete/docs/file-explorer.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="File explorer — browse like an archive · rete docs" />
-  <meta property="og:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <meta property="og:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, a graph you can draw, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
   <meta property="og:url" content="https://caviri.github.io/rete/docs/file-explorer.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/file-explorer.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="File explorer — browse like an archive · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="File explorer — browse like an archive · rete docs" />
-  <meta name="twitter:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
+  <meta name="twitter:description" content="Open a .rete the way an archive tool opens a .zip: folders, files, a preview pane, a graph you can draw, and extract. It runs in a browser and ships as a desktop app for macOS and Windows." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/file-explorer.png" />
   <meta name="rete:section" content="Guides" />
   <script>
@@ -618,13 +618,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 <p class="parent-link"><a href="integrations.html">Back to Tools and integrations</a></p>
 <h1 id="file-explorer--browse-a-rete-like-an-archive">File explorer — browse a <code>.rete</code> like an archive</h1>
 <p>Open a <code>.rete</code> the way an archive tool opens a <code>.zip</code>: folders, files, a preview
-pane, and <strong>extract</strong>. It runs in a browser and ships as a desktop app for macOS
-and Windows.</p>
+pane, a graph you can draw, and <strong>extract</strong>. It runs in a browser and ships as a
+desktop app for macOS and Windows.</p>
 <p>SPARQL is the wall most people hit; folders are the one interface everybody
 already knows. Nothing here is a new engine feature — it projects what a <code>.rete</code>
-already carries (the 1 KB section directory, the baked schema pyramid, the
-Dataset Card, its permutation indexes) onto a metaphor a non-specialist can walk
-into.</p>
+already carries (its header and section table, the baked schema, the Dataset
+Card, its permutation indexes) onto a metaphor a non-specialist can walk into.
+It reads every format the engine reads, <code>0x05</code> to <code>0x08</code>.</p>
 <blockquote>
 <p><strong>Status: experiment.</strong> It lives in <code>experiments/rete-file-explorer/</code> and is not
 part of the released surface. The desktop builds are unsigned.</p>
@@ -637,8 +637,26 @@ part of the released surface. The desktop builds are unsigned.</p>
 </code></pre>
 <p>It loads the WASM build from <code>web/pkg-nomodules/</code>, so run <code>scripts/build_wasm.sh</code>
 first if that directory is stale.</p>
-<p>Open one of the catalogued datasets, paste any <code>.rete</code> URL, or <strong>drag a file onto
-the window</strong> — anywhere, at any time.</p>
+<p>Open a file from a catalog, paste any <code>.rete</code> link, or <strong>drag a file onto the
+window</strong> — anywhere, at any time.</p>
+<h2 id="your-files-and-your-catalogs">Your files and your catalogs</h2>
+<p>The home has two shelves. <strong>Your files</strong> lists what you opened here, newest
+first: a link reopens with a click, the desktop app reopens a path, and a browser
+asks for a local file again (it cannot reopen one by itself). <strong>Catalogs</strong> lists
+the files of every catalog you subscribe to, with a filter over names, tags and
+licences.</p>
+<p>A catalog is a JSON list of <code>.rete</code> links that anyone can publish next to their
+graphs. Paste its link in the box at the top, or in the Catalogs shelf, to
+subscribe; a link to a <code>.rete</code> file opens it instead. The explorer reads rete's
+own catalog shape (<code>{"datasets": [{"key", "label", "url", "size", …}]}</code>, as in
+<code>clients/relay/catalog.json</code>), the plaza's (<code>docs/plaza/plaza.json</code>, links
+relative to the catalog), a list of entries, or a plain list of links. rete's
+catalog is subscribed by default. Subscriptions and your files are kept in the
+browser (or the desktop app's webview); nothing is sent anywhere.</p>
+<p>Each picture is drawn from the file's own card — its classes as discs sized by
+their instances, the links between them, coloured by vocabulary — the same
+picture the plaza draws. The card is read with two small range requests, only for
+files that scroll into view, and kept.</p>
 <h2 id="install-the-desktop-app">Install the desktop app</h2>
 <p>Builds are attached to a GitHub Release by
 <a href="https://github.com/caviri/rete/actions/workflows/desktop-release.yml"><code>.github/workflows/desktop-release.yml</code></a>:
@@ -690,12 +708,13 @@ defensible ones, each true in its own way, so you switch between them.</p>
 <tr><td><strong>Namespace</strong></td><td>the IRI's own path segments</td><td>a bounded sample per class</td></tr>
 <tr><td><strong>Predicates</strong></td><td>one relation each; files are two-column tables</td><td>the schema pyramid only</td></tr>
 <tr><td><strong>Graphs</strong></td><td>named graphs, as volumes</td><td>one <code>DISTINCT ?g</code></td></tr>
-<tr><td><strong>Sections</strong></td><td>the actual bytes on disk</td><td>nothing — it <em>is</em> the first 1 KB</td></tr>
+<tr><td><strong>Sections</strong></td><td>the actual bytes on disk</td><td>the header and the section table: a few KB</td></tr>
 </tbody></table>
-<p><strong>Sections</strong> is the one that makes the metaphor land. It renders the header's
-typed section directory with real offsets, so you can see that the INDEX is 47%
-of a file and the DICTIONARY 9%, and click a section to see its extent drawn
-against the whole file. See <a href="SPEC.html">the format spec</a> for what each section holds.</p>
+<p><strong>Sections</strong> is the one that makes the metaphor land. It renders the file's
+section table with real offsets (the root block's table in <code>0x06</code>–<code>0x08</code>, the
+1 KB directory in <code>0x05</code>), so you can see that the INDEX is 47% of a file and
+the DICTIONARY 9%, and click a section to see its extent drawn against the whole
+file. See <a href="SPEC.html">the format spec</a> for what each section holds.</p>
 <p>A "file" is a resource's Concise Bounded Description, previewable as a property
 table, JSON-LD, or Turtle, with its incoming references underneath.</p>
 <h2 id="folders-that-do-not-bottom-out">Folders that do not bottom out</h2>
@@ -706,14 +725,32 @@ descend <code>Creature → A-Acererak the Archlich → printedIn → Adventures 
 travel with each node, so a link back to something already on your path is marked
 <code>↺</code> rather than pretending to be new. Literals are deliberately <em>not</em> children —
 they are the contents of the file, shown in the preview.</p>
-<h2 id="two-layouts">Two layouts</h2>
+<h2 id="three-layouts">Three layouts</h2>
 <ul>
 <li><strong>Tree</strong> — nested and expandable. The twisty expands; clicking the name opens
 the preview. They are separate targets on purpose: a resource is both a folder
 and a file, so clicking its name must not collapse it.</li>
 <li><strong>Icons</strong> — one folder at a time as tiles with a breadcrumb, like a file
 manager. Tiles show a real thumbnail wherever the data has one.</li>
+<li><strong>Graph</strong> — draws what is selected: an entity and its links, a sample of a
+class, a predicate or a named graph, or, with nothing selected, the schema as
+boxes of classes listing their properties. The <strong>◉ Graph</strong> button on a preview
+or on query results does the same, and double-clicking a row too.</li>
 </ul>
+<h2 id="the-graph">The graph</h2>
+<p>The Graph layout is the graph view of the <a href="agents.html#the-desktop-extension-retemcpb">Claude Desktop extension</a>:
+the same page, which the explorer hosts the way Claude does (it is an
+<a href="https://github.com/modelcontextprotocol/ext-apps">MCP App</a>) and answers from the
+open file instead of from the extension. Everything the view does in Claude works
+here: double-click a node to bring in its links, search for a name, group nodes
+into coloured layers, draw dots, boxes or a class diagram, change the layout,
+hide, remove and aggregate nodes, switch to a table and save it as CSV. What
+needs a conversation (sending a selection to the chat) is left out.</p>
+<p>An entity adds to the picture, so walking from one thing to the next builds it
+up; a schema, a sample or a query replaces it. The copy lives in
+<code>experiments/rete-file-explorer/graph/</code>, generated from <code>clients/mcpb/src/view/</code>
+by <code>clients/mcpb/build-explorer.mjs</code>; the extension's CI fails when it is out of
+date.</p>
 <h2 id="naming-things">Naming things</h2>
 <p>IRIs make serviceable filenames and terrible reading. The <strong>name by</strong> control
 lists every literal-valued predicate the schema knows about, with counts, and
@@ -760,12 +797,12 @@ the session to 109 MB. That cost is dominated by <strong>dictionary chunk faults
 while decoding subject IDs, not by the <code>?s a &lt;C&gt;</code> scan, which is a contiguous POS
 range.</p>
 <h2 id="files-without-a-pyramid-have-no-class-list">Files without a pyramid have no class list</h2>
-<p><code>gharchive</code>, <code>orcid</code>, <code>dblp</code> and the <code>wikidata-xxl</code> shards carry
-<code>schemaMetaLen = 0</code>. Types and Predicates are empty for them, because deriving
-classes would mean scanning the whole file — the page says so rather than
-appearing broken, and Namespace and Sections still work.</p>
-<p>Check before you wonder: a nonzero <code>schemaMetaLen</code> in the header means the views
-will populate.</p>
+<p><code>gharchive</code>, <code>orcid</code>, <code>dblp</code> and the <code>wikidata-xxl</code> shards were built without
+one. Types and Predicates are empty for them, because deriving classes would mean
+scanning the whole file — the page says so rather than appearing broken, and
+Namespace and Sections still work.</p>
+<p>Check before you wonder: the header says whether a file has one (the schema
+presence bit in <code>0x06</code>–<code>0x08</code>, a nonzero <code>schemaMetaLen</code> in <code>0x05</code>).</p>
 <hr />
 <h2 id="shape-for-reuse">Shape, for reuse</h2>
 <p>The split is deliberate:</p>
@@ -776,6 +813,10 @@ own; it takes an <code>engine</code> (<code>query</code> / <code>prefix</code> /
 self-description.</li>
 <li><strong><code>js/fs-worker.js</code></strong> — owns one <code>Graph</code> / <code>RemoteGraph</code>. A classic worker,
 because remote reads use synchronous XHR, which browsers allow only there.</li>
+<li><strong><code>js/library.js</code></strong> — your files and catalogs: what is kept, and how a catalog
+of any shape is read.</li>
+<li><strong><code>js/graph-host.js</code></strong> — hosts the graph view and answers its tool calls with
+the view model shared with the extension (<code>clients/mcpb/src/view-model.mjs</code>).</li>
 <li><strong><code>js/app.js</code></strong> — chrome only.</li>
 </ul>
 <p>Exactly one line differs between the web and desktop builds:</p>

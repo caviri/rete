@@ -63,6 +63,11 @@ jobs:
         run: node --test --test-timeout=180000 clients/mcpb/test/*.test.mjs
       - name: Validate the manifest
         run: npx --yes @anthropic-ai/mcpb@2 validate clients/mcpb/build/manifest.json
+      # The file explorer carries a copy of the graph view and its model
+      # (experiments/rete-file-explorer/graph/), generated from src/view and
+      # src/view-model.mjs: a change to either has to regenerate it.
+      - name: The file explorer's copy of the graph view is current
+        run: node clients/mcpb/build-explorer.mjs --check
       # The bundle targets node18; run the same suites on that runtime (built
       # above on 22, as the release builds it). Node 18's runner has no
       # --test-timeout.
