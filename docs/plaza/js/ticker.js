@@ -29,7 +29,7 @@ if (bar) {
       group.after(copy);
       // "Submit a dataset" opens the same dialog as the header button.
       bar.addEventListener("click", (e) => {
-        if (!e.target.closest('a[href="#submit"]')) return;
+        if (!e.target.closest('a[href="#submitModal"]')) return;
         e.preventDefault();
         document.getElementById("submitBtn")?.click();
       });
