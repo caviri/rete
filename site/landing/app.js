@@ -1335,7 +1335,7 @@ const navLinks = $$(".nav a");
 const sectionSpy = new IntersectionObserver((entries) => {
   for (const e of entries) if (e.isIntersecting) navLinks.forEach((a) => a.classList.toggle("on", a.getAttribute("href") === `#${e.target.id}`));
 }, { rootMargin: "-45% 0px -50% 0px" });
-["try", "how", "use", "apps", "support"].forEach((id) => sectionSpy.observe(document.getElementById(id)));
+["try", "how", "cost", "use", "apps", "support"].forEach((id) => sectionSpy.observe(document.getElementById(id)));
 
 // Hero: "Query it from …" cycles through the places a .rete can be queried.
 (function rotator() {
@@ -1378,31 +1378,6 @@ if (!REDUCED) {
   addEventListener("scroll", () => { if (!pRaf) pRaf = requestAnimationFrame(doParallax); }, { passive: true });
   doParallax();
 }
-
-// How-it-works, step 3: the file lights up a few blocks at a time.
-(function queryArt() {
-  const g = $(".art-query .cells");
-  const cols = 8, rows = 9, cw = 18, ch = 16, x0 = 24, y0 = 42;
-  const cells = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("x", x0 + c * (cw + 2)); rect.setAttribute("y", y0 + r * (ch + 2));
-    rect.setAttribute("width", cw); rect.setAttribute("height", ch); rect.setAttribute("rx", 3);
-    g.append(rect); cells.push(rect);
-  }
-  cells[0].classList.add("hit"); cells[1].classList.add("hit");
-  if (REDUCED) { [13, 30, 51].forEach((i) => cells[i].classList.add("hit")); return; }
-  let timer = 0;
-  const tick = () => {
-    cells.forEach((c, i) => { if (i > 1) c.classList.remove("hit"); });
-    const n = 3 + Math.floor(Math.random() * 2);
-    for (let k = 0; k < n; k++) cells[2 + Math.floor(Math.random() * (cells.length - 2))].classList.add("hit");
-  };
-  new IntersectionObserver(([e]) => {
-    if (e.isIntersecting && !timer) { tick(); timer = setInterval(tick, 1600); }
-    else if (!e.isIntersecting && timer) { clearInterval(timer); timer = 0; }
-  }).observe(g.closest("svg"));
-})();
 
 // Code tabs.
 $$(".seg-code button").forEach((b) => b.addEventListener("click", () => {
