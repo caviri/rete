@@ -1,6 +1,6 @@
 crossref	crossref	https://data.graphplaza.com/crossref/crossref.rete
 datacite	datacite	https://data.graphplaza.com/datacite/datacite.rete
-opencitations	opencitations	https://data.graphplaza.com/opencitations/opencitations.rete
+opencitations-meta	opencitations-meta	https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete
 orcid	orcid	https://data.graphplaza.com/orcid/orcid.rete
 openalex	openalex-authors	https://data.graphplaza.com/openalex/openalex-authors.rete
 dblp	dblp	https://data.graphplaza.com/dblp/dblp-2026-07-01.rete

@@ -22,6 +22,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - **Playground: the ontology reference of a file with no schema and no
   ontology.** The live sample of classes and predicates was passed to the
   renderer in an old shape and threw; the panel stayed empty.
+- **The last pages that read old catalog addresses.** The plaza opened
+  `chemotion` and `getty-ulan`, the YASGUI page `wikidata-100MB` and the ISWC
+  demo notebook `zenodo-records` at their old addresses. They use the new
+  files, so the old ones can be deleted.
 
 - **The ISWC demo's agent extension is the 0.7.4 `rete.mcpb`.** The old
   three-dataset build (engine 0.3.0) could not read format `0x08` and still
