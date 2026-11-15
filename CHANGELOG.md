@@ -9,13 +9,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 - **The ISWC demo's agent extension is the 0.7.5 `rete.mcpb`.** The 0.7.4
   bundle still named the old addresses of the 36 catalog files moved in 0.7.5.
-
-### Fixed
-
-- **The plaza runs the 0.7.5 engine.** It ran 0.3.0, which reads no current
-  catalog file, and its card reader knew only the `0x05` header, so its five
-  remote datasets (all format `0x08`) did not open. It reads `0x05` to `0x08`
-  now, including the zstd-compressed cards of `0x06` on.
+- **The plaza is redesigned and lists the whole catalog.** graphplaza.com now
+  shows every dataset of the playground catalog (103, from a generated
+  `plaza.json`) with search and filters, a schema preview drawn from each
+  file's card, and a query page per dataset. It runs the 0.7.5 engine and
+  reads `0x05` to `0x08` cards; before, it ran 0.3.0 and its five remote
+  datasets did not open. In browsers with WebMCP, the pages offer their search
+  and query functions to agents as tools.
 
 ## [0.7.5] - 2026-11-15
 
