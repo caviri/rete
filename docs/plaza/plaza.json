@@ -384,8 +384,8 @@
           "note": "directory of <Class>.parquet + _manifest.parquet (served locally)"
         }
       ],
-      "formatVersion": 5,
-      "size": 131170253
+      "formatVersion": 8,
+      "size": 142138366
     },
     {
       "key": "ohm-full",
@@ -425,8 +425,8 @@
           "verified": true
         }
       ],
-      "formatVersion": 5,
-      "size": 176430304
+      "formatVersion": 8,
+      "size": 168403037
     },
     {
       "key": "chemotion",
@@ -557,8 +557,8 @@
           "url": "https://www.ebi.ac.uk/chebi/"
         }
       ],
-      "formatVersion": 5,
-      "size": 164832053
+      "formatVersion": 8,
+      "size": 159313443
     },
     {
       "key": "hugging-face",
@@ -614,7 +614,7 @@
     {
       "key": "figshare",
       "title": "figshare — figshare public research outputs as a DOI-linked scholarly graph, with downloadable file URLs (in progress)",
-      "rete": "https://data.graphplaza.com/figshare/figshare.rete",
+      "rete": "https://data.graphplaza.com/figshare/figshare-2026-07-25.rete",
       "kind": "remote-lazy",
       "icon": "📊",
       "tags": [
@@ -651,8 +651,8 @@
           "verified": true
         }
       ],
-      "formatVersion": 5,
-      "size": 221861303
+      "formatVersion": 8,
+      "size": 211319861
     },
     {
       "key": "proteinbase",
@@ -685,7 +685,7 @@
     {
       "key": "ethz-research-collection",
       "title": "ethz-research-collection — the ETH Zürich institutional repository as a scholarly graph, DOI/ORCID-linked to the hub (306,835 works + a file manifest)",
-      "rete": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
+      "rete": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection-2026-07-23.rete",
       "kind": "remote-lazy",
       "icon": "🎓",
       "tags": [
@@ -735,8 +735,8 @@
           "verified": true
         }
       ],
-      "size": 206054877,
-      "formatVersion": 5
+      "size": 220860610,
+      "formatVersion": 8
     },
     {
       "key": "swissubase",
@@ -1081,7 +1081,7 @@
     {
       "key": "farmacos-es",
       "title": "farmacos-es — todos los medicamentos autorizados en España (CIMA/AEMPS)",
-      "rete": "https://data.graphplaza.com/farmacos-es/farmacos-es.rete",
+      "rete": "https://data.graphplaza.com/farmacos-es/farmacos-es-2026-07-18.rete",
       "kind": "remote-lazy",
       "icon": "💊",
       "tags": [
@@ -1110,8 +1110,8 @@
           "url": "https://cima.aemps.es/"
         }
       ],
-      "formatVersion": 5,
-      "size": 291675828
+      "formatVersion": 8,
+      "size": 251972715
     },
     {
       "key": "open-pulse",
@@ -1218,7 +1218,7 @@
     {
       "key": "epfl-infoscience",
       "title": "epfl-infoscience — EPFL Infoscience research repository, with full text",
-      "rete": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience.rete",
+      "rete": "https://data.graphplaza.com/epfl-infoscience/epfl-infoscience-2026-07-18.rete",
       "kind": "remote-lazy",
       "icon": "🎓",
       "tags": [
@@ -1247,13 +1247,13 @@
           "url": "https://infoscience.epfl.ch"
         }
       ],
-      "formatVersion": 5,
-      "size": 1642708129
+      "formatVersion": 8,
+      "size": 1415052277
     },
     {
       "key": "wikidata",
       "title": "wikidata",
-      "rete": "https://data.graphplaza.com/wikidata-1GB/wikidata.rete",
+      "rete": "https://data.graphplaza.com/wikidata-1GB/wikidata-2025-11-07.rete",
       "kind": "remote-lazy",
       "icon": "🌐",
       "tags": [
@@ -1296,13 +1296,13 @@
           "verified": true
         }
       ],
-      "formatVersion": 5,
-      "size": 1490440535
+      "formatVersion": 8,
+      "size": 1542940320
     },
     {
       "key": "wikidata-zenodo",
       "title": "wikidata-zenodo",
-      "rete": "https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo.rete",
+      "rete": "https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo-2025-11-07.rete",
       "kind": "remote-lazy",
       "icon": "🏛️",
       "tags": [
@@ -1327,13 +1327,13 @@
           "url": "https://zenodo.org/records/21168821"
         }
       ],
-      "formatVersion": 5,
-      "size": 1490440535
+      "formatVersion": 8,
+      "size": 1542939334
     },
     {
       "key": "wikidata-ontology",
       "title": "wikidata-ontology — every Wikidata class: the ontology without the instances",
-      "rete": "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology.rete",
+      "rete": "https://data.graphplaza.com/wikidata-ontology/wikidata-ontology-2025-11-07.rete",
       "kind": "remote-lazy",
       "icon": "🌳",
       "tags": [
@@ -1361,8 +1361,8 @@
           "url": "https://www.wikidata.org"
         }
       ],
-      "formatVersion": 5,
-      "size": 2182498038
+      "formatVersion": 8,
+      "size": 2289327930
     },
     {
       "key": "scholar-noisy",
@@ -2076,7 +2076,7 @@
     {
       "key": "mmm",
       "title": "mmm",
-      "rete": "https://data.graphplaza.com/mmm/mmm.rete",
+      "rete": "https://data.graphplaza.com/mmm/mmm-v2.1.0.rete",
       "kind": "remote-lazy",
       "icon": "📜",
       "tags": [
@@ -2096,8 +2096,8 @@
           "url": "https://mappingmanuscriptmigrations.org"
         }
       ],
-      "formatVersion": 5,
-      "size": 147120711
+      "formatVersion": 8,
+      "size": 148001459
     },
     {
       "key": "openalex-astrocytes",
@@ -2339,52 +2339,6 @@
       "size": 183665
     },
     {
-      "key": "opencitations",
-      "title": "opencitations — OpenCitations Meta: 135.4M scholarly works with their authors and venues",
-      "rete": "https://data.graphplaza.com/opencitations/opencitations.rete",
-      "kind": "remote-lazy",
-      "icon": "🔗",
-      "tags": [
-        "OpenCitations",
-        "citations"
-      ],
-      "blurb": "The complete OpenCitations Meta v13.1.0 corpus (CC0) as one range-queryable graph — 5,184,588,893 triples (33.4 GB) covering 135.4 million bibliographic records: journal articles, book chapters, proceedings papers…",
-      "license": "CC0",
-      "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
-      "links": [
-        {
-          "label": "Open in playground",
-          "url": "https://caviri.github.io/rete/docs/playground.html#dataset=opencitations&mode=sparql"
-        },
-        {
-          "label": "Source",
-          "url": "https://opencitations.net/meta"
-        }
-      ],
-      "companions": [
-        {
-          "kind": "parquet",
-          "label": "per-table Parquet",
-          "url": "https://data.graphplaza.com/opencitations/opencitations-tables/",
-          "note": "directory of .parquet tables"
-        },
-        {
-          "kind": "duckdb",
-          "label": "opencitations.duckdb",
-          "url": "https://data.graphplaza.com/opencitations/opencitations.duckdb",
-          "verified": true
-        },
-        {
-          "kind": "sqlite",
-          "label": "opencitations.sqlite",
-          "url": "https://data.graphplaza.com/opencitations/opencitations.sqlite",
-          "verified": true
-        }
-      ],
-      "formatVersion": 5,
-      "size": 35852509508
-    },
-    {
       "key": "opencitations-meta",
       "title": "opencitations-meta",
       "rete": "https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete",
@@ -2453,7 +2407,7 @@
     {
       "key": "nanopubs",
       "title": "nanopubs — Nanopublications 2018: 10.8M nanopublications as 43.2M named graphs",
-      "rete": "https://data.graphplaza.com/nanopubs/nanopub-dump-20180405.rete",
+      "rete": "https://data.graphplaza.com/nanopubs/nanopubs-2018-04-05.rete",
       "kind": "remote-lazy",
       "icon": "🔬",
       "tags": [
@@ -2481,8 +2435,8 @@
           "url": "https://doi.org/10.5281/zenodo.1213293"
         }
       ],
-      "size": 3882041979,
-      "formatVersion": 6
+      "size": 2522157337,
+      "formatVersion": 8
     },
     {
       "key": "orkg",
@@ -2533,7 +2487,7 @@
     {
       "key": "wikidata-xxl",
       "title": "wikidata-xxl",
-      "rete": "https://data.graphplaza.com/wikidata-xxl/shard_0000.rete",
+      "rete": "https://data.graphplaza.com/wikidata-xxl/shard_0000-2025-11-07.rete",
       "kind": "remote-lazy",
       "icon": "⛓",
       "tags": [
@@ -2548,12 +2502,12 @@
       "license": "CC0",
       "typePredicate": "<http://www.wikidata.org/prop/direct/P31>",
       "shards": [
-        "https://data.graphplaza.com/wikidata-xxl/shard_0000.rete",
-        "https://data.graphplaza.com/wikidata-xxl/shard_0001.rete",
-        "https://data.graphplaza.com/wikidata-xxl/shard_0002.rete",
-        "https://data.graphplaza.com/wikidata-xxl/shard_0003.rete",
-        "https://data.graphplaza.com/wikidata-xxl/shard_0004.rete",
-        "https://data.graphplaza.com/wikidata-xxl/shard_0005.rete"
+        "https://data.graphplaza.com/wikidata-xxl/shard_0000-2025-11-07.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0001-2025-11-07.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0002-2025-11-07.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0003-2025-11-07.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0004-2025-11-07.rete",
+        "https://data.graphplaza.com/wikidata-xxl/shard_0005-2025-11-07.rete"
       ],
       "links": [
         {
@@ -2565,13 +2519,13 @@
           "url": "https://www.wikidata.org"
         }
       ],
-      "formatVersion": 5,
-      "size": 4872958617
+      "formatVersion": 8,
+      "size": 4748199957
     },
     {
       "key": "deps-dev",
       "title": "deps-dev",
-      "rete": "https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete",
+      "rete": "https://data.graphplaza.com/deps-dev/deps-dev-npm-0-2026-07-13.rete",
       "kind": "remote-lazy",
       "icon": "📦",
       "tags": [
@@ -2590,14 +2544,14 @@
       "license": "CC-BY 4.0",
       "typePredicate": "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
       "shards": [
-        "https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete",
-        "https://data.graphplaza.com/deps-dev/deps-dev-npm-1.rete",
-        "https://data.graphplaza.com/deps-dev/deps-dev-go.rete",
-        "https://data.graphplaza.com/deps-dev/deps-dev-maven.rete",
-        "https://data.graphplaza.com/deps-dev/deps-dev-nuget.rete",
-        "https://data.graphplaza.com/deps-dev/deps-dev-pypi.rete",
-        "https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete",
-        "https://data.graphplaza.com/deps-dev/deps-dev-rubygems.rete"
+        "https://data.graphplaza.com/deps-dev/deps-dev-npm-0-2026-07-13.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-npm-1-2026-07-13.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-go-2026-07-13.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-maven-2026-07-13.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-nuget-2026-07-13.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-pypi-2026-07-13.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-cargo-2026-07-13.rete",
+        "https://data.graphplaza.com/deps-dev/deps-dev-rubygems-2026-07-13.rete"
       ],
       "links": [
         {
@@ -2609,8 +2563,8 @@
           "url": "https://deps.dev/"
         }
       ],
-      "formatVersion": 5,
-      "size": 12844234514
+      "formatVersion": 8,
+      "size": 12319537129
     },
     {
       "key": "mirbase",
@@ -2827,7 +2781,7 @@
     {
       "key": "bne",
       "title": "bne",
-      "rete": "https://data.graphplaza.com/bne-full/bne-full.rete",
+      "rete": "https://data.graphplaza.com/bne-full/bne-full-2026-06-29.rete",
       "kind": "remote-lazy",
       "icon": "🇪🇸",
       "tags": [
@@ -2850,13 +2804,13 @@
           "url": "https://datos.bne.es/"
         }
       ],
-      "formatVersion": 5,
-      "size": 3653583413
+      "formatVersion": 8,
+      "size": 3738781843
     },
     {
       "key": "biblissima",
       "title": "biblissima",
-      "rete": "https://data.graphplaza.com/biblissima-full/biblissima-full.rete",
+      "rete": "https://data.graphplaza.com/biblissima-full/biblissima-full-2026-06-27.rete",
       "kind": "remote-lazy",
       "icon": "🗝️",
       "tags": [
@@ -2879,8 +2833,8 @@
           "url": "https://data.biblissima.fr/"
         }
       ],
-      "formatVersion": 5,
-      "size": 699899183
+      "formatVersion": 8,
+      "size": 688339432
     },
     {
       "key": "albala",
@@ -3346,7 +3300,7 @@
     {
       "key": "cordis",
       "title": "cordis",
-      "rete": "https://data.graphplaza.com/cordis/cordis.rete",
+      "rete": "https://data.graphplaza.com/cordis/cordis-2026-04-02.rete",
       "kind": "remote-lazy",
       "icon": "🇪🇺",
       "tags": [
@@ -3373,8 +3327,8 @@
           "url": "https://cordis.europa.eu/about/archive"
         }
       ],
-      "formatVersion": 5,
-      "size": 791123584
+      "formatVersion": 8,
+      "size": 854827613
     },
     {
       "key": "wikiart",
@@ -3412,7 +3366,7 @@
     {
       "key": "switzerland-fedlex",
       "title": "switzerland-fedlex",
-      "rete": "https://data.graphplaza.com/switzerland-fedlex.rete",
+      "rete": "https://data.graphplaza.com/switzerland-fedlex-2026-07-30.rete",
       "kind": "remote-lazy",
       "icon": "🇨🇭",
       "tags": [
@@ -3443,8 +3397,8 @@
           "url": "https://fedlex.data.admin.ch/sparqlendpoint"
         }
       ],
-      "formatVersion": 5,
-      "size": 1043524612
+      "formatVersion": 8,
+      "size": 232077005
     },
     {
       "key": "scrolls",
@@ -3505,7 +3459,7 @@
     {
       "key": "bcul",
       "title": "bcul — BCU Lausanne: a digital twin of the whole library, incl. where every book is held",
-      "rete": "https://data.graphplaza.com/bcul/bcul.rete",
+      "rete": "https://data.graphplaza.com/bcul/bcul-2026-07-07.rete",
       "kind": "remote-lazy",
       "icon": "🏛️",
       "tags": [
@@ -3539,8 +3493,8 @@
           "note": "directory of .parquet tables"
         }
       ],
-      "formatVersion": 5,
-      "size": 1984739965
+      "formatVersion": 8,
+      "size": 2192416160
     },
     {
       "key": "vidy",
@@ -3578,7 +3532,7 @@
     {
       "key": "bcn",
       "title": "bcn — Arxiu Municipal de Barcelona (the whole city archive)",
-      "rete": "https://data.graphplaza.com/bcn/bcn.rete",
+      "rete": "https://data.graphplaza.com/bcn/bcn-2026-07-14.rete",
       "kind": "remote-lazy",
       "icon": "🏙️",
       "tags": [
@@ -3604,8 +3558,8 @@
           "url": "https://catalegarxiumunicipal.bcn.cat"
         }
       ],
-      "formatVersion": 5,
-      "size": 134613753
+      "formatVersion": 8,
+      "size": 147932514
     },
     {
       "key": "ecal",
@@ -3641,7 +3595,7 @@
     {
       "key": "gbif-birds",
       "title": "gbif-birds",
-      "rete": "https://data.graphplaza.com/gbif-birds/gbif-birds.rete",
+      "rete": "https://data.graphplaza.com/gbif-birds/gbif-birds-2026-07-01.rete",
       "kind": "remote-lazy",
       "icon": "🐦",
       "tags": [
@@ -3675,8 +3629,8 @@
           "url": "https://www.gbif.org"
         }
       ],
-      "formatVersion": 5,
-      "size": 1532501192
+      "formatVersion": 8,
+      "size": 1561537054
     },
     {
       "key": "worldcup",
@@ -3950,7 +3904,7 @@
     {
       "key": "zenodo-records",
       "title": "zenodo-records — every Zenodo record (7.76M) as a DataCite scholarly graph",
-      "rete": "https://data.graphplaza.com/zenodo-records/zenodo-records.rete",
+      "rete": "https://data.graphplaza.com/zenodo-records/zenodo-records-2026-07-10.rete",
       "kind": "remote-lazy",
       "icon": "🔬",
       "tags": [
@@ -3980,8 +3934,8 @@
           "url": "https://zenodo.org/api/exporter"
         }
       ],
-      "formatVersion": 5,
-      "size": 2094612808
+      "formatVersion": 8,
+      "size": 2377111135
     },
     {
       "key": "biosyslit",
@@ -4022,7 +3976,7 @@
     {
       "key": "gotriple",
       "title": "gotriple — GoTriple: 2.7M Social-Sciences & Humanities publications, DOI-federated",
-      "rete": "https://data.graphplaza.com/gotriple/gotriple.rete",
+      "rete": "https://data.graphplaza.com/gotriple/gotriple-2026-01-08.rete",
       "kind": "remote-lazy",
       "icon": "📚",
       "tags": [
@@ -4054,8 +4008,8 @@
           "url": "https://zenodo.org/records/18185971"
         }
       ],
-      "formatVersion": 5,
-      "size": 832172325
+      "formatVersion": 8,
+      "size": 977337507
     },
     {
       "key": "orcid",
@@ -4204,7 +4158,7 @@
     {
       "key": "dblp",
       "title": "dblp — the DBLP computer-science bibliography, with the author co-authorship graph",
-      "rete": "https://data.graphplaza.com/dblp/dblp.rete",
+      "rete": "https://data.graphplaza.com/dblp/dblp-2026-07-01.rete",
       "kind": "remote-lazy",
       "icon": "💻",
       "tags": [
@@ -4234,8 +4188,8 @@
           "url": "https://dblp.org"
         }
       ],
-      "formatVersion": 5,
-      "size": 2265161556
+      "formatVersion": 8,
+      "size": 2211052268
     },
     {
       "key": "aifdb-open",
