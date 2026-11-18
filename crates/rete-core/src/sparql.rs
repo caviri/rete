@@ -2694,6 +2694,72 @@ mod tests {
         assert_eq!(n(bodies[11]), 200);
     }
 
+    /// EXISTS in value position — a BIND, a projected expression, a
+    /// sub-select's projection, a function's argument, an aggregate's argument,
+    /// a GROUP BY key, an ORDER BY key — is decided per row against the graph,
+    /// as it is in a FILTER. It used to be `false` on every row, so
+    /// `BIND(IF(NOT EXISTS { … }, …))` took the same branch for all of them.
+    #[test]
+    fn exists_in_value_position_reads_the_row() {
+        let rete = people();
+        let t = "\"true\"^^<http://www.w3.org/2001/XMLSchema#boolean>";
+        let f = "\"false\"^^<http://www.w3.org/2001/XMLSchema#boolean>";
+        // p0 has an age (every even person does), p1 has none.
+        let both = "VALUES ?s { ex:p0 ex:p1 }";
+        let sols = |body: &str| {
+            eval_sparql(&rete, &format!("PREFIX ex: <http://ex/> {body}"))
+                .unwrap()
+                .1
+        };
+        let col = |body: &str, var: &str| -> Vec<String> {
+            let rows = sols(body);
+            rows.iter()
+                .map(|b| b.get(var).cloned().unwrap_or_default())
+                .collect()
+        };
+        for floor in [f64::MAX, 0.0] {
+            crate::bgp::with_probe_floor(floor, || {
+                let bind = format!(
+                    "SELECT ?x WHERE {{ {both} BIND(IF(NOT EXISTS {{ ?s ex:age ?a }}, \"no\", \"yes\") AS ?x) }} ORDER BY ?s"
+                );
+                assert_eq!(col(&bind, "x"), ["\"yes\"", "\"no\""]);
+                let bare =
+                    format!("SELECT ?x WHERE {{ {both} BIND(EXISTS {{ ?s ex:age ?a }} AS ?x) }} ORDER BY ?s");
+                assert_eq!(col(&bare, "x"), [t, f]);
+                let projected = format!(
+                    "SELECT (NOT EXISTS {{ ?s ex:age ?a }} AS ?x) WHERE {{ {both} }} ORDER BY ?s"
+                );
+                assert_eq!(col(&projected, "x"), [f, t]);
+                let sub = format!(
+                    "SELECT ?x WHERE {{ {{ SELECT ?s (EXISTS {{ ?s ex:age ?a }} AS ?x) WHERE {{ {both} }} }} }} ORDER BY ?s"
+                );
+                assert_eq!(col(&sub, "x"), [t, f]);
+                let arg = format!(
+                    "SELECT ?x WHERE {{ {both} BIND(STR(EXISTS {{ ?s ex:age ?a }}) AS ?x) }} ORDER BY ?s"
+                );
+                assert_eq!(col(&arg, "x"), ["\"true\"", "\"false\""]);
+
+                // 100 of the 200 people have an age.
+                let sum = "SELECT (SUM(IF(EXISTS { ?s ex:age ?a }, 1, 0)) AS ?with) WHERE { ?s ex:name ?n }";
+                assert!(
+                    col(sum, "with")[0].starts_with("\"100\""),
+                    "{:?}",
+                    col(sum, "with")
+                );
+                let grouped = "SELECT ?e (COUNT(*) AS ?c) WHERE { ?s ex:name ?n } \
+                               GROUP BY (EXISTS { ?s ex:age ?a } AS ?e) ORDER BY ?e";
+                assert_eq!(col(grouped, "e"), [f, t]);
+                assert!(col(grouped, "c").iter().all(|c| c.starts_with("\"100\"")));
+
+                // false sorts before true; with a LIMIT the top-k path sorts.
+                let order =
+                    format!("SELECT ?s WHERE {{ {both} }} ORDER BY (EXISTS {{ ?s ex:age ?a }})");
+                assert_eq!(col(&order, "s"), ["<http://ex/p1>", "<http://ex/p0>"]);
+                assert_eq!(col(&format!("{order} LIMIT 1"), "s"), ["<http://ex/p1>"]);
+            });
+        }
+    }
+
     /// A UNION joined with a small bound side takes that side's bindings into
     /// each branch (a `VALUES`, or a preceding pattern): the same rows as
     /// evaluating every branch whole.

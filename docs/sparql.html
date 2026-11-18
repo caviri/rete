@@ -639,7 +639,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <table><thead><tr><th>Area</th><th>Details</th></tr></thead><tbody>
 <tr><td><strong>Query forms</strong></td><td><code>SELECT</code>, <code>ASK</code>, <code>CONSTRUCT</code>, <code>DESCRIBE</code></td></tr>
 <tr><td><strong>Patterns</strong></td><td>Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables</td></tr>
-<tr><td><strong>Algebra</strong></td><td><code>OPTIONAL</code> (left join), <code>UNION</code>, <code>MINUS</code>, <code>FILTER EXISTS</code> / <code>NOT EXISTS</code>, nested <code>SELECT</code> <strong>subqueries</strong> (evaluated independently, then joined on shared projected variables)</td></tr>
+<tr><td><strong>Algebra</strong></td><td><code>OPTIONAL</code> (left join), <code>UNION</code>, <code>MINUS</code>, <code>EXISTS</code> / <code>NOT EXISTS</code> (in a <code>FILTER</code> and anywhere else an expression goes: <code>BIND</code>, a projected expression, an aggregate's argument, <code>GROUP BY</code>, <code>ORDER BY</code>), nested <code>SELECT</code> <strong>subqueries</strong> (evaluated independently, then joined on shared projected variables)</td></tr>
 <tr><td><strong>Filters</strong></td><td>Comparisons, <code>&amp;&amp;</code>/<code>||</code>/<code>!</code>, arithmetic, <code>BOUND</code>, <code>COALESCE</code>; built-ins incl. <code>CONTAINS</code>, <code>STRLEN</code>, <code>SUBSTR</code>, <code>CONCAT</code>, <code>STR</code>, <code>isIRI</code>/<code>isLiteral</code>/<code>isBlank</code>, <code>DATATYPE</code>, <code>LANG</code>, <code>REGEX</code></td></tr>
 <tr><td><strong>Property paths</strong></td><td><code>p+</code>, <code>p*</code>, <code>p?</code> (zero-length included for <code>*</code>/<code>?</code>), reverse <code>^p</code>, sequence <code>a/b</code>, alternative <code>a|b</code> — evaluated goal-directed from a bound endpoint</td></tr>
 <tr><td><strong>Solution modifiers</strong></td><td><code>DISTINCT</code>, <code>ORDER BY</code> (ASC/DESC), <code>LIMIT</code>, <code>OFFSET</code>, <code>VALUES</code>, <code>BIND</code></td></tr>
@@ -770,7 +770,8 @@ has more than 100,000 groups, the threads do the per-row work and send their
 rows to one fold, which uses the memory the single thread uses.</p>
 <p>Not sliced: a pattern whose path to the scan goes through <code>VALUES</code>, a
 sub-select that aggregates, sorts or slices (it runs on several threads
-itself when it groups), or an <code>EXISTS</code> inside a <code>BIND</code>; a join whose large
+itself when it groups), or an <code>EXISTS</code> inside a <code>BIND</code> or an aggregate's
+argument; a join whose large
 scan is on its right side; a query under a memory guard.</p>
 <p><code>SUM</code> and <code>AVG</code> add the slices' sums. The slices are fixed by the file (at most
 64), not by the machine, so the result is the same on any number of threads;
