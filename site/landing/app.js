@@ -51,106 +51,42 @@ SELECT DISTINCT ?reached ?name WHERE {
     ],
   },
   {
-    key: "bph", name: "Hermetic books", ico: "📜",
-    url: `${R2}/bph/bph-2026-07-01.rete`,
-    blurb: "The Embassy of the Free Mind in Amsterdam: 2,307 books on alchemy, mysticism and esotericism, with their covers.",
-    facts: { triples: "5.74 M" },
+    key: "wikidata-paintings", name: "Wikidata paintings", ico: "🖼️",
+    url: `${R2}/wikidata-paintings/wikidata-paintings-2025-11-07.rete`,
+    blurb: "Every painting in Wikidata, 1.1 million of them, with their painters, collections and places.",
+    facts: { triples: "23.5 M", license: "CC0" },
     questions: [
-      { label: "Alchemy books, with covers", q: `PREFIX schema: <http://schema.org/>
-PREFIX dct: <http://purl.org/dc/terms/>
+      { label: "All of Vermeer's paintings", q: `PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?book ?cover ?title ?author ?year WHERE {
-  ?book dct:subject <https://data.embassyofthefreemind.com/category/alchemy> ;
-        schema:image ?cover ; rdfs:label ?title ;
-        dct:creator ?author ; schema:datePublished ?year
-}
-ORDER BY ?year
-LIMIT 40` },
-      { label: "Most-represented authors", q: `PREFIX schema: <http://schema.org/>
+SELECT ?work ?title ?thumb WHERE {
+  ?work wdt:P170 wd:Q41264 ; wdt:P18 ?img .
+  FILTER(isIRI(?img))
+  OPTIONAL { ?work rdfs:label ?title FILTER(LANG(?title) = "en") }
+  BIND(IRI(CONCAT(REPLACE(STR(?img), "^http:", "https:"), "?width=330")) AS ?thumb)
+}` },
+      { label: "Collections with the most paintings", q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?author (COUNT(?b) AS ?books) WHERE {
-  ?b schema:author ?a . ?a rdfs:label ?author
+SELECT ?collection ?name ?paintings WHERE {
+  { SELECT ?collection (COUNT(*) AS ?paintings) WHERE { ?p wdt:P195 ?collection }
+    GROUP BY ?collection ORDER BY DESC(?paintings) LIMIT 15 }
+  OPTIONAL { ?collection rdfs:label ?name FILTER(LANG(?name) = "en") }
 }
-GROUP BY ?author
-ORDER BY DESC(?books)
-LIMIT 20` },
-      { label: "How alchemy books relate", view: "graph", q: `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX dct: <http://purl.org/dc/terms/>
-PREFIX schema: <http://schema.org/>
-PREFIX efmo: <https://data.embassyofthefreemind.com/ontology#>
+ORDER BY DESC(?paintings)` },
+      { label: "Rembrandt's teachers and students", view: "graph", q: `PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+# wdt:P1066 is "student of"
 CONSTRUCT {
-  ?b rdfs:label ?bl ; efmo:relatedBook ?r ; schema:image ?cover .
-  ?r rdfs:label ?rl .
+  ?student wdt:P1066 ?teacher .
+  ?student rdfs:label ?sn . ?teacher rdfs:label ?tn .
 } WHERE {
-  ?b dct:subject <https://data.embassyofthefreemind.com/category/alchemy> ;
-     efmo:relatedBook ?r ; rdfs:label ?bl .
-  ?r rdfs:label ?rl .
-  OPTIONAL { ?b schema:image ?cover }
-}` },
-    ],
-  },
-  {
-    key: "davidrumsey", name: "Old maps", ico: "🗺️",
-    url: `${R2}/davidrumsey/davidrumsey.rete`,
-    blurb: "The David Rumsey Map Collection: 150,017 maps with images, dates and places.",
-    facts: { triples: "5.15 M" },
-    questions: [
-      { label: "Star charts, oldest first", q: `PREFIX dct: <http://purl.org/dc/terms/>
-PREFIX drm: <https://w3id.org/rete/davidrumsey#>
-PREFIX edm: <http://www.europeana.eu/schemas/edm/>
-SELECT ?thumb ?title ?year ?author WHERE {
-  ?m a drm:CelestialMap ; dct:title ?title ; edm:preview ?thumb .
-  OPTIONAL { ?m drm:year ?year }
-  OPTIONAL { ?m dct:creator ?author }
-}
-ORDER BY ?year LIMIT 40` },
-      { label: "Wall maps over two meters wide", q: `PREFIX dct: <http://purl.org/dc/terms/>
-PREFIX drm: <https://w3id.org/rete/davidrumsey#>
-PREFIX edm: <http://www.europeana.eu/schemas/edm/>
-SELECT ?thumb ?title ?year ?wcm WHERE {
-  ?m a drm:WallMap ; dct:title ?title ; drm:objWidthCm ?wcm ; edm:preview ?thumb .
-  OPTIONAL { ?m drm:year ?year }
-  FILTER(?wcm > 200)
-}
-ORDER BY DESC(?wcm) LIMIT 30` },
-      { label: "Atlases with the most maps", q: `PREFIX dct: <http://purl.org/dc/terms/>
-SELECT ?title (COUNT(?m) AS ?maps) WHERE {
-  ?m dct:isPartOf ?pub .
-  ?pub dct:title ?title .
-} GROUP BY ?title ORDER BY DESC(?maps) LIMIT 15` },
-    ],
-  },
-  {
-    key: "hugging-face", name: "Hugging Face Hub", ico: "🤗",
-    url: `${R2}/hugging-face/hugging-face.rete`,
-    blurb: "2.9 million models, 1.4 million Spaces and the people behind them, with which model was fine-tuned from which.",
-    facts: { triples: "84.7 M" },
-    questions: [
-      { label: "Llama-3.1-8B: parents, children, Spaces", view: "graph", q: `PREFIX hf: <https://w3id.org/rete/huggingface#>
-CONSTRUCT {
-  <https://huggingface.co/meta-llama/Llama-3.1-8B> hf:finetunedFrom ?parent .
-  ?child hf:finetunedFrom <https://huggingface.co/meta-llama/Llama-3.1-8B> .
-  ?space hf:usesModel <https://huggingface.co/meta-llama/Llama-3.1-8B> .
-} WHERE {
-  { <https://huggingface.co/meta-llama/Llama-3.1-8B> hf:finetunedFrom ?parent }
+  { wd:Q5598 wdt:P1066 ?teacher BIND(wd:Q5598 AS ?student) }
   UNION
-  { SELECT ?child WHERE { ?child hf:finetunedFrom <https://huggingface.co/meta-llama/Llama-3.1-8B> } LIMIT 25 }
-  UNION
-  { SELECT ?space WHERE { ?space hf:usesModel <https://huggingface.co/meta-llama/Llama-3.1-8B> } LIMIT 25 }
+  { ?student wdt:P1066 wd:Q5598 BIND(wd:Q5598 AS ?teacher) }
+  OPTIONAL { ?student rdfs:label ?sn FILTER(LANG(?sn) = "en") }
+  OPTIONAL { ?teacher rdfs:label ?tn FILTER(LANG(?tn) = "en") }
 }` },
-      { label: "Mistral AI's people, by followers", q: `PREFIX hf: <https://w3id.org/rete/huggingface#>
-PREFIX schema: <https://schema.org/>
-SELECT ?person ?name ?followers WHERE {
-  ?person hf:memberOf <https://huggingface.co/mistralai> ;
-          hf:followerCount ?followers .
-  OPTIONAL { ?person schema:name ?name }
-}
-ORDER BY DESC(?followers) LIMIT 25` },
-      { label: "The most fine-tuned models", q: `PREFIX hf: <https://w3id.org/rete/huggingface#>
-SELECT ?base (COUNT(*) AS ?finetunes) WHERE {
-  ?model hf:finetunedFrom ?base .
-}
-GROUP BY ?base ORDER BY DESC(?finetunes) LIMIT 15` },
     ],
   },
 ];
@@ -1500,6 +1436,8 @@ let autoRan = false;
 new IntersectionObserver(([e]) => {
   if (e.isIntersecting && !autoRan) {
     autoRan = true;
-    run();
+    // A click that brought the console into view may already have started a
+    // query; a second run() would stop it.
+    if (!state.running) run();
   }
 }, { rootMargin: "200px 0px" }).observe($("#console"));

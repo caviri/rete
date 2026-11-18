@@ -1,0 +1,78 @@
+[
+ {
+  "key": "linked-jazz",
+  "file": "linked-jazz-2026-06-13",
+  "questions": [
+   {
+    "label": "Musicians, with photos",
+    "q": "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX dbo: <http://dbpedia.org/ontology/>\nSELECT ?person ?name ?photo WHERE {\n  ?person foaf:name ?name ; dbo:thumbnail ?photo .\n} LIMIT 60"
+   },
+   {
+    "label": "Most talked-about musicians",
+    "q": "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT ?name (COUNT(?s) AS ?mentions) WHERE {\n  ?s ?rel ?person .\n  FILTER(?rel != foaf:name && ?rel != <http://dbpedia.org/ontology/thumbnail>)\n  ?person foaf:name ?name .\n} GROUP BY ?name ORDER BY DESC(?mentions) LIMIT 15"
+   },
+   {
+    "label": "Mary Lou Williams' collaborators",
+    "q": "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\nPREFIX dbo: <http://dbpedia.org/ontology/>\nPREFIX mo: <http://purl.org/ontology/mo/>\nPREFIX lj: <http://linkedjazz.org/ontology/>\nCONSTRUCT {\n  <http://dbpedia.org/resource/Mary_Lou_Williams> ?p ?other .\n  ?other foaf:name ?name ; dbo:thumbnail ?photo .\n} WHERE {\n  <http://dbpedia.org/resource/Mary_Lou_Williams> ?p ?other .\n  FILTER(?p = mo:collaborated_with || ?p = lj:playedTogether)\n  ?other foaf:name ?name .\n  OPTIONAL { ?other dbo:thumbnail ?photo }\n}"
+   },
+   {
+    "label": "Who Count Basie reaches by word of mouth",
+    "q": "PREFIX rel: <http://purl.org/vocab/relationship/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT DISTINCT ?reached ?name WHERE {\n  <http://dbpedia.org/resource/Count_Basie> rel:knowsOf+ ?reached .\n  ?reached foaf:name ?name .\n} ORDER BY ?name LIMIT 100"
+   }
+  ]
+ },
+ {
+  "key": "bph",
+  "file": "bph-2026-07-01",
+  "questions": [
+   {
+    "label": "Alchemy books, with covers",
+    "q": "PREFIX schema: <http://schema.org/>\nPREFIX dct: <http://purl.org/dc/terms/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?book ?cover ?title ?author ?year WHERE {\n  ?book dct:subject <https://data.embassyofthefreemind.com/category/alchemy> ;\n        schema:image ?cover ; rdfs:label ?title ;\n        dct:creator ?author ; schema:datePublished ?year\n}\nORDER BY ?year\nLIMIT 40"
+   },
+   {
+    "label": "Most-represented authors",
+    "q": "PREFIX schema: <http://schema.org/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?author (COUNT(?b) AS ?books) WHERE {\n  ?b schema:author ?a . ?a rdfs:label ?author\n}\nGROUP BY ?author\nORDER BY DESC(?books)\nLIMIT 20"
+   },
+   {
+    "label": "How alchemy books relate",
+    "q": "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX dct: <http://purl.org/dc/terms/>\nPREFIX schema: <http://schema.org/>\nPREFIX efmo: <https://data.embassyofthefreemind.com/ontology#>\nCONSTRUCT {\n  ?b rdfs:label ?bl ; efmo:relatedBook ?r ; schema:image ?cover .\n  ?r rdfs:label ?rl .\n} WHERE {\n  ?b dct:subject <https://data.embassyofthefreemind.com/category/alchemy> ;\n     efmo:relatedBook ?r ; rdfs:label ?bl .\n  ?r rdfs:label ?rl .\n  OPTIONAL { ?b schema:image ?cover }\n}"
+   }
+  ]
+ },
+ {
+  "key": "davidrumsey",
+  "file": "davidrumsey",
+  "questions": [
+   {
+    "label": "Star charts, oldest first",
+    "q": "PREFIX dct: <http://purl.org/dc/terms/>\nPREFIX drm: <https://w3id.org/rete/davidrumsey#>\nPREFIX edm: <http://www.europeana.eu/schemas/edm/>\nSELECT ?thumb ?title ?year ?author WHERE {\n  ?m a drm:CelestialMap ; dct:title ?title ; edm:preview ?thumb .\n  OPTIONAL { ?m drm:year ?year }\n  OPTIONAL { ?m dct:creator ?author }\n}\nORDER BY ?year LIMIT 40"
+   },
+   {
+    "label": "Wall maps over two meters wide",
+    "q": "PREFIX dct: <http://purl.org/dc/terms/>\nPREFIX drm: <https://w3id.org/rete/davidrumsey#>\nPREFIX edm: <http://www.europeana.eu/schemas/edm/>\nSELECT ?thumb ?title ?year ?wcm WHERE {\n  ?m a drm:WallMap ; dct:title ?title ; drm:objWidthCm ?wcm ; edm:preview ?thumb .\n  OPTIONAL { ?m drm:year ?year }\n  FILTER(?wcm > 200)\n}\nORDER BY DESC(?wcm) LIMIT 30"
+   },
+   {
+    "label": "Atlases with the most maps",
+    "q": "PREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?title (COUNT(?m) AS ?maps) WHERE {\n  ?m dct:isPartOf ?pub .\n  ?pub dct:title ?title .\n} GROUP BY ?title ORDER BY DESC(?maps) LIMIT 15"
+   }
+  ]
+ },
+ {
+  "key": "hugging-face",
+  "file": "hugging-face",
+  "questions": [
+   {
+    "label": "Llama-3.1-8B: parents, children, Spaces",
+    "q": "PREFIX hf: <https://w3id.org/rete/huggingface#>\nCONSTRUCT {\n  <https://huggingface.co/meta-llama/Llama-3.1-8B> hf:finetunedFrom ?parent .\n  ?child hf:finetunedFrom <https://huggingface.co/meta-llama/Llama-3.1-8B> .\n  ?space hf:usesModel <https://huggingface.co/meta-llama/Llama-3.1-8B> .\n} WHERE {\n  { <https://huggingface.co/meta-llama/Llama-3.1-8B> hf:finetunedFrom ?parent }\n  UNION\n  { SELECT ?child WHERE { ?child hf:finetunedFrom <https://huggingface.co/meta-llama/Llama-3.1-8B> } LIMIT 25 }\n  UNION\n  { SELECT ?space WHERE { ?space hf:usesModel <https://huggingface.co/meta-llama/Llama-3.1-8B> } LIMIT 25 }\n}"
+   },
+   {
+    "label": "Mistral AI's people, by followers",
+    "q": "PREFIX hf: <https://w3id.org/rete/huggingface#>\nPREFIX schema: <https://schema.org/>\nSELECT ?person ?name ?followers WHERE {\n  ?person hf:memberOf <https://huggingface.co/mistralai> ;\n          hf:followerCount ?followers .\n  OPTIONAL { ?person schema:name ?name }\n}\nORDER BY DESC(?followers) LIMIT 25"
+   },
+   {
+    "label": "The most fine-tuned models",
+    "q": "PREFIX hf: <https://w3id.org/rete/huggingface#>\nSELECT ?base (COUNT(*) AS ?finetunes) WHERE {\n  ?model hf:finetunedFrom ?base .\n}\nGROUP BY ?base ORDER BY DESC(?finetunes) LIMIT 15"
+   }
+  ]
+ }
+]
