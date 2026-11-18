@@ -45,14 +45,15 @@ export function mountTableExplorer(host, entry, token) {
   const manifestUrl = fileUrl("_manifest.parquet");
 
   host.innerHTML = `
-    <div class="notice">Query the columnar companion tables with <b>DuckDB-Wasm</b> — Parquet read over HTTP range, entirely in your browser (same bytes-on-demand idea as the .rete).</div>
-    <button class="run" id="tblLoad">Load table explorer</button>
+    <p class="dz-fine">Query the columnar companion tables with DuckDB-Wasm. Parquet is read over HTTP range, in your browser. The first use loads DuckDB-Wasm from a CDN.</p>
+    <div class="dz-tbl-row"><button type="button" class="pz-btn pz-btn-sm" id="tblLoad">Load the table explorer</button><span class="dz-fine" id="tblStatus" role="status" aria-live="polite"></span></div>
     <div id="tblUI" hidden>
-      <div class="notice" style="margin:10px 0 4px">tables (click to query):</div>
-      <div class="starter" id="tblFiles"></div>
-      <textarea class="sparql" id="tblSql" spellcheck="false"></textarea>
-      <div class="run-row"><button class="run" id="tblRun" disabled>Run SQL</button><span class="status" id="tblStatus"></span></div>
-      <div class="results" id="tblResults" hidden></div>
+      <p class="dz-fine">Tables in the manifest. Click one to query it.</p>
+      <div class="dz-tbl-tables" id="tblFiles"></div>
+      <label class="pz-sr" for="tblSql">SQL query</label>
+      <textarea class="dz-tbl-sql" id="tblSql" spellcheck="false"></textarea>
+      <div class="dz-tbl-row"><button type="button" class="pz-btn pz-btn-sm pz-btn-primary" id="tblRun" disabled>Run SQL</button></div>
+      <div class="dz-table-wrap" id="tblResults" hidden style="margin-top:14px"></div>
     </div>`;
 
   const $ = (id) => document.getElementById(id);
@@ -60,21 +61,21 @@ export function mountTableExplorer(host, entry, token) {
   const showResults = (r, err) => {
     const box = $("tblResults");
     box.hidden = false;
-    if (err) { box.innerHTML = `<div class="warnbox" style="border-radius:10px">${esc(err)}</div>`; return; }
-    if (!r.rows.length) { box.innerHTML = `<div style="padding:14px;color:var(--faint)">No rows.</div>`; return; }
+    if (err) { box.innerHTML = `<div class="dz-banner dz-banner-err" role="alert" style="margin:0">${esc(err)}</div>`; return; }
+    if (!r.rows.length) { box.innerHTML = `<p class="dz-empty" style="padding:14px;margin:0">No rows.</p>`; return; }
     box.innerHTML =
-      `<table class="rs"><thead><tr>${r.cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${r.rows
+      `<table class="dz-table"><thead><tr>${r.cols.map((c) => `<th scope="col"><span style="display:block;padding:10px 14px;font:600 13px var(--sans);color:var(--muted)">${esc(c)}</span></th>`).join("")}</tr></thead><tbody>${r.rows
         .map((row) => `<tr>${r.cols.map((c) => `<td>${cell(row[c])}</td>`).join("")}</tr>`)
         .join("")}</tbody></table>` +
-      `<div class="notice" style="padding:8px 12px">${r.rows.length} rows${r.rows.length === 300 ? " (capped)" : ""}</div>`;
+      `<p class="dz-fine" style="padding:8px 14px;margin:0">${r.rows.length} rows${r.rows.length === 300 ? " (capped at 300)" : ""}</p>`;
   };
 
   $("tblLoad").onclick = async () => {
     $("tblLoad").disabled = true;
-    status("loading DuckDB-Wasm…");
+    status("Loading DuckDB-Wasm…");
     let conn;
     try { conn = await initDuckDB(); }
-    catch (e) { status(""); $("tblLoad").disabled = false; showResults(null, "Couldn't load DuckDB-Wasm (needs network): " + e); $("tblUI").hidden = false; return; }
+    catch (e) { status(""); $("tblLoad").disabled = false; showResults(null, "Could not load DuckDB-Wasm. It needs network access to a CDN. " + e); $("tblUI").hidden = false; return; }
     $("tblUI").hidden = false;
     $("tblRun").disabled = false;
     $("tblSql").value = `SELECT * FROM read_parquet('${manifestUrl}') LIMIT 100`;
@@ -83,9 +84,9 @@ export function mountTableExplorer(host, entry, token) {
       const sql = $("tblSql").value.trim();
       if (!sql) return;
       $("tblRun").disabled = true;
-      status("running…");
+      status("Running…");
       const t0 = performance.now();
-      try { showResults(await runSql(conn, sql)); status(((performance.now() - t0) / 1000).toFixed(2) + "s"); }
+      try { showResults(await runSql(conn, sql)); status(((performance.now() - t0) / 1000).toFixed(2) + " s"); }
       catch (e) { showResults(null, String(e)); status("error"); }
       finally { $("tblRun").disabled = false; }
     };
@@ -103,11 +104,12 @@ export function mountTableExplorer(host, entry, token) {
       fe.innerHTML = "";
       files.slice(0, 30).forEach((f) => {
         const b = document.createElement("button");
+        b.type = "button"; b.className = "pz-chip";
         b.textContent = f.replace(/\.parquet$/, "");
         b.onclick = () => { $("tblSql").value = `SELECT * FROM read_parquet('${fileUrl(f)}') LIMIT 100`; run(); };
         fe.appendChild(b);
       });
-      status(files.length ? `ready — ${files.length} tables in the manifest` : "ready");
+      status(files.length ? `Ready, ${files.length} tables in the manifest` : "Ready");
     } catch (e) {
       showResults(null, String(e));
       status("error");
@@ -116,7 +118,7 @@ export function mountTableExplorer(host, entry, token) {
 }
 
 function cell(v) {
-  if (v == null) return `<span style="color:var(--faint)">—</span>`;
+  if (v == null) return `<span class="dz-null">–</span>`;
   if (typeof v === "bigint") return esc(v.toString());
   if (typeof v === "object") return esc(JSON.stringify(v));
   return esc(String(v));
