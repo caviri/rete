@@ -1,0 +1,306 @@
+{
+ "measured": "2026-11-15",
+ "machine": "Docker, 2 CPUs and 4 GB per engine",
+ "engines": [
+  {
+   "key": "qlever",
+   "name": "QLever",
+   "version": "commit 18c097c (2026-11-14)",
+   "image": "adfreiburg/qlever@sha256:d7ecda47b4d0132c190b4a73279761fd1c614f24cba4e894ca1ba8117cef6727"
+  },
+  {
+   "key": "oxigraph",
+   "name": "Oxigraph",
+   "version": "0.5.13",
+   "image": "ghcr.io/oxigraph/oxigraph@sha256:260454ee29c091d2cdb99dd156212594ff3127850627adb4cfdcd9b1e425d480"
+  }
+ ],
+ "graphs": {
+  "linked-jazz": {
+   "qlever": {
+    "built": true,
+    "buildSeconds": 0.064,
+    "buildPeakBytes": 40321024,
+    "buildExit": 0,
+    "indexBytes": 311304,
+    "readySeconds": 0.28,
+    "servePeakBytes": 62640128,
+    "questions": [
+     {
+      "label": "Musicians, with photos",
+      "firstMs": 5.3,
+      "medianMs": 3.0,
+      "rows": 60,
+      "bytes": 13762
+     },
+     {
+      "label": "Most talked-about musicians",
+      "firstMs": 6.0,
+      "medianMs": 5.4,
+      "rows": 15,
+      "bytes": 2551
+     },
+     {
+      "label": "Mary Lou Williams' collaborators",
+      "firstMs": 4.5,
+      "medianMs": 3.7,
+      "rows": 38,
+      "bytes": 5031
+     },
+     {
+      "label": "Who Count Basie reaches by word of mouth",
+      "firstMs": 4.4,
+      "medianMs": 3.9,
+      "rows": 9,
+      "bytes": 1430
+     }
+    ],
+    "answerBytes": 5694
+   },
+   "oxigraph": {
+    "built": true,
+    "buildSeconds": 0.316,
+    "buildPeakBytes": 27262976,
+    "buildExit": 0,
+    "indexBytes": 1192932,
+    "readySeconds": 0.35,
+    "servePeakBytes": 21712896,
+    "questions": [
+     {
+      "label": "Musicians, with photos",
+      "firstMs": 24.2,
+      "medianMs": 1.0,
+      "rows": 60,
+      "bytes": 13745
+     },
+     {
+      "label": "Most talked-about musicians",
+      "firstMs": 9.0,
+      "medianMs": 6.3,
+      "rows": 15,
+      "bytes": 2547
+     },
+     {
+      "label": "Mary Lou Williams' collaborators",
+      "firstMs": 2.8,
+      "medianMs": 0.9,
+      "rows": 38,
+      "bytes": 4812
+     },
+     {
+      "label": "Who Count Basie reaches by word of mouth",
+      "firstMs": 1.5,
+      "medianMs": 0.7,
+      "rows": 9,
+      "bytes": 1367
+     }
+    ],
+    "answerBytes": 5618
+   }
+  },
+  "bph": {
+   "qlever": {
+    "built": true,
+    "buildSeconds": 13.704,
+    "buildPeakBytes": 1583345664,
+    "buildExit": 0,
+    "indexBytes": 145432053,
+    "readySeconds": 0.28,
+    "servePeakBytes": 114466816,
+    "questions": [
+     {
+      "label": "Alchemy books, with covers",
+      "firstMs": 16.5,
+      "medianMs": 10.7,
+      "rows": 40,
+      "bytes": 17712
+     },
+     {
+      "label": "Most-represented authors",
+      "firstMs": 5.0,
+      "medianMs": 4.3,
+      "rows": 20,
+      "bytes": 3117
+     },
+     {
+      "label": "How alchemy books relate",
+      "firstMs": 7.8,
+      "medianMs": 6.9,
+      "rows": 568,
+      "bytes": 161849
+     }
+    ],
+    "answerBytes": 60893
+   },
+   "oxigraph": {
+    "built": true,
+    "buildSeconds": 12.469,
+    "buildPeakBytes": 1915203584,
+    "buildExit": 0,
+    "indexBytes": 652204316,
+    "readySeconds": 0.36,
+    "servePeakBytes": 70492160,
+    "questions": [
+     {
+      "label": "Alchemy books, with covers",
+      "firstMs": 50.3,
+      "medianMs": 18.9,
+      "rows": 40,
+      "bytes": 17701
+     },
+     {
+      "label": "Most-represented authors",
+      "firstMs": 32.5,
+      "medianMs": 19.5,
+      "rows": 20,
+      "bytes": 3133
+     },
+     {
+      "label": "How alchemy books relate",
+      "firstMs": 50.2,
+      "medianMs": 33.2,
+      "rows": 568,
+      "bytes": 106488
+     }
+    ],
+    "answerBytes": 42441
+   }
+  },
+  "davidrumsey": {
+   "qlever": {
+    "built": true,
+    "buildSeconds": 10.76,
+    "buildPeakBytes": 1381359616,
+    "buildExit": 0,
+    "indexBytes": 150163075,
+    "readySeconds": 0.27,
+    "servePeakBytes": 123777024,
+    "questions": [
+     {
+      "label": "Star charts, oldest first",
+      "firstMs": 15.5,
+      "medianMs": 10.1,
+      "rows": 40,
+      "bytes": 16439
+     },
+     {
+      "label": "Wall maps over two meters wide",
+      "firstMs": 9.3,
+      "medianMs": 9.0,
+      "rows": 26,
+      "bytes": 13867
+     },
+     {
+      "label": "Atlases with the most maps",
+      "firstMs": 11.5,
+      "medianMs": 10.7,
+      "rows": 15,
+      "bytes": 5356
+     }
+    ],
+    "answerBytes": 11887
+   },
+   "oxigraph": {
+    "built": true,
+    "buildSeconds": 11.769,
+    "buildPeakBytes": 1849380864,
+    "buildExit": 0,
+    "indexBytes": 520555536,
+    "readySeconds": 0.36,
+    "servePeakBytes": 62287872,
+    "questions": [
+     {
+      "label": "Star charts, oldest first",
+      "firstMs": 96.2,
+      "medianMs": 71.0,
+      "rows": 40,
+      "bytes": 16537
+     },
+     {
+      "label": "Wall maps over two meters wide",
+      "firstMs": 20.5,
+      "medianMs": 12.4,
+      "rows": 26,
+      "bytes": 13855
+     },
+     {
+      "label": "Atlases with the most maps",
+      "firstMs": 952.3,
+      "medianMs": 907.5,
+      "rows": 15,
+      "bytes": 5351
+     }
+    ],
+    "answerBytes": 11914
+   }
+  },
+  "hugging-face": {
+   "qlever": {
+    "built": true,
+    "buildSeconds": 272.41,
+    "buildPeakBytes": 4299808768,
+    "buildExit": 0,
+    "indexBytes": 2219053845,
+    "readySeconds": 0.27,
+    "servePeakBytes": 111542272,
+    "questions": [
+     {
+      "label": "Llama-3.1-8B: parents, children, Spaces",
+      "firstMs": 17.1,
+      "medianMs": 3.3,
+      "rows": 50,
+      "bytes": 8179
+     },
+     {
+      "label": "Mistral AI's people, by followers",
+      "firstMs": 14.8,
+      "medianMs": 5.5,
+      "rows": 10,
+      "bytes": 2282
+     },
+     {
+      "label": "The most fine-tuned models",
+      "firstMs": 9.2,
+      "medianMs": 4.8,
+      "rows": 15,
+      "bytes": 2838
+     }
+    ],
+    "answerBytes": 4433
+   },
+   "oxigraph": {
+    "built": true,
+    "buildSeconds": 176.383,
+    "buildPeakBytes": 1863282688,
+    "buildExit": 0,
+    "indexBytes": 7251061984,
+    "readySeconds": 0.36,
+    "servePeakBytes": 84176896,
+    "questions": [
+     {
+      "label": "Llama-3.1-8B: parents, children, Spaces",
+      "firstMs": 132.5,
+      "medianMs": 2.2,
+      "rows": 50,
+      "bytes": 8098
+     },
+     {
+      "label": "Mistral AI's people, by followers",
+      "firstMs": 276.2,
+      "medianMs": 3.7,
+      "rows": 10,
+      "bytes": 2257
+     },
+     {
+      "label": "The most fine-tuned models",
+      "firstMs": 138.2,
+      "medianMs": 86.8,
+      "rows": 15,
+      "bytes": 2834
+     }
+    ],
+    "answerBytes": 4396
+   }
+  }
+ }
+}

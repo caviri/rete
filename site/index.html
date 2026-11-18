@@ -69,7 +69,6 @@
   <nav class="nav" aria-label="Sections">
     <a href="#try">Try it</a>
     <a href="#how">How it works</a>
-    <a href="#cost">Cost</a>
     <a href="#use">Use it</a>
     <a href="#apps">Apps</a>
     <a href="#support">Support</a>
@@ -111,9 +110,9 @@
   <div class="wrap">
     <div class="section-head reveal">
       <p class="kicker">Try it</p>
-      <h2 id="try-title">Ask a graph a question</h2>
-      <p>Pick a graph and a question. The query runs in this page with the same engine the
-        command line uses. There is no database server behind it.</p>
+      <h2 id="try-title">Query a published graph</h2>
+      <p>Choose a graph and a SPARQL query. Your browser reads the file straight
+        from the bucket and answers it, with the same engine as the command line.</p>
     </div>
 
     <div class="console reveal" id="console">
@@ -310,7 +309,8 @@
 </section>
 
 <!-- ───────────────────────── Cost ───────────────────────── -->
-<section class="cost" id="cost" aria-labelledby="cost-title">
+<!-- Hidden for now (user, 2026-11-18). Remove `hidden` and put the "Cost" link back in the nav to show it. -->
+<section class="cost" id="cost" aria-labelledby="cost-title" hidden>
   <div class="wrap">
     <div class="section-head reveal">
       <p class="kicker">Cost</p>
@@ -348,22 +348,41 @@
             <li><a href="https://aws.amazon.com/s3/pricing/">Amazon S3</a> Standard, us-east-1: $0.023 per
               GB a month, $0.0004 per 1,000 GET requests, data out $0.09 per GB after the first 100 GB a
               month, less past 10 TB.</li>
+            <li><a href="https://huggingface.co/storage">Hugging Face buckets</a>, checked 2026-11-18: public
+              storage is free on a best-effort basis. Past "the first few gigabytes" Hugging Face asks you
+              to upgrade to PRO, $9 a month, which includes up to 10 TB of public storage
+              (<a href="https://huggingface.co/docs/hub/storage-limits">storage limits</a>). It names no
+              number, so files up to 5 GB are priced on a free account. Data out is included up to 8 times
+              what you store; it does not say over what period, or what happens past that. A bucket's
+              download link redirects to Hugging Face's CDN and this page's reader follows it: the hermetic
+              books' questions read the same bytes as from R2 and took 1.5 to 2.4 times as long.</li>
             <li><a href="https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits">GitHub Pages</a>:
               free for a public repository, a 1 GB site and a soft limit of 100 GB of traffic a month. Git
-              refuses files over 100 MB.</li>
+              refuses files over 100 MiB.</li>
             <li><a href="https://help.zenodo.org/docs/deposit/manage-files/">Zenodo</a>: free, up to 50 GB
               per record.</li>
-            <li><b>The server</b> runs <a href="https://docs.qlever.dev/use-cases/">QLever</a>, chosen
-              because it needs little memory, so this is a low estimate. Its RAM comes from QLever's own
-              table: about 1 GB for small graphs, 5 GB at 240 million triples, 20 GB from 1.5 billion up.
-              The machine is the smallest <a href="https://aws.amazon.com/ec2/pricing/on-demand/">AWS
-              Graviton</a> instance with that much memory, on demand, 730 hours a month ($0.0168 an hour
-              for 2 GiB up to $0.2142 for 32 GiB). Disk is 8 GB plus 24 bytes per statement, QLever's
-              Wikidata ratio, at $0.08 per GB a month. Hetzner's shared machines cost about the same
-              (CPX12 with 2 GB, €9.99 a month; CPX62 with 32 GB, €110.99, in Helsinki).</li>
+            <li><a href="https://aws.amazon.com/ec2/pricing/on-demand/">AWS Graviton</a> machines, on demand,
+              us-east-1, 730 hours a month: $0.0042 an hour for 0.5 GiB of memory up to $0.1071 for 16 GiB,
+              each with 2 vCPUs. Disk (gp3) is $0.08 per GB a month. Data out is charged as for S3.</li>
           </ul>
-          <p>Not counted: the time it takes someone to run a server, backups, and the data its answers
-            send out.</p>
+          <p><b>The servers</b> are <a href="https://github.com/ad-freiburg/qlever">QLever</a> (commit
+            18c097c, 2026-11-14) and <a href="https://github.com/oxigraph/oxigraph">Oxigraph</a> 0.5.13. On
+            2026-11-15 we loaded each graph into both, from the same statements, and asked them the demo's
+            questions. Each ran in Docker with 2 CPUs and 4 GB of memory, and each question returned as many
+            rows as it does from the file. A server's price comes from what it used:</p>
+          <ul>
+            <li>the smallest machine whose memory holds the server's peak while answering, its index and
+              512 MiB for the system, because the answers were timed with the index in memory;</li>
+            <li>a disk of 8 GB plus the index the server built, in whole GB;</li>
+            <li>each reader's answer sent out once.</li>
+          </ul>
+          <p>At a million readers a month a server gets a question about every 2.6 seconds. The slowest
+            answer we measured took 0.95 s, so one machine keeps up. We did not measure busier traffic,
+            so the page stops there.</p>
+          <p>The OpenCitations Index has no server price: 15.8 billion statements is far past what fits in
+            those runs, and we show only what we measured. The scripts and every number are in
+            <a href="https://github.com/caviri/rete/tree/main/experiments/server-bench">experiments/server-bench</a>.</p>
+          <p>Not counted: the time it takes someone to run a server, backups, and building its index.</p>
         </div>
       </details>
     </div>

@@ -1,0 +1,6 @@
+data/
+nt/
+bin/
+results/*
+!results/summary.json
+!results/counts.tsv

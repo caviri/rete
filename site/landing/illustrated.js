@@ -2,10 +2,12 @@
 //
 // Every number here is measured or published: reads.js holds what this page's
 // own reader fetched from R2 for each demo question, the file anatomy is
-// `rete info` on bph-2026-07-01.rete, and PRICES carries each provider's price
-// with the page it was read from.
+// `rete info` on bph-2026-07-01.rete, servers.js holds what QLever and
+// Oxigraph used to serve the same graphs, and PRICES carries each provider's
+// price with the page it was read from.
 
 import { READS, MEASURED } from "./reads.js";
+import { SERVERS, ENGINES, SERVERS_MEASURED } from "./servers.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -49,9 +51,9 @@ function fmtCount(n) {
 function fmtUSD(v) {
   if (v === 0) return "$0";
   if (v < 0.01) return "under $0.01";
-  if (v < 100) return `$${v.toFixed(2)}`;
-  return `$${Math.round(v).toLocaleString("en-US")}`;
+  return `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+const cents = (v) => Math.round(v * 100) / 100;
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 // Run fn once the node is on screen.
@@ -335,28 +337,35 @@ const RTT = 0.03; // seconds per request, one at a time: the page's reader is sy
 
 /* ───────────────────────── Cost ───────────────────────── */
 
-// Checked 2026-11-14 on each provider's own page (AWS: its price-list files).
+// Checked 2026-11-14 on each provider's own page; the AWS figures again on
+// 2026-11-15 in the price-list files that AWS's pricing pages load.
 const PRICES = {
   checked: "2026-11-14",
   r2: { gbMonth: 0.015, freeGB: 10, perMillionReads: 0.36, freeReads: 10e6, src: "https://developers.cloudflare.com/r2/pricing/" },
-  s3: {
-    gbMonth: 0.023, perGet: 0.0004 / 1000, freeOutGB: 100,
-    out: [[10240, 0.09], [40960, 0.085], [102400, 0.07], [Infinity, 0.05]],
-    src: "https://aws.amazon.com/s3/pricing/",
-  },
-  pages: { fileBytes: 100 * 2 ** 20, softGB: 100, src: "https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits" },
+  s3: { gbMonth: 0.023, perGet: 0.0004 / 1000, src: "https://aws.amazon.com/s3/pricing/" },
+  // Data out to the internet, shared by S3 and EC2: the first 100 GB a month are free, and the
+  // tiers ("first 10 TB ... beyond the global free tier") start after them.
+  awsOut: { freeGB: 100, tiers: [[10240, 0.09], [40960, 0.085], [102400, 0.07], [Infinity, 0.05]] },
+  pages: { fileBytes: 100 * 2 ** 20, softBytes: 100e9, src: "https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits" },
   zenodo: { recordBytes: 50e9, src: "https://help.zenodo.org/docs/deposit/manage-files/" },
-  // AWS Graviton, on demand, us-east-1: [name, GiB RAM, $ an hour]
+  // Hugging Face, checked 2026-11-18 on /storage, /pricing and /docs/hub/storage-limits. Public
+  // storage is free and "best-effort"; "beyond the first few gigabytes" it asks for PRO ($9 a
+  // month, "up to 10TB included" public). It names no number for "a few", so files up to
+  // freeBytes are priced on a free account. "Egress is included up to a generous 8:1 ratio of
+  // your total storage"; the pages say neither over what period nor what happens past it.
+  hf: { checked: "2026-11-18", freeBytes: 5e9, proMonth: 9, proPublicBytes: 10e12, egressRatio: 8, src: "https://huggingface.co/storage" },
+  // AWS Graviton, on demand, Linux, us-east-1: [name, GiB of RAM, $ an hour]. Each has 2 vCPUs,
+  // as the servers had when they were measured.
   ec2: {
-    machines: [["t4g.small", 2, 0.0168], ["t4g.medium", 4, 0.0336], ["t4g.large", 8, 0.0672], ["r7g.large", 16, 0.1071],
-      ["r7g.xlarge", 32, 0.2142], ["r7g.2xlarge", 64, 0.4284], ["r7g.4xlarge", 128, 0.8568]],
-    hours: 730, gp3GBMonth: 0.08, systemGB: 8, src: "https://aws.amazon.com/ec2/pricing/on-demand/",
+    machines: [["t4g.nano", 0.5, 0.0042], ["t4g.micro", 1, 0.0084], ["t4g.small", 2, 0.0168], ["t4g.medium", 4, 0.0336],
+      ["t4g.large", 8, 0.0672], ["r7g.large", 16, 0.1071]],
+    hours: 730, gp3GBMonth: 0.08, systemGB: 8, osBytes: 512 * 2 ** 20, src: "https://aws.amazon.com/ec2/pricing/on-demand/",
   },
-  // QLever's own table: [statements, GB of RAM]; 24 bytes of index per statement is Wikidata's ratio there.
-  qlever: { ram: [[1.8e6, 1], [240e6, 5], [1.5e9, 20], [26e9, 20]], indexBytesPerStatement: 24, src: "https://docs.qlever.dev/use-cases/" },
 };
 
-const READERS = [[1e3, "1,000"], [1e5, "100,000"], [1e7, "10 million"]];
+// Up to a million: at that rate a server gets a question every 2.6 s on average, and the slowest
+// answer measured took under a second, so one machine keeps up. Busier traffic was not measured.
+const READERS = [[1e3, "1,000"], [1e5, "100,000"], [1e6, "1 million"]];
 
 // A reader opens the file and asks one of the demo's questions.
 function perReader(g) {
@@ -367,26 +376,33 @@ function perReader(g) {
   };
 }
 
-function qleverRam(statements) {
-  const t = PRICES.qlever.ram;
-  if (statements <= t[0][0]) return t[0][1];
-  for (let i = 1; i < t.length; i++) {
-    if (statements <= t[i][0]) {
-      const [x0, y0] = t[i - 1], [x1, y1] = t[i];
-      return y0 + ((y1 - y0) * (statements - x0)) / (x1 - x0);
-    }
-  }
-  return t[t.length - 1][1];
-}
-
-function s3Out(gb) {
-  let rest = Math.max(0, gb - PRICES.s3.freeOutGB), cost = 0;
-  for (const [size, price] of PRICES.s3.out) {
+// AWS data out to the internet for one month, in dollars, for `gb` GiB.
+function awsOut(gb) {
+  let rest = Math.max(0, gb - PRICES.awsOut.freeGB), cost = 0;
+  for (const [size, price] of PRICES.awsOut.tiers) {
     const take = Math.min(rest, size);
     cost += take * price; rest -= take;
     if (rest <= 0) break;
   }
   return cost;
+}
+
+// A server for graph g, from what QLever or Oxigraph used when it was measured. The times were
+// measured with the index in memory, so the machine is the smallest whose memory holds the
+// server's peak, its index and 512 MiB for the system. The disk is 8 GB plus the index (billed
+// in whole GB), and each reader's answer is sent out once.
+function serverRow(g, engine, s, readers) {
+  const P = PRICES.ec2;
+  const m = P.machines.find(([, ram]) => ram * GiB >= s.servePeakBytes + s.indexBytes + P.osBytes);
+  if (!m) return null;
+  const diskGB = Math.ceil(P.systemGB + s.indexBytes / GiB);
+  const machine = m[2] * P.hours, disk = diskGB * P.gp3GBMonth, out = awsOut((readers * s.answerBytes) / GiB);
+  return {
+    name: `${engine.name} server`, server: true, total: machine + disk + out,
+    sub: `an AWS ${m[0]} (${m[1]} GiB), running all month`,
+    parts: [["machine", machine], [`${diskGB} GB disk`, disk], ["data out", out]],
+    note: `it peaked at ${fmtBytes(s.servePeakBytes)} of memory, with a ${fmtBytes(s.indexBytes)} index`,
+  };
 }
 
 function costRows(g, readers) {
@@ -401,31 +417,49 @@ function costRows(g, readers) {
       parts: [["storage", storage], ["requests", ops], ["data out", 0]] });
   }
   {
-    const storage = gb * P.s3.gbMonth, ops = reads * P.s3.perGet, out = s3Out(outGB);
+    const storage = gb * P.s3.gbMonth, ops = reads * P.s3.perGet, out = awsOut(outGB);
     rows.push({ name: "Amazon S3", sub: "object storage, us-east-1", total: storage + ops + out,
       parts: [["storage", storage], ["requests", ops], ["data out", out]] });
   }
-  if (g.length > P.pages.fileBytes) rows.push({ name: "GitHub Pages", sub: "a public repository", unfit: "A git repository refuses files over 100 MB." });
+  {
+    const name = "Hugging Face bucket", out = readers * bytes, incl = P.hf.egressRatio * g.length;
+    const egress = out > incl
+      ? `but data out is included only up to ${P.hf.egressRatio}× the file (${fmtBytes(incl)}), and these readers fetch ${fmtBytes(out)} a month`
+      : "and data out is included";
+    if (g.length <= P.hf.freeBytes) rows.push({ name, sub: "public, on a free account", total: 0, parts: [], note: `free, best effort, ${egress}` });
+    else if (g.length <= P.hf.proPublicBytes) rows.push({ name, sub: "public, on a PRO account", total: P.hf.proMonth,
+      parts: [["PRO account", P.hf.proMonth]], note: `PRO includes up to 10 TB, ${egress}` });
+    else rows.push({ name, sub: "public", unfit: "Past the 10 TB of public storage a PRO account includes." });
+  }
+  if (g.length > P.pages.fileBytes) rows.push({ name: "GitHub Pages", sub: "a public repository", unfit: "A git repository refuses files over 100 MiB." });
   else rows.push({ name: "GitHub Pages", sub: "a public repository", total: 0, parts: [],
-    note: outGB > P.pages.softGB ? `but ${fmtBytes(outGB * GiB)} a month is past its 100 GB soft limit` : "free for a public repository" });
+    note: readers * bytes > P.pages.softBytes ? `but ${fmtBytes(readers * bytes)} a month is past its 100 GB soft limit` : "free for a public repository" });
   if (g.length > P.zenodo.recordBytes) rows.push({ name: "Zenodo", sub: "a research archive", unfit: "A record holds at most 50 GB." });
   else rows.push({ name: "Zenodo", sub: "a research archive", total: 0, parts: [], note: "free, with a DOI" });
-  {
-    const need = qleverRam(g.statements);
-    const m = P.ec2.machines.find(([, ram]) => ram >= need) || P.ec2.machines[P.ec2.machines.length - 1];
-    const disk = P.ec2.systemGB + (g.statements * P.qlever.indexBytesPerStatement) / GiB;
-    const machine = m[2] * P.ec2.hours, storage = disk * P.ec2.gp3GBMonth;
-    rows.push({ name: "A SPARQL server", sub: `QLever on an AWS ${m[0]} (${m[1]} GiB), running all month`, total: machine + storage, server: true,
-      parts: [["machine", machine], [`${Math.ceil(disk)} GB disk`, storage]],
-      note: readers >= 1e7 ? "one machine; this many readers would likely need more" : null });
+  const measured = SERVERS[g.key];
+  if (!measured) {
+    rows.push({ name: "A SPARQL server", sub: "QLever or Oxigraph", server: true,
+      unfit: `Not measured. We ran the servers with 4 GB of memory; ${fmtCount(g.statements)} statements is past what we tested.` });
+  } else {
+    for (const e of ENGINES) {
+      const s = measured[e.key];
+      const row = s && serverRow(g, e, s, readers);
+      rows.push(row || { name: `${e.name} server`, sub: "", server: true, unfit: "Not measured on this graph." });
+    }
   }
-  return rows;
+  // Each part is rounded to the cent and the total is the sum of the rounded parts, so the
+  // figures on the page add up.
+  return rows.map((r) => {
+    if (!r.parts || !r.parts.length) return r;
+    const parts = r.parts.map(([k, v]) => [k, cents(v), v]);
+    return { ...r, parts, total: cents(parts.reduce((t, p) => t + p[1], 0)) };
+  });
 }
 
 (function costFigure() {
   const root = $("#costBox");
   if (!root) return;
-  let g = READS.find((x) => x.key === "opencitations-index") || READS[READS.length - 1];
+  let g = READS.find((x) => x.key === "hugging-face") || READS[READS.length - 1];
   let readers = 1e5;
   const graphChips = h("div", { class: "chips", role: "radiogroup", "aria-label": "Graph" });
   const readerSeg = h("div", { class: "seg", role: "radiogroup", "aria-label": "Readers a month" });
@@ -452,15 +486,18 @@ function costRows(g, readers) {
           h("span", { class: "cr-fill", style: `--w:${max ? (r.total / max) * 100 : 0}%` }),
           h("b", { class: "cr-val" }, fmtUSD(r.total))),
       r.unfit ? null : h("div", { class: "cr-parts" },
-        r.parts.map(([k, v]) => h("span", {}, `${k} ${v === 0 && r.name === "Cloudflare R2" && k === "data out" ? "free" : fmtUSD(v)}`)),
+        r.parts.map(([k, v, raw]) => h("span", {}, `${k} ${v === 0 && raw > 0 ? "under $0.01" : v === 0 && r.name === "Cloudflare R2" && k === "data out" ? "free" : fmtUSD(v)}`)),
         r.note ? h("span", { class: "cr-note" }, r.note) : null))));
-    const r2 = rows[0].total, srv = rows[rows.length - 1].total;
+    const r2 = rows[0].total;
+    const cheapest = rows.filter((r) => r.server && !r.unfit).sort((a, b) => a.total - b.total)[0];
     const { bytes, requests } = perReader(g);
     lead.replaceChildren(
       h("b", {}, g.name), ` (${fmtBytes(g.length)}), ${READERS.find(([n]) => n === readers)[1]} readers a month: `,
       r2 === 0 ? "R2's free allowance covers it." : h("span", {}, h("b", {}, fmtUSD(r2)), " a month on R2."),
-      " A server sized for it: ", h("b", {}, fmtUSD(srv)), " a month, readers or not.");
-    foot.textContent = `A reader opens the file and asks one of the demo's questions: ${fmtBytes(bytes)} in ${requests.toFixed(0)} requests on average for this graph, measured ${MEASURED}. Prices checked ${PRICES.checked}.`;
+      cheapest
+        ? h("span", {}, " The cheapest server we measured for it, ", cheapest.name.replace(/ server$/, ""), ": ", h("b", {}, fmtUSD(cheapest.total)), " a month.")
+        : " We have not measured a server for a graph this size.");
+    foot.textContent = `A reader opens the file and asks one of the demo's questions: ${fmtBytes(bytes)} in ${requests.toFixed(0)} requests on average for this graph, measured ${MEASURED}. Servers measured ${SERVERS_MEASURED}. Prices checked ${PRICES.checked}, Hugging Face's ${PRICES.hf.checked}.`;
   }
   root.append(
     h("div", { class: "cost-controls" },
