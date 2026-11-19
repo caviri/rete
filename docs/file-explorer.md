@@ -42,7 +42,7 @@ A catalog is a JSON list of `.rete` links that anyone can publish next to their
 graphs. Paste its link in the box at the top, or in the Catalogs shelf, to
 subscribe; a link to a `.rete` file opens it instead. The explorer reads rete's
 own catalog shape (`{"datasets": [{"key", "label", "url", "size", …}]}`, as in
-`clients/relay/catalog.json`), the plaza's (`docs/plaza/plaza.json`, links
+`clients/server/rete_server/catalog.json`), the plaza's (`docs/plaza/plaza.json`, links
 relative to the catalog), a list of entries, or a plain list of links. rete's
 catalog is subscribed by default. Subscriptions and your files are kept in the
 browser (or the desktop app's webview); nothing is sent anywhere.
