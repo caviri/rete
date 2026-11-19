@@ -456,11 +456,12 @@ fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     let mut raw = match &sel.group {
         // Grouping runs directly on the integer rows â€” only group keys and the
         // values an aggregate needs are ever resolved.
-        Some(g) => aggregate(ctx, eval_plan_iter(ctx, active, nf, &sel.plan), g),
+        Some(g) => aggregate(ctx, active, eval_plan_iter(ctx, active, nf, &sel.plan), g),
         None => eval_plan_iter(ctx, active, nf, &sel.plan).collect(),
     };
+    let mut cache = ExistsCache::new();
     for row in raw.iter_mut() {
-        apply_extends_row(ctx, row, &sel.extends);
+        apply_extends_row(ctx, active, row, &sel.extends, &mut cache);
     }
     // HAVING runs on the aggregated (and aliased) rows.
     if !sel.having.is_empty() {
@@ -491,10 +492,17 @@ pub(super) fn only_projects(sub: &Select) -> bool {
 }
 
 /// Apply BIND/alias assignments to one row (columns only â€” never drops rows).
-fn apply_extends_row(ctx: &Ctx, row: &mut Row, extends: &[(String, FExpr)]) {
+/// An EXISTS in one is decided against `active` ([`FExpr::value_in`]).
+fn apply_extends_row(
+    ctx: &Ctx,
+    active: &GraphIndex,
+    row: &mut Row,
+    extends: &[(String, FExpr)],
+    cache: &mut ExistsCache,
+) {
     for (var, expr) in extends.iter().rev() {
         if let Some(slot) = ctx.slots.slot(var) {
-            if let Some(v) = expr.value(ctx, row) {
+            if let Some(v) = expr.value_in(ctx, active, row, cache) {
                 row[slot] = Some(ctx.resolver.canon_term(&v));
             }
         }
@@ -820,15 +828,16 @@ fn finish_select_rows<'a, 'q>(
 ) -> Vec<Row> {
     // Source rows: aggregation is blocking; everything else streams.
     let mut source: RowIter<'q> = match &sel.group {
-        Some(g) if !grouped => Box::new(aggregate(ctx, source, g).into_iter()),
+        Some(g) if !grouped => Box::new(aggregate(ctx, active, source, g).into_iter()),
         _ => source,
     };
 
     // BIND/aliases add columns per row â€” streaming.
     if !sel.extends.is_empty() {
         let extends = &sel.extends;
+        let mut cache = ExistsCache::new();
         source = Box::new(source.map(move |mut row| {
-            apply_extends_row(ctx, &mut row, extends);
+            apply_extends_row(ctx, active, &mut row, extends, &mut cache);
             row
         }));
     }
@@ -847,10 +856,14 @@ fn finish_select_rows<'a, 'q>(
     // bounded insertion instead of a full sort.
     if !sel.order.is_empty() {
         let sorted = match (sel.limit, sel.distinct) {
-            (Some(limit), false) => {
-                top_k(ctx, source, &sel.order, sel.offset.saturating_add(limit))
-            }
-            _ => sort_all(ctx, source, &sel.order),
+            (Some(limit), false) => top_k(
+                ctx,
+                active,
+                source,
+                &sel.order,
+                sel.offset.saturating_add(limit),
+            ),
+            _ => sort_all(ctx, active, source, &sel.order),
         };
         source = Box::new(sorted.into_iter());
     }
@@ -1264,23 +1277,34 @@ fn cmp_keyed(
 /// pre-parsed) instead of re-evaluating them on every comparison.
 /// One ORDER BY key of a row. A plain variable bound to a dictionary id the
 /// file's term order covers is not decoded ([`SortKey::of_val`]); everything
-/// else is evaluated and classified once, as it always was.
-fn sort_key(ctx: &Ctx, e: &FExpr, row: &Row) -> SortKey {
+/// else is evaluated and classified once, as it always was (an EXISTS against
+/// `active`).
+fn sort_key(
+    ctx: &Ctx,
+    active: &GraphIndex,
+    e: &FExpr,
+    row: &Row,
+    cache: &mut ExistsCache,
+) -> SortKey {
     if let FExpr::Var(v) = e {
         return match ctx.slots.slot(v).and_then(|slot| row[slot].as_ref()) {
             Some(val) => SortKey::of_val(ctx, val),
             None => SortKey::Unbound,
         };
     }
-    SortKey::of(e.value(ctx, row))
+    SortKey::of(e.value_in(ctx, active, row, cache))
 }
 
-fn sort_all(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)]) -> Vec<Row> {
+fn sort_all(ctx: &Ctx, active: &GraphIndex, rows: RowIter, order: &[(FExpr, bool)]) -> Vec<Row> {
     // (`sort_key` below: ids the dictionary order covers are not decoded.)
+    let mut cache = ExistsCache::new();
     let mut keyed: Vec<(Vec<SortKey>, usize, Row)> = rows
         .enumerate()
         .map(|(seq, b)| {
-            let keys = order.iter().map(|(e, _)| sort_key(ctx, e, &b)).collect();
+            let keys = order
+                .iter()
+                .map(|(e, _)| sort_key(ctx, active, e, &b, &mut cache))
+                .collect();
             (keys, seq, b)
         })
         .collect();
@@ -1290,13 +1314,23 @@ fn sort_all(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)]) -> Vec<Row> {
 
 /// The first `k` rows of the stable sort order, via bounded insertion â€” O(nÂ·k)
 /// worst case with k = LIMIT + OFFSET (small), instead of sorting all n rows.
-fn top_k(ctx: &Ctx, rows: RowIter, order: &[(FExpr, bool)], k: usize) -> Vec<Row> {
+fn top_k(
+    ctx: &Ctx,
+    active: &GraphIndex,
+    rows: RowIter,
+    order: &[(FExpr, bool)],
+    k: usize,
+) -> Vec<Row> {
     if k == 0 {
         return Vec::new();
     }
+    let mut cache = ExistsCache::new();
     let mut top: Vec<(Vec<SortKey>, usize, Row)> = Vec::with_capacity(k + 1);
     for (seq, b) in rows.enumerate() {
-        let keys: Vec<SortKey> = order.iter().map(|(e, _)| sort_key(ctx, e, &b)).collect();
+        let keys: Vec<SortKey> = order
+            .iter()
+            .map(|(e, _)| sort_key(ctx, active, e, &b, &mut cache))
+            .collect();
         let entry = (keys, seq, b);
         if top.len() >= k && cmp_keyed(ctx, order, &entry, &top[k - 1]) != std::cmp::Ordering::Less
         {
@@ -1481,13 +1515,17 @@ pub(crate) fn eval_plan_iter<'q>(
                 }
             }
         }
-        // In-pattern BIND: set `var` from `expr` per row (unbound where it errors).
+        // In-pattern BIND: set `var` from `expr` per row (unbound where it
+        // errors; an EXISTS in it is decided against this graph).
         Plan::Extend(var, expr, inner) => {
             let slot = ctx.slots.slot(var);
+            let mut cache = ExistsCache::new();
             Box::new(
                 eval_plan_iter(ctx, index, named_filter, inner).map(move |mut row| {
                     if let Some(slot) = slot {
-                        row[slot] = expr.value(ctx, &row).map(|v| ctx.resolver.canon_term(&v));
+                        row[slot] = expr
+                            .value_in(ctx, index, &row, &mut cache)
+                            .map(|v| ctx.resolver.canon_term(&v));
                     }
                     row
                 }),

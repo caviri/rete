@@ -79,11 +79,83 @@ impl FExpr {
         }
     }
 
+    /// Evaluate in value position — a BIND, a projected expression, an
+    /// aggregate's argument, a GROUP BY or ORDER BY key — with the active graph
+    /// at hand. Each EXISTS in the expression is decided for this row first
+    /// ([`Self::decide_exists`]); then it evaluates as [`Self::value`] does.
+    /// `value` alone has no graph, and used to answer every EXISTS `false`, so
+    /// `BIND(IF(NOT EXISTS { … }, …))` took the same branch on every row.
+    pub(super) fn value_in(
+        &self,
+        ctx: &Ctx,
+        index: &GraphIndex,
+        b: &Row,
+        cache: &mut ExistsCache,
+    ) -> Option<Arc<str>> {
+        match self.decide_exists(ctx, index, b, cache) {
+            Some(decided) => decided.value(ctx, b),
+            None => self.value(ctx, b),
+        }
+    }
+
+    /// `self` with every EXISTS replaced by its `xsd:boolean` for row `b`, or
+    /// `None` when it has none (nothing is copied then). An EXISTS never errors
+    /// and changes nothing, so deciding one in an IF branch that is not taken
+    /// costs work and no difference in the answer.
+    fn decide_exists(
+        &self,
+        ctx: &Ctx,
+        index: &GraphIndex,
+        b: &Row,
+        cache: &mut ExistsCache,
+    ) -> Option<FExpr> {
+        let pair = |l: &FExpr, r: &FExpr, cache: &mut ExistsCache| {
+            let (dl, dr) = (
+                l.decide_exists(ctx, index, b, cache),
+                r.decide_exists(ctx, index, b, cache),
+            );
+            (dl.is_some() || dr.is_some()).then(|| (or_copy(dl, l), or_copy(dr, r)))
+        };
+        match self {
+            FExpr::Exists(_) => {
+                let holds = self.boolean3(ctx, index, b, cache) == Some(true);
+                Some(FExpr::Const(bool_literal(holds)))
+            }
+            FExpr::Var(_) | FExpr::Const(_) | FExpr::Bound(_) => None,
+            FExpr::Not(a) => Some(FExpr::Not(Box::new(a.decide_exists(ctx, index, b, cache)?))),
+            FExpr::Arith(op, l, r) => pair(l, r, cache).map(|(l, r)| FExpr::Arith(*op, l, r)),
+            FExpr::Compare(op, l, r) => pair(l, r, cache).map(|(l, r)| FExpr::Compare(*op, l, r)),
+            FExpr::SameTerm(l, r) => pair(l, r, cache).map(|(l, r)| FExpr::SameTerm(l, r)),
+            FExpr::And(l, r) => pair(l, r, cache).map(|(l, r)| FExpr::And(l, r)),
+            FExpr::Or(l, r) => pair(l, r, cache).map(|(l, r)| FExpr::Or(l, r)),
+            FExpr::If(c, t, e) => {
+                let dc = c.decide_exists(ctx, index, b, cache);
+                let (dt, de) = (
+                    t.decide_exists(ctx, index, b, cache),
+                    e.decide_exists(ctx, index, b, cache),
+                );
+                (dc.is_some() || dt.is_some() || de.is_some())
+                    .then(|| FExpr::If(or_copy(dc, c), or_copy(dt, t), or_copy(de, e)))
+            }
+            FExpr::In(x, list) => {
+                let dx = x.decide_exists(ctx, index, b, cache);
+                let dl = decide_list(list, ctx, index, b, cache);
+                (dx.is_some() || dl.is_some())
+                    .then(|| FExpr::In(or_copy(dx, x), dl.unwrap_or_else(|| list.clone())))
+            }
+            FExpr::Func(f, args) => {
+                decide_list(args, ctx, index, b, cache).map(|a| FExpr::Func(*f, a))
+            }
+            FExpr::Coalesce(args) => decide_list(args, ctx, index, b, cache).map(FExpr::Coalesce),
+        }
+    }
+
     /// Three-valued effective boolean value **without** access to the active
     /// graph: `Some(true)`, `Some(false)`, or `None` for an *error* (§17.2.2 —
     /// an unbound argument, a type error inside, or a term that has no EBV).
-    /// EXISTS needs the graph, so it evaluates to `false` here (value
-    /// position); [`Self::boolean3`] is the graph-aware form.
+    /// EXISTS needs the graph: [`Self::boolean3`] decides it in a condition and
+    /// [`Self::value_in`] in value position. One that still reaches here is an
+    /// error (unbound), not a `false` standing in for an answer.
     pub(super) fn ebv3(&self, ctx: &Ctx, b: &Row) -> Option<bool> {
         match self {
             // BOUND never errors.
@@ -124,7 +196,7 @@ impl FExpr {
                 false => e.ebv3(ctx, b),
             },
             FExpr::Func(f, args) if is_boolean_builtin(*f) => func_bool(*f, args, ctx, b),
-            FExpr::Exists(_) => Some(false),
+            FExpr::Exists(_) => None,
             // A value-form expression used as a boolean (a bare `true` literal, a
             // `?var`, arithmetic, COALESCE, a value function such as STR …)
             // takes the effective boolean value of its computed term; a term
@@ -227,6 +299,35 @@ impl FExpr {
     ) -> bool {
         self.boolean3(ctx, index, b, cache) == Some(true)
     }
+}
+
+/// `decided`, or a copy of `original` when nothing in it changed.
+fn or_copy(decided: Option<FExpr>, original: &FExpr) -> Box<FExpr> {
+    Box::new(decided.unwrap_or_else(|| original.clone()))
+}
+
+/// [`FExpr::decide_exists`] over a list: `None` when no member has an EXISTS.
+fn decide_list(
+    list: &[FExpr],
+    ctx: &Ctx,
+    index: &GraphIndex,
+    b: &Row,
+    cache: &mut ExistsCache,
+) -> Option<Vec<FExpr>> {
+    let decided: Vec<Option<FExpr>> = list
+        .iter()
+        .map(|e| e.decide_exists(ctx, index, b, cache))
+        .collect();
+    if decided.iter().all(Option::is_none) {
+        return None;
+    }
+    Some(
+        decided
+            .into_iter()
+            .zip(list)
+            .map(|(d, e)| d.unwrap_or_else(|| e.clone()))
+            .collect(),
+    )
 }
 
 /// SPARQL logical-and over the §17.2 truth table: `F && E = E && F = F`,

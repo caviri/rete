@@ -18,7 +18,8 @@ use crate::row::{Ctx, Row, Val};
 
 use super::distinct::DistinctSet;
 use super::value::OrderKey;
-use super::{fmt_num_typed, lexical, Agg, GroupSpec};
+use super::{fmt_num_typed, lexical, Agg, ExistsCache, GroupSpec};
+use crate::index::GraphIndex;
 
 /// A single aggregate's running state — updated per row, finalized once per group.
 /// Slot is resolved once at construction; `None` = the variable isn't in scope.
@@ -355,11 +356,14 @@ impl Accum {
 /// Group `rows` and compute aggregates, producing one row per group (group-by
 /// slots keep their values; each aggregate's result lands in its result slot).
 /// Rows are consumed as an iterator and folded per group — never all held at once.
-pub(super) fn aggregate<I>(ctx: &Ctx, rows: I, g: &GroupSpec) -> Vec<Row>
+/// `index` is the active graph, which an EXISTS in an aggregate's argument or a
+/// GROUP BY expression reads.
+pub(super) fn aggregate<I>(ctx: &Ctx, index: &GraphIndex, rows: I, g: &GroupSpec) -> Vec<Row>
 where
     I: IntoIterator<Item = Row>,
 {
-    let groups = fold_groups(ctx, rows, g, usize::MAX, None).expect("no group cap");
+    let groups =
+        fold_groups(ctx, with_pre(ctx, index, rows, g), g, usize::MAX, None).expect("no group cap");
     let groups = groups
         .into_iter()
         .map(|(key, accs)| (key, accs.into_iter().map(Accum::finalize).collect()));
@@ -368,13 +372,39 @@ where
 
 /// Materialize the synthetic columns of aggregates over expressions on `row`
 /// (`SUM(?a * 2)` reads a hidden column holding `?a * 2`). An expression that
-/// errors leaves its column unbound (SPARQL error semantics).
-pub(super) fn apply_pre(ctx: &Ctx, row: &mut Row, g: &GroupSpec) {
+/// errors leaves its column unbound (SPARQL error semantics); an EXISTS in one
+/// is decided against `index` (`FExpr::value_in`).
+pub(super) fn apply_pre(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    row: &mut Row,
+    g: &GroupSpec,
+    cache: &mut ExistsCache,
+) {
     for (var, expr) in &g.pre {
         if let Some(slot) = ctx.slots.slot(var) {
-            row[slot] = expr.value(ctx, row).map(Val::Str);
+            row[slot] = expr.value_in(ctx, index, row, cache).map(Val::Str);
         }
     }
+}
+
+/// `rows`, each with its synthetic columns in place ([`apply_pre`]) before it
+/// is grouped, so an aggregate reads one exactly like a plain slot.
+fn with_pre<'a, I>(
+    ctx: &'a Ctx,
+    index: &'a GraphIndex,
+    rows: I,
+    g: &'a GroupSpec,
+) -> impl Iterator<Item = Row> + 'a
+where
+    I: IntoIterator<Item = Row>,
+    I::IntoIter: 'a,
+{
+    let mut cache = ExistsCache::new();
+    rows.into_iter().map(move |mut r| {
+        apply_pre(ctx, index, &mut r, g, &mut cache);
+        r
+    })
 }
 
 /// The slots a fold reads: the group-by variables and the arguments of the
@@ -463,12 +493,7 @@ where
 
     // BTreeMap keeps group order deterministic (by integer id / value order).
     let mut groups: BTreeMap<Vec<Option<Val>>, Vec<Accum>> = BTreeMap::new();
-    for mut r in rows {
-        // Aggregate-over-expression: materialize each synthetic column on THIS row
-        // before grouping, so an aggregate reads it exactly like a plain slot.
-        if cut.is_none() {
-            apply_pre(ctx, &mut r, g);
-        }
+    for r in rows {
         let key: Vec<Option<Val>> = by_slots
             .iter()
             .map(|s| s.and_then(|i| r[i].clone()))
@@ -716,6 +741,7 @@ impl Partial {
 #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(super) fn aggregate_partial<I>(
     ctx: &Ctx,
+    index: &GraphIndex,
     rows: I,
     g: &GroupSpec,
     max_groups: usize,
@@ -723,7 +749,7 @@ pub(super) fn aggregate_partial<I>(
 where
     I: IntoIterator<Item = Row>,
 {
-    let groups = fold_groups(ctx, rows, g, max_groups, None)?;
+    let groups = fold_groups(ctx, with_pre(ctx, index, rows, g), g, max_groups, None)?;
     Some(
         groups
             .into_iter()
@@ -1014,7 +1040,7 @@ mod tests {
                 ),
             )],
         };
-        let grouped = aggregate(&ctx, rows, &spec);
+        let grouped = aggregate(&ctx, rete.default_index(), rows, &spec);
         assert_eq!(grouped.len(), 2);
         let g = ctx.slots.slot("g").unwrap();
         let result = ctx.slots.slot("result").unwrap();
@@ -1046,7 +1072,7 @@ mod tests {
             aggs: vec![("result".into(), Agg::CountStar { distinct: true })],
             pre: vec![],
         };
-        let grouped = aggregate(&ctx, Vec::new(), &empty);
+        let grouped = aggregate(&ctx, rete.default_index(), Vec::new(), &empty);
         assert_eq!(grouped.len(), 1);
         assert_eq!(
             ctx.resolver.num(grouped[0][result].as_ref().unwrap()),

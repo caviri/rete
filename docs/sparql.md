@@ -29,7 +29,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 |---|---|
 | **Query forms** | `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE` |
 | **Patterns** | Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables |
-| **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `FILTER EXISTS` / `NOT EXISTS`, nested `SELECT` **subqueries** (evaluated independently, then joined on shared projected variables) |
+| **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `EXISTS` / `NOT EXISTS` (in a `FILTER` and anywhere else an expression goes: `BIND`, a projected expression, an aggregate's argument, `GROUP BY`, `ORDER BY`), nested `SELECT` **subqueries** (evaluated independently, then joined on shared projected variables) |
 | **Filters** | Comparisons, `&&`/`\|\|`/`!`, arithmetic, `BOUND`, `COALESCE`; built-ins incl. `CONTAINS`, `STRLEN`, `SUBSTR`, `CONCAT`, `STR`, `isIRI`/`isLiteral`/`isBlank`, `DATATYPE`, `LANG`, `REGEX` |
 | **Property paths** | `p+`, `p*`, `p?` (zero-length included for `*`/`?`), reverse `^p`, sequence `a/b`, alternative `a\|b` — evaluated goal-directed from a bound endpoint |
 | **Solution modifiers** | `DISTINCT`, `ORDER BY` (ASC/DESC), `LIMIT`, `OFFSET`, `VALUES`, `BIND` |
@@ -186,7 +186,8 @@ rows to one fold, which uses the memory the single thread uses.
 
 Not sliced: a pattern whose path to the scan goes through `VALUES`, a
 sub-select that aggregates, sorts or slices (it runs on several threads
-itself when it groups), or an `EXISTS` inside a `BIND`; a join whose large
+itself when it groups), or an `EXISTS` inside a `BIND` or an aggregate's
+argument; a join whose large
 scan is on its right side; a query under a memory guard.
 
 `SUM` and `AVG` add the slices' sums. The slices are fixed by the file (at most

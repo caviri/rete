@@ -671,7 +671,8 @@ mod threaded {
                                 seen = seen.wrapping_add(1);
                                 !seen.is_multiple_of(4096) || !abort.load(Ordering::Relaxed)
                             });
-                        let folded = aggregate_partial(wctx, rows, job.g, MAX_SHARD_GROUPS);
+                        let folded =
+                            aggregate_partial(wctx, job.active, rows, job.g, MAX_SHARD_GROUPS);
                         if folded.is_none() {
                             too_many.store(true, Ordering::Relaxed);
                         }
@@ -830,8 +831,11 @@ mod threaded {
                         wctx.shard.begin(Some((i, n)));
                         let mut chunk: Vec<Row> = Vec::with_capacity(ROW_CHUNK);
                         let mut open = true;
+                        // Unused: a query with an EXISTS in an aggregate's argument
+                        // never runs on several threads (`aggregate_shards` refuses it).
+                        let mut cache = super::super::ExistsCache::new();
                         for mut row in eval_plan_iter(wctx, job.active, job.nf, &job.sel.plan) {
-                            apply_pre(wctx, &mut row, job.g);
+                            apply_pre(wctx, job.active, &mut row, job.g, &mut cache);
                             chunk.push(keep.iter().map(|&s| row[s].take()).collect());
                             if chunk.len() == ROW_CHUNK {
                                 let full =
