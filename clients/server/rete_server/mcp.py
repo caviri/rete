@@ -18,6 +18,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from . import state
+from .views import register_views
 
 READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
 
@@ -46,10 +47,15 @@ Recommended workflow:
    a question mentions a specific thing; `describe_entity` shows one.
 7. `validate_shacl(dataset, shapes)` — SHACL Core data-quality checks;
    `shacl_shapes(dataset)` lists curated shapes that run as-is.
+8. `graph_view(dataset, query | iri | schema=true)` — show results as an
+   interactive graph the user explores in the conversation (clients that
+   render MCP Apps, as Claude does). Keep it to a few hundred nodes (a
+   LIMIT); `graph_view_update` changes the open view and `graph_view_state`
+   says what the user selected.
 """
 
 _AUTHORING = """\
-8. Authoring — create graphs, not only read them: `suggest_vocabulary` (find
+9. Authoring — create graphs, not only read them: `suggest_vocabulary` (find
    existing terms on LOV before minting IRIs) → draft an ontology in Turtle →
    `check_ontology` until clean → `build_rete` (ontology + instances + card +
    examples) → the returned dataset key works at once in sparql_query.
@@ -261,4 +267,7 @@ def build_mcp(author: bool) -> FastMCP:
 
             return authoring.causal_diagram(claims, title, render, build)
 
+    # The graph view: its page and tools. A file the user opens in a view
+    # becomes a dataset here, as a build_rete file does, so it goes with authoring.
+    register_views(mcp, uploads=author)
     return mcp

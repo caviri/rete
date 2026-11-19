@@ -178,7 +178,7 @@ class Catalog:
         return {
             "key": f"generated/{path.name}",
             "label": path.stem,
-            "description": "Built on this server by build_rete (ephemeral).",
+            "description": "Built on this server (ephemeral): by build_rete, or opened in a graph view.",
             "url": f"/generated/{path.name}",
             "local_path": str(path),
             "size_bytes": path.stat().st_size,

@@ -59,7 +59,8 @@ def landing_html(base: str, version: str, datasets: List[Dict[str, Any]], token:
   {auth_note}
   <h2>Endpoints</h2>
   <ul>
-    <li><code>/mcp</code> — MCP server (streamable HTTP) for Claude, ChatGPT and other agents</li>
+    <li><code>/mcp</code> — MCP server (streamable HTTP) for Claude, ChatGPT and other agents, with an
+      interactive graph view that clients rendering MCP Apps (Claude does) show in the conversation</li>
     <li><code>/sparql/&lt;dataset&gt;</code> — a standard SPARQL 1.1 Protocol endpoint per dataset</li>
     <li><code>/api/…</code> — REST: datasets, cards, schema, examples, query, SHACL (<a href="/docs">API docs</a>)</li>
     <li><code>/health</code> — liveness</li>

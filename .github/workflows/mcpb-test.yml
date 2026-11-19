@@ -11,6 +11,7 @@ on:
     paths:
       - "clients/mcpb/**"
       - "clients/chrome/lib/**" # the graph view bundles the Retelens cells, statistics, hints and maps
+      - "clients/server/rete_server/view/**"
       - "clients/js/**"
       - "crates/rete-wasm/**"
       - "crates/rete-core/**"
@@ -20,6 +21,7 @@ on:
     paths:
       - "clients/mcpb/**"
       - "clients/chrome/lib/**" # the graph view bundles the Retelens cells, statistics, hints and maps
+      - "clients/server/rete_server/view/**"
       - "clients/js/**"
       - "crates/rete-wasm/**"
       - "crates/rete-core/**"
@@ -65,10 +67,11 @@ jobs:
         run: node --test --test-timeout=180000 clients/mcpb/test/*.test.mjs
       - name: Validate the manifest
         run: npx --yes @anthropic-ai/mcpb@2 validate clients/mcpb/build/manifest.json
-      # The file explorer carries a copy of the graph view and its model
-      # (experiments/rete-file-explorer/graph/), generated from src/view and
-      # src/view-model.mjs: a change to either has to regenerate it.
-      - name: The file explorer's copy of the graph view is current
+      # The file explorer (experiments/rete-file-explorer/graph/) and
+      # rete-server (clients/server/rete_server/view/) carry copies of the
+      # graph view, generated from src/view and src/view-model.mjs: a change
+      # to either has to regenerate them.
+      - name: The committed copies of the graph view are current
         run: node clients/mcpb/build-explorer.mjs --check
       # The bundle targets node18; run the same suites on that runtime (built
       # above on 22, as the release builds it). Node 18's runner has no

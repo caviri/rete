@@ -47,7 +47,9 @@ def _parser() -> argparse.ArgumentParser:
     a("--no-urls", action="store_true", default=None,
       help="answer only for catalog datasets, never an arbitrary url= [RETE_ALLOW_URLS=0]")
     a("--no-author", action="store_true", default=None,
-      help="turn off the authoring tools and /generated [RETE_AUTHOR=0]")
+      help="turn off the authoring tools, /generated and files opened in a graph view [RETE_AUTHOR=0]")
+    a("--upload-max-mb", type=int, help="largest file a user may open in a graph view "
+                                        "(default 64) [RETE_UPLOAD_MAX_MB]")
     a("--ask-model", help="pydantic-ai model id enabling /api/ask [RETE_ASK_MODEL]")
     a("--public-url", help="this server's public base URL [RETE_PUBLIC_URL]")
     a("--threads", type=int, help="threads for engine calls (default 32) [RETE_THREADS]")
@@ -76,7 +78,8 @@ def settings_from(argv: Optional[List[str]] = None, env: Optional[dict] = None) 
         s.cache_dir = args.cache_dir
     for name, attr in (("cache_max_mb", "cache_max_mb"), ("max_handles", "max_handles"),
                        ("row_cap", "row_cap"), ("query_timeout", "query_timeout_s"),
-                       ("catalog_refresh", "catalog_refresh_s"), ("threads", "threads")):
+                       ("catalog_refresh", "catalog_refresh_s"), ("threads", "threads"),
+                       ("upload_max_mb", "upload_max_mb")):
         value = getattr(args, name)
         if value is not None:
             setattr(s, attr, value)

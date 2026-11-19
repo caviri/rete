@@ -188,6 +188,22 @@ def _evict_generated() -> None:
         state.catalog.drop_generated(old)
 
 
+def store_generated(data: bytes, label: Optional[str] = None) -> str:
+    """Keep a built ``.rete`` beside the others: it is dataset
+    ``generated/<name>`` at once, and the oldest go past ``MAX_GENERATED``.
+    Returns the file's name."""
+    out_dir = _generated_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = hashlib.sha256(data).hexdigest()[:16] + ".rete"
+    path = out_dir / name
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+    state.catalog.add_generated(path, label=label)
+    _evict_generated()
+    return name
+
+
 def build_rete(rdf_text: str, format: str = "ttl",
                card: Optional[Dict[str, Any]] = None,
                examples: Optional[List[Dict[str, str]]] = None,
@@ -216,16 +232,7 @@ def build_rete(rdf_text: str, format: str = "ttl",
     if text_index:
         builder.text_index(True)
     data = builder.run()
-
-    out_dir = _generated_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    name = hashlib.sha256(data).hexdigest()[:16] + ".rete"
-    path = out_dir / name
-    tmp = path.with_suffix(".tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, path)
-    state.catalog.add_generated(path, label=(card or {}).get("title"))
-    _evict_generated()
+    name = store_generated(data, (card or {}).get("title"))
 
     g = rete.open(data)
     doc: Dict[str, Any] = {

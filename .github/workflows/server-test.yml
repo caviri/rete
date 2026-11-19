@@ -6,19 +6,22 @@ name: Server tests
 # serve. That is what lets a release PR, whose `rete-graph>=` floor names a
 # version PyPI does not have until the tag publishes it, pass here; and it
 # tests the server against the engine it will ship with. Allow-listed to the
-# server, the Python binding it imports, and the workflows that build them.
+# server, the Python binding it imports, the graph view's host bundle the
+# browser test loads, and the workflows that build them.
 on:
   push:
     branches: [main]
     paths:
       - "clients/server/**"
       - "clients/python/**"
+      - "experiments/rete-file-explorer/graph/host-lib.js"
       - ".github/workflows/server-test.yml"
       - ".github/workflows/python-wheels.yml"
   pull_request:
     paths:
       - "clients/server/**"
       - "clients/python/**"
+      - "experiments/rete-file-explorer/graph/host-lib.js"
       - ".github/workflows/server-test.yml"
       - ".github/workflows/python-wheels.yml"
   workflow_dispatch:
@@ -69,6 +72,18 @@ jobs:
             pip install --quiet --no-cache-dir --root-user-action=ignore pytest pyoxigraph
             python -c "import rete_graph; print(\"rete-graph\", rete_graph.__version__, \"engine\", rete_graph.__engine_version__)"
             python -m pytest tests -q -p no:cacheprovider
+          '
+      # The graph view (rete_server/view/graph-view.html, the extension's
+      # page) in Chromium, behind the MCP Apps SDK's AppBridge as Claude hosts
+      # it, against a live server on this commit's engine wheel.
+      - name: The graph view in a browser
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$RUNNER_TEMP/wheels:/wheels" -w /w/clients/server \
+            -e RETE_UI_TEST=1 mcr.microsoft.com/playwright/python:v1.49.0-noble sh -c '
+            set -e
+            pip install --quiet --break-system-packages --no-index --find-links /wheels rete-graph
+            pip install --quiet --break-system-packages ".[test]" playwright==1.49.0
+            python3 -m pytest tests/ui -q -p no:cacheprovider
           '
       - name: The image passes its own health check
         run: |

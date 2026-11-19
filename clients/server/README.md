@@ -51,7 +51,7 @@ Generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32
 
 | Route | What |
 |---|---|
-| `/mcp` | MCP over streamable HTTP (stateless) |
+| `/mcp` | MCP over streamable HTTP (stateless), with the graph view |
 | `/sparql/<dataset>` | SPARQL 1.1 Protocol: GET or POST, SPARQL-JSON or N-Triples |
 | `/api/…` | REST: datasets, card, schema, examples, search, query, SHACL, status; documented at `/docs` |
 | `/generated/<name>` | files built by the authoring tools |
@@ -72,6 +72,31 @@ Query from anything that speaks SPARQL:
 curl -s https://<host>/sparql/boe -H "Authorization: Bearer $RETE_TOKEN" \
   --data-urlencode 'query=SELECT * WHERE { ?s ?p ?o } LIMIT 3'
 ```
+
+## The graph view
+
+`graph_view` opens an interactive graph of a query's results, an entity's
+neighbourhood or a dataset's schema, right in the conversation. The user can
+label, group, lay out, search, expand and edit it, and switch to a table;
+Claude changes it with `graph_view_update` and reads the selection with
+`graph_view_state`.
+
+The server renders nothing. It sends the page (`ui://rete/graph-view.html`)
+as an [MCP App](https://github.com/modelcontextprotocol/ext-apps) and the
+client draws it, exactly as with the Claude Desktop extension: it is the same
+page, copied from `clients/mcpb` by `clients/mcpb/build-explorer.mjs`. The
+page asks for its data with six app-only tools (`graph_view_sync`, `…_labels`,
+`…_expand`, `…_search`, `…_edit`, `…_upload`), so the data never passes
+through the model. A client without MCP Apps gets the text answers only.
+
+A file attached to the chat sits in Claude's sandbox, out of the server's
+reach. Given its path (`/mnt/user-data/uploads/…`), `graph_view` asks the user
+to choose or drop the file in the view; it becomes a `generated/…` dataset
+that every tool can query. That goes with authoring, so `--no-author` turns
+it off, and `RETE_UPLOAD_MAX_MB` caps the file (RDF text at 32 MB at most).
+
+Views live in the server's memory, the newest 200, under ids nobody can
+guess.
 
 ## Tokens
 
@@ -105,7 +130,8 @@ Every option is a flag and an environment variable; the flag wins.
 | `RETE_CATALOG_REFRESH_S` | `--catalog-refresh` | `600` | |
 | `RETE_ALLOW_URLS` | `--no-urls` | on | queries against any public `.rete` URL |
 | `RETE_ALLOW_PRIVATE_URLS` | | off | let `url=` reach private addresses |
-| `RETE_AUTHOR` | `--no-author` | on | `build_rete`, `causal_diagram`, vocabulary and ontology checks |
+| `RETE_AUTHOR` | `--no-author` | on | `build_rete`, `causal_diagram`, vocabulary and ontology checks, files opened in a graph view |
+| `RETE_UPLOAD_MAX_MB` | `--upload-max-mb` | `64` | largest file opened in a graph view |
 | `RETE_ASK_MODEL` | `--ask-model` | (none) | a pydantic-ai model id, e.g. `anthropic:claude-sonnet-5-5` |
 | `RETE_PUBLIC_URL` | `--public-url` | (none) | this server's own URL, for absolute links |
 | `RETE_THREADS` | `--threads` | `32` | threads for engine calls |
@@ -145,3 +171,7 @@ docker run --rm -v "$PWD/clients/server:/src" -w /src rete-server-test sh -c \
 
 No network and no LLM: datasets are built into a temporary folder, and the
 `/api/ask` agent runs on pydantic-ai's scripted `FunctionModel`.
+
+`tests/ui` drives the graph view in Chromium against a live server; it runs
+only with `RETE_UI_TEST=1`, in the Playwright image (the command is at the
+top of `tests/ui/test_view_ui.py`).

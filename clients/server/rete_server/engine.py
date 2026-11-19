@@ -26,6 +26,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import threading
@@ -48,6 +49,11 @@ log = logging.getLogger("rete_server.engine")
 # --------------------------------------------------------------------------- #
 # Errors (the routes map them to status codes)
 # --------------------------------------------------------------------------- #
+
+# Where Claude's own sandbox keeps the files it works with: a file attached to
+# the chat is /mnt/user-data/uploads/<name> there, out of this server's reach.
+SANDBOX = re.compile(r"^/(mnt/user-data|mnt/data|home/claude)/")
+
 
 class RequestError(ValueError):
     """The request is wrong: 400."""
@@ -350,6 +356,15 @@ class Service:
             return url, {"key": url, "url": url, "kind": "url"}
         if not dataset:
             raise RequestError("provide either dataset (a catalog key) or url")
+        if SANDBOX.match(dataset):
+            if self.settings.author:
+                how = (f'To open it, call graph_view with dataset "{dataset}": the view asks the user to '
+                       "choose or drop the file, which then becomes a dataset here (the view says its "
+                       "generated/… key).")
+            else:
+                how = "This server takes no files from users (authoring is off)."
+            raise RequestError(f"{dataset} is a file attached to the chat: Claude's copy of it is in Claude's "
+                               f"own sandbox, out of this server's reach. {how}")
         entry = self.catalog.get(dataset)
         if entry is None:
             known = ", ".join(sorted(self.catalog.keys())[:40])
@@ -496,6 +511,59 @@ class Service:
             if table is not None:
                 doc["table"] = table
         return doc
+
+    def source_of(self, name: str) -> Tuple[str, Dict[str, Any]]:
+        """A dataset key, or a public ``.rete`` URL, → ``(source, entry)``."""
+        if name.startswith(("http://", "https://")):
+            return self.resolve(url=name)
+        return self.resolve(dataset=name)
+
+    def query_env(self, name: str, query: str) -> Dict[str, Any]:
+        """The engine's own answer, term tokens and all, for a caller that
+        reads it itself (the graph view). The same lock and time limit as
+        :meth:`run_query`."""
+        source, _ = self.source_of(name)
+        handle = self.handle(source)
+        with self._locked(handle):
+            started = time.time()
+            try:
+                env = handle.graph.query_raw(query, reason=False)
+            except ValueError as e:
+                raise RequestError(str(e)) from None
+            elapsed = time.time() - started
+            handle.queries += 1
+        if elapsed > self.settings.query_timeout_s:
+            raise QueryTimeout(f"query took {elapsed:.1f}s (limit {self.settings.query_timeout_s:.0f}s); "
+                               "narrow it or add a LIMIT")
+        return env
+
+    def schema_lists(self, name: str) -> Dict[str, Any]:
+        """Classes ``[iri, n]`` and class-level relations ``[s, p, o, n]``:
+        from the schema pyramid, or else the lists the card carries (a file
+        built without a pyramid). For the graph view's schema diagram."""
+        source, entry = self.source_of(name)
+        handle = self.handle(source)
+        with self._locked(handle):
+            try:
+                schema = handle.graph.schema()
+            except Exception:
+                schema = None
+            card = None if schema else (handle.graph.card() or {})
+        if schema:
+            return {"classes": schema.get("classes") or [], "relations": schema.get("relations") or [],
+                    "from": "pyramid"}
+
+        def bare(term: Any) -> str:
+            s = str(term)
+            return s[1:-1] if s.startswith("<") and s.endswith(">") else s
+
+        classes = [[bare(c), n] for c, n in card.get("classes") or []]
+        relations = [[bare(link.get("s_class")), bare(link.get("predicate")), bare(link.get("o_class")),
+                      link.get("count") or 0] for link in card.get("class_links") or []]
+        if not classes:
+            raise RequestError(f"{entry.get('key')} has no schema pyramid, and its card lists no classes: "
+                               "there is no schema to draw")
+        return {"classes": classes, "relations": relations, "from": "card"}
 
     def ask_boolean(self, dataset: Optional[str], url: Optional[str], query: str) -> bool:
         return bool(self.run_query(dataset, url, query).get("boolean"))
