@@ -173,3 +173,17 @@ crate = "unic-ucd-ident"
 lockfiles = ["clients/tauri/src-tauri"]
 reason = "Unmaintained (informational); see RUSTSEC-2025-0075, same origin and same fix."
 review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2026-0543"
+crate = "chrono"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = """
+chrono is unmaintained (informational, no vulnerability, no patched release).
+None of it is compiled: `cargo tree --target all --all-features -i chrono` in
+clients/tauri/src-tauri prints nothing. It is in the lockfile only because
+serde_with (through tauri-utils) names its optional chrono dependency in weak
+`chrono_0_4?/...` features, and Cargo locks every optional dependency a weak
+feature names. The newest serde_with (3.24) and tauri-utils (2.10) do the same,
+so no update removes it. Check again on each Tauri upgrade."""
+review_by = 2027-02-19
