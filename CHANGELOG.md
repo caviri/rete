@@ -5,21 +5,28 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-11-19
+
+0.7.6 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
 ### Changed
 
-- **The ISWC demo's agent extension is the 0.7.5 `rete.mcpb`.** The 0.7.4
-  bundle still named the old addresses of the 36 catalog files moved in 0.7.5.
+- **The ISWC demo's agent extension is the 0.7.5 `rete.mcpb`** (#494). The
+  0.7.4 bundle still named the old addresses of the 36 catalog files moved in
+  0.7.5.
+- **The landing page's console queries Linked Jazz and Wikidata paintings**
+  (#496). The hosting-cost section is hidden for now.
 
 ### Fixed
 
-- **`EXISTS` outside a `FILTER` reads the row.** In a `BIND`, a projected
+- **`EXISTS` outside a `FILTER` reads the row** (#497). In a `BIND`, a projected
   expression, an aggregate's argument, a `GROUP BY` or an `ORDER BY` key,
   `EXISTS` was `false` on every row and `NOT EXISTS` `true`, so
   `BIND(IF(NOT EXISTS { ?s :path ?p }, "no-path", "has-path") AS ?x)` gave
   `"no-path"` for every `?s`, and `SUM(IF(EXISTS { … }, 1, 0))` was 0. A bare
   `(EXISTS { … } AS ?x)` was unbound. Each is now decided per row against
   the active graph, as in a `FILTER`.
-- **The plaza runs the 0.7.5 engine.** It ran 0.3.0, which reads no current
+- **The plaza runs the 0.7.5 engine** (#495). It ran 0.3.0, which reads no current
   catalog file, and its card reader knew only the `0x05` header, so its five
   remote datasets (all format `0x08`) did not open. It reads `0x05` to `0x08`
   now, including the zstd-compressed cards of `0x06` on.
