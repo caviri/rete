@@ -56,37 +56,51 @@ SELECT DISTINCT ?reached ?name WHERE {
     blurb: "Every painting in Wikidata, 1.1 million of them, with their painters, collections and places.",
     facts: { triples: "23.5 M", license: "CC0" },
     questions: [
-      { label: "All of Vermeer's paintings", q: `PREFIX wd: <http://www.wikidata.org/entity/>
+      { label: "Ten of Vermeer's paintings", q: `PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+# P170 creator, P18 image, P1476 title
 SELECT ?work ?title ?thumb WHERE {
-  ?work wdt:P170 wd:Q41264 ; wdt:P18 ?img .
-  FILTER(isIRI(?img))
-  OPTIONAL { ?work rdfs:label ?title FILTER(LANG(?title) = "en") }
+  { SELECT ?work WHERE { ?work wdt:P170 wd:Q41264 } LIMIT 12 }
+  ?work wdt:P18 ?img ; wdt:P1476 ?title .
+  FILTER(isIRI(?img) && LANG(?title) = "en")
   BIND(IRI(CONCAT(REPLACE(STR(?img), "^http:", "https:"), "?width=330")) AS ?thumb)
 }` },
-      { label: "Collections with the most paintings", q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+      { label: "Rembrandt's students, with portraits", q: `PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?collection ?name ?paintings WHERE {
-  { SELECT ?collection (COUNT(*) AS ?paintings) WHERE { ?p wdt:P195 ?collection }
-    GROUP BY ?collection ORDER BY DESC(?paintings) LIMIT 15 }
-  OPTIONAL { ?collection rdfs:label ?name FILTER(LANG(?name) = "en") }
-}
-ORDER BY DESC(?paintings)` },
-      { label: "Rembrandt's teachers and students", view: "graph", q: `PREFIX wd: <http://www.wikidata.org/entity/>
+# P1066 student of, P18 image
+SELECT ?painter ?name ?portrait WHERE {
+  { SELECT ?painter WHERE { ?painter wdt:P1066 wd:Q5598 } LIMIT 14 }
+  ?painter wdt:P18 ?img ; rdfs:label ?name .
+  FILTER(isIRI(?img) && LANG(?name) = "en")
+  BIND(IRI(CONCAT(REPLACE(STR(?img), "^http:", "https:"), "?width=330")) AS ?portrait)
+}` },
+      { label: "Rembrandt and his students", view: "graph", q: `PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 # wdt:P1066 is "student of"
 CONSTRUCT {
-  ?student wdt:P1066 ?teacher .
-  ?student rdfs:label ?sn . ?teacher rdfs:label ?tn .
+  ?student wdt:P1066 wd:Q5598 .
+  ?student rdfs:label ?name ; wdt:P18 ?portrait .
+  wd:Q5598 rdfs:label ?rname ; wdt:P18 ?rportrait .
 } WHERE {
-  { wd:Q5598 wdt:P1066 ?teacher BIND(wd:Q5598 AS ?student) }
-  UNION
-  { ?student wdt:P1066 wd:Q5598 BIND(wd:Q5598 AS ?teacher) }
-  OPTIONAL { ?student rdfs:label ?sn FILTER(LANG(?sn) = "en") }
-  OPTIONAL { ?teacher rdfs:label ?tn FILTER(LANG(?tn) = "en") }
+  { SELECT ?student WHERE { ?student wdt:P1066 wd:Q5598 } LIMIT 14 }
+  ?student rdfs:label ?name ; wdt:P18 ?img .
+  FILTER(LANG(?name) = "en" && isIRI(?img))
+  BIND(IRI(CONCAT(REPLACE(STR(?img), "^http:", "https:"), "?width=120")) AS ?portrait)
+  wd:Q5598 rdfs:label ?rname ; wdt:P18 ?rimg .
+  FILTER(LANG(?rname) = "en" && isIRI(?rimg))
+  BIND(IRI(CONCAT(REPLACE(STR(?rimg), "^http:", "https:"), "?width=120")) AS ?rportrait)
 }` },
+      { label: "Collections with the most paintings", q: `PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+# P195 collection
+SELECT ?collection ?name ?paintings WHERE {
+  { SELECT ?collection (COUNT(*) AS ?paintings) WHERE { ?p wdt:P195 ?collection }
+    GROUP BY ?collection ORDER BY DESC(?paintings) LIMIT 10 }
+  OPTIONAL { ?collection rdfs:label ?name FILTER(LANG(?name) = "en") }
+}
+ORDER BY DESC(?paintings)` },
     ],
   },
 ];
@@ -211,7 +225,7 @@ function humanize(iri) {
 }
 const LABEL_RE = /(^|[:#/_-])(name|label|title|preflabel|caption|headline)$|^(name|label|title)$/i;
 const IMG_EXT = /\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i;
-const IMG_VAR = /(img|image|photo|thumb|picture|depiction|logo|preview|painting|icon|poster|render)/i;
+const IMG_VAR = /(img|image|photo|thumb|picture|portrait|depiction|logo|preview|painting|icon|poster|render)/i;
 function imageOf(term, name = "") {
   if (!term) return null;
   const v = term.v;
