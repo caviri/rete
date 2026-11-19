@@ -441,14 +441,16 @@ async function run(queryText, opts = {}) {
     if (!engine.w) setStatus("Loading the engine…");
     await engine.start();
     state.gen++;
+    const tOpen = performance.now();
     const { info, fresh } = await ensureOpen(g);
+    const openMs = performance.now() - tOpen;
     if (token !== state.token) return;
     setStatus("Running…");
     state.spanUrl = g.url;
     const r = await engine.call("query", g.inMemory ? { key: g.key, query } : { url: g.url, query });
     if (token !== state.token) return;
     r.fileLength = r.fileLength || info.fileLength;
-    if (fresh && !g.inMemory) { r.openBytes = info.openBytes; r.openRequests = info.openRequests; }
+    if (fresh && !g.inMemory) { r.openBytes = info.openBytes; r.openRequests = info.openRequests; r.ms += openMs; }
     const result = r.result;
     if (opts.explore) {
       state.trail.push({ label: opts.label, iri: opts.iri, query, result, r });
@@ -1171,9 +1173,14 @@ function setMeter(r) {
   // The first query on a file also pays for opening it; count that in.
   const bytes = r.bytes + (r.openBytes || 0), reqs = r.requests + (r.openRequests || 0);
   const pct = L ? (bytes / L) * 100 : 0;
+  const opened = r.openBytes ? ", opening the file included" : "";
+  // Parts saved on an earlier visit are read from this browser, not fetched.
+  const net = reqs - (r.savedRequests || 0);
   t.innerHTML = bytes === 0
     ? `Answered from parts of the file this page already had: <b>0 bytes</b> fetched, ${fmtMs(r.ms)}.`
-    : `Read <b>${fmtBytes(bytes)}</b> of a <b>${fmtBytes(L)}</b> file <span class="pct">(${fmtPct(pct)})</span> in ${reqs} request${reqs === 1 ? "" : "s"}, ${fmtMs(r.ms)}${r.openBytes ? ", opening the file included" : ""}.`;
+    : r.savedBytes
+      ? `Read <b>${fmtBytes(bytes)}</b> of a <b>${fmtBytes(L)}</b> file <span class="pct">(${fmtPct(pct)})</span> in ${fmtMs(r.ms)}${opened}. <b>${fmtBytes(r.savedBytes)}</b> of it came from this browser, saved on an earlier visit; ${net ? `the rest took ${net} request${net === 1 ? "" : "s"}` : "nothing went over the network"}.`
+      : `Read <b>${fmtBytes(bytes)}</b> of a <b>${fmtBytes(L)}</b> file <span class="pct">(${fmtPct(pct)})</span> in ${reqs} request${reqs === 1 ? "" : "s"}, ${fmtMs(r.ms)}${opened}.`;
 }
 
 /* ───────────────────────── Bring your own graph ───────────────────────── */

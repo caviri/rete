@@ -9,6 +9,10 @@
 // The engine calls `self.reteProgress(bytes, spans, n)` after every physical
 // fetch. We forward those spans to the page, which draws them on the file
 // strip while the query is still running.
+//
+// Parts of a file read on an earlier visit are kept in this browser
+// (rangecache.js) and answered from there; the page is told how much.
+import * as rangeCache from "./rangecache.js";
 import init, {
   RemoteGraph,
   register_local_file,
@@ -17,6 +21,7 @@ import init, {
   card as cardBytes,
 } from "../docs/engine/rete_wasm.js";
 
+rangeCache.install();
 const ready = init();
 const sessions = new Map(); // url -> RemoteGraph
 const memory = new Map();   // key -> Uint8Array (graphs built in the browser)
@@ -48,6 +53,14 @@ function session(url) {
   return g;
 }
 
+// Opening read the header from the network, so the content hash is this
+// file's, not an older copy's; only then are saved parts used.
+async function armed(url, g) {
+  let hash = "";
+  try { hash = g.content_hash(); } catch { /* an engine without it: no cache */ }
+  await rangeCache.arm(url, hash);
+}
+
 function parseStats(g) {
   try { return JSON.parse(g.stats()); } catch { return {}; }
 }
@@ -68,6 +81,7 @@ const handlers = {
       const g = session(url);
       const card = cardOf(g);
       const s = parseStats(g);
+      await armed(url, g);
       return { fileLength: s.fileLength || 0, card, openBytes: s.bytes || 0, openRequests: s.requests || 0 };
     } finally {
       live = null;
@@ -102,7 +116,9 @@ const handlers = {
       };
     }
     const g = session(url);
+    await armed(url, g);
     const before = parseStats(g);
+    const hit0 = { ...rangeCache.hits };
     live = { id, bytes: 0, requests: 0 };
     try {
       const json = g.query(query, "json");
@@ -112,12 +128,15 @@ const handlers = {
         ms: performance.now() - t0,
         bytes: (after.bytes || 0) - (before.bytes || 0),
         requests: (after.requests || 0) - (before.requests || 0),
+        savedBytes: rangeCache.hits.bytes - hit0.bytes,
+        savedRequests: rangeCache.hits.requests - hit0.requests,
         totalBytes: after.bytes || 0,
         fileLength: after.fileLength || 0,
         base: after.base || 0,
       };
     } finally {
       live = null;
+      rangeCache.flush();
     }
   },
 };
