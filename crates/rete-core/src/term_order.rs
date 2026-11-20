@@ -327,6 +327,9 @@ impl TermOrder {
             if let Some(k) = self.text_separator(prev_last, first) {
                 return k;
             }
+            if let Some(k) = self.typed_separator(prev_last, first) {
+                return k;
+            }
             return first.to_vec();
         }
         crate::dict::shortest_separator(prev_last, first)
@@ -334,6 +337,59 @@ impl TermOrder {
 }
 
 impl TermOrder {
+    /// The separator of two typed-literal tokens. The group is ordered by the
+    /// token's bytes, so a key that is a *typed literal with a shortened
+    /// lexical form* (`"UklGRb"^^<dt>`: `first`'s body cut one byte past the
+    /// divergence, closed again, with `first`'s own suffix) routes between
+    /// them, and a long literal (an embedded image, a WKT polygon) costs the
+    /// directory a few bytes, not its whole text. Keeping `first` whole made
+    /// every directory entry as large as the literal: a file of 137 KiB
+    /// literals had an 800 MB directory, which a first scan read. The cut must
+    /// be re-closed rather than truncated: an unterminated `"…` reads as a
+    /// simple literal, the text group, which sorts below every typed token.
+    /// `None` when no short key routes (the caller keeps `first`).
+    fn typed_separator(self, prev_last: &[u8], first: &[u8]) -> Option<Vec<u8>> {
+        if group(prev_last) != G_TYPED || group(first) != G_TYPED || prev_last >= first {
+            return None;
+        }
+        let sf = std::str::from_utf8(first).ok()?;
+        let (body, suffix) = crate::terms::literal_parts(sf)?;
+        if suffix.is_empty() || suffix.starts_with('@') {
+            return None;
+        }
+        let shared = prev_last
+            .iter()
+            .zip(first)
+            .take_while(|(a, b)| a == b)
+            .count();
+        // First candidate: one byte past the divergence. A byte below `"` in
+        // `first` (a space, `!`) would put the closing quote above it; try the
+        // next cut, a few times.
+        let mut end = shared.max(1);
+        for _ in 0..8 {
+            end += 1;
+            while end <= body.len() && !body.is_char_boundary(end - 1) {
+                end += 1;
+            }
+            let cut = end - 1;
+            if cut >= body.len() || !body.is_char_boundary(cut) {
+                return None;
+            }
+            let mut key = Vec::with_capacity(cut + suffix.len() + 2);
+            key.push(b'"');
+            key.extend_from_slice(&body.as_bytes()[..cut]);
+            key.push(b'"');
+            key.extend_from_slice(suffix.as_bytes());
+            let routes = group(&key) == G_TYPED
+                && self.cmp(prev_last, &key) == Ordering::Less
+                && self.cmp(&key, first) != Ordering::Greater;
+            if routes {
+                return Some(key);
+            }
+        }
+        None
+    }
+
     /// The separator of two text literals: a simple literal whose lexical form
     /// is the shortest string strictly between the two lexical forms (so no
     /// datatype or tag decides). `None` when there is none (equal or prefix
@@ -656,5 +712,30 @@ mod tests {
         assert!(c.is_exact(1) && c.is_exact(4));
         assert!(!c.is_exact(5) && !c.is_exact(6));
         assert!(c.is_exact(7));
+    }
+
+    #[test]
+    fn typed_literal_separators_are_short_and_route() {
+        let o = TermOrder::Sparql;
+        let dt = "^^<http://www.w3.org/2001/XMLSchema#base64Binary>";
+        let big = |head: &str| format!("\"{head}{}\"{dt}", "Q".repeat(150_000));
+        let (a, b) = (big("UklGRaaa"), big("UklGRbbb"));
+        assert!(o.cmp_str(&a, &b) == Ordering::Less);
+        let k = o.separator(a.as_bytes(), b.as_bytes());
+        assert!(
+            k.len() < dt.len() + 16,
+            "a {} B key for a 150 KB literal",
+            k.len()
+        );
+        assert_eq!(o.cmp(a.as_bytes(), &k), Ordering::Less);
+        assert_ne!(o.cmp(&k, b.as_bytes()), Ordering::Greater);
+        // A cut that ends on a closing quote would read as a text literal and
+        // sort below the typed group, mis-routing the previous chunk's last
+        // term: the writer keeps the whole term there.
+        let (p, f) = ("\"ab!\"^^<http://e/d>", "\"ab\"^^<http://e/d>");
+        assert_eq!(o.cmp_str(p, f), Ordering::Less);
+        let k = o.separator(p.as_bytes(), f.as_bytes());
+        assert_eq!(o.cmp(p.as_bytes(), &k), Ordering::Less);
+        assert_ne!(o.cmp(&k, f.as_bytes()), Ordering::Greater);
     }
 }

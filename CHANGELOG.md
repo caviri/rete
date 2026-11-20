@@ -5,6 +5,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A format 0x08 file of very large typed literals has a small dictionary
+  directory.** The routing key between two dictionary chunks of typed
+  literals (an embedded image as `xsd:base64Binary`, a WKT polygon) was the
+  whole first literal, so a file of 137 KiB literals carried an 800 MB
+  directory that the first query read and decoded (a `LIMIT 1` scan read
+  800 MB and the card's `ov-one-row` was dropped; an aggregate over the
+  literals was killed at 8 GB). The key is now the literal cut one byte past
+  where it differs from its predecessor. Files written before keep working;
+  they get the small directory when they are written again (`rete convert`).
+
 ## [0.7.6] - 2026-11-19
 
 0.7.6 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
