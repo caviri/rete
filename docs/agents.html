@@ -748,8 +748,10 @@ word search), read from its header and card without opening it.</p>
 so <code>graph_view</code> shows a query's results, an entity's neighbourhood or a
 dataset's schema as an interactive graph in the conversation: as dots, as boxes
 listing each entity's properties, or as a class diagram. The user can change
-labels, layers and layout, search, expand and aggregate nodes, switch to a
-table, and send a selection back to the chat; Claude changes the open view with
+labels, layers and layout (including a hive plot), search, expand and aggregate
+nodes, switch to a table or to cards (a card per row, with pictures, audio, video
+and 3D models where the values are addresses), and send a selection back to the
+chat; Claude changes the open view with
 <code>graph_view_update</code> and reads what the user selected with <code>graph_view_state</code>.
 The view fetches its data with tools only it can call, so the triples never
 pass through the model. Details in <code>clients/mcpb/README.md</code>.</p>

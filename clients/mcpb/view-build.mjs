@@ -42,6 +42,10 @@ export const BUNDLED = [
   ["cytoscape", "drawing the graph view"],
   ["@dagrejs/dagre", "the layered layout"],
   ["@dagrejs/graphlib", "the layered layout"],
+  ["@google/model-viewer", "3D models in the card view"],
+  ["three", "3D models in the card view"],
+  ["lit", "3D models in the card view"],
+  ["@monogrid/gainmap-js", "3D models in the card view"],
 ];
 
 export function packageOf(name) {
@@ -106,6 +110,19 @@ export function aboutOf({ version, build: stamp, bundled = BUNDLED }) {
  * MCP Apps client included — and its styles are inlined into one HTML file.
  */
 export async function buildViewHtml(about) {
+  // The 3D viewer rides along as text in a script the page never runs until a
+  // card has a model to show (src/view/app.js: loadModelViewer): it is a
+  // megabyte, and most views have no model.
+  const viewer = await build({
+    stdin: { contents: `import "@google/model-viewer";`, resolveDir: here, sourcefile: "model-viewer.js" },
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    target: "es2020",
+    minify: true,
+    write: false,
+    legalComments: "none",
+  });
   const view = await build({
     entryPoints: [join(here, "src", "view", "app.js")],
     bundle: true,
@@ -119,5 +136,11 @@ export async function buildViewHtml(about) {
   });
   return readFileSync(join(here, "src", "view", "index.html"), "utf8")
     .replace("/*STYLE*/", () => readFileSync(join(here, "src", "view", "style.css"), "utf8"))
-    .replace("/*SCRIPT*/", () => view.outputFiles[0].text.replaceAll("</script", "<\\/script"));
+    .replace("/*MODELVIEWER*/", () => escapeScript(viewer.outputFiles[0].text))
+    .replace("/*SCRIPT*/", () => escapeScript(view.outputFiles[0].text));
+}
+
+/** Script text that is safe inside a <script> element: no "</script" and no "<!--" (both can only be in strings). */
+function escapeScript(text) {
+  return text.replaceAll("</script", "<\\/script").replaceAll("<!--", "<\\x21--");
 }

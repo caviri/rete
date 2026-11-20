@@ -279,3 +279,43 @@ test("bad calls say what is wrong", async (t) => {
   assert.ok(ask.isError);
   assert.match(ask.content[0].text, /no graph to show/);
 });
+
+test("the page declares where the card view may load media from, and Claude can set the new options", async (t) => {
+  const { client, data } = await connect(t, await fixture());
+  const { contents } = await client.readResource({ uri: "ui://rete/graph-view.html" });
+  const csp = contents[0]._meta.ui.csp;
+  assert.ok(csp.resourceDomains.includes("https://*.wikimedia.org"), "pictures from Commons");
+  assert.deepEqual(csp.connectDomains, csp.resourceDomains, "a 3D model is fetched from the same sites");
+  assert.ok(csp.resourceDomains.every((d) => /^https:\/\//.test(d)), "https only");
+  assert.equal(contents[0]._meta.ui.prefersBorder, true);
+  const listed = (await client.listResources()).resources.find((r) => r.uri === "ui://rete/graph-view.html");
+  assert.deepEqual(listed._meta.ui.csp, csp, "also in the listing, for hosts that read it there");
+  // The 3D viewer is inside the page as text, which the page runs only when a model needs it.
+  assert.match(contents[0].text, /<script type="text\/plain" id="model-viewer-src">[\s\S]{100000,}?<\/script>/);
+
+  const { view_id } = (await client.callTool({ name: "graph_view", arguments: { dataset: "people", query: EDGES } })).structuredContent;
+  await data("graph_view_update", {
+    view_id,
+    options: { view: "cards", layout: "hive", hive_axes: "role", hive_order: "name", card_fields: { photo: "image", ref: "link" } },
+  });
+  const whole = await data("graph_view_sync", { view_id, since: 0 });
+  assert.deepEqual(
+    [whole.snapshot.options.view, whole.snapshot.options.layout, whole.snapshot.options.hive_axes, whole.snapshot.options.hive_order],
+    ["cards", "hive", "role", "name"],
+  );
+  assert.deepEqual(whole.snapshot.options.card_fields, { photo: "image", ref: "link" });
+  const bad = await client.callTool({ name: "graph_view_update", arguments: { view_id, options: { card_fields: { photo: "hologram" } } } });
+  assert.ok(bad.isError, "an unknown field type is refused");
+});
+
+test("RETE_VIEW_MEDIA_DOMAINS replaces the declared sites, or declares none", async () => {
+  const { mediaDomains, MEDIA_DOMAINS } = await import("../src/views.mjs");
+  assert.deepEqual(mediaDomains({}), MEDIA_DOMAINS);
+  assert.deepEqual(mediaDomains({ RETE_VIEW_MEDIA_DOMAINS: "https://a.example, https://*.b.example:8443 ,javascript:alert(1), http://c.example" }), [
+    "https://a.example",
+    "https://*.b.example:8443",
+    "http://c.example",
+  ]);
+  assert.deepEqual(mediaDomains({ RETE_VIEW_MEDIA_DOMAINS: "https:" }), ["https:"]);
+  assert.deepEqual(mediaDomains({ RETE_VIEW_MEDIA_DOMAINS: "none" }), []);
+});

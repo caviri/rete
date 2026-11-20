@@ -22,6 +22,8 @@ import { z } from "zod";
 import { Term } from "rete-graph";
 
 import { AttachmentError, uploadLimit } from "./graphs.mjs";
+import { FIELD_TYPE_NAMES } from "./view/cards.js";
+import { HIVE_AXES, HIVE_ORDERS } from "./view/hive.js";
 import {
   LABEL_BATCH,
   LABELS,
@@ -83,14 +85,57 @@ const optionsSchema = z
       .describe('colour and layer nodes by "type" (rdf:type, default), "namespace", "none", or a predicate IRI'),
     group_boxes: z.boolean().optional().describe("draw each group as a box around its nodes (default false)"),
     layout: z
-      .enum(["cose", "layered", "concentric", "breadthfirst", "circle", "grid"])
+      .enum(["cose", "layered", "concentric", "breadthfirst", "circle", "grid", "hive"])
       .optional()
-      .describe("cose: force-directed (default for graph); layered: top-down layers (default for boxes and classes)"),
-    view: z.enum(["graph", "table"]).optional().describe("which tab is shown"),
+      .describe(
+        "cose: force-directed (default for graph); layered: top-down layers (default for boxes and classes); " +
+          "hive: nodes on a few radial axes, ordered along each by hive_order, edges curved between the axes",
+      ),
+    hive_axes: z
+      .enum(HIVE_AXES)
+      .optional()
+      .describe("hive layout: what puts a node on an axis — type (its class), role (sources / both / sinks), kind (resource / literal / …), degree (thirds by links); auto (default) takes the first that tells two groups apart"),
+    hive_order: z.enum(HIVE_ORDERS).optional().describe("hive layout: what orders nodes along an axis, from the centre out — degree (links, default), in, out, name"),
+    view: z.enum(["graph", "table", "cards"]).optional().describe("which tab is shown: the graph, the rows as a table, or the rows as cards (pictures, video, audio and 3D models drawn where the values are addresses)"),
+    card_fields: z
+      .record(z.string(), z.enum(FIELD_TYPE_NAMES))
+      .optional()
+      .describe("cards: how to draw each column, by column name (a SELECT variable): " + FIELD_TYPE_NAMES.join(" / ") + ". Columns not named are detected from their values (auto)"),
     theme: z.enum(["auto", "light", "dark"]).optional().describe("the view's colours; auto (default) follows Claude's theme"),
     literals_as_nodes: z.boolean().optional().describe("draw literal values as nodes instead of node properties"),
   })
   .optional();
+
+// --- what the card view may load ---------------------------------------------
+
+/**
+ * Sites the card view declares to the host (MCP Apps: _meta.ui.csp), where it may
+ * load pictures, audio, video and 3D models from. A host enforces exactly the
+ * origins declared: it cannot be told "any site" in the way a page would like,
+ * so these are the sites the published graphs point at. RETE_VIEW_MEDIA_DOMAINS
+ * replaces the list (comma separated; origins as in a CSP, https://*.example.org
+ * for subdomains, https: for any https site; "none" for no network at all).
+ */
+export const MEDIA_DOMAINS = [
+  "https://*.wikimedia.org",
+  "https://*.graphplaza.com",
+  "https://huggingface.co",
+  "https://*.huggingface.co",
+  "https://*.hf.co",
+  "https://archive.org",
+  "https://*.archive.org",
+  "https://*.githubusercontent.com",
+];
+
+export function mediaDomains(env = process.env) {
+  const given = env.RETE_VIEW_MEDIA_DOMAINS;
+  if (given === undefined || given.trim() === "") return [...MEDIA_DOMAINS];
+  if (given.trim().toLowerCase() === "none") return [];
+  return given
+    .split(",")
+    .map((d) => d.trim())
+    .filter((d) => /^(https?:\/\/[\w.*-]+(:\d+)?|https?:)$/.test(d));
+}
 
 // --- the tools ---------------------------------------------------------------
 
@@ -291,14 +336,23 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
 
   // --- the UI resource ---------------------------------------------------------
 
+  // The page carries its script, so it needs the network for nothing but what the card
+  // view shows: pictures, audio and video (resourceDomains) and the file of a 3D model
+  // (connectDomains), from whatever site a value names. A host only honours the origins
+  // declared here, so the list below is what can load in Claude (mediaDomains).
+  const media = mediaDomains();
+  const csp = media.length ? { resourceDomains: media, connectDomains: media } : undefined;
   registerAppResource(
     server,
     "Graph view",
     VIEW_URI,
-    { description: "Interactive graph and table view of query results, with labels, layers, layouts, zoom and search." },
+    {
+      description: "Interactive graph, table and card view of query results, with labels, layers, layouts, zoom and search.",
+      _meta: { ui: { prefersBorder: true, ...(csp && { csp }) } },
+    },
     async () => {
       html ??= await readFile(join(here, "graph-view.html"), "utf8");
-      return { contents: [{ uri: VIEW_URI, mimeType: RESOURCE_MIME_TYPE, text: html, _meta: { ui: { prefersBorder: true } } }] };
+      return { contents: [{ uri: VIEW_URI, mimeType: RESOURCE_MIME_TYPE, text: html, _meta: { ui: { prefersBorder: true, ...(csp && { csp }) } } }] };
     },
   );
 
@@ -396,7 +450,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
         "(or every node of a type) and ungroup them, or change its look — diagram " +
         "(graph / boxes / classes), labels, edge_labels, properties, node_shape, edge_style " +
         "(curved / straight / square), group_by (type / namespace / none / a predicate IRI), " +
-        "group_boxes, layout, view (graph / table), literals_as_nodes, theme (auto / light / dark). " +
+        "group_boxes, layout (incl. hive, with hive_axes and hive_order), view (graph / table / cards, with card_fields), literals_as_nodes, theme (auto / light / dark). " +
         "The open view picks the change up within a second or two. Answers with the new counts " +
         "and what the user has selected.",
       inputSchema: {
