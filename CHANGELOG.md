@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-11-20
+
+0.7.7 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
 ### Added
 
 - **The MCPB graph view has a card view and a hive layout.** Cards is a third
