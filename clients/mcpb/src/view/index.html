@@ -12,6 +12,7 @@
     <div class="tabs" role="tablist">
       <button type="button" data-tab="graph" class="on">Graph</button>
       <button type="button" data-tab="table">Table</button>
+      <button type="button" data-tab="cards">Cards</button>
     </div>
     <label class="sel">Draw
       <select id="opt-diagram" title="Dots, a box per entity with its properties, or a class diagram">
@@ -35,6 +36,24 @@
         <option value="breadthfirst">tree</option>
         <option value="circle">circle</option>
         <option value="grid">grid</option>
+        <option value="hive">hive</option>
+      </select>
+    </label>
+    <label class="sel hive-opt" hidden>Axes
+      <select id="opt-hive-axes" title="What puts a node on an axis">
+        <option value="auto">auto</option>
+        <option value="type">by type</option>
+        <option value="role">by role</option>
+        <option value="kind">by kind</option>
+        <option value="degree">by links</option>
+      </select>
+    </label>
+    <label class="sel hive-opt" hidden>Order
+      <select id="opt-hive-order" title="What orders the nodes along an axis, from the centre out">
+        <option value="degree">links</option>
+        <option value="in">links in</option>
+        <option value="out">links out</option>
+        <option value="name">name</option>
       </select>
     </label>
     <label class="sel">Lines
@@ -70,6 +89,7 @@
   </header>
   <main>
     <section id="graph" aria-label="graph"></section>
+    <svg id="hive-axes" aria-hidden="true" hidden></svg>
     <section id="table" hidden>
       <div class="table-bar">
         <input id="table-filter" type="search" placeholder="Filter rows" autocomplete="off">
@@ -78,6 +98,22 @@
         <button type="button" id="csv" hidden>CSV</button>
       </div>
       <div class="table-wrap"><table id="rows"></table></div>
+    </section>
+    <section id="cards" aria-label="cards" hidden>
+      <div class="table-bar">
+        <input id="cards-filter" type="search" placeholder="Filter cards" autocomplete="off">
+        <span id="cards-count"></span>
+        <span class="grow"></span>
+        <details id="cards-fields-menu" class="menu menu-right">
+          <summary title="How each field is drawn">⚙ Fields</summary>
+          <div class="menu-body" id="cards-fields"></div>
+        </details>
+      </div>
+      <div class="cards-wrap">
+        <div id="cards-grid" class="cards-grid"></div>
+        <p id="cards-empty" class="cards-empty" hidden>Nothing to show as cards yet.</p>
+        <button type="button" id="cards-more" hidden></button>
+      </div>
     </section>
     <aside id="side">
       <section id="layers">
@@ -112,6 +148,7 @@
   <div id="about" hidden></div>
 </div>
 <div id="ctx" role="menu" hidden></div>
+<script type="text/plain" id="model-viewer-src">/*MODELVIEWER*/</script>
 <script>/*SCRIPT*/</script>
 </body>
 </html>

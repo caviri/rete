@@ -5,6 +5,20 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **The MCPB graph view has a card view and a hive layout.** Cards is a third
+  tab beside Graph and Table: one card per row, as a masonry, with a Fields menu
+  that picks how each column is drawn (text, link, button, image, audio, video,
+  3D, PDF, number; detected from the value when left on auto), as in the
+  playground. Media loads when a card scrolls into view. In Claude Desktop it
+  loads only from the sites the extension declares (`RETE_VIEW_MEDIA_DOMAINS`
+  replaces the list); elsewhere the card shows a link. Hive is a new layout:
+  nodes sit on a few axes (by class, role, kind or degree) and are ordered
+  along them by their links. `graph_view` takes `view: "cards"`, `card_fields`,
+  `layout: "hive"`, `hive_axes` and `hive_order`. The file explorer's copy of
+  the view has both.
+
 ### Fixed
 
 - **A format 0x08 file of very large typed literals has a small dictionary

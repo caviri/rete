@@ -70,8 +70,8 @@ file's header, so it answers for every published file.
 Where the client renders MCP Apps (Claude Desktop does), `graph_view` opens an
 interactive view in the conversation; `graph_view_update` changes it and
 `graph_view_state` reads what the user selected. Its page (`src/view/`) is
-built into one self-contained HTML file — cytoscape and dagre inlined, since
-the sandbox has no network — and fetches its elements with app-only tools, so
+built into one self-contained HTML file — cytoscape, dagre and the 3D viewer
+inlined, since the sandbox has no network — and fetches its elements with app-only tools, so
 the data never passes through the model. It draws the graph three ways:
 
 - **nodes** — a dot per entity (circles, or squares), in a force layout;
@@ -87,6 +87,61 @@ or straight. `graph_view(dataset, schema: true)` draws a dataset's own schema �
 its most frequent classes as boxes listing their literal properties with
 counts, linked by their relations — from the schema pyramid, or the card's
 lists in a file without one.
+
+**Hive layout.** The layout menu also has **hive**: nodes sit on a few radial
+axes, ordered along each by a measure, and each edge is a curve between two
+axes, so two plots of the same graph can be compared. The axes come from the
+nodes' classes (the five commonest, the rest sharing one); when the nodes have
+no classes, from their role (sources, both, sinks), then their kind (resource,
+literal, …), then thirds by number of links. **Axes** picks one of these, and
+**Order** what runs along an axis, from the centre out: links (the default),
+links in, links out or name. An edge between two nodes of one axis is an arc
+beside it. It stays a graph: select, hover, pan and zoom work as in the other
+layouts. `options.layout: "hive"`, `hive_axes`, `hive_order`; the arithmetic
+is `src/view/hive.js`.
+
+### Cards
+
+The **Cards** tab draws the rows of the table, one card per row, as the
+playground's Cards output does: the fields stacked, in a masonry on a wide page
+and in one column on a narrow one. A card is a row, so clicking one selects its
+entity in the graph. **⚙ Fields** sets how each column is drawn, with the
+playground's field types that make sense in an offline page: Auto, Text, Link,
+Button, Image, Audio, Video, 3D, PDF (a link) and Number. Auto looks at the value
+only (a file extension, or a Commons `Special:FilePath` address, never a dataset
+or a predicate): `.jpg` `.png` `.svg` … is an image, `.mp3` … audio, `.mp4`
+`.webm` … video, `.glb` `.gltf` a 3D model (drawn with
+[`<model-viewer>`](https://modelviewer.dev), built into the page and started
+the first time a model is shown), `.pdf` a link, another web address a link, the
+rest text. IIIF, maps, molecular structures, PDF.js and page previews are not
+in the extension. `options.view: "cards"` and `options.card_fields`
+(`{ "photo": "image" }`) let Claude open the view on cards and set the fields;
+`graph_view_state` reports what the user set.
+
+Cards are built from text, never from markup, and an address loads only if it
+is `http(s)` (or a `data:image/…` for a picture); a value that is not an address
+is text whatever type it is given. Media loads when its card nears the screen,
+24 cards are drawn and **Show more** adds 48 at a time, up to 500, and at most
+six 3D viewers are alive at once (each holds a WebGL context). Every media field
+has an **Open … ↗** link under it, which opens through the host.
+
+**What can load.** The page runs in a sandboxed frame whose content security
+policy the host builds from what the extension declares in `_meta.ui.csp`; a
+host enforces exactly those origins, so a site that is not declared cannot be
+reached. The extension declares `resourceDomains` (pictures, audio, video) and
+`connectDomains` (the fetch of a 3D model) for Wikimedia, graphplaza.com,
+Hugging Face, archive.org and GitHub user content (`MEDIA_DOMAINS` in
+`src/views.mjs`). `RETE_VIEW_MEDIA_DOMAINS` replaces the list for a build or a
+server process (comma separated CSP origins, `https://*.example.org` for
+subdomains, `https:` for any https site, `none` for no network at all); a 3D
+model also needs the site to send CORS headers, and a Draco-compressed model
+needs the decoder, which `<model-viewer>` fetches from gstatic.com. Where the
+host says what it approved (`hostCapabilities.sandbox.csp`) the card does not
+even ask a site outside it; where it says nothing the page tries, and a picture,
+player or model that does not load is replaced by the reason and a link to the
+file. The footer names the sites a host blocked. In the file explorer, which
+hosts the page in a frame with no policy of its own, any `https` address loads
+(subject to the site's own CORS for models).
 
 A right-click on a node opens its menu — on a node of the selection, the
 selection's: **Expand** (its links), **Compress** (take out what hangs only off

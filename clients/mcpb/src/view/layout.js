@@ -71,3 +71,7 @@ export function layeredPositions(nodes, edges) {
   }
   return { pos, error };
 }
+
+// The hive plot lives apart, in a file with no dependencies, so the server can
+// read its option names; this is where the page finds it with the other layouts.
+export { HIVE_AXES, HIVE_ORDERS, hiveAxes, hivePositions } from "./hive.js";

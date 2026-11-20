@@ -11,9 +11,11 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "3.1.1",
+    "@google/model-viewer": "4.4.0",
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cytoscape": "^3.31.0",
+    "three": "0.183.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

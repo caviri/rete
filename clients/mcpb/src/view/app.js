@@ -9,13 +9,15 @@
 import { App } from "@modelcontextprotocol/ext-apps/app-with-deps";
 import cytoscape from "cytoscape";
 
-import { layeredPositions } from "./layout.js";
+import * as Cards from "./cards.js";
+import { hivePositions, layeredPositions } from "./layout.js";
 
 const PALETTE = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#2f4b7c", "#a05195", "#5fa2ce"];
 const OTHER = "#a8a8a8";
 const MAX_PROPS = 40; // shown in the selection panel
 const MAX_LITERAL_NODES = 12; // per node, with literals as nodes
 const MAX_TABLE = 1000; // rows drawn at once
+const FIELD_LABELS = Object.fromEntries(Cards.FIELD_TYPES);
 const PART = 1024 * 1024; // bytes of a file per graph_view_upload call
 // Version, build, credits and links: stamped in by build.mjs.
 const ABOUT = typeof __RETE_ABOUT__ === "object" ? __RETE_ABOUT__ : null;
@@ -44,6 +46,9 @@ const S = {
     group_by: "type",
     group_boxes: false,
     layout: "cose",
+    hive_axes: "auto", // the hive layout: what puts a node on an axis,
+    hive_order: "degree", // and what orders it along it
+    card_fields: {}, // the cards view: how each field is drawn, by column
     view: "graph",
     literals_as_nodes: false,
     theme: "auto", // or "light", "dark"; auto follows Claude's
@@ -64,6 +69,8 @@ const S = {
   uploading: false,
   labelled: new Set(), // node ids whose labels were asked for
   sort: { col: null, desc: false },
+  hive: null, // the hive layout's last plan: { pos, axes, bow, by }
+  cards: { viewerTimeout: 45000, shown: Cards.CARDS_FIRST, io: null, live: [], fieldsKey: "", blocked: new Set() },
   lastActivity: Date.now(),
   stateDirty: true,
   syncing: false,
@@ -210,6 +217,7 @@ function loadSnapshot(snap) {
   applyTheme(false); // the rebuild below draws the boxes
   syncControls();
   rebuild(true);
+  if (S.options.view !== "graph") showTab(S.options.view); // opened on the table or the cards
   requestLabels();
 }
 
@@ -307,7 +315,7 @@ function applyPatch(p) {
       break;
   }
   requestLabels();
-  if (S.options.view === "table") renderTable();
+  renderRows();
 }
 
 // --- the graph ------------------------------------------------------------------------
@@ -693,6 +701,7 @@ function styleSheet() {
 
 function applyStyle() {
   S.cy?.style(styleSheet());
+  styleHive();
 }
 
 function rebuild(layout) {
@@ -720,7 +729,8 @@ function rebuild(layout) {
   if (layout) runLayout(positions.size === 0);
   renderLayers();
   renderDetails();
-  if (S.options.view === "table") renderTable();
+  renderRows();
+  styleHive();
 }
 
 /** New elements into the drawing, keeping what is there in place. */
@@ -772,6 +782,8 @@ function runLayout(randomize) {
   if (!cy || cy.nodes().empty()) return;
   const name = S.options.layout || "cose";
   const many = cy.nodes().length > 400;
+  if (name !== "hive") clearHive();
+  if (name === "hive") return hive(cy.elements(":visible"), !many);
   if (name === "layered") return layered(cy.elements(":visible"), !many);
   const opts = { name, fit: true, padding: 30, animate: !many, animationDuration: 350, nodeDimensionsIncludeLabels: true };
   if (name === "cose") Object.assign(opts, { randomize, idealEdgeLength: 70, nodeRepulsion: 9000, gravity: 0.25, numIter: many ? 600 : 1200, componentSpacing: 60 });
@@ -793,6 +805,77 @@ function layered(eles, animate) {
   const { pos, error } = layeredPositions(nodes, edges);
   if (error) setNote(`layers: ${error.message} — packed in rows instead`);
   eles.layout({ name: "preset", positions: (n) => pos[n.id()] ?? n.position(), fit: true, padding: 30, animate, animationDuration: 350 }).run();
+}
+
+/**
+ * The hive plot: nodes on radial axes, ordered along each by a measure, edges
+ * bent between the axes (hive.js has the arithmetic). cytoscape only places the
+ * nodes and bends the edges, so selecting, hovering, panning and zooming are
+ * what they are in every other layout.
+ */
+function hive(eles, animate) {
+  const nodes = eles
+    .nodes()
+    .filter((n) => !n.isParent())
+    .map((n) => {
+      const m = S.nodes.get(n.id());
+      return { id: n.id(), kind: m?.kind ?? "other", type: m?.types?.[0] ? local(m.types[0]) : null, label: m?.label ?? n.data("label") };
+    });
+  const edges = eles.edges().map((e) => ({ id: e.id(), source: e.source().id(), target: e.target().id() }));
+  S.hive = hivePositions(nodes, edges, { by: S.options.hive_axes || "auto", order: S.options.hive_order || "degree" });
+  styleHive();
+  eles.layout({ name: "preset", positions: (n) => S.hive.pos[n.id()] ?? n.position(), fit: true, padding: 60, animate, animationDuration: 350, stop: drawAxes }).run();
+  setNote(`hive: axes by ${S.hive.by}, ${S.options.hive_order === "name" ? "ordered by name" : `ordered by ${S.options.hive_order || "degree"}`}`);
+}
+
+/** Each edge bent toward where its axes meet; the other layouts' lines come back when the hive goes. */
+function styleHive() {
+  const cy = S.cy;
+  if (!cy || S.options.layout !== "hive" || !S.hive) return;
+  cy.edges().forEach((e) => {
+    const d = S.hive.bow[e.id()];
+    if (d !== undefined) e.style({ "curve-style": "unbundled-bezier", "control-point-distances": [d], "control-point-weights": [0.5] });
+  });
+}
+
+function clearHive() {
+  if (!S.hive) return;
+  S.hive = null;
+  S.cy?.edges().removeStyle("curve-style control-point-distances control-point-weights");
+  drawAxes();
+}
+
+/** The axes and their names, over the drawing, following pan and zoom. */
+function drawAxes() {
+  const svg = $("hive-axes");
+  const cy = S.cy;
+  if (!S.hive || !cy || S.options.view !== "graph" || S.options.layout !== "hive") {
+    svg.toggleAttribute("hidden", true); // an SVG element has no .hidden
+    return;
+  }
+  svg.toggleAttribute("hidden", false);
+  const w = cy.width();
+  const h = cy.height();
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  const { x: px, y: py } = cy.pan();
+  const z = cy.zoom();
+  const at = (r, a) => [r * Math.cos(a) * z + px, r * Math.sin(a) * z + py];
+  const ns = "http://www.w3.org/2000/svg";
+  svg.replaceChildren(
+    ...S.hive.axes.flatMap((a) => {
+      const [x1, y1] = at(a.from, a.angle);
+      const [x2, y2] = at(a.to, a.angle);
+      const [tx, ty] = at(a.to + 26 / z, a.angle);
+      const line = document.createElementNS(ns, "line");
+      for (const [k, v] of Object.entries({ x1, y1, x2, y2 })) line.setAttribute(k, v);
+      const text = document.createElementNS(ns, "text");
+      text.setAttribute("x", tx);
+      text.setAttribute("y", ty);
+      text.textContent = `${a.key} (${a.count})`;
+      return [line, text];
+    }),
+  );
 }
 
 function applyHidden() {
@@ -1291,15 +1374,267 @@ function csvText() {
 }
 
 function showTab(tab) {
-  S.options.view = tab === "table" ? "table" : "graph";
-  for (const b of document.querySelectorAll(".tabs button")) b.classList.toggle("on", b.dataset.tab === S.options.view);
+  S.options.view = tab === "table" || tab === "cards" ? tab : "graph";
+  for (const b of document.querySelectorAll(".tabs button")) {
+    b.classList.toggle("on", b.dataset.tab === S.options.view);
+    b.setAttribute("aria-selected", String(b.dataset.tab === S.options.view));
+  }
   $("graph").hidden = S.options.view !== "graph";
   $("table").hidden = S.options.view !== "table";
-  if (S.options.view === "table") renderTable();
-  else {
+  $("cards").hidden = S.options.view !== "cards";
+  if (S.options.view === "graph") {
     S.cy?.resize();
-    S.cy?.fit(S.cy.elements(":visible"), 30);
+    if (S.options.layout === "hive") runLayout(false);
+    else S.cy?.fit(S.cy.elements(":visible"), 30);
+  } else drawAxes();
+  if (S.options.view === "cards") renderCards(true);
+  else stopCards();
+  if (S.options.view === "table") renderTable();
+}
+
+/** The rows' tab that is showing, drawn again after the data changed. */
+function renderRows() {
+  if (S.options.view === "table") renderTable();
+  else if (S.options.view === "cards") renderCards(false);
+}
+
+// --- cards --------------------------------------------------------------------------------
+// One card per row of the table, as the playground's Cards output does: the fields
+// stacked, media full width, a masonry on a wide page. Everything is built as DOM
+// nodes from text, never as markup, and an address is loaded only when safeUrl
+// (cards.js) accepts it; images, audio, video and 3D load when their card nears the
+// screen, and the number of cards drawn is bounded (CARDS_FIRST, then CARDS_STEP at a time).
+
+function stopCards() {
+  const c = S.cards;
+  c.io?.disconnect();
+  c.io = null;
+  c.live = [];
+}
+
+/** The card view's fields: the table's columns, and how each is drawn. */
+function renderCards(reset) {
+  const { vars, rows } = tableData();
+  const q = $("cards-filter").value.trim().toLowerCase();
+  const found = q ? rows.filter((r) => vars.some((v) => String(r[v] ?? "").toLowerCase().includes(q))) : rows;
+  const c = S.cards;
+  if (reset) c.shown = Cards.CARDS_FIRST;
+  const n = Cards.cardsShown(found.length, c.shown);
+  stopCards();
+  const types = S.options.card_fields ?? {};
+  const grid = $("cards-grid");
+  grid.replaceChildren(...found.slice(0, n).map((row) => cardElement(vars, row, types)));
+  grid.hidden = !found.length;
+  $("cards-count").textContent = `${found.length} of ${rows.length} cards${found.length > Cards.CARDS_MAX ? ` (first ${Cards.CARDS_MAX} drawn)` : ""}`;
+  const more = $("cards-more");
+  more.textContent = Cards.moreLabel(found.length, n);
+  more.hidden = !more.textContent;
+  renderFieldsMenu(vars);
+  $("cards-empty").hidden = !!found.length;
+  $("cards-grid").dataset.drawn = String(n);
+  $("cards").scrollTop = 0;
+}
+
+const el = (tag, className, text) => {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+
+const prettyName = (v) => String(v).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/^./, (ch) => ch.toUpperCase());
+
+function cardElement(vars, row, types) {
+  const card = el("article", "rcard");
+  card.tabIndex = 0;
+  card.dataset.first = row[vars[0]] ?? "";
+  const fields = Cards.cardFields(vars, row, types);
+  for (const f of fields) card.append(fieldElement(f));
+  if (!fields.length) card.append(el("div", "cf-v", "(empty row)"));
+  card.setAttribute("aria-label", trunc(String(row[vars.find((v) => row[v]) ?? ""] ?? "card"), 80));
+  return card;
+}
+
+function fieldElement(f) {
+  const wrap = el("div", "cf");
+  const key = el("div", "cf-k", prettyName(f.name));
+  key.title = f.name.startsWith("?") ? f.name : `?${f.name}`;
+  const value = el("div", "cf-v");
+  wrap.append(key, value);
+  if (Cards.isMedia(f.type)) {
+    value.classList.add("cf-media");
+    const slot = el("div", "media-slot", f.type === "model3d" ? "3D" : f.type);
+    slot.dataset.kind = f.type;
+    slot._field = f;
+    value.append(slot, openLink(f, Cards.OPEN_LABEL[f.type], "media-footer"));
+    watch(slot);
+  } else if (f.type === "number") {
+    value.classList.add("num");
+    value.textContent = f.value;
+    value.title = f.value;
+  } else if (f.link && (f.type === "link" || f.type === "button" || f.type === "pdf")) {
+    const label = f.type === "button" ? "Open ↗" : f.type === "pdf" ? "Open PDF ↗" : trunc(f.value, 120);
+    const a = el("a", f.type === "button" ? "cell-btn" : "", label);
+    a.href = f.link;
+    a.dataset.open = f.link;
+    a.title = f.value;
+    a.rel = "noopener noreferrer";
+    value.append(a);
+  } else {
+    value.textContent = trunc(f.value, 600);
+    value.title = f.value.length > 120 ? trunc(f.value, 600) : "";
   }
+  return wrap;
+}
+
+/** A link that opens through the host, with the label the playground gives it. */
+function openLink(f, label, className) {
+  const wrap = el("div", className);
+  const a = el("a", "media-source", label);
+  a.href = f.link ?? "#";
+  a.dataset.open = f.link ?? "";
+  a.rel = "noopener noreferrer";
+  a.title = f.value;
+  wrap.append(a);
+  return wrap;
+}
+
+/** Media loads when its card is near the screen, not before. */
+function watch(slot) {
+  const c = S.cards;
+  if (typeof IntersectionObserver === "undefined") return queueMicrotask(() => hydrate(slot));
+  c.io ??= new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        c.io?.unobserve(e.target);
+        hydrate(e.target);
+      }
+    },
+    { root: document.querySelector(".cards-wrap"), rootMargin: "300px 0px" },
+  );
+  c.io.observe(slot);
+}
+
+/** What the media could not do, said where the picture would be, with a way to the file. */
+function fallback(slot, why) {
+  const f = slot._field;
+  const box = el("div", "media-fallback");
+  box.append(el("span", "why", why));
+  const a = el("a", "", Cards.OPEN_LABEL[f.type]);
+  a.href = f.link ?? "#";
+  a.dataset.open = f.link ?? "";
+  a.rel = "noopener noreferrer";
+  box.append(a);
+  slot.classList.remove("done");
+  slot.replaceChildren(box);
+}
+
+function hydrate(slot) {
+  const f = slot._field;
+  const csp = S.app?.getHostCapabilities?.()?.sandbox?.csp;
+  if (Cards.hostAllows(csp, f.src, f.type) === false) {
+    return fallback(slot, `${new URL(f.src).host} is not on this host's list of allowed sites`);
+  }
+  const done = () => slot.classList.add("done");
+  const failed = () => fallback(slot, `this ${f.type === "model3d" ? "3D model" : f.type} did not load here (the host may block ${new URL(f.src).host})`);
+  if (f.type === "image") {
+    const img = new Image();
+    img.alt = prettyName(f.name);
+    img.decoding = "async";
+    img.referrerPolicy = "no-referrer";
+    img.onload = done;
+    img.onerror = failed;
+    img.src = Cards.thumbnail(f.src);
+    img.addEventListener("click", (e) => (e.stopPropagation(), f.link && openUrl(f.link).catch((error) => setNote(error.message))));
+    slot.replaceChildren(img);
+  } else if (f.type === "video" || f.type === "audio") {
+    const m = document.createElement(f.type);
+    m.controls = true;
+    m.preload = "metadata";
+    m.referrerPolicy = "no-referrer";
+    if (f.type === "video") m.playsInline = true;
+    m.addEventListener("loadedmetadata", done);
+    m.addEventListener("error", failed);
+    m.src = f.src;
+    m.setAttribute("aria-label", prettyName(f.name));
+    slot.replaceChildren(m);
+  } else if (f.type === "model3d") {
+    loadModelViewer().then((ok) => {
+      if (!slot.isConnected) return;
+      if (!ok) return fallback(slot, "the 3D viewer could not start in this host");
+      const mv = document.createElement("model-viewer");
+      for (const [k, v] of Object.entries({ src: f.src, alt: prettyName(f.name), "camera-controls": "", "auto-rotate": "", "interaction-prompt": "none", "shadow-intensity": "0.6", "environment-image": "neutral", "touch-action": "pan-y", reveal: "auto" })) mv.setAttribute(k, v);
+      mv.addEventListener("load", done);
+      mv.addEventListener("error", failed);
+      slot.replaceChildren(mv);
+      // A viewer that fails without an error (a host that forbids WebAssembly, say) must not sit there for ever:
+      // after viewerTimeout of being on screen, unloaded, the model becomes a link. (model-viewer itself
+      // waits for the model to be on screen before it fetches it, so time off screen does not count.)
+      let waited = 0;
+      const wait = setInterval(() => {
+        const open = slot.contains(mv) && !slot.classList.contains("done");
+        const r = mv.getBoundingClientRect();
+        if (open && r.bottom > 0 && r.top < window.innerHeight) waited += 500;
+        if (open && waited > S.cards.viewerTimeout) {
+          fallback(slot, `this 3D model did not finish loading here (the host may block the 3D viewer or ${new URL(f.src).host})`);
+        }
+        if (!slot.contains(mv) || slot.classList.contains("done") || slot.querySelector(".media-fallback")) clearInterval(wait);
+      }, 500);
+      // Every viewer holds a WebGL context, and a browser keeps only a few: the oldest go back to their place.
+      const live = S.cards.live;
+      live.push(slot);
+      while (live.length > Cards.LIVE_3D) {
+        const old = live.shift();
+        old.classList.remove("done");
+        old.replaceChildren(document.createTextNode("3D"));
+        watch(old);
+      }
+    });
+  }
+}
+
+let viewerLoading = null;
+/** The 3D viewer (model-viewer, built into this page) starts the first time a model needs it. */
+function loadModelViewer() {
+  viewerLoading ??= new Promise((resolve) => {
+    if (customElements.get("model-viewer")) return resolve(true);
+    const source = document.getElementById("model-viewer-src")?.textContent;
+    if (!source) return resolve(false);
+    try {
+      const script = document.createElement("script");
+      script.textContent = source;
+      document.head.append(script);
+    } catch {
+      /* a host that forbids inline scripts leaves the element undefined */
+    }
+    resolve(!!customElements.get("model-viewer"));
+  });
+  return viewerLoading;
+}
+
+/** The ⚙ Fields menu: a select per column, the playground's field types. */
+function renderFieldsMenu(vars) {
+  const key = vars.join("\u0000");
+  const types = S.options.card_fields ?? {};
+  const box = $("cards-fields");
+  if (S.cards.fieldsKey !== key) {
+    S.cards.fieldsKey = key;
+    box.replaceChildren(
+      ...vars.map((v) => {
+        const row = el("label", "field-row");
+        const name = el("span", "", prettyName(v));
+        name.title = v;
+        const select = el("select");
+        select.dataset.field = v;
+        select.setAttribute("aria-label", `How to draw ${v}`);
+        for (const [type, label] of Cards.FIELD_TYPES) select.append(Object.assign(el("option", "", label), { value: type }));
+        row.append(name, select);
+        return row;
+      }),
+    );
+  }
+  for (const select of box.querySelectorAll("select")) select.value = types[select.dataset.field] ?? "auto";
 }
 
 // --- status, controls, host ----------------------------------------------------------------
@@ -1380,6 +1715,9 @@ function syncControls() {
   $("opt-literals").checked = !!S.options.literals_as_nodes;
   $("opt-boxes").checked = !!S.options.group_boxes;
   $("opt-layout").value = S.options.layout || "cose";
+  $("opt-hive-axes").value = S.options.hive_axes || "auto";
+  $("opt-hive-order").value = S.options.hive_order || "degree";
+  for (const e of document.querySelectorAll(".hive-opt")) e.hidden = S.options.layout !== "hive";
   // Grouping by a property: every predicate or column the nodes carry.
   const select = $("opt-group");
   const preds = new Set();
@@ -1430,7 +1768,14 @@ function wire() {
     S.hiddenGroups.clear();
     rebuild(S.options.group_boxes);
   });
-  $("opt-layout").addEventListener("change", (e) => (option("layout", e.target.value), applyStyle(), runLayout(true)));
+  $("opt-layout").addEventListener("change", (e) => {
+    option("layout", e.target.value);
+    for (const h of document.querySelectorAll(".hive-opt")) h.hidden = e.target.value !== "hive";
+    applyStyle();
+    runLayout(true);
+  });
+  $("opt-hive-axes").addEventListener("change", (e) => (option("hive_axes", e.target.value), runLayout(true)));
+  $("opt-hive-order").addEventListener("change", (e) => (option("hive_order", e.target.value), runLayout(true)));
   $("opt-diagram").addEventListener("change", (e) => setDiagram(e.target.value));
   $("opt-edges").addEventListener("change", (e) => (option("edge_style", e.target.value), applyStyle()));
   $("opt-shape").addEventListener("change", (e) => (option("node_shape", e.target.checked ? "square" : "circle"), applyStyle()));
@@ -1623,6 +1968,58 @@ function wire() {
       .downloadFile({ contents: [{ type: "resource", resource: { uri: `file:///${(S.title || "graph").replace(/\W+/g, "-")}.csv`, mimeType: "text/csv", text: csvText() } }] })
       .catch((error) => setNote(`CSV: ${error.message}`));
   });
+  // Cards.
+  $("cards-filter").addEventListener("input", debounce(() => renderCards(true), 150));
+  $("cards-more").addEventListener("click", () => {
+    S.cards.shown = Cards.cardsShown(Infinity, S.cards.shown, true);
+    renderCards(false);
+  });
+  $("cards-fields").addEventListener("change", (e) => {
+    const select = e.target.closest("select[data-field]");
+    if (!select) return;
+    const fields = { ...(S.options.card_fields ?? {}) };
+    if (select.value === "auto") delete fields[select.dataset.field];
+    else fields[select.dataset.field] = select.value;
+    S.options.card_fields = fields;
+    markState();
+    renderCards(false);
+  });
+  const pick = (card) => {
+    for (const r of document.querySelectorAll("#cards-grid .rcard.on")) r.classList.remove("on");
+    card.classList.add("on");
+    const first = card.dataset.first;
+    const id = S.nodes.has(`<${first}>`) ? `<${first}>` : [...S.nodes.values()].find((n) => nodeLabel(n) === first)?.id;
+    if (id) focusNode(id);
+  };
+  $("cards-grid").addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-open]");
+    if (a) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (a.dataset.open) openUrl(a.dataset.open).catch((error) => setNote(error.message));
+      return;
+    }
+    const card = e.target.closest(".rcard");
+    if (card && !e.target.closest("video, audio, model-viewer, img")) pick(card);
+  });
+  $("cards-grid").addEventListener("keydown", (e) => {
+    const card = e.target.closest?.(".rcard");
+    if (card && e.target === card && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      pick(card);
+    }
+  });
+  $("cards-fields-menu").addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", (e) => {
+    const menu = $("cards-fields-menu");
+    if (menu.open && !menu.contains(e.target)) menu.open = false;
+  });
+  // What the host's content policy refuses is said once, by site, where it was refused.
+  document.addEventListener("securitypolicyviolation", (e) => {
+    if (!/^https?:/.test(e.blockedURI)) return;
+    S.cards.blocked.add(new URL(e.blockedURI).host);
+    setNote(`the host blocked ${[...S.cards.blocked].slice(0, 3).join(", ")}${S.cards.blocked.size > 3 ? "…" : ""} (content policy)`);
+  });
   document.addEventListener("visibilitychange", () => !document.hidden && sync(false));
 }
 
@@ -1637,6 +2034,7 @@ function zoomBy(factor) {
 function start() {
   S.cy = cytoscape({ container: $("graph"), elements: [], style: styleSheet(), wheelSensitivity: 0.25, minZoom: 0.05, maxZoom: 6, boxSelectionEnabled: true });
   S.cy.on("select unselect", "node", debounce(onSelectionChanged, 60));
+  S.cy.on("viewport resize", drawAxes);
   S.cy.on("dbltap", "node", (e) => {
     const el = e.target;
     const c = S.classBoxes.get(el.id());
