@@ -903,3 +903,137 @@ fn a_reader_refuses_a_generation_it_does_not_know_by_name() {
         "{e}"
     );
 }
+
+/// `n` works, each with one typed literal of about `kb` KiB (an embedded image:
+/// base64, the same first bytes, then bytes of its own) beside a few small
+/// statements.
+fn image_quads(n: usize, kb: usize) -> Vec<RawQuad> {
+    const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut q = Vec::new();
+    // Small subjects that sort first, as a real corpus has (concepts, artists):
+    // more rows than a scan window, so a first row never reaches an image.
+    for i in 0..400 {
+        let s = format!("<http://ex.org/concept/{i:04}>");
+        q.push((
+            s.clone(),
+            RDF_TYPE.to_string(),
+            "<http://ex.org/Concept>".into(),
+            None,
+        ));
+        q.push((s, RDFS_LABEL.to_string(), format!("\"concept {i}\""), None));
+    }
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    for i in 0..n {
+        let s = format!("<http://ex.org/work/{i:04}>");
+        let mut data = String::from("UklGRh");
+        while data.len() < kb * 1024 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            data.push(B64[(x % 64) as usize] as char);
+        }
+        q.push((
+            s.clone(),
+            "<http://ex.org/p/imageData>".to_string(),
+            format!("\"{data}\"^^<http://www.w3.org/2001/XMLSchema#base64Binary>"),
+            None,
+        ));
+        q.push((
+            s.clone(),
+            RDF_TYPE.to_string(),
+            "<http://ex.org/Work>".into(),
+            None,
+        ));
+        q.push((s, RDFS_LABEL.to_string(), format!("\"work {i}\""), None));
+    }
+    q
+}
+
+fn image_of(quads: Vec<RawQuad>) -> Vec<u8> {
+    let o = AssembleOptions::sectioned();
+    assemble_dataset_opts(quads, &o, |_, _| Vec::new()).0
+}
+
+/// A file of very large typed literals must not make its dictionary
+/// directory as large as the literals. The directory routes by a separator
+/// between two neighbouring chunks; for typed literals that used to be the
+/// whole first literal, so every directory entry was an image and the leaves,
+/// grown to keep the root small, were hundreds of MB on a real file. A first
+/// scan (`LIMIT 1`, the card's `ov-one-row`) read all of it.
+#[test]
+fn huge_typed_literals_keep_the_directory_small() {
+    let n = 48;
+    let bytes = image_of(image_quads(n, 200));
+    let literal_bytes = (n * 200 * 1024) as u64;
+    assert!(
+        bytes.len() as u64 > literal_bytes / 2,
+        "fixture holds the images"
+    );
+    // The directory itself: every routing key is a few bytes, not an image.
+    let longest = crate::file::dict_chunk_keys_for_test(&bytes)
+        .iter()
+        .flatten()
+        .map(|k| k.len())
+        .max()
+        .unwrap();
+    assert!(longest <= 256, "a {longest} B routing key in the directory");
+    let counting = std::sync::Arc::new(CountingReader::new(BytesReader(std::sync::Arc::from(
+        &bytes[..],
+    ))));
+    let r = Rete::open_ranged_lazy(counting.clone()).unwrap();
+    let out = crate::sparql::eval_query(&r, "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1").unwrap();
+    match out {
+        crate::sparql::QueryOutput::Select(_, rows) => assert_eq!(rows.len(), 1),
+        _ => panic!("a SELECT"),
+    }
+    let read = counting.bytes_read();
+    // The first row needs a few chunks and tiles; it must not scale with the
+    // size of the literals (one of them is 200 KiB).
+    assert!(
+        read <= 3 << 20,
+        "LIMIT 1 read {read} B of a {} B file holding {literal_bytes} B of literals",
+        bytes.len()
+    );
+}
+
+/// The same file: an aggregate over the literals is right and reads the file
+/// once at most, and every literal is found again by its own text, so the
+/// shortened keys route correctly at every chunk boundary.
+#[test]
+fn short_keys_still_route_every_huge_literal() {
+    let n = 48;
+    let bytes = image_of(image_quads(n, 200));
+    let counting = std::sync::Arc::new(CountingReader::new(BytesReader(std::sync::Arc::from(
+        &bytes[..],
+    ))));
+    let r = Rete::open_ranged_lazy(counting.clone()).unwrap();
+    let q = "SELECT (COUNT(*) AS ?n) (MIN(STRLEN(STR(?d))) AS ?min) WHERE { ?w <http://ex.org/p/imageData> ?d }";
+    let out = crate::sparql::eval_query(&r, q).unwrap();
+    let crate::sparql::QueryOutput::Select(_, rows) = out else {
+        panic!("a SELECT")
+    };
+    let row = format!("{:?}", rows[0]);
+    assert!(row.contains(&format!("\\\"{n}\\\"")), "{row}");
+    assert!(
+        counting.bytes_read() <= bytes.len() as u64 + (1 << 20),
+        "read {} B for a {} B file",
+        counting.bytes_read(),
+        bytes.len()
+    );
+    // Every typed literal is found again by its own text (routing by the
+    // shortened keys is right at every boundary).
+    for (i, quad) in image_quads(n, 200)
+        .iter()
+        .filter(|q| q.1.contains("imageData"))
+        .enumerate()
+    {
+        if i % 4 != 0 {
+            continue;
+        }
+        let q = format!("ASK {{ ?s <http://ex.org/p/imageData> {} }}", quad.2);
+        assert!(matches!(
+            crate::sparql::eval_query(&r, &q).unwrap(),
+            crate::sparql::QueryOutput::Ask(true)
+        ));
+    }
+}
