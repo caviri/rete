@@ -21,6 +21,14 @@
   <a href="https://doi.org/10.5281/zenodo.21546287"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21546287.svg" alt="DOI: 10.5281/zenodo.21546287"></a>
 </p>
 
+> [!WARNING]
+> rete is a highly experimental project. Expect breaking changes, in the file
+> format and in the APIs, until the format is stable in version 1.0.
+
+<p align="center">
+  <i>This software is dedicated to <a href="https://en.wikipedia.org/wiki/Aaron_Swartz">Aaron Swartz</a>.</i>
+</p>
+
 ## What is rete?
 
 rete (Latin for "net", pronounced RAY-teh) stores a whole RDF graph in one
