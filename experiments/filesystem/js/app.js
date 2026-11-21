@@ -41,8 +41,8 @@ const CATALOG = [
   { key: "wikidata", name: "Wikidata (1 GB slice)", url: "https://data.graphplaza.com/wikidata-1GB/wikidata-2025-11-07.rete", size: 1490440000, blurb: "1.4 GB · 120M quads" },
   { key: "gbif-birds", name: "GBIF birds", url: "https://data.graphplaza.com/gbif-birds/gbif-birds-2026-07-01.rete", size: 1532500000, blurb: "334M quads of occurrences" },
   { key: "bne", name: "Biblioteca Nacional (BNE)", url: "https://data.graphplaza.com/bne-full/bne-full-2026-06-29.rete", size: 3653580000, blurb: "3.4 GB · 267M quads" },
-  { key: "causenet", name: "CauseNet", url: "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed.rete", size: 6386310000, blurb: "5.9 GB of claimed causality" },
-  { key: "databnf", name: "data.bnf.fr", url: "https://data.graphplaza.com/databnf-full/databnf-full.rete", size: 7685950000, blurb: "7.2 GB · 673M quads — the stress test" },
+  { key: "causenet", name: "CauseNet", url: "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed-2020-08-19.rete", size: 6386310000, blurb: "5.9 GB of claimed causality" },
+  { key: "databnf", name: "data.bnf.fr", url: "https://data.graphplaza.com/databnf-full/databnf-full-2026-06-27.rete", size: 7685950000, blurb: "7.2 GB · 673M quads — the stress test" },
 ];
 
 // -------------------------------------------------------------------- state

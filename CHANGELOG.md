@@ -5,6 +5,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **8 more catalog files have new addresses.** `causenet`, `databnf`,
+  `epfl-graph`, both `gharchive` months, `orcid`, `wikiart` and
+  `crossref-citations` are format `0x08` with a full card, under
+  `<name>-<version or source date>.rete`. `web/datasets.moved.json` lists each
+  old and new address. `wikiart` was written by 0.7.7, with the small
+  dictionary directory: 23.46 GB (was 25.4 GB).
+
 ## [0.7.7] - 2026-11-20
 
 0.7.7 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
