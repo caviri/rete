@@ -5,6 +5,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The ISWC demo's agent extension is the 0.7.8 `rete.mcpb`.** It names the
+  new addresses of the batch 3 catalog files and has the graph view's card
+  view and hive layout.
+
 ## [0.7.8] - 2026-11-22
 
 0.7.8 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
