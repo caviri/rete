@@ -1,14 +1,14 @@
 crossref	crossref	https://data.graphplaza.com/crossref/crossref.rete
 datacite	datacite	https://data.graphplaza.com/datacite/datacite.rete
 opencitations-meta	opencitations-meta	https://data.graphplaza.com/opencitations-meta/opencitations-meta.rete
-orcid	orcid	https://data.graphplaza.com/orcid/orcid.rete
+orcid	orcid	https://data.graphplaza.com/orcid/orcid-2025-10-01.rete
 openalex	openalex-authors	https://data.graphplaza.com/openalex/openalex-authors.rete
 dblp	dblp	https://data.graphplaza.com/dblp/dblp-2026-07-01.rete
 zenodo-records	zenodo-records	https://data.graphplaza.com/zenodo-records/zenodo-records-2026-07-10.rete
 gotriple	gotriple	https://data.graphplaza.com/gotriple/gotriple-2026-01-08.rete
 ror	ror	https://data.graphplaza.com/ror/ror-v1.54.rete
 openaire-2021	openaire-2021	https://data.graphplaza.com/openaire-2021/openaire-2021.rete
-epfl-graph	epfl-graph	https://data.graphplaza.com/epfl-graph/epfl-graph.rete
+epfl-graph	epfl-graph	https://data.graphplaza.com/epfl-graph/epfl-graph-v1.0.1.rete
 biosyslit	biosyslit	https://data.graphplaza.com/biosyslit/biosyslit.rete
 epfl-infoscience	epfl-infoscience	https://data.graphplaza.com/epfl-infoscience/epfl-infoscience-2026-07-18.rete
 hugging-face	hugging-face	https://data.graphplaza.com/hugging-face/hugging-face.rete
@@ -31,8 +31,8 @@ deps-dev	deps-dev-pypi	https://data.graphplaza.com/deps-dev/deps-dev-pypi-2026-0
 deps-dev	deps-dev-nuget	https://data.graphplaza.com/deps-dev/deps-dev-nuget-2026-07-13.rete
 deps-dev	deps-dev-cargo	https://data.graphplaza.com/deps-dev/deps-dev-cargo-2026-07-13.rete
 deps-dev	deps-dev-rubygems	https://data.graphplaza.com/deps-dev/deps-dev-rubygems-2026-07-13.rete
-gharchive	gharchive-2025-07	https://data.graphplaza.com/gharchive/gharchive-2025-07.rete
-gharchive	gharchive-2026-06	https://data.graphplaza.com/gharchive/gharchive-2026-06.rete
+gharchive	gharchive-2025-07	https://data.graphplaza.com/gharchive/gharchive-2025-07-31.rete
+gharchive	gharchive-2026-06	https://data.graphplaza.com/gharchive/gharchive-2026-06-30.rete
 wikidata-zenodo	wikidata-zenodo	https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo-2025-11-07.rete
 openalex	openalex-entities	https://data.graphplaza.com/openalex/openalex-entities.rete
 # DELIBERATELY ABSENT: the 16 openalex works-*-of-10 shards (322.6 GB of .rete,

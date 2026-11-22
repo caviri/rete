@@ -502,6 +502,52 @@
      "new": "https://data.graphplaza.com/zenodo-records/zenodo-records-2026-07-10.rete"
     }
    ]
+  },
+  {
+   "date": "2026-11-21",
+   "note": "catalog batch 3, converted with rete 0.7.4, 0.7.5 and 0.7.7",
+   "files": [
+    {
+     "key": "causenet",
+     "old": "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed.rete",
+     "new": "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed-2020-08-19.rete"
+    },
+    {
+     "key": "crossref-citations",
+     "old": "https://data.graphplaza.com/crossref/crossref-citations.rete",
+     "new": "https://data.graphplaza.com/crossref/crossref-citations-2026-03.rete"
+    },
+    {
+     "key": "databnf",
+     "old": "https://data.graphplaza.com/databnf-full/databnf-full.rete",
+     "new": "https://data.graphplaza.com/databnf-full/databnf-full-2026-06-27.rete"
+    },
+    {
+     "key": "epfl-graph",
+     "old": "https://data.graphplaza.com/epfl-graph/epfl-graph.rete",
+     "new": "https://data.graphplaza.com/epfl-graph/epfl-graph-v1.0.1.rete"
+    },
+    {
+     "key": "gharchive",
+     "old": "https://data.graphplaza.com/gharchive/gharchive-2025-07.rete",
+     "new": "https://data.graphplaza.com/gharchive/gharchive-2025-07-31.rete"
+    },
+    {
+     "key": "gharchive-2026-06",
+     "old": "https://data.graphplaza.com/gharchive/gharchive-2026-06.rete",
+     "new": "https://data.graphplaza.com/gharchive/gharchive-2026-06-30.rete"
+    },
+    {
+     "key": "orcid",
+     "old": "https://data.graphplaza.com/orcid/orcid.rete",
+     "new": "https://data.graphplaza.com/orcid/orcid-2025-10-01.rete"
+    },
+    {
+     "key": "wikiart",
+     "old": "https://data.graphplaza.com/wikiart.rete",
+     "new": "https://data.graphplaza.com/wikiart-2026-07-26.rete"
+    }
+   ]
   }
  ]
 }
