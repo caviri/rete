@@ -5,6 +5,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-11-22
+
+0.7.8 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+
 ### Changed
 
 - **8 more catalog files have new addresses.** `causenet`, `databnf`,
