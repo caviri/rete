@@ -18,6 +18,11 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   old and new address. `wikiart` was written by 0.7.7, with the small
   dictionary directory: 23.46 GB (was 25.4 GB).
 
+### Security
+
+- **`url` 2.5.9.** The lockfiles move from `url` 2.5.8, which RUSTSEC-2026-0592
+  flags (a stack overflow in `Url::origin()` on nested `blob:` URLs).
+
 ## [0.7.7] - 2026-11-20
 
 0.7.7 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
