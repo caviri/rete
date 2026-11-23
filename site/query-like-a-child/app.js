@@ -6,9 +6,10 @@
 // query: empty slots stand for variables and the text is there to copy.
 import {
   NS, CALC_FNS, CMP_OPS, GENERIC_LABELS, PATHS, RECIPES, TEXT_OPS,
-  clone, contains, describe, emptySketch, find, hole, holeName, iri, kindsOf, lit, make,
+  clone, contains, describe, emptySketch, find, graphTemplate, hole, holeName, iri, kindsOf, lit, make,
   nameOf, normVar, prefixer, rename, splitIri, tidy, toSparql, variables, vr, walk,
 } from "./model.js";
+import { fromSparql } from "./parse.js";
 
 const R2 = "https://data.graphplaza.com";
 const SAMPLES = [
@@ -46,7 +47,7 @@ function h(tag, attrs, ...kids) {
     else if (k in e && k !== "list" && typeof v !== "string") e[k] = v;
     else e.setAttribute(k, v === true ? "" : v);
   }
-  for (const k of kids.flat()) if (k != null && k !== false) e.append(k);
+  for (const k of kids.flat(3)) if (k != null && k !== false) e.append(k);
   return e;
 }
 /** replaceChildren that skips what is not there (it would print "null"). */
@@ -156,12 +157,12 @@ function dataset(url, r, file) {
   const sig = card.signals || {};
   const classes = pairs(card.classes), preds = pairs(card.predicates);
   const examples = [];
-  for (const q of Array.isArray(card.queries) ? card.queries : []) if (q && q.sparql) examples.push({ title: q.title || q.question || q.id, sparql: q.sparql });
   for (const q of Array.isArray(card.example_queries) ? card.example_queries : []) {
     if (typeof q !== "string") continue;
     const m = /^#\s*(.+)/.exec(q);
-    examples.push({ title: m ? m[1] : q.slice(0, 50), sparql: q });
+    examples.push({ title: m ? m[1].trim() : q.replace(/\s+/g, " ").slice(0, 50), sparql: q, curated: true });
   }
+  for (const q of Array.isArray(card.queries) ? card.queries : []) if (q && q.sparql) examples.push({ title: q.title || q.question || q.id, hint: q.question && q.title ? q.question : "", sparql: q.sparql });
   return {
     url, file, card, classes, preds, links, examples,
     labels: new Map(), hints: new Map(), asked: new Set(), lang: sig.default_lang || "en",
@@ -595,13 +596,37 @@ function renderBlock(b) {
 
 function recipeCtx() { return ds ? { topClass: ds.topClass, topLink: ds.topLink } : {}; }
 
+/** A card's query as blocks, when the blocks can say it (worked out once). */
+function asSketch(x) {
+  if (x.sketch === undefined) x.sketch = fromSparql(x.sparql, ctx());
+  return x.sketch;
+}
+function loadExample(x) {
+  const sk = asSketch(x);
+  if (sk) { setSketch(clone(sk)); scheduleRun(0); return; }
+  manual = x.sparql;
+  renderQuery(); scheduleRun(0);
+  toast("Opened as text: the blocks cannot say this query");
+}
+function renderRecipeMenu() {
+  const sel = $("#recipe");
+  put(sel, h("option", { value: "" }, "Start from…"),
+    ds && ds.examples.length ? h("optgroup", { label: `From ${ds.name}` }, ds.examples.slice(0, 40).map((x, i) => h("option", { value: "x:" + i }, x.title))) : null,
+    h("optgroup", { label: "For any file" }, RECIPES.map((r) => h("option", { value: "r:" + r.id }, r.title))));
+}
+
 function renderCanvas() {
   const root = h("div", { class: "zone root", "data-zone": "root" });
   if (sketch.blocks.length) root.append(...sketch.blocks.map(renderBlock));
   else {
+    const mine = ds ? ds.examples.slice(0, 40) : [];
     root.append(h("div", { class: "empty" },
       h("p", { class: "big" }, "Drag a block here to begin"),
-      h("p", {}, ds ? `or a kind or property of ${ds.name} from the list on the left.` : "or start from one of these and change it."),
+      h("p", {}, ds ? `or a kind or property of ${ds.name} from the list on the left, or start from an example.` : "or start from one of these and change it."),
+      mine.length ? [h("h3", {}, `From ${ds.name}`),
+        h("div", { class: "recipes" }, mine.map((x) => h("button", { class: "recipe mine", type: "button", title: x.sparql, onclick: () => loadExample(x) },
+          h("b", {}, x.title), h("span", {}, asSketch(x) ? (x.hint || "Opens as blocks.") : "Opens as text: it uses SPARQL the blocks do not have."))))] : null,
+      mine.length ? h("h3", {}, "For any file") : null,
       h("div", { class: "recipes" }, RECIPES.map((r) => h("button", { class: "recipe", type: "button", onclick: () => setSketch(r.build(recipeCtx())) },
         h("b", {}, r.title), h("span", {}, r.hint))))));
   }
@@ -669,7 +694,7 @@ function renderSketch() {
   $("#undo").disabled = !past.length;
 }
 function renderAll() {
-  renderData(); renderShelf(); renderSketch(); renderRun();
+  renderData(); renderShelf(); renderRecipeMenu(); renderSketch(); renderRun();
 }
 
 // ── popovers ─────────────────────────────────────────────────────────────
@@ -1154,10 +1179,7 @@ function renderQuery() {
   const body = manual != null
     ? h("textarea", { spellcheck: false, "aria-label": "SPARQL query", value: text, oninput: (e) => { manual = e.target.value; scheduleRun(900); } })
     : h("pre", { "aria-label": "SPARQL query" }, h("code", {}, highlight(text)));
-  const examples = ds && ds.examples.length ? h("select", { "aria-label": "Queries from this file's card", onchange: (e) => {
-    const x = ds.examples[Number(e.target.value)];
-    if (x) { manual = x.sparql; renderQuery(); scheduleRun(0); }
-  } }, h("option", { value: "" }, "From this file's card…"), ds.examples.map((x, i) => h("option", { value: i }, x.title))) : null;
+  const examples = null;
   put($("#query"), body,
     h("div", { class: "query-bar" },
       manual != null ? h("span", { class: "tag" }, "Written by hand: the blocks are not in step") : null,
@@ -1165,6 +1187,8 @@ function renderQuery() {
       manual != null
         ? h("button", { class: "linkish", type: "button", onclick: () => { manual = null; renderQuery(); scheduleRun(0); } }, "Back to the blocks")
         : h("button", { class: "linkish", type: "button", onclick: () => { manual = g.text; renderQuery(); $("#query textarea").focus(); } }, "Edit as text"),
+      manual == null ? h("button", { class: "linkish", type: "button", title: "The same sketch as a query that writes a graph: every link, kind and name it asks for, as statements",
+        onclick: () => copy(toSparql(sketch, ctx(), { construct: true }).text, "CONSTRUCT query copied") }, "Copy as CONSTRUCT") : null,
       h("button", { class: "linkish", type: "button", onclick: () => copy(currentQuery(), "Query copied") }, "Copy")));
   put($("#notes"), ...(manual == null ? g.problems.map((p) => h("p", { class: "note" }, p)) : []));
 }
@@ -1237,9 +1261,201 @@ function cell(tok) {
   return h("td", {}, t.v);
 }
 
+// ── ways to look at a result ─────────────────────────────────────────────
+
+let view = "table";
+try { view = localStorage.getItem("rete.qlc.view") || "table"; } catch { /* default */ }
+const VIEWS = [["table", "Table"], ["cards", "Cards"], ["graph", "Graph"]];
+function renderViews(show) {
+  const box = $("#views");
+  box.hidden = !show;
+  if (!show) return;
+  put(box, VIEWS.map(([v, text]) => h("button", { type: "button", role: "tab", "aria-selected": String(view === v), onclick: () => {
+    view = v;
+    try { localStorage.setItem("rete.qlc.view", v); } catch { /* not kept */ }
+    renderRun();
+  } }, text)));
+}
+
+/** One card per row: a picture when the row has one, a title, then the rest. */
+function cardsView(rows, vars) {
+  const sample = rows.slice(0, 60).map((row) => vars.map((v) => parseTerm(row[v])));
+  const mostly = (i, test) => { const got = sample.map((r) => r[i]).filter(Boolean); return got.length > 0 && got.filter(test).length * 2 >= got.length; };
+  const isLit = (t) => t.t === "lit" && !t.num, isImg = (t) => t.t === "iri" && IMAGE.test(t.v);
+  const img = vars.findIndex((v, i) => mostly(i, isImg));
+  let title = vars.findIndex((v, i) => /name|label|title/i.test(v) && mostly(i, isLit));
+  if (title < 0) title = vars.findIndex((v, i) => mostly(i, isLit));
+  if (title < 0) title = vars.findIndex((v, i) => i !== img);
+  return h("div", { class: "cards" }, rows.slice(0, 300).map((row) => {
+    const t = parseTerm(row[vars[img]]);
+    return h("article", { class: "card" },
+      img >= 0 && t && t.t === "iri" ? h("a", { href: t.v, target: "_blank", rel: "noopener" }, h("img", { src: t.v, alt: "", loading: "lazy", referrerpolicy: "no-referrer" })) : null,
+      title >= 0 && row[vars[title]] != null ? h("h3", {}, [...cell(row[vars[title]]).childNodes]) : null,
+      h("dl", {}, vars.map((v, i) => (i === img || i === title || row[v] == null ? null : [h("dt", {}, "?" + v), h("dd", {}, [...cell(row[v]).childNodes])]))));
+  }));
+}
+
+/** The things and links a result holds, for drawing. */
+function graphData(r) {
+  const nodes = new Map(), edges = [], seen = new Set();
+  const node = (v) => { let n = nodes.get(v); if (!n) { n = { id: v, label: labelOf(v) || "", deg: 0 }; nodes.set(v, n); } return n; };
+  const add = (s, p, o) => {
+    const key = s + " " + p + " " + o;
+    if (seen.has(key) || edges.length >= 900) return;
+    seen.add(key);
+    const a = node(s), b = node(o);
+    a.deg++; b.deg++;
+    edges.push({ a, b, p });
+  };
+  const pName = (t) => (t.t === "iri" ? labelOf(t.v) || nameOf({ v: t.v }) : "");
+  let why = "";
+  if (r.kind === "construct") {
+    for (const [s, p, o] of r.triples || []) {
+      const S = parseTerm(s), P = parseTerm(p), O = parseTerm(o);
+      if (!S || !O || S.t !== "iri") continue;
+      if (O.t === "iri") add(S.v, pName(P), O.v);
+      else if (O.t === "lit" && /label|name|title/i.test(P.v)) node(S.v).label = O.v;
+    }
+  } else if (manual == null) {
+    const tpl = graphTemplate(sketch);
+    const val = (t, row) => (t.k === "iri" ? { t: "iri", v: t.v } : t.k === "var" ? parseTerm(row[t.v]) : null);
+    for (const row of r.rows || []) {
+      for (const l of tpl.links) {
+        const S = val(l.s, row), O = val(l.o, row), P = val(l.p, row);
+        if (S && O && S.t === "iri" && O.t === "iri") add(S.v, l.p.k === "iri" ? nm(l.p) : P ? pName(P) : "", O.v);
+      }
+    }
+    for (const row of r.rows || []) for (const n of tpl.names) { const S = val(n.s, row), O = val(n.o, row); if (S && O && S.t === "iri" && O.t === "lit" && nodes.has(S.v)) nodes.get(S.v).label = O.v; }
+    if (!edges.length) why = !tpl.links.length ? "A graph draws links between things. Add an “is linked to” block, and it shows here."
+      : "The links of this sketch have an end that is not in the answer, or that is a value. Show both ends (or show everything) to draw them.";
+  } else {
+    const vars = r.vars || [];
+    for (const row of r.rows || []) {
+      const t = vars.map((v) => parseTerm(row[v]));
+      if (vars.length === 3 && t[0] && t[1] && t[2] && t[0].t === "iri" && t[1].t === "iri" && t[2].t === "iri") { add(t[0].v, pName(t[1]), t[2].v); continue; }
+      let last = null;
+      for (const x of t) { if (!x || x.t !== "iri" || IMAGE.test(x.v)) continue; if (last) add(last, "", x.v); last = x.v; }
+    }
+    if (!edges.length) why = "Nothing to link: a graph needs rows with two or more things in them.";
+  }
+  return { nodes: [...nodes.values()], edges, why };
+}
+
+let graphFrame = 0;
+const svg = (tag, attrs, ...kids) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs || {}) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+  for (const k of kids.flat()) if (k != null) e.append(k);
+  return e;
+};
+/** A small force layout: links pull, things push apart, everything drifts to the middle. */
+function graphView(g) {
+  cancelAnimationFrame(graphFrame);
+  if (!g.edges.length) return h("div", { class: "idle" }, h("b", {}, "No graph to draw"), g.why);
+  const W = 900, H = 640, N = g.nodes, E = g.edges;
+  N.forEach((n, i) => { const a = (i / N.length) * Math.PI * 2, r = 120 + (i % 7) * 26; n.x = W / 2 + Math.cos(a) * r; n.y = H / 2 + Math.sin(a) * r; n.vx = 0; n.vy = 0; });
+  const few = N.length <= 70;
+  const short = (t) => (t.length > 24 ? t.slice(0, 23) + "…" : t);
+  const lines = E.map((e) => svg("line", { class: "g-edge", "marker-end": "url(#g-arrow)" }, svg("title", {}, e.p)));
+  const oneKind = new Set(E.map((e) => e.p)).size === 1;
+  const tags = E.length <= 70 && !oneKind ? E.map((e) => svg("text", { class: "g-tag" }, short(e.p))) : [];
+  const dots = N.map((n) => {
+    const name = n.label || labelOf(n.id) || nameOf({ v: n.id });
+    const el = svg("g", { class: "g-node" },
+      svg("circle", { r: 5 + Math.min(9, Math.sqrt(n.deg) * 2) }),
+      few || n.deg >= 3 ? svg("text", { x: 9 + Math.min(9, Math.sqrt(n.deg) * 2), y: 4 }, short(name)) : null,
+      svg("title", {}, `${name}\n${n.id}`));
+    el.addEventListener("pointerdown", (e) => {
+      e.stopPropagation(); e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      n.held = true; heat = Math.max(heat, 0.5); loop();
+      const move = (ev) => { const p = point(ev); n.x = p.x; n.y = p.y; };
+      const stop = () => { n.held = false; el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", stop); el.removeEventListener("pointercancel", stop); };
+      el.addEventListener("pointermove", move); el.addEventListener("pointerup", stop); el.addEventListener("pointercancel", stop);
+    });
+    el.addEventListener("dblclick", () => window.open(n.id, "_blank", "noopener"));
+    return el;
+  });
+  const box = { x: 0, y: 0, w: W, h: H };
+  const root = svg("svg", { class: "graph", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Graph of ${N.length} things and ${E.length} links` },
+    svg("defs", {}, svg("marker", { id: "g-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, svg("path", { d: "M0 1 10 5 0 9z", class: "g-head" }))),
+    svg("g", {}, lines), svg("g", {}, tags), svg("g", {}, dots));
+  const point = (ev) => { const r = root.getBoundingClientRect(); return { x: box.x + ((ev.clientX - r.left) / r.width) * box.w, y: box.y + ((ev.clientY - r.top) / r.height) * box.h }; };
+  const frame = () => root.setAttribute("viewBox", `${box.x} ${box.y} ${box.w} ${box.h}`);
+  root.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const p = point(e), k = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+    if (box.w * k < 120 || box.w * k > W * 8) return;
+    box.x = p.x - (p.x - box.x) * k; box.y = p.y - (p.y - box.y) * k; box.w *= k; box.h *= k;
+    frame();
+  }, { passive: false });
+  root.addEventListener("pointerdown", (e) => {
+    root.setPointerCapture(e.pointerId);
+    let last = { x: e.clientX, y: e.clientY };
+    const move = (ev) => { const r = root.getBoundingClientRect(); box.x -= ((ev.clientX - last.x) / r.width) * box.w; box.y -= ((ev.clientY - last.y) / r.height) * box.h; last = { x: ev.clientX, y: ev.clientY }; frame(); };
+    const stop = () => { root.removeEventListener("pointermove", move); root.removeEventListener("pointerup", stop); root.removeEventListener("pointercancel", stop); };
+    root.addEventListener("pointermove", move); root.addEventListener("pointerup", stop); root.addEventListener("pointercancel", stop);
+  });
+
+  let heat = 1;
+  const step = () => {
+    for (let i = 0; i < N.length; i++) {
+      const a = N[i];
+      for (let j = i + 1; j < N.length; j++) {
+        const b = N[j];
+        let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+        if (d2 < 0.01) { dx = (i % 2 ? 1 : -1) * 0.5; dy = 0.5; d2 = 0.5; }
+        if (d2 > 40000) continue;
+        const f = (1500 / d2) * heat;
+        a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
+      }
+      a.vx += (W / 2 - a.x) * 0.045 * heat; a.vy += (H / 2 - a.y) * 0.06 * heat;
+    }
+    for (const e of E) {
+      const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.hypot(dx, dy) || 1, f = ((d - 70) / d) * 0.08 * heat;
+      e.a.vx += dx * f; e.a.vy += dy * f; e.b.vx -= dx * f; e.b.vy -= dy * f;
+    }
+    for (const n of N) { if (!n.held) { n.x += Math.max(-30, Math.min(30, n.vx)); n.y += Math.max(-30, Math.min(30, n.vy)); } n.vx *= 0.6; n.vy *= 0.6; }
+    heat *= 0.985;
+  };
+  const paint = () => {
+    E.forEach((e, i) => {
+      const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.hypot(dx, dy) || 1, rb = 7 + Math.min(9, Math.sqrt(e.b.deg) * 2);
+      lines[i].setAttribute("x1", e.a.x); lines[i].setAttribute("y1", e.a.y);
+      lines[i].setAttribute("x2", e.b.x - (dx / d) * rb); lines[i].setAttribute("y2", e.b.y - (dy / d) * rb);
+      if (tags[i]) { tags[i].setAttribute("x", (e.a.x + e.b.x) / 2); tags[i].setAttribute("y", (e.a.y + e.b.y) / 2 - 3); }
+    });
+    N.forEach((n, i) => dots[i].setAttribute("transform", `translate(${n.x} ${n.y})`));
+  };
+  let running = false;
+  const loop = () => {
+    if (running) return;
+    running = true;
+    const tick = () => {
+      if (!root.isConnected && heat < 0.99) { running = false; return; }
+      step(); if (N.length < 150) step();
+      paint();
+      if (heat > 0.02 || N.some((n) => n.held)) graphFrame = requestAnimationFrame(tick); else running = false;
+    };
+    graphFrame = requestAnimationFrame(tick);
+  };
+  // Settle most of the way before the first paint, so it does not swirl in.
+  for (let k = 0; k < (N.length > 300 ? 40 : 160); k++) step();
+  // Frame what was laid out, with room for the names.
+  const xs = N.map((n) => n.x), ys = N.map((n) => n.y);
+  const x0 = Math.min(...xs) - 50, x1 = Math.max(...xs) + 130, y0 = Math.min(...ys) - 40, y1 = Math.max(...ys) + 40;
+  const k = Math.max((x1 - x0) / W, (y1 - y0) / H, 0.35);
+  box.w = W * k; box.h = H * k; box.x = (x0 + x1) / 2 - box.w / 2; box.y = (y0 + y1) / 2 - box.h / 2;
+  frame();
+  paint(); loop();
+  return h("div", { class: "graph-box" }, root,
+    h("p", { class: "graph-note" }, `${fmtN(N.length)} things · ${fmtN(E.length)} links${E.length >= 900 ? " (the first 900)" : ""} ${oneKind && E[0].p ? ` · every link is “${E[0].p}”` : ""} · drag a thing to move it, the background to pan, scroll to zoom, double-click to open`));
+}
+
 function renderRun() {
   const status = $("#status"), out = $("#out");
   status.className = "status";
+  renderViews(!!ds && run.state === "done" && run.result.kind !== "ask");
   $("#run").disabled = !ds;
   if (!ds) {
     put(status, );
@@ -1275,7 +1491,7 @@ function renderRun() {
   if (r.kind === "construct") {
     const triples = r.triples || [];
     put(status, h("b", {}, `${fmtN(triples.length)} statements`), " · ", cost);
-    put(out, h("table", {}, h("tbody", {}, triples.slice(0, ROW_CAP).map((t) => h("tr", {}, t.map(cell))))));
+    put(out, view === "graph" ? graphView(graphData(r)) : h("table", {}, h("tbody", {}, triples.slice(0, ROW_CAP).map((t) => h("tr", {}, t.map(cell))))));
     return;
   }
   const rows = r.rows || [], vars = r.vars || [];
@@ -1287,7 +1503,7 @@ function renderRun() {
     put(out, h("div", { class: "idle" }, h("b", {}, "No rows"), "Nothing in the file matches the whole sketch. Open a slot, or move a block into “if there is”."));
     return;
   }
-  put(out, h("table", {},
+  put(out, view === "cards" ? cardsView(rows, vars) : view === "graph" ? graphView(graphData(r)) : h("table", {},
     h("thead", {}, h("tr", {}, vars.map((v) => { const s = h("span", {}, "?" + v); s.style.setProperty("--h", v === "count" ? 15 : hue(v)); return h("th", {}, s); }))),
     h("tbody", {}, rows.slice(0, ROW_CAP).map((row) => h("tr", {}, vars.map((v) => cell(row[v])))))));
   labelCells(ds, rows, vars);
@@ -1320,8 +1536,12 @@ function restore() {
 
 // ── start ────────────────────────────────────────────────────────────────
 
-for (const r of RECIPES) $("#recipe").append(h("option", { value: r.id }, r.title));
-$("#recipe").onchange = (e) => { const r = RECIPES.find((x) => x.id === e.target.value); e.target.value = ""; if (r) setSketch(r.build(recipeCtx())); };
+$("#recipe").onchange = (e) => {
+  const [kind, id] = e.target.value.split(/:(.*)/);
+  e.target.value = "";
+  if (kind === "r") { const r = RECIPES.find((x) => x.id === id); if (r) setSketch(r.build(recipeCtx())); }
+  else if (kind === "x" && ds && ds.examples[Number(id)]) loadExample(ds.examples[Number(id)]);
+};
 $("#clear").onclick = () => setSketch(emptySketch());
 $("#undo").onclick = undo;
 $("#share").onclick = () => { save(); copy(location.href, ds && ds.file ? "Link copied (the sketch only: a file from this device cannot be linked)" : "Link copied"); };

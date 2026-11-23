@@ -190,6 +190,33 @@ async function dragTo(page, from, to, opts = {}) {
   await page.waitForSelector("#out .ask", { timeout: 30000 });
   ok((await page.locator("#out .ask").textContent()) === "Yes", "a query written by hand runs too");
 
+  // ── examples, cards, graph ──
+  await page.locator(".linkish", { hasText: "Back to the blocks" }).click();
+  await page.click("#clear");
+  ok(await page.locator(".recipe.mine").count() >= 5 && await page.locator(".recipe:not(.mine)").count() >= 17, "the empty sketch offers the file's own examples and the general ones");
+  await page.screenshot({ path: path.join(SHOTS, "10-examples.png"), fullPage: true });
+  const blocksFromCard = await page.locator(".recipe.mine", { hasText: "Opens as blocks" }).count() + await page.locator(".recipe.mine span:not(:has-text('Opens as text'))").count();
+  ok(blocksFromCard >= 3, `some of the card's queries open as blocks (${blocksFromCard})`);
+  await page.locator(".recipe.mine span:not(:has-text('Opens as text'))").first().click();
+  ok(await page.locator("#canvas .block").count() >= 1, "a card query becomes blocks");
+  await page.click("#clear");
+  await page.locator(".recipe", { hasText: "Either of two kinds" }).click();
+  ok(/\{\n\s+\?thing a foaf:Person \.\n\s+\} UNION \{/.test(await query()), "a union example");
+  await page.click("#clear");
+  await page.locator(".item.k-prop", { hasText: "knows of" }).first().click();
+  await page.locator(".pal", { hasText: "has a name" }).click();
+  await settled();
+  await page.locator("#views button", { hasText: "Graph" }).click();
+  await page.waitForSelector("svg.graph .g-node");
+  ok(await page.locator("svg.graph .g-node").count() >= 10 && await page.locator("svg.graph .g-edge").count() >= 10, "the graph view draws the sketch's links");
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: path.join(SHOTS, "11-graph.png") });
+  await page.locator("#views button", { hasText: "Cards" }).click();
+  ok(await page.locator("#out .card").count() === 50 && await page.locator("#out .card h3").count() === 50 && await page.locator("#out .card dd .cell-iri").count() >= 50 && !(await page.locator("#out").textContent()).includes("[object"), "the cards view has one card per row");
+  await page.screenshot({ path: path.join(SHOTS, "12-cards.png") });
+  await page.locator("#views button", { hasText: "Table" }).click();
+  await page.locator(".linkish", { hasText: "Edit as text" }).click();
+
   // ── names for identifiers ──
   ok(await page.locator("#out .cell-iri", { hasText: "Billy Eckstine" }).count() >= 0, "result cells are named");
   await page.locator(".linkish", { hasText: "Back to the blocks" }).click();

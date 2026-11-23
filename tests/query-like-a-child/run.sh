@@ -11,7 +11,7 @@ export MSYS_NO_PATHCONV=1
 here=$(pwd -W 2>/dev/null || pwd)
 
 docker run --rm --memory 1g -v "$here:/work:ro" -w /work node:22-slim \
-  node --test tests/query-like-a-child/model.test.mjs
+  node --test tests/query-like-a-child/model.test.mjs tests/query-like-a-child/parse.test.mjs
 
 [ "${1:-}" = unit ] && exit 0
 
