@@ -383,3 +383,17 @@ body.matching #canvas .slot:not(.can) { opacity:.3; }
 .g-node:hover circle { fill:var(--accent-2); }
 .g-node text { fill:var(--fg); font:11.5px var(--sans); paint-order:stroke; stroke:var(--panel-2); stroke-width:3px; pointer-events:none; }
 .graph-note { margin:0; padding:7px 12px; border-top:1px solid var(--border-2); color:var(--muted); font-size:12px; }
+
+/* ───────── Pointing at a piece ─────────
+   The piece under the pointer shows where it belongs in the sidebar: its
+   shape in the legend, its block in the palette, its kind or property on
+   the shelf. */
+#rail .lit { transition:box-shadow .12s, background .12s; }
+.pal.lit { border-color:var(--c); background:var(--tint); box-shadow:0 0 0 2px color-mix(in srgb, var(--c) 45%, transparent); }
+.legend .lit, .item.lit { --edge:var(--accent); --fill:color-mix(in srgb, var(--accent) 26%, var(--panel)); color:var(--fg); }
+.legend .lit.sh-thing, .legend .lit.sh-value { border-color:var(--accent); border-style:solid; background:color-mix(in srgb, var(--accent) 26%, var(--panel)); box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.legend .lit.sh-class, .legend .lit.sh-prop, .item.lit { filter:drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 75%, transparent)); }
+
+/* A variable made by hand and not on a slot yet. */
+.var.unused { background:transparent; border-style:dotted; opacity:.85; }
+.vars .add { min-height:28px; }

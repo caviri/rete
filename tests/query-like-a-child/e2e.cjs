@@ -82,6 +82,27 @@ async function dragTo(page, from, to, opts = {}) {
   await dragTo(page, page.locator(".item.k-class", { hasText: "Person" }).first(), page.locator('.slot[data-role="class"]'));
   ok((await query()).includes("?thing a foaf:Person ."), "a kind dropped on the kind slot");
 
+  await page.locator('#canvas .slot[data-role="class"]').hover();
+  ok(await page.locator('.legend .lit[data-legend="class"]').count() === 1 && await page.locator(".legend .lit").count() === 1
+    && await page.locator('.pal.lit[data-t="kind"]').count() === 1 && await page.locator(".item.k-class.lit").count() === 1,
+    "pointing at a slot lights its shape, its block and its piece in the sidebar");
+  ok(/^A kind goes here/.test(await page.locator('#canvas .slot[data-role="class"]').getAttribute("title")), "and its tooltip names the kind of piece");
+  await page.screenshot({ path: path.join(SHOTS, "02c-spotlight.png") });
+  await page.mouse.move(700, 880);
+  ok(await page.locator("#rail .lit").count() === 0, "leaving the sketch clears it");
+  // a variable made by hand joins the list and can be dragged onto a slot
+  await page.click("#newvar");
+  await page.locator("#pop input").fill("the artist");
+  await page.locator("#pop .btn", { hasText: "Add" }).click();
+  ok(await page.locator("#vars .var.unused", { hasText: "?the_artist" }).count() === 1 && !(await query()).includes("the_artist"), "a new variable joins the list without changing the query");
+  await dragTo(page, page.locator("#vars .var", { hasText: "?the_artist" }), page.locator('#canvas .slot[data-f="s"]'));
+  ok((await query()).includes("?the_artist a foaf:Person .") && await page.locator("#vars .var.unused").count() === 0, "dragged onto a slot, it is used");
+  await page.locator('#canvas .slot[data-f="s"]').click();
+  await page.locator("#pop input[placeholder='a new name']").fill("thing");
+  await page.locator("#pop .pop-row", { has: page.locator("input[placeholder='a new name']") }).locator("button").click();
+  ok((await query()).includes("?thing a foaf:Person .") && await page.locator("#vars .var.unused", { hasText: "?the_artist" }).count() === 1, "and it stays in the list when the slot moves on");
+  await page.locator("#vars .var.unused .x").click();
+  ok(await page.locator("#vars .var", { hasText: "?the_artist" }).count() === 0, "until it is removed");
   await dragTo(page, page.locator(".pal", { hasText: "has a name" }), page.locator("#canvas .block"), { dy: 60 });
   ok(/\?thing a foaf:Person \.\n\s+\?thing rdfs:label\|/.test(await query()), "second block inserted after the first");
 

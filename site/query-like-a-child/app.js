@@ -362,13 +362,13 @@ function renderPalette() {
   put($("#palette"), ...PALETTE.flatMap(([title, fam, items]) => [
     h("h3", {}, title),
     ...items.map(([t, label]) => h("button", {
-      class: `pal fam-${fam}`, type: "button", "data-drag": JSON.stringify({ type: "new", t }),
+      class: `pal fam-${fam}`, type: "button", "data-t": t, "data-drag": JSON.stringify({ type: "new", t }),
       title: "Drag into the sketch, or press Enter to add it at the end",
       onclick: () => { addBlock(sketch.blocks, sketch.blocks.length, newBlock(t)); },
     }, h("span", { class: "grip", "aria-hidden": "true" }, "⋮⋮"), label)),
   ]), h("h3", {}, "Shapes"),
     h("div", { class: "legend", title: "A piece fits the slots of its own shape. A variable fits anywhere." },
-      [["thing", "thing"], ["class", "kind"], ["prop", "property"], ["value", "value"]].map(([s, text]) => h("span", { class: `slot demo is-hole sh-${s}` }, text))));
+      [["thing", "thing"], ["class", "kind"], ["prop", "property"], ["value", "value"]].map(([s, text]) => h("span", { class: `slot demo is-hole sh-${s}`, "data-legend": s }, text))));
 }
 
 let shelfFilter = "";
@@ -379,7 +379,7 @@ function shelfItems() {
 function itemButton(kind, it) {
   const name = nm({ v: it.v }), label = labelOf(it.v) || undefined, hint = ds ? ds.hints.get(it.v) : "";
   const btn = h("button", {
-    class: `item k-${kind}`, type: "button", title: `${it.v}\nDrag into the sketch or onto a slot`,
+    class: `item k-${kind}`, type: "button", "data-iri": it.v, title: `${it.v}\nDrag into the sketch or onto a slot`,
     "data-drag": JSON.stringify({ type: "item", kind, iri: it.v, label }),
     onclick: () => dropItem({ kind, iri: it.v, label }, sketch.blocks, sketch.blocks.length),
   }, h("span", {}, name, label ? h("i", {}, " " + px.show(it.v).replace(/^.*[:/#]/, "")) : hint ? h("i", {}, " " + hint) : null), h("small", {}, it.n != null ? fmtN(it.n) : px.show(it.v)));
@@ -412,7 +412,7 @@ function focusVar(list) {
 }
 function freshVar(base) {
   base = normVar(base) || "value";
-  const taken = new Set(variables(sketch).map((v) => v.name));
+  const taken = new Set(allVars().map((v) => v.name));
   let n = base, i = 2;
   while (taken.has(n)) n = base + i++;
   return n;
@@ -498,30 +498,36 @@ let info = new Map();
 // round-then-square where either a thing or a value may go. The shelf's
 // kinds and properties carry the same outlines.
 const SHAPE = { thing: "thing", class: "class", prop: "prop", any: "any" };
+const SHAPE_SAYS = {
+  thing: "A thing goes here (round)", class: "A kind goes here (pointed at both ends)", prop: "A property goes here (arrow)",
+  value: "A value goes here (square)", any: "A thing or a value goes here (round, then square)",
+};
 function slot(b, f, role, shape) {
   const t = b[f];
-  const el = h("button", { class: "slot sh-" + (shape || SHAPE[role] || "value"), type: "button", "data-b": b.id, "data-f": f, "data-role": role, onclick: () => openPicker(el) });
+  shape = shape || SHAPE[role] || "value";
+  const el = h("button", { class: "slot sh-" + shape, "data-shape": shape, type: "button", "data-b": b.id, "data-f": f, "data-role": role, onclick: () => openPicker(el) });
   if (t.k === "var") {
     el.classList.add("is-var");
     el.style.setProperty("--h", hue(t.v));
     el.textContent = "?" + t.v;
     el.dataset.drag = JSON.stringify({ type: "var", name: t.v });
-    el.title = [(info.get(t.v) || []).join("; "), "Click to change, drag to connect"].filter(Boolean).join("\n");
+    el.title = [SHAPE_SAYS[shape] + ". Now: the variable ?" + t.v, (info.get(t.v) || []).join("; "), "Click to change, drag to connect"].filter(Boolean).join("\n");
   } else if (t.k === "hole") {
     const n = holeName(sketch, b, f);
     el.classList.add("is-hole");
     el.append(h("span", {}, HOLE_WORDS[role]), h("span", { class: "hv" }, "?" + n));
     el.dataset.drag = JSON.stringify({ type: "var", name: n, from: [b.id, f] });
-    el.title = `Open: it stands for the variable ?${n}. Click to fill it in, or drop something on it.`;
+    el.title = `${SHAPE_SAYS[shape]}.\nOpen: it stands for the variable ?${n}. Click to fill it in, or drop something on it.`;
   } else if (t.k === "iri") {
     el.classList.add("is-iri");
     const short = px.show(t.v);
     el.append(h("span", {}, nm(t)), short !== t.v ? h("small", {}, short) : null);
-    el.title = t.v;
+    el.dataset.iri = t.v;
+    el.title = `${SHAPE_SAYS[shape]}. Now: ${nm(t)}\n${t.v}`;
   } else {
     el.classList.add("is-lit");
     el.append(t.v === "" ? h("span", { style: "color:var(--muted)" }, "a value…") : h("span", {}, t.dt === "text" ? `“${t.v}”` : String(t.v)));
-    el.title = "Click to change";
+    el.title = `${SHAPE_SAYS[shape]}.\nClick to change`;
   }
   return el;
 }
@@ -639,11 +645,39 @@ function varChip(name, extra) {
   return c;
 }
 
+// Variables made by hand stay in the list until they are removed, used or
+// not: sketch.extra holds their names, and travels with the sketch.
+const declared = () => (Array.isArray(sketch.extra) ? sketch.extra : (sketch.extra = []));
+function declare(name) {
+  name = normVar(name);
+  if (name && !declared().includes(name)) declared().push(name);
+  return name;
+}
+/** Every variable to offer: the ones the sketch uses, then the ones only declared. */
+function allVars() {
+  const used = variables(sketch), names = new Set(used.map((v) => v.name));
+  return [...used, ...declared().filter((n) => !names.has(n)).map((name) => ({ name, open: false, unused: true }))];
+}
+
 function renderVars() {
-  const vs = variables(sketch);
-  put($("#vars"), ...(vs.length ? [h("span", {}, "Variables"),
-    ...vs.map((v) => { const c = varChip(v.name); c.tabIndex = 0; c.setAttribute("role", "button"); c.onclick = () => openVar(c, v); c.onkeydown = (e) => { if (e.key === "Enter") openVar(c, v); }; if (v.open) c.style.borderStyle = "dashed"; return c; }),
-    h("span", {}, "— drag one onto a slot or into the answer")] : []));
+  const vs = allVars();
+  const add = h("button", { class: "add", type: "button", id: "newvar", title: "Make a variable to drag onto a slot", onclick: (e) => openPop(e.currentTarget, [
+    h("h4", {}, "A new variable"),
+    entryRow("a name, like person", "Add", (v) => { const n = declare(v); if (n) { closePop(); change(); } }),
+    h("p", { class: "hint" }, "It joins the list. Drag it onto a slot to use it."),
+  ]) }, "+ new variable");
+  put($("#vars"), h("span", {}, "Variables"),
+    vs.map((v) => {
+      const c = varChip(v.name, v.unused ? h("button", { class: "x", type: "button", "aria-label": `Remove ?${v.name}`, onclick: (e) => { e.stopPropagation(); sketch.extra = declared().filter((n) => n !== v.name); change(); } }, "×") : null);
+      c.tabIndex = 0; c.setAttribute("role", "button");
+      c.onclick = () => openVar(c, v);
+      c.onkeydown = (e) => { if (e.key === "Enter") openVar(c, v); };
+      if (v.open) c.style.borderStyle = "dashed";
+      if (v.unused) { c.classList.add("unused"); c.title = "Not used yet: drag it onto a slot"; }
+      return c;
+    }),
+    add,
+    vs.length ? h("span", {}, "— drag one onto a slot or into the answer") : null);
 }
 
 function renderAnswer() {
@@ -682,6 +716,7 @@ function dropFromArea(key, v) {
 }
 function addToArea(key, v) {
   const a = sketch.answer;
+  if (!variables(sketch).some((x) => x.name === v)) { toast(`?${v} is not in a block yet: put it on a slot first`); return; }
   if (key === "show") { if (!a.show.includes(v)) a.show.push(v); }
   else if (key === "per") { if (!a.per.includes(v)) a.per.push(v); }
   else a.of = v;
@@ -696,6 +731,27 @@ function renderSketch() {
 function renderAll() {
   renderData(); renderShelf(); renderRecipeMenu(); renderSketch(); renderRun();
 }
+
+// ── pointing at a piece lights up its place in the sidebar ───────────────
+//
+// Over a slot: its shape in the legend, and the kind or property it holds on
+// the shelf. Over a block: the block it came from in the palette.
+
+function spotlight(target) {
+  document.querySelectorAll("#rail .lit").forEach((e) => e.classList.remove("lit"));
+  if (!target || drag) return;
+  const lit = (e) => { if (e) e.classList.add("lit"); };
+  const block = target.closest("#canvas .block");
+  if (block) { const f = find(sketch, block.dataset.id); if (f) lit(document.querySelector(`.pal[data-t="${f.block.t}"]`)); }
+  const s = target.closest("#canvas .slot");
+  if (!s) return;
+  for (const shape of s.dataset.shape === "any" ? ["thing", "value"] : [s.dataset.shape]) lit(document.querySelector(`.legend [data-legend="${shape}"]`));
+  if (s.dataset.iri) for (const it of document.querySelectorAll("#shelf .item")) if (it.dataset.iri === s.dataset.iri) lit(it);
+}
+$("#canvas").addEventListener("pointerover", (e) => spotlight(e.target));
+$("#canvas").addEventListener("pointerleave", () => spotlight(null));
+$("#canvas").addEventListener("focusin", (e) => spotlight(e.target));
+$("#canvas").addEventListener("focusout", () => spotlight(null));
 
 // ── popovers ─────────────────────────────────────────────────────────────
 
@@ -741,7 +797,7 @@ function openPicker(el) {
   const set = (term) => { b[f] = term; closePop(); change(); };
   const useIri = (text) => { const v = parseIri(text); if (v) set(iri(v)); else toast("That is not an IRI: use http://… or a known prefix:name"); };
   const kids = [];
-  const named = variables(sketch).filter((v) => !v.open && !(t.k === "var" && t.v === v.name));
+  const named = allVars().filter((v) => !v.open && !(t.k === "var" && t.v === v.name));
 
   if (role === "class" || role === "prop") {
     const items = offers(role, b);
@@ -776,8 +832,8 @@ function openPicker(el) {
   if (role !== "value" || named.length) {
     kids.push(h("h4", {}, role === "name" ? "Call it" : "A variable"),
       named.length ? h("div", { class: "pop-vars" }, named.map((v) => { const c = varChip(v.name); c.setAttribute("role", "button"); c.tabIndex = 0; c.onclick = () => set(vr(v.name)); c.onkeydown = (e) => { if (e.key === "Enter") set(vr(v.name)); }; return c; })) : null,
-      entryRow("a new name", "Use", (v) => { const n = normVar(v); if (n) set(vr(n)); }));
-    if (t.k === "var") kids.push(entryRow(`rename ?${t.v} everywhere`, "Rename", (v) => { if (normVar(v)) { rename(sketch, t.v, v); closePop(); change(); } }));
+      entryRow("a new name", "Use", (v) => { const n = declare(v); if (n) set(vr(n)); }));
+    if (t.k === "var") kids.push(entryRow(`rename ?${t.v} everywhere`, "Rename", (v) => { if (normVar(v)) { renameVar(t.v, v); closePop(); change(); } }));
   }
   if (role === "class" || role === "prop" || role === "thing" || role === "any")
     kids.push(h("h4", {}, "An IRI"), entryRow("http://… or prefix:name", "Use", useIri));
@@ -786,13 +842,18 @@ function openPicker(el) {
   openPop(el, kids);
 }
 
+function renameVar(from, to) {
+  rename(sketch, from, to);
+  sketch.extra = [...new Set(declared().map((n) => (n === from ? normVar(to) : n)))];
+}
+
 function openVar(anchor, v) {
   const lines = info.get(v.name) || [];
   openPop(anchor, [
     h("h4", {}, "?" + v.name),
-    lines.length ? h("div", { class: "pop-list" }, lines.map((l) => h("p", { class: "hint", style: "margin:2px" }, l))) : h("p", { class: "hint" }, "Nothing is said about it yet."),
+    lines.length ? h("div", { class: "pop-list" }, lines.map((l) => h("p", { class: "hint", style: "margin:2px" }, l))) : h("p", { class: "hint" }, v.unused ? "Not used yet. Drag it onto a slot, or pick it from a slot's menu." : "Nothing is said about it yet."),
     v.open ? h("p", { class: "hint" }, "It stands for an open slot. Drag it onto another slot to give it a place of its own.") :
-      entryRow("a new name", "Rename", (t) => { if (normVar(t)) { rename(sketch, v.name, t); closePop(); change(); } }),
+      entryRow("a new name", "Rename", (t) => { if (normVar(t)) { renameVar(v.name, t); closePop(); change(); } }),
   ]);
 }
 
