@@ -55,7 +55,7 @@ input::placeholder { color:color-mix(in srgb, var(--muted) 70%, transparent); }
 .mark { width:28px; height:28px; }
 .title { flex:1; min-width:220px; }
 .title p { margin:2px 0 0; color:var(--muted); font-size:13.5px; }
-.top-actions { display:flex; gap:8px; }
+.top-actions { display:flex; gap:8px; flex-wrap:wrap; min-width:0; }
 
 /* ───────── The file ───────── */
 .data { padding:12px 20px; border-bottom:1px solid var(--border-2); background:var(--panel-2); }
