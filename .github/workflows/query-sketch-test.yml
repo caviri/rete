@@ -1,0 +1,72 @@
+name: Query sketch page tests
+
+# site/query-like-a-child: the sketch → SPARQL model and the SPARQL → sketch
+# parser are plain Node; the page itself is driven in headless Chromium with a
+# real pointer, against the engine in docs/engine/ and two published files
+# read over HTTP range requests. Runs when the page, its tests or the engine
+# it loads change.
+on:
+  push:
+    branches: [main, "release-*"]
+    paths:
+      - "site/query-like-a-child/**"
+      - "site/landing/rangecache.js"
+      - "docs/engine/**"
+      - "tests/query-like-a-child/**"
+      - ".github/workflows/query-sketch-test.yml"
+  pull_request:
+    paths:
+      - "site/query-like-a-child/**"
+      - "site/landing/rangecache.js"
+      - "docs/engine/**"
+      - "tests/query-like-a-child/**"
+      - ".github/workflows/query-sketch-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: query-sketch-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: node --test (model, parser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: node --test tests/query-like-a-child/model.test.mjs tests/query-like-a-child/parse.test.mjs
+
+  browser:
+    name: headless Chromium (drag and drop, live files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Install Playwright (the gate's pinned version)
+        working-directory: tests/gate
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Browser check
+        env:
+          NODE_PATH: ${{ github.workspace }}/tests/gate/node_modules
+          SHOTS: ${{ runner.temp }}/shots
+        run: node tests/query-like-a-child/e2e.cjs
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: query-sketch-shots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+          retention-days: 7

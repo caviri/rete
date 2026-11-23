@@ -2,7 +2,8 @@
 # Tests for site/query-like-a-child, in Docker.
 #   bash tests/query-like-a-child/run.sh           unit tests, then the browser check
 #   bash tests/query-like-a-child/run.sh unit      the sketch → SPARQL model only
-# The browser check needs the network: it queries Linked Jazz over range requests.
+# The browser check needs the network: it queries Linked Jazz and Wikidata
+# paintings over range requests. CI runs both (query-sketch-test.yml).
 # It uses playwright-core from tests/gate/node_modules (npm ci there first) with
 # the Chromium of the mcr.microsoft.com/playwright:v1.49.0-jammy image.
 set -euo pipefail
