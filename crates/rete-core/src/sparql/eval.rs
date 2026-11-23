@@ -440,7 +440,15 @@ fn plan_exists(ctx: &Ctx, index: &GraphIndex, nf: Option<&[String]>, plan: &Plan
 /// evaluation context alongside the rows so callers can resolve terms.
 pub(super) fn raw_solutions<'a>(rete: &'a Rete, sel: &Select) -> (Ctx<'a>, Vec<Row>) {
     let ctx = query_ctx(rete, sel);
-    let rows = raw_solutions_in(&ctx, sel);
+    // ORDER BY, OFFSET and LIMIT sort and cut the *solutions*, before a
+    // CONSTRUCT template or a DESCRIBE reads them. The SELECT pipeline does
+    // exactly that (and stops the scan at the cut); without them the plan is
+    // collected as it comes.
+    let rows = if sel.limit.is_some() || sel.offset > 0 || !sel.order.is_empty() {
+        select_rows(&ctx, sel)
+    } else {
+        raw_solutions_in(&ctx, sel)
+    };
     (ctx, rows)
 }
 

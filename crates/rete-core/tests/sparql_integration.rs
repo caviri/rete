@@ -964,6 +964,63 @@ fn dataset_graph_from_describe() {
     }
 }
 
+/// `ORDER BY`, `OFFSET` and `LIMIT` on a CONSTRUCT (and a DESCRIBE) apply to
+/// the solutions, before the template is filled. They were ignored: every
+/// solution was written, also when the cut sat in a subquery the planner had
+/// folded into the query.
+#[test]
+fn construct_and_describe_honor_solution_modifiers() {
+    let rete = Rete::open(&dataset()).unwrap();
+    let construct = |q: &str| match eval_query(&rete, &format!("{PREFIX}{q}")).unwrap() {
+        QueryOutput::Construct(t) => t,
+        other => panic!("{q}: {other:?}"),
+    };
+    let all = construct("CONSTRUCT { ?b ex:knownBy ?a } WHERE { ?a ex:knows ?b }");
+    assert!(all.len() > 3, "the fixture has more than three knows edges");
+
+    let two = construct("CONSTRUCT { ?b ex:knownBy ?a } WHERE { ?a ex:knows ?b } LIMIT 2");
+    assert_eq!(two.len(), 2);
+    assert!(two.iter().all(|t| all.contains(t)));
+
+    let sub = construct(
+        "CONSTRUCT { ?b ex:knownBy ?a } WHERE { { SELECT ?a ?b WHERE { ?a ex:knows ?b } LIMIT 2 } }",
+    );
+    assert_eq!(sub.len(), 2);
+
+    // OFFSET skips solutions; past the end there is nothing left to write.
+    let rest = construct("CONSTRUCT { ?b ex:knownBy ?a } WHERE { ?a ex:knows ?b } OFFSET 1");
+    assert_eq!(rest.len(), all.len() - 1);
+    assert!(construct(&format!(
+        "CONSTRUCT {{ ?b ex:knownBy ?a }} WHERE {{ ?a ex:knows ?b }} OFFSET {}",
+        all.len()
+    ))
+    .is_empty());
+
+    // ORDER BY decides which solutions the LIMIT keeps.
+    let names = |q: &str| {
+        let mut v: Vec<String> = construct(q).into_iter().map(|t| t.2).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        names("CONSTRUCT { ?p ex:label ?n } WHERE { ?p ex:name ?n } ORDER BY ?n LIMIT 2"),
+        vec!["\"Alice\"", "\"Bob\""]
+    );
+    assert_eq!(
+        names("CONSTRUCT { ?p ex:label ?n } WHERE { ?p ex:name ?n } ORDER BY DESC(?n) LIMIT 2"),
+        vec!["\"Dave\"", "\"Eve\""]
+    );
+    assert_eq!(
+        names("CONSTRUCT { ?p ex:label ?n } WHERE { ?p ex:name ?n } ORDER BY ?n OFFSET 1 LIMIT 2"),
+        vec!["\"Bob\"", "\"Carol\""]
+    );
+
+    // DESCRIBE: one resource described, not all five.
+    let one = construct("DESCRIBE ?p WHERE { ?p ex:name ?n } ORDER BY ?n LIMIT 1");
+    assert!(!one.is_empty());
+    assert!(one.iter().all(|t| t.0 == "<http://ex/Alice>"), "{one:?}");
+}
+
 #[test]
 fn ask_construct_exists() {
     let rete = Rete::open(&dataset()).unwrap();
