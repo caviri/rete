@@ -397,3 +397,25 @@ body.matching #canvas .slot:not(.can) { opacity:.3; }
 /* A variable made by hand and not on a slot yet. */
 .var.unused { background:transparent; border-style:dotted; opacity:.85; }
 .vars .add { min-height:28px; }
+
+/* ───────── About and the guided tour ───────── */
+.about { padding:6px 18px 12px; max-height:min(62vh, 520px); }
+.about p, .about li { font-size:14px; line-height:1.55; }
+.about p { margin:8px 0; }
+.about ul { margin:6px 0; padding-left:18px; }
+.about li { margin:5px 0; }
+.finder-body.about h4 { margin:14px 0 2px; }
+.tour-ring { position:fixed; z-index:1500; pointer-events:none; border:2px solid var(--accent); border-radius:12px;
+  box-shadow:0 0 0 9999px rgba(4,8,6,.5), 0 0 0 5px color-mix(in srgb, var(--accent) 30%, transparent); transition:left .2s, top .2s, width .2s, height .2s; }
+.tour { position:fixed; z-index:1600; width:330px; max-width:calc(100vw - 20px); background:var(--panel); border:1px solid var(--accent); border-radius:14px; box-shadow:var(--shadow); padding:13px 15px 12px; transition:left .2s, top .2s; }
+.tour h3 { margin:2px 0 6px; font:700 18px/1.25 var(--serif); }
+.tour p { margin:0 0 8px; font-size:14px; line-height:1.5; }
+.tour-n { color:var(--accent); font:600 11px/1 var(--sans) !important; letter-spacing:.08em; text-transform:uppercase; }
+.tour-bar { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; font-size:13px; }
+
+/* The query text is edited in place. */
+.query pre.editable { cursor:text; }
+.query pre.editable:hover, .query pre.editable:focus-visible { background:color-mix(in srgb, var(--accent) 6%, transparent); outline:0; border-radius:11px 11px 0 0; }
+.query-bar .tag:empty { display:none; }
+.query-bar .tag { color:var(--accent); }
+.query-bar .tag.off { color:var(--hl-var); }

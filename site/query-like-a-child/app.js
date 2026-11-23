@@ -239,7 +239,7 @@ function renderData() {
         h("button", { class: "sample", type: "button", onclick: () => pick.click() }, "a file from this device…"), pick),
     ),
     dsError ? h("p", { class: "data-err" }, dsError) : null,
-    !dsError && !dsBusy ? h("p", { class: "data-desc" }, "No file is needed to sketch: open slots stand for variables and the query can be copied. With a .rete file, the slots offer its own kinds, properties and things, and the result shows on the right.") : null,
+    !dsError && !dsBusy ? h("p", { class: "data-desc" }, "No file is needed to build a script: open slots stand for variables and the query can be copied. With a .rete file, the slots offer its own kinds, properties and things, and the result shows on the right.") : null,
   );
 }
 
@@ -363,7 +363,7 @@ function renderPalette() {
     h("h3", {}, title),
     ...items.map(([t, label]) => h("button", {
       class: `pal fam-${fam}`, type: "button", "data-t": t, "data-drag": JSON.stringify({ type: "new", t }),
-      title: "Drag into the sketch, or press Enter to add it at the end",
+      title: "Drag into the script, or press Enter to add it at the end",
       onclick: () => { addBlock(sketch.blocks, sketch.blocks.length, newBlock(t)); },
     }, h("span", { class: "grip", "aria-hidden": "true" }, "⋮⋮"), label)),
   ]), h("h3", {}, "Shapes"),
@@ -379,7 +379,7 @@ function shelfItems() {
 function itemButton(kind, it) {
   const name = nm({ v: it.v }), label = labelOf(it.v) || undefined, hint = ds ? ds.hints.get(it.v) : "";
   const btn = h("button", {
-    class: `item k-${kind}`, type: "button", "data-iri": it.v, title: `${it.v}\nDrag into the sketch or onto a slot`,
+    class: `item k-${kind}`, type: "button", "data-iri": it.v, title: `${it.v}\nDrag into the script or onto a slot`,
     "data-drag": JSON.stringify({ type: "item", kind, iri: it.v, label }),
     onclick: () => dropItem({ kind, iri: it.v, label }, sketch.blocks, sketch.blocks.length),
   }, h("span", {}, name, label ? h("i", {}, " " + px.show(it.v).replace(/^.*[:/#]/, "")) : hint ? h("i", {}, " " + hint) : null), h("small", {}, it.n != null ? fmtN(it.n) : px.show(it.v)));
@@ -395,7 +395,7 @@ function renderShelf() {
     oninput: (e) => { shelfFilter = e.target.value; renderShelf(); $("#shelf input").focus(); } });
   put($("#shelf"), 
     h("h3", {}, own ? "In this file" : "Common vocabulary"),
-    h("p", { class: "shelf-note" }, own ? "Drag a kind or a property into the sketch." : "Open a file to see its own kinds and properties here."),
+    h("p", { class: "shelf-note" }, own ? "Drag a kind or a property into the script." : "Open a file to see its own kinds and properties here."),
     own && classes.length + preds.length > 12 ? filter : null,
     h("h3", {}, `Kinds${own ? ` · ${classes.length}` : ""}`), list("class", classes),
     h("h3", {}, `Properties${own ? ` · ${preds.length}` : ""}`), list("prop", preds),
@@ -521,7 +521,8 @@ function slot(b, f, role, shape) {
   } else if (t.k === "iri") {
     el.classList.add("is-iri");
     const short = px.show(t.v);
-    el.append(h("span", {}, nm(t)), short !== t.v ? h("small", {}, short) : null);
+    el.append(h("span", {}, nm(t)));
+    if (short !== t.v) el.append(h("small", {}, short));
     el.dataset.iri = t.v;
     el.title = `${SHAPE_SAYS[shape]}. Now: ${nm(t)}\n${t.v}`;
   } else {
@@ -611,6 +612,7 @@ function loadExample(x) {
   const sk = asSketch(x);
   if (sk) { setSketch(clone(sk)); scheduleRun(0); return; }
   manual = x.sparql;
+  inStep = false;
   renderQuery(); scheduleRun(0);
   toast("Opened as text: the blocks cannot say this query");
 }
@@ -628,6 +630,7 @@ function renderCanvas() {
     const mine = ds ? ds.examples.slice(0, 40) : [];
     root.append(h("div", { class: "empty" },
       h("p", { class: "big" }, "Drag a block here to begin"),
+      h("p", {}, h("button", { class: "linkish", type: "button", onclick: startTour }, "or take the guided tour"), " (two minutes, with a library of old books)"),
       h("p", {}, ds ? `or a kind or property of ${ds.name} from the list on the left, or start from an example.` : "or start from one of these and change it."),
       mine.length ? [h("h3", {}, `From ${ds.name}`),
         h("div", { class: "recipes" }, mine.map((x) => h("button", { class: "recipe mine", type: "button", title: x.sparql, onclick: () => loadExample(x) },
@@ -1234,23 +1237,68 @@ function highlight(text) {
   return out;
 }
 
+// The text can be edited in place. While the blocks can say what is typed,
+// they follow it; when they cannot, the text is run as it stands and the
+// blocks wait, unchanged, until the text is something they can say again.
+let inStep = true;
+let syncTimer = 0;
+function queryTag() {
+  const tag = $("#qtag");
+  if (!tag) return;
+  tag.textContent = manual == null ? "" : inStep ? "Editing the text: the blocks follow" : "Editing the text: the blocks cannot say this, so they stay as they were";
+  tag.className = "tag" + (manual != null && !inStep ? " off" : "");
+  const back = $("#qback");
+  if (back) back.textContent = inStep ? "Done" : "Back to the blocks";
+}
+function syncFromText() {
+  if (manual == null) return;
+  const sk = fromSparql(manual, ctx());
+  inStep = !!sk;
+  if (sk) {
+    sk.extra = sketch.extra;
+    sketch = sk;
+    stampLabels(); tidy(sketch);
+    const now = JSON.stringify(sketch);
+    if (now !== snap) { past.push(snap); if (past.length > 100) past.shift(); snap = now; }
+    info = describe(sketch);
+    renderCanvas(); renderVars(); renderAnswer();
+    $("#undo").disabled = !past.length;
+    save();
+  }
+  queryTag();
+}
+function editQuery(text) {
+  manual = text;
+  inStep = true;
+  renderQuery();
+  syncFromText();
+  const ta = $("#query textarea");
+  if (ta) ta.focus();
+}
+
 function renderQuery() {
   const g = generated();
   const text = manual != null ? manual : g.text;
   const body = manual != null
-    ? h("textarea", { spellcheck: false, "aria-label": "SPARQL query", value: text, oninput: (e) => { manual = e.target.value; scheduleRun(900); } })
-    : h("pre", { "aria-label": "SPARQL query" }, h("code", {}, highlight(text)));
-  const examples = null;
+    ? h("textarea", { spellcheck: false, "aria-label": "SPARQL query", value: text, oninput: (e) => {
+      manual = e.target.value;
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(syncFromText, 350);
+      scheduleRun(900);
+    } })
+    : h("pre", { "aria-label": "SPARQL query, click to edit", title: "Click to edit the SPARQL", tabindex: 0, class: "editable",
+      onclick: () => { if (!String(getSelection())) editQuery(g.text); },
+      onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); editQuery(g.text); } } }, h("code", {}, highlight(text)));
   put($("#query"), body,
     h("div", { class: "query-bar" },
-      manual != null ? h("span", { class: "tag" }, "Written by hand: the blocks are not in step") : null,
-      examples,
+      h("span", { class: "tag", id: "qtag" }),
       manual != null
-        ? h("button", { class: "linkish", type: "button", onclick: () => { manual = null; renderQuery(); scheduleRun(0); } }, "Back to the blocks")
-        : h("button", { class: "linkish", type: "button", onclick: () => { manual = g.text; renderQuery(); $("#query textarea").focus(); } }, "Edit as text"),
-      manual == null ? h("button", { class: "linkish", type: "button", title: "The same sketch as a query that writes a graph: every link, kind and name it asks for, as statements",
+        ? h("button", { class: "linkish", type: "button", id: "qback", onclick: () => { clearTimeout(syncTimer); syncFromText(); manual = null; renderSketch(); scheduleRun(0); } }, "Done")
+        : h("button", { class: "linkish", type: "button", onclick: () => editQuery(g.text) }, "Edit the SPARQL"),
+      manual == null ? h("button", { class: "linkish", type: "button", title: "The same script as a query that writes a graph: every link, kind and name it asks for, as statements",
         onclick: () => copy(toSparql(sketch, ctx(), { construct: true }).text, "CONSTRUCT query copied") }, "Copy as CONSTRUCT") : null,
       h("button", { class: "linkish", type: "button", onclick: () => copy(currentQuery(), "Query copied") }, "Copy")));
+  queryTag();
   put($("#notes"), ...(manual == null ? g.problems.map((p) => h("p", { class: "note" }, p)) : []));
 }
 async function copy(text, done) {
@@ -1315,7 +1363,7 @@ function cell(tok) {
     const short = px.show(t.v), label = labelOf(t.v);
     const a = h("a", { class: "cell-iri", href: t.v, target: "_blank", rel: "noopener",
       "data-drag": JSON.stringify({ type: "item", kind: "entity", iri: t.v, label: label || undefined }) }, label || (short !== t.v ? short : nameOf({ v: t.v })));
-    a.title = t.v + "\nDrag into the sketch to ask about exactly this";
+    a.title = t.v + "\nDrag into the script to ask about exactly this";
     return h("td", {}, a, label ? h("small", {}, " " + (short !== t.v ? short : splitIri(t.v)[1])) : short === t.v ? h("small", {}, " " + splitIri(t.v)[0].replace(/^https?:\/\//, "").split("/")[0]) : null);
   }
   if (t.t === "lit") return h("td", { class: t.num ? "num" : null }, t.num && isFinite(Number(t.v)) ? fmtN(Number(t.v)) : t.v, t.lang ? h("small", {}, " @" + t.lang) : null);
@@ -1388,7 +1436,7 @@ function graphData(r) {
     }
     for (const row of r.rows || []) for (const n of tpl.names) { const S = val(n.s, row), O = val(n.o, row); if (S && O && S.t === "iri" && O.t === "lit" && nodes.has(S.v)) nodes.get(S.v).label = O.v; }
     if (!edges.length) why = !tpl.links.length ? "A graph draws links between things. Add an “is linked to” block, and it shows here."
-      : "The links of this sketch have an end that is not in the answer, or that is a value. Show both ends (or show everything) to draw them.";
+      : "The links of this script have an end that is not in the answer, or that is a value. Show both ends (or show everything) to draw them.";
   } else {
     const vars = r.vars || [];
     for (const row of r.rows || []) {
@@ -1527,7 +1575,7 @@ function renderRun() {
   }
   if (run.state === "idle") {
     put(status, run.note || "");
-    put(out, h("div", { class: "idle" }, h("b", {}, `Ready to ask ${ds.name}`), "Press Run, or turn Live on to see rows as you sketch."));
+    put(out, h("div", { class: "idle" }, h("b", {}, `Ready to ask ${ds.name}`), "Press Run, or turn Live on to see rows as you build."));
     return;
   }
   if (run.state === "running") {
@@ -1561,7 +1609,7 @@ function renderRun() {
     rows.length && rows.length === limit ? " · the limit was reached, there may be more" : "",
     rows.length > ROW_CAP ? ` · showing the first ${fmtN(ROW_CAP)}` : "");
   if (!rows.length) {
-    put(out, h("div", { class: "idle" }, h("b", {}, "No rows"), "Nothing in the file matches the whole sketch. Open a slot, or move a block into “if there is”."));
+    put(out, h("div", { class: "idle" }, h("b", {}, "No rows"), "Nothing in the file matches the whole script. Open a slot, or move a block into “if there is”."));
     return;
   }
   put(out, view === "cards" ? cardsView(rows, vars) : view === "graph" ? graphView(graphData(r)) : h("table", {},
@@ -1595,6 +1643,145 @@ function restore() {
   return url;
 }
 
+// ── about, and the guided tour ───────────────────────────────────────────
+//
+// The page takes its idea from Scratch: blocks in colour families on the
+// left, a script in the middle, what it does on the right, shapes that say
+// what fits. The tour walks one real question through it.
+
+function openAbout() {
+  const dlg = $("#about");
+  put(dlg,
+    h("div", { class: "finder-head" }, h("h3", {}, "About this page"),
+      h("p", {}, "A SPARQL query, built from blocks.")),
+    h("div", { class: "finder-body about" },
+      h("p", {}, "The idea comes from ", h("a", { href: "https://scratch.mit.edu/about", target: "_blank", rel: "noopener" }, "Scratch"),
+        ", the block language from the Lifelong Kindergarten group at the MIT Media Lab, made so that children could program by snapping blocks together instead of typing. It showed that a hard thing gets easy to start when its parts can be picked up, tried and put somewhere else."),
+      h("h4", {}, "What is borrowed"),
+      h("ul", {},
+        h("li", {}, h("b", {}, "Blocks in families. "), "Green blocks find things, blue ones keep only some, amber ones combine. The palette is on the left, the script in the middle, and what it does shows on the right."),
+        h("li", {}, h("b", {}, "Shapes that say what fits. "), "A round slot takes a thing, a pointed one a kind, an arrow a property, a square a value. A piece of the wrong shape does not go in, so a script cannot be put together wrong."),
+        h("li", {}, h("b", {}, "Tinkering. "), "Every change runs at once. Nothing has to be finished first: an empty slot stands for “anything” and is already a question."),
+        h("li", {}, h("b", {}, "A low floor and wide walls. "), "One block is enough to see rows. The same blocks reach unions, optional parts, counting and paths.")),
+      h("h4", {}, "What is different"),
+      h("p", {}, "The blocks are not a language of their own. Each one stands for a line of SPARQL, the standard query language of the web of data, and the text is always there to read, copy or edit. A query that came from somewhere else is turned into blocks when the blocks can say it."),
+      h("h4", {}, "The file"),
+      h("p", {}, "With a .rete file open, the kinds, properties and names in the slots are the file's own, read from its card. A question reads only the parts of the file it needs, over the network, in this browser."),
+      h("p", { class: "hint" }, "Scratch is a project of the Scratch Foundation. This page is not part of it and uses none of its code or artwork.")),
+    h("div", { class: "finder-foot" },
+      h("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => { dlg.close(); startTour(); } }, "Take the guided tour"),
+      h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => dlg.close() }, "Close")));
+  dlg.showModal();
+}
+$("#about").addEventListener("click", (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+
+const TOUR_FILE = SAMPLES[1][1];
+const TOUR_PLACE = "https://data.embassyofthefreemind.com/ontology#placePublished";
+// The file's own example, kept here too in case a later card drops it.
+const TOUR_QUERY = `PREFIX schema: <http://schema.org/>
+PREFIX dct: <http://purl.org/dc/terms/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?cover ?title ?author ?year WHERE {
+  ?b dct:subject <https://data.embassyofthefreemind.com/category/alchemy> ;
+     schema:image ?cover ; rdfs:label ?title ;
+     dct:creator ?author ; schema:datePublished ?year
+}
+ORDER BY ?year
+LIMIT 40`;
+const placeBlock = () => [...walk(sketch.blocks)].map(([b]) => b).find((b) => b.t === "link" && b.p.k === "iri" && b.p.v === TOUR_PLACE);
+
+const TOUR = [
+  { at: "#palette", title: "Blocks, as in Scratch",
+    text: "This page borrows from Scratch, the language where children program by snapping blocks together. Here the blocks make a question for a graph of data. Each colour is a family: green blocks find things, blue ones keep only some, amber ones combine." },
+  { at: "#data", title: "A file to ask",
+    text: "The tour opens Hermetic books: 2,307 early printed books from the Embassy of the Free Mind in Amsterdam. The file is not downloaded: each question reads only the parts it needs.",
+    async enter() { if (!ds || ds.url !== TOUR_FILE) await openData(TOUR_FILE); } },
+  { at: "#canvas", title: "A script, read top to bottom",
+    text: "The file brings its own questions. This is “Alchemy books, with cover images”, opened as blocks. ?b is a book whose subject is alchemy; the next blocks ask for its cover, its name, its author and its year.",
+    enter() {
+      const x = ds && ds.examples.find((e) => /alchemy/i.test(e.title) && asSketch(e));
+      setSketch(clone(x ? asSketch(x) : fromSparql(TOUR_QUERY, ctx())));
+      scheduleRun(0);
+    } },
+  { at: ".legend", title: "Shapes say what fits",
+    text: "Look at the outlines in the script. A round slot takes a thing, a pointed one a kind, an arrow a property, a square a value. Point at any piece and its shape lights up here. A variable, like ?b, fits anywhere." },
+  { at: "#out", title: "The answer, as cards",
+    text: "Each row of the answer is a card. The ?cover column holds pictures, so each card shows its book. Table and Graph are other ways to look at the same rows.",
+    enter() { view = "cards"; renderRun(); } },
+  { at: () => [...document.querySelectorAll("#shelf .item")].find((e) => e.dataset.iri === TOUR_PLACE) || $("#shelf"), title: "Now add a column",
+    text: "On the left are the file's own properties. This one is “place published”. Drag it into the script, under the other blocks. Or press Next and the tour does it." },
+  { at: () => { const b = placeBlock(); return (b && document.querySelector(`.block[data-id="${b.id}"]`)) || $("#canvas"); }, title: "A new block",
+    text: "?b → place published → a new variable. Read the query on the right: it gained one line. That is all a block is, a line of SPARQL you can pick up.",
+    enter() { if (!placeBlock()) dropItem({ kind: "prop", iri: TOUR_PLACE, label: labelOf(TOUR_PLACE) || undefined }, sketch.blocks, sketch.blocks.length); } },
+  { at: "#answer", title: "Show it",
+    text: "The answer lists which variables to show. The new one is now among them, so every card says where its book was printed. You can drag any variable here yourself.",
+    enter() { const b = placeBlock(); if (b && b.o.k === "var" && !sketch.answer.show.includes(b.o.v)) addToArea("show", b.o.v); } },
+  { at: "#out", title: "Your turn",
+    text: "Try things: nothing breaks. Click the pointed “alchemy” piece to pick another subject. Drag a name from the cards into the script to ask about just that one. Put the place block inside “if there is” to keep the books with no place. Undo is at the top." },
+];
+
+let tourAt = -1, tourTimer = 0;
+function placeTour() {
+  const step = TOUR[tourAt];
+  if (!step) return;
+  const el = typeof step.at === "function" ? step.at() : $(step.at);
+  const ring = $("#tour-ring"), card = $("#tour");
+  if (!el) { ring.hidden = true; return; }
+  const r = el.getBoundingClientRect();
+  ring.hidden = false;
+  Object.assign(ring.style, { left: r.left - 5 + "px", top: r.top - 5 + "px", width: r.width + 10 + "px", height: r.height + 10 + "px" });
+  const cw = card.offsetWidth, ch = card.offsetHeight, gap = 14;
+  let x, y;
+  if (r.right + gap + cw <= innerWidth) { x = r.right + gap; y = r.top; }
+  else if (r.left - gap - cw >= 0) { x = r.left - gap - cw; y = r.top; }
+  else if (r.bottom + gap + ch <= innerHeight) { x = r.left; y = r.bottom + gap; }
+  else { x = r.left; y = r.top - gap - ch; }
+  card.style.left = Math.max(10, Math.min(x, innerWidth - cw - 10)) + "px";
+  card.style.top = Math.max(10, Math.min(y, innerHeight - ch - 10)) + "px";
+}
+async function showTour(i) {
+  tourAt = i;
+  const step = TOUR[i], card = $("#tour");
+  card.hidden = false;
+  const busy = h("p", { class: "hint" }, h("span", { class: "spin" }), " One moment…");
+  const draw = (working) => put(card,
+    h("p", { class: "tour-n" }, `Guided tour · ${i + 1} of ${TOUR.length}`),
+    h("h3", {}, step.title), h("p", {}, step.text), working ? busy : null,
+    h("div", { class: "tour-bar" },
+      h("button", { class: "linkish", type: "button", onclick: endTour }, "End tour"),
+      h("span", {},
+        i > 0 ? h("button", { class: "btn btn-ghost btn-sm", type: "button", disabled: working, onclick: () => showTour(i - 1) }, "Back") : null, " ",
+        i < TOUR.length - 1
+          ? h("button", { class: "btn btn-primary btn-sm", type: "button", id: "tour-next", disabled: working, onclick: () => showTour(i + 1) }, "Next")
+          : h("button", { class: "btn btn-primary btn-sm", type: "button", id: "tour-next", onclick: endTour }, "Done"))));
+  draw(!!step.enter);
+  placeTour();
+  if (step.enter) {
+    try { await step.enter(); } catch { /* the step still explains itself */ }
+    if (tourAt !== i) return;
+    draw(false);
+  }
+  const el = typeof step.at === "function" ? step.at() : $(step.at);
+  if (el) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  placeTour();
+  const next = $("#tour-next");
+  if (next) next.focus({ preventScroll: true });
+}
+function startTour() {
+  closePop();
+  clearInterval(tourTimer);
+  // The spot follows its piece while the page redraws or scrolls under it.
+  tourTimer = setInterval(placeTour, 150);
+  showTour(0);
+}
+function endTour() {
+  clearInterval(tourTimer);
+  tourAt = -1;
+  $("#tour").hidden = true;
+  $("#tour-ring").hidden = true;
+}
+addEventListener("keydown", (e) => { if (e.key === "Escape" && tourAt >= 0) endTour(); });
+
 // ── start ────────────────────────────────────────────────────────────────
 
 $("#recipe").onchange = (e) => {
@@ -1605,8 +1792,10 @@ $("#recipe").onchange = (e) => {
 };
 $("#clear").onclick = () => setSketch(emptySketch());
 $("#undo").onclick = undo;
-$("#share").onclick = () => { save(); copy(location.href, ds && ds.file ? "Link copied (the sketch only: a file from this device cannot be linked)" : "Link copied"); };
+$("#share").onclick = () => { save(); copy(location.href, ds && ds.file ? "Link copied (the script only: a file from this device cannot be linked)" : "Link copied"); };
 $("#run").onclick = runNow;
+$("#tourbtn").onclick = startTour;
+$("#aboutbtn").onclick = openAbout;
 $("#live").onchange = () => scheduleRun(0);
 
 const startUrl = restore();

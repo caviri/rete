@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
   <title>Query like a child · rete</title>
-  <meta name="description" content="Sketch a SPARQL query by dragging blocks. Works on its own, and on any .rete file: open one by link and pick its kinds, properties and things." />
+  <meta name="description" content="Build a SPARQL query by snapping blocks together, as in Scratch. Works on its own, and on any .rete file: open one by link and pick its kinds, properties and things." />
   <link rel="canonical" href="https://caviri.github.io/rete/query-like-a-child/" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect width='120' height='120' rx='28' fill='%232a6df4'/%3E%3Cg fill='%23fff'%3E%3Ccircle cx='60' cy='34' r='11'/%3E%3Ccircle cx='30' cy='77' r='9'/%3E%3Ccircle cx='90' cy='77' r='9'/%3E%3Ccircle cx='60' cy='102' r='8'/%3E%3C/g%3E%3C/svg%3E" />
   <link rel="stylesheet" href="style.css" />
@@ -26,11 +26,13 @@
   </a>
   <div class="title">
     <h1>Query like a child</h1>
-    <p>Drag blocks to sketch a question. The SPARQL writes itself.</p>
+    <p>Snap blocks together to ask a question, as in Scratch. The SPARQL writes itself.</p>
   </div>
   <div class="top-actions">
     <button class="btn btn-ghost btn-sm" id="undo" type="button" disabled>Undo</button>
     <button class="btn btn-ghost btn-sm" id="share" type="button">Copy link</button>
+    <button class="btn btn-ghost btn-sm" id="tourbtn" type="button">Guided tour</button>
+    <button class="btn btn-ghost btn-sm" id="aboutbtn" type="button">About</button>
     <a class="btn btn-ghost btn-sm" href="../docs/">Docs</a>
   </div>
 </header>
@@ -47,7 +49,7 @@
     <div class="split" id="splitRail" role="separator" aria-orientation="vertical" aria-label="Width of the blocks column" tabindex="0" title="Drag to resize · double-click to reset"></div>
     <div class="board">
       <div class="board-head">
-        <h2>Sketch</h2>
+        <h2>Script</h2>
         <div class="board-tools">
           <label class="sr-only" for="recipe">Start from a recipe</label>
           <select id="recipe"><option value="">Start from…</option></select>
@@ -79,6 +81,9 @@
 
 <div class="pop" id="pop" hidden></div>
 <dialog class="finder" id="finder" aria-label="Find a thing"></dialog>
+<dialog class="finder" id="about" aria-label="About this page"></dialog>
+<div class="tour-ring" id="tour-ring" hidden></div>
+<div class="tour" id="tour" role="dialog" aria-label="Guided tour" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
 <script type="module" src="app.js"></script>
