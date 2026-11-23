@@ -20,6 +20,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   new addresses of the batch 3 catalog files and has the graph view's card
   view and hive layout.
 
+### Fixed
+
+- **`LIMIT`, `OFFSET` and `ORDER BY` on CONSTRUCT and DESCRIBE.** They were
+  ignored: every solution was written, also when the cut sat in a subquery
+  (`CONSTRUCT { … } WHERE { { SELECT … LIMIT 5 } }`). They now sort and cut
+  the solutions before the template is filled, and a `LIMIT` stops the scan
+  there, so a CONSTRUCT with a small `LIMIT` on a large remote file reads
+  what a SELECT with that `LIMIT` reads.
+
 ## [0.7.8] - 2026-11-22
 
 0.7.8 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
