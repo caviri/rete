@@ -55,7 +55,7 @@ input::placeholder { color:color-mix(in srgb, var(--muted) 70%, transparent); }
 .mark { width:28px; height:28px; }
 .title { flex:1; min-width:220px; }
 .title p { margin:2px 0 0; color:var(--muted); font-size:13.5px; }
-.top-actions { display:flex; gap:8px; }
+.top-actions { display:flex; gap:8px; flex-wrap:wrap; min-width:0; }
 
 /* ───────── The file ───────── */
 .data { padding:12px 20px; border-bottom:1px solid var(--border-2); background:var(--panel-2); }
@@ -383,3 +383,39 @@ body.matching #canvas .slot:not(.can) { opacity:.3; }
 .g-node:hover circle { fill:var(--accent-2); }
 .g-node text { fill:var(--fg); font:11.5px var(--sans); paint-order:stroke; stroke:var(--panel-2); stroke-width:3px; pointer-events:none; }
 .graph-note { margin:0; padding:7px 12px; border-top:1px solid var(--border-2); color:var(--muted); font-size:12px; }
+
+/* ───────── Pointing at a piece ─────────
+   The piece under the pointer shows where it belongs in the sidebar: its
+   shape in the legend, its block in the palette, its kind or property on
+   the shelf. */
+#rail .lit { transition:box-shadow .12s, background .12s; }
+.pal.lit { border-color:var(--c); background:var(--tint); box-shadow:0 0 0 2px color-mix(in srgb, var(--c) 45%, transparent); }
+.legend .lit, .item.lit { --edge:var(--accent); --fill:color-mix(in srgb, var(--accent) 26%, var(--panel)); color:var(--fg); }
+.legend .lit.sh-thing, .legend .lit.sh-value { border-color:var(--accent); border-style:solid; background:color-mix(in srgb, var(--accent) 26%, var(--panel)); box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.legend .lit.sh-class, .legend .lit.sh-prop, .item.lit { filter:drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 75%, transparent)); }
+
+/* A variable made by hand and not on a slot yet. */
+.var.unused { background:transparent; border-style:dotted; opacity:.85; }
+.vars .add { min-height:28px; }
+
+/* ───────── About and the guided tour ───────── */
+.about { padding:6px 18px 12px; max-height:min(62vh, 520px); }
+.about p, .about li { font-size:14px; line-height:1.55; }
+.about p { margin:8px 0; }
+.about ul { margin:6px 0; padding-left:18px; }
+.about li { margin:5px 0; }
+.finder-body.about h4 { margin:14px 0 2px; }
+.tour-ring { position:fixed; z-index:1500; pointer-events:none; border:2px solid var(--accent); border-radius:12px;
+  box-shadow:0 0 0 9999px rgba(4,8,6,.5), 0 0 0 5px color-mix(in srgb, var(--accent) 30%, transparent); transition:left .2s, top .2s, width .2s, height .2s; }
+.tour { position:fixed; z-index:1600; width:330px; max-width:calc(100vw - 20px); background:var(--panel); border:1px solid var(--accent); border-radius:14px; box-shadow:var(--shadow); padding:13px 15px 12px; transition:left .2s, top .2s; }
+.tour h3 { margin:2px 0 6px; font:700 18px/1.25 var(--serif); }
+.tour p { margin:0 0 8px; font-size:14px; line-height:1.5; }
+.tour-n { color:var(--accent); font:600 11px/1 var(--sans) !important; letter-spacing:.08em; text-transform:uppercase; }
+.tour-bar { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; font-size:13px; }
+
+/* The query text is edited in place. */
+.query pre.editable { cursor:text; }
+.query pre.editable:hover, .query pre.editable:focus-visible { background:color-mix(in srgb, var(--accent) 6%, transparent); outline:0; border-radius:11px 11px 0 0; }
+.query-bar .tag:empty { display:none; }
+.query-bar .tag { color:var(--accent); }
+.query-bar .tag.off { color:var(--hl-var); }

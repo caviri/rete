@@ -82,6 +82,27 @@ async function dragTo(page, from, to, opts = {}) {
   await dragTo(page, page.locator(".item.k-class", { hasText: "Person" }).first(), page.locator('.slot[data-role="class"]'));
   ok((await query()).includes("?thing a foaf:Person ."), "a kind dropped on the kind slot");
 
+  await page.locator('#canvas .slot[data-role="class"]').hover();
+  ok(await page.locator('.legend .lit[data-legend="class"]').count() === 1 && await page.locator(".legend .lit").count() === 1
+    && await page.locator('.pal.lit[data-t="kind"]').count() === 1 && await page.locator(".item.k-class.lit").count() === 1,
+    "pointing at a slot lights its shape, its block and its piece in the sidebar");
+  ok(/^A kind goes here/.test(await page.locator('#canvas .slot[data-role="class"]').getAttribute("title")), "and its tooltip names the kind of piece");
+  await page.screenshot({ path: path.join(SHOTS, "02c-spotlight.png") });
+  await page.mouse.move(700, 880);
+  ok(await page.locator("#rail .lit").count() === 0, "leaving the sketch clears it");
+  // a variable made by hand joins the list and can be dragged onto a slot
+  await page.click("#newvar");
+  await page.locator("#pop input").fill("the artist");
+  await page.locator("#pop .btn", { hasText: "Add" }).click();
+  ok(await page.locator("#vars .var.unused", { hasText: "?the_artist" }).count() === 1 && !(await query()).includes("the_artist"), "a new variable joins the list without changing the query");
+  await dragTo(page, page.locator("#vars .var", { hasText: "?the_artist" }), page.locator('#canvas .slot[data-f="s"]'));
+  ok((await query()).includes("?the_artist a foaf:Person .") && await page.locator("#vars .var.unused").count() === 0, "dragged onto a slot, it is used");
+  await page.locator('#canvas .slot[data-f="s"]').click();
+  await page.locator("#pop input[placeholder='a new name']").fill("thing");
+  await page.locator("#pop .pop-row", { has: page.locator("input[placeholder='a new name']") }).locator("button").click();
+  ok((await query()).includes("?thing a foaf:Person .") && await page.locator("#vars .var.unused", { hasText: "?the_artist" }).count() === 1, "and it stays in the list when the slot moves on");
+  await page.locator("#vars .var.unused .x").click();
+  ok(await page.locator("#vars .var", { hasText: "?the_artist" }).count() === 0, "until it is removed");
   await dragTo(page, page.locator(".pal", { hasText: "has a name" }), page.locator("#canvas .block"), { dy: 60 });
   ok(/\?thing a foaf:Person \.\n\s+\?thing rdfs:label\|/.test(await query()), "second block inserted after the first");
 
@@ -185,13 +206,13 @@ async function dragTo(page, from, to, opts = {}) {
   ok(await page.locator("#out tbody tr").count() <= 1, "and the result follows");
   await page.screenshot({ path: path.join(SHOTS, "07-pinned.png") });
 
-  await page.locator(".linkish", { hasText: "Edit as text" }).click();
+  await page.locator(".linkish", { hasText: "Edit the SPARQL" }).click();
   await page.locator("#query textarea").fill("ASK { ?s ?p ?o }");
   await page.waitForSelector("#out .ask", { timeout: 30000 });
   ok((await page.locator("#out .ask").textContent()) === "Yes", "a query written by hand runs too");
 
   // ── examples, cards, graph ──
-  await page.locator(".linkish", { hasText: "Back to the blocks" }).click();
+  await page.locator("#qback").click();
   await page.click("#clear");
   ok(await page.locator(".recipe.mine").count() >= 5 && await page.locator(".recipe:not(.mine)").count() >= 17, "the empty sketch offers the file's own examples and the general ones");
   await page.screenshot({ path: path.join(SHOTS, "10-examples.png"), fullPage: true });
@@ -215,11 +236,11 @@ async function dragTo(page, from, to, opts = {}) {
   ok(await page.locator("#out .card").count() === 50 && await page.locator("#out .card h3").count() === 50 && await page.locator("#out .card dd .cell-iri").count() >= 50 && !(await page.locator("#out").textContent()).includes("[object"), "the cards view has one card per row");
   await page.screenshot({ path: path.join(SHOTS, "12-cards.png") });
   await page.locator("#views button", { hasText: "Table" }).click();
-  await page.locator(".linkish", { hasText: "Edit as text" }).click();
+  await page.locator(".linkish", { hasText: "Edit the SPARQL" }).click();
 
   // ── names for identifiers ──
   ok(await page.locator("#out .cell-iri", { hasText: "Billy Eckstine" }).count() >= 0, "result cells are named");
-  await page.locator(".linkish", { hasText: "Back to the blocks" }).click();
+  await page.locator("#qback").click();
   await page.click("#clear");
   await page.locator(".recipe", { hasText: "List things of a kind" }).click();
   await page.waitForSelector("#out .cell-iri:has-text('Aaron Copland')", { timeout: 60000 });
@@ -239,15 +260,58 @@ async function dragTo(page, from, to, opts = {}) {
   await page.locator(".sample", { hasText: "Linked Jazz" }).click();
   await page.waitForSelector(".data-name", { timeout: 60000 });
   await settled();
-  await page.locator(".linkish", { hasText: "Edit as text" }).click();
+  await page.locator(".linkish", { hasText: "Edit the SPARQL" }).click();
 
   // ── a phone ──
   await page.setViewportSize({ width: 390, height: 800 });
-  await page.locator(".linkish", { hasText: "Back to the blocks" }).click();
+  await page.locator("#qback").click();
   await settled();
   const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  ok(wide <= 1, `no sideways scroll at phone width (${wide}px over)`);
+  const over = wide <= 1 ? "" : await page.evaluate(() => {
+    const w = document.documentElement.clientWidth;
+    return [...document.querySelectorAll("body *")].filter((x) => x.getBoundingClientRect().right > w + 1)
+      .map((x) => `${x.tagName.toLowerCase()}${x.id ? "#" + x.id : ""}.${String(x.className.baseVal ?? x.className).replace(/ +/g, ".")}@${Math.round(x.getBoundingClientRect().right)}`).slice(0, 12).join(" ");
+  });
+  ok(wide <= 1, `no sideways scroll at phone width (${wide}px over) ${over}`);
   await page.screenshot({ path: path.join(SHOTS, "08-phone.png"), fullPage: true });
+
+  // ── editing the SPARQL: the blocks follow when they can ──
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.click("#clear");
+  await page.locator("#query pre").click();
+  await page.locator("#query textarea").fill("PREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT ?who ?n WHERE {\n  ?who a foaf:Person ; foaf:name ?n .\n  FILTER(CONTAINS(LCASE(STR(?n)), \"duke\"))\n} LIMIT 5");
+  await page.waitForFunction(() => document.querySelectorAll("#canvas .block").length === 3);
+  ok(/blocks follow/.test(await page.locator("#qtag").textContent()) && await page.locator('#canvas .slot.is-var', { hasText: "?who" }).count() >= 2, "typing SPARQL the blocks can say rebuilds the blocks");
+  await settled();
+  ok(await page.locator("#out tbody tr").count() >= 1, "and it runs");
+  await page.locator("#query textarea").fill("SELECT ?s WHERE { ?s ?p ?o . FILTER(isIRI(?o)) } LIMIT 3");
+  await page.waitForFunction(() => /cannot say/.test(document.querySelector("#qtag").textContent));
+  ok(await page.locator("#canvas .block").count() === 3, "text the blocks cannot say runs as text and leaves the blocks alone");
+  await settled();
+  ok(await page.locator("#out tbody tr").count() === 3, "and it runs too");
+  await page.locator("#qback").click();
+  ok((await query()).includes('FILTER(CONTAINS(LCASE(STR(?n)), "duke"))'), "going back returns to the last script");
+
+  // ── about, and the guided tour on Hermetic books ──
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.click("#aboutbtn");
+  ok(await page.locator("#about a[href='https://scratch.mit.edu/about']").count() === 1, "About says where the idea comes from");
+  await page.screenshot({ path: path.join(SHOTS, "13-about.png") });
+  await page.locator("#about .btn", { hasText: "Take the guided tour" }).click();
+  for (let i = 1; i <= 8; i++) {
+    await page.waitForSelector("#tour-next:not([disabled])", { timeout: 120000 });
+    if (i === 5) { await settled(); await page.waitForSelector("#out .card img", { timeout: 120000 }); await page.screenshot({ path: path.join(SHOTS, "14-tour-cards.png") }); }
+    await page.click("#tour-next");
+    await page.waitForFunction((n) => document.querySelector(".tour-n").textContent.includes(`${n} of 9`), i + 1);
+  }
+  await page.waitForSelector("#tour-next:not([disabled])");
+  await settled();
+  ok(/\?b \S*placePublished \?placePublished \./.test(await query()) && /SELECT \?cover \?title \?author \?year \?placePublished\n/.test(await query()), "the tour adds the place of publication as a column");
+  await page.waitForFunction(() => document.querySelectorAll("#out .card").length >= 10 && [...document.querySelectorAll("#out .card dt")].some((d) => d.textContent === "?placePublished"), null, { timeout: 120000 });
+  ok(await page.locator("#out .card img").count() >= 10, "and the cards show the covers and the place");
+  await page.screenshot({ path: path.join(SHOTS, "15-tour-end.png") });
+  await page.click("#tour-next");
+  ok(await page.locator("#tour").isHidden() && await page.locator("#tour-ring").isHidden(), "the tour ends");
 
   ok(errors.length === 0, "no page errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   await browser.close();
