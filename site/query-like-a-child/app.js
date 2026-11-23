@@ -968,6 +968,60 @@ addEventListener("click", (e) => { if (swallowClick) { e.stopPropagation(); e.pr
 // A link in a result cell is draggable; keep the browser's own drag out of it.
 addEventListener("dragstart", (e) => { if (e.target.closest && e.target.closest("[data-drag]")) e.preventDefault(); });
 
+// ── column widths ────────────────────────────────────────────────────────
+//
+// The two dividers resize the blocks column and the sketch against the
+// result. Widths are kept in this browser; a double-click puts one back.
+
+const SPLITS = {
+  // now(): the width as it stands; per(): how much one pixel of pointer travel changes it.
+  splitRail: { prop: "--rail", unit: "px", min: 150, max: 460, step: 16, base: 212, now: () => $("#rail").getBoundingClientRect().width, per: () => 1 },
+  splitMain: { prop: "--left", unit: "%", min: 32, max: 76, step: 2, base: 54.5,
+    now: () => ($(".compose").getBoundingClientRect().width / $(".work").getBoundingClientRect().width) * 100,
+    per: () => 100 / $(".work").getBoundingClientRect().width },
+};
+let widths = {};
+try { widths = JSON.parse(localStorage.getItem("rete.qlc.widths") || "{}") || {}; } catch { /* no storage: defaults */ }
+function setWidth(id, value) {
+  const c = SPLITS[id];
+  if (value == null) { delete widths[id]; document.documentElement.style.removeProperty(c.prop); }
+  else {
+    widths[id] = Math.round(Math.max(c.min, Math.min(c.max, value)) * 10) / 10;
+    document.documentElement.style.setProperty(c.prop, widths[id] + c.unit);
+  }
+  try { localStorage.setItem("rete.qlc.widths", JSON.stringify(widths)); } catch { /* not kept, still applied */ }
+}
+for (const id in SPLITS) {
+  const el = document.getElementById(id), c = SPLITS[id];
+  if (Number.isFinite(widths[id])) setWidth(id, widths[id]);
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("on");
+    document.body.classList.add("resizing");
+    const from = c.now(), x0 = e.clientX, per = c.per();
+    const move = (ev) => setWidth(id, from + (ev.clientX - x0) * per);
+    const stop = () => {
+      el.classList.remove("on");
+      document.body.classList.remove("resizing");
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", stop);
+      el.removeEventListener("pointercancel", stop);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", stop);
+    el.addEventListener("pointercancel", stop);
+  });
+  el.addEventListener("dblclick", () => setWidth(id, null));
+  el.addEventListener("keydown", (e) => {
+    const now = widths[id] ?? c.base;
+    if (e.key === "ArrowLeft") { e.preventDefault(); setWidth(id, now - c.step); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setWidth(id, now + c.step); }
+    else if (e.key === "Home" || e.key === "Enter") { e.preventDefault(); setWidth(id, null); }
+  });
+}
+
 // ── the query text ───────────────────────────────────────────────────────
 
 const KEYWORDS = /^(PREFIX|SELECT|DISTINCT|WHERE|FILTER|OPTIONAL|UNION|NOT|EXISTS|VALUES|BIND|AS|GROUP|ORDER|BY|LIMIT|OFFSET|DESC|ASC|COUNT|SUM|AVG|MIN|MAX|CONTAINS|LCASE|UCASE|STR|STRSTARTS|STRLEN|REGEX|LANG|DATATYPE|YEAR|MONTH|MINUS|ASK|CONSTRUCT|DESCRIBE|HAVING|SERVICE|GRAPH)$/i;
