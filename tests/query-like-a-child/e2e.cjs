@@ -267,7 +267,12 @@ async function dragTo(page, from, to, opts = {}) {
   await page.locator("#qback").click();
   await settled();
   const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  ok(wide <= 1, `no sideways scroll at phone width (${wide}px over)`);
+  const over = wide <= 1 ? "" : await page.evaluate(() => {
+    const w = document.documentElement.clientWidth;
+    return [...document.querySelectorAll("body *")].filter((x) => x.getBoundingClientRect().right > w + 1)
+      .map((x) => `${x.tagName.toLowerCase()}${x.id ? "#" + x.id : ""}.${String(x.className.baseVal ?? x.className).replace(/ +/g, ".")}@${Math.round(x.getBoundingClientRect().right)}`).slice(0, 12).join(" ");
+  });
+  ok(wide <= 1, `no sideways scroll at phone width (${wide}px over) ${over}`);
   await page.screenshot({ path: path.join(SHOTS, "08-phone.png"), fullPage: true });
 
   // ── editing the SPARQL: the blocks follow when they can ──
