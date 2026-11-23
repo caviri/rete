@@ -115,6 +115,31 @@ async function dragTo(page, from, to, opts = {}) {
   await page.waitForSelector("#canvas .block");
   ok((await query()).includes("dcterms:creator"), "the link restores the sketch");
 
+  // ── column widths ──
+  {
+    const width = async (sel) => (await page.locator(sel).boundingBox()).width;
+    const pull = async (sel, dx) => {
+      const b = await page.locator(sel).boundingBox();
+      await page.mouse.move(b.x + b.width / 2, b.y + 200);
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.width / 2 + dx, b.y + 220, { steps: 5 });
+      await page.mouse.up();
+    };
+    const rail0 = await width("#rail"), res0 = await width(".results");
+    await pull("#splitRail", 90);
+    { const w = await width("#rail"); ok(Math.abs(w - rail0 - 90) <= 2, `dragging the first divider widens the blocks column (${rail0} to ${w})`); }
+    await pull("#splitMain", -150);
+    { const w = await width(".results"); ok(Math.abs(w - res0 - 150) <= 3, `dragging the second divider widens the result (${res0} to ${w})`); }
+    await page.screenshot({ path: path.join(SHOTS, "03b-resized.png") });
+    await page.reload();
+    await page.waitForSelector(".pal");
+    ok(Math.abs(await width("#rail") - rail0 - 90) <= 2, "the widths are kept across a reload");
+    await page.locator("#splitRail").dblclick();
+    await page.locator("#splitMain").dblclick();
+    ok(Math.abs(await width("#rail") - rail0) <= 1 && Math.abs(await width(".results") - res0) <= 1, "a double-click puts a divider back");
+    ok(await page.evaluate(() => getComputedStyle(document.querySelector(".board")).scrollbarWidth) === "thin", "scrollbars are the thin, themed kind");
+  }
+
   // ── with a file ──
   await page.click("#clear");
   await page.locator(".sample", { hasText: "Linked Jazz" }).click();

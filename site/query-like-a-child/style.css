@@ -81,9 +81,17 @@ input::placeholder { color:color-mix(in srgb, var(--muted) 70%, transparent); }
    result each scroll on their own, so a block can be dragged from one to the
    other without the page moving. Narrow screens stack and scroll as a page. */
 body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
-.work { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); }
-.compose { display:grid; grid-template-columns:212px minmax(0,1fr); min-height:0; border-right:1px solid var(--border-2); }
-.rail { padding:14px 12px 24px 20px; border-right:1px solid var(--border-2); overflow:auto; min-height:0; }
+.work { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0, var(--left, 54.5%)) 9px minmax(0,1fr); }
+.compose { display:grid; grid-template-columns:var(--rail, 212px) 9px minmax(0,1fr); min-height:0; }
+.rail { padding:14px 8px 24px 20px; overflow:auto; min-height:0; }
+/* The dividers: drag one to give a column more room. */
+.split { position:relative; cursor:col-resize; touch-action:none; user-select:none; }
+.split::before { content:""; position:absolute; top:0; bottom:0; left:4px; width:1px; background:var(--border-2); transition:background .15s, width .15s, left .15s; }
+.split::after { content:""; position:absolute; top:50%; left:2px; width:5px; height:34px; margin-top:-17px; border-radius:3px; background:var(--border); opacity:0; transition:opacity .15s, background .15s; }
+.split:hover::before, .split:focus-visible::before, .split.on::before { background:var(--accent); width:3px; left:3px; }
+.split:hover::after, .split:focus-visible::after, .split.on::after { opacity:1; background:var(--accent); }
+.split:focus-visible { outline:0; }
+body.resizing, body.resizing * { cursor:col-resize !important; user-select:none !important; }
 .board { padding:14px 20px 28px; min-width:0; min-height:0; overflow:auto; }
 .results { padding:14px 20px 28px; min-width:0; min-height:0; overflow:auto; }
 .board-head, .res-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; min-height:34px; }
@@ -94,14 +102,15 @@ body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
 @media (max-width:1080px) {
   body { display:block; height:auto; overflow:visible; }
   .work { display:block; }
-  .compose { border-right:0; }
+  #splitMain { display:none; }
   .rail { max-height:70vh; }
   .board, .results { overflow:visible; }
   .results { border-top:1px solid var(--border-2); }
 }
 @media (max-width:640px) {
   .compose { display:block; }
-  .rail { max-height:none; border-right:0; border-bottom:1px solid var(--border-2); padding:14px 16px; }
+  #splitRail { display:none; }
+  .rail { max-height:none; border-bottom:1px solid var(--border-2); padding:14px 16px; }
   .palette { display:flex; flex-wrap:wrap; gap:6px; }
   .palette h3 { width:100%; margin-bottom:0; }
   .pal { width:auto; margin:0; }
@@ -326,3 +335,16 @@ body.dragging { user-select:none; }
 body.matching #canvas .slot:not(.can) { opacity:.3; }
 .slot.can, .dropvars.can, .vals.can { --edge:var(--accent); border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .sh-class.can, .sh-prop.can { box-shadow:none; filter:drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 70%, transparent)); }
+
+/* ───────── Scrollbars ─────────
+   Thin and in the page's own colours, so the three columns do not grow
+   bright bars on a dark page. The thumb shows more when its box is hovered. */
+* { scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
+::-webkit-scrollbar { width:10px; height:10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:3px solid transparent; background-clip:padding-box; min-height:36px; }
+:hover::-webkit-scrollbar-thumb { background-color:color-mix(in srgb, var(--muted) 55%, var(--border)); }
+::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color:var(--accent); }
+/* Room for the bar is kept, so a column does not jump when it starts to scroll. */
+.rail, .board, .results { scrollbar-gutter:stable; overscroll-behavior:contain; }
+.shelf-list, .pop-list, .finder-body, .query pre { overscroll-behavior:contain; }
