@@ -65,6 +65,19 @@ async function dragTo(page, from, to, opts = {}) {
   await dragTo(page, page.locator(".pal", { hasText: "is a kind of thing" }), page.locator("#canvas"), { shot: "02-dragging.png" });
   ok(await page.locator("#canvas .block").count() === 1, "a palette block dragged into the sketch");
   ok((await query()).includes("?thing a ?kind ."), "open slot stands for a variable");
+  ok(await page.locator("#canvas .slot.sh-class").count() === 1 && await page.locator("#canvas .slot.sh-thing").count() === 1 && await page.locator(".item.k-class").count() > 0, "slots and pieces carry shapes");
+  {
+    const item = page.locator(".item.k-class", { hasText: "Person" }).first();
+    await item.scrollIntoViewIfNeeded();
+    const a = await item.boundingBox();
+    await page.mouse.move(a.x + 12, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(a.x + 60, a.y - 40, { steps: 4 });
+    ok(await page.locator("#canvas .slot.can").count() === 1 && await page.locator('#canvas .slot.can[data-role="class"]').count() === 1, "while a kind is dragged, only the kind slot lights up");
+    await page.screenshot({ path: path.join(SHOTS, "02b-matching.png") });
+    await page.mouse.move(5, 5);
+    await page.mouse.up();
+  }
 
   await dragTo(page, page.locator(".item.k-class", { hasText: "Person" }).first(), page.locator('.slot[data-role="class"]'));
   ok((await query()).includes("?thing a foaf:Person ."), "a kind dropped on the kind slot");
@@ -123,6 +136,9 @@ async function dragTo(page, from, to, opts = {}) {
   await page.locator("#pop .opt", { hasText: "knows of" }).first().click();
   await page.locator('#canvas .slot[data-role="any"]').click();
   await page.locator("#pop .opt", { hasText: "Find a thing by name" }).click();
+  await page.waitForSelector("#finder h4:has-text('A sample of what “knows of” points to')", { timeout: 60000 });
+  ok(await page.locator("#finder .opt").count() >= 10, "the finder opens with a quick sample that fits the slot");
+  await page.screenshot({ path: path.join(SHOTS, "06a-sample.png") });
   await page.locator("#finder input").fill("Mary Lou");
   await page.waitForSelector("#finder .opt .sub", { timeout: 60000 });
   await page.screenshot({ path: path.join(SHOTS, "06-finder.png") });

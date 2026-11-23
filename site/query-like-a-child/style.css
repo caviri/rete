@@ -80,7 +80,7 @@ input::placeholder { color:color-mix(in srgb, var(--muted) 70%, transparent); }
    On a wide screen the page is one fixed frame: the rail, the sketch and the
    result each scroll on their own, so a block can be dragged from one to the
    other without the page moving. Narrow screens stack and scroll as a page. */
-body { display:flex; flex-direction:column; height:100vh; }
+body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
 .work { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); }
 .compose { display:grid; grid-template-columns:212px minmax(0,1fr); min-height:0; border-right:1px solid var(--border-2); }
 .rail { padding:14px 12px 24px 20px; border-right:1px solid var(--border-2); overflow:auto; min-height:0; }
@@ -92,7 +92,7 @@ body { display:flex; flex-direction:column; height:100vh; }
 .live { display:flex; gap:6px; align-items:center; color:var(--muted); font-size:13px; cursor:pointer; }
 
 @media (max-width:1080px) {
-  body { display:block; height:auto; }
+  body { display:block; height:auto; overflow:visible; }
   .work { display:block; }
   .compose { border-right:0; }
   .rail { max-height:70vh; }
@@ -288,3 +288,41 @@ body.dragging { user-select:none; }
   .pal { width:auto; margin:0; }
   .palette h3 { margin-bottom:0; }
 }
+
+/* ───────── Shapes ─────────
+   A slot's outline says what fits it, and the pieces on the shelf carry the
+   same outline: round for a thing, pointed at both ends for a kind, an arrow
+   for a property, square for a value. A slot that takes a thing or a value is
+   round on the left and square on the right. Variables fit anywhere. */
+.slot { --edge:var(--border); --fill:var(--code-bg); }
+.slot.is-var { --edge:hsl(var(--h) 45% 38%); --fill:hsl(var(--h) 45% 20%); }
+.slot.is-hole { --edge:color-mix(in srgb, var(--muted) 55%, transparent); --fill:var(--panel-2); }
+.slot.is-iri { --edge:color-mix(in srgb, var(--iri) 45%, var(--border)); --fill:color-mix(in srgb, var(--iri) 14%, var(--panel)); }
+.slot.is-lit { --edge:color-mix(in srgb, var(--hl-num) 40%, var(--border)); --fill:color-mix(in srgb, var(--hl-num) 12%, var(--panel)); }
+.sh-thing { border-radius:999px; }
+.sh-value { border-radius:5px; }
+.sh-any { border-radius:999px 5px 5px 999px; }
+/* Pointed outlines are cut with clip-path, which would cut a border too, so
+   the edge and the fill are two layers behind the text. */
+.sh-class, .sh-prop, .item.k-class, .item.k-prop {
+  position:relative; isolation:isolate; border:0 !important; background:none !important; border-radius:0;
+}
+.sh-class, .item.k-class { --cut:polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%); padding-left:16px; padding-right:16px; }
+.sh-prop, .item.k-prop { --cut:polygon(0 0, calc(100% - 11px) 0, 100% 50%, calc(100% - 11px) 100%, 0 100%, 5px 50%); padding-left:14px; padding-right:18px; }
+.sh-class::before, .sh-prop::before, .item.k-class::before, .item.k-prop::before,
+.sh-class::after, .sh-prop::after, .item.k-class::after, .item.k-prop::after { content:""; position:absolute; clip-path:var(--cut); }
+.sh-class::before, .sh-prop::before, .item.k-class::before, .item.k-prop::before { inset:0; background:var(--edge); z-index:-2; }
+.sh-class::after, .sh-prop::after, .item.k-class::after, .item.k-prop::after { inset:1.5px; background:var(--fill); z-index:-1; }
+.item.k-class { --edge:color-mix(in srgb, var(--c-pattern) 60%, var(--border)); --fill:var(--panel); }
+.item.k-prop { --edge:color-mix(in srgb, var(--c-group) 55%, var(--border)); --fill:var(--panel); }
+.item.k-class:hover, .item.k-prop:hover { --fill:var(--tint); }
+.sh-class:hover, .sh-prop:hover { --edge:var(--accent); }
+.sh-class.over, .sh-prop.over { outline:0; --edge:var(--accent); --fill:color-mix(in srgb, var(--accent) 30%, var(--panel)); }
+
+.legend { display:flex; flex-wrap:wrap; gap:5px; }
+.slot.demo { pointer-events:none; font-size:12px; min-height:24px; padding-top:2px; padding-bottom:2px; }
+
+/* While a piece is in the air, the slots it fits stand out. */
+body.matching #canvas .slot:not(.can) { opacity:.3; }
+.slot.can, .dropvars.can, .vals.can { --edge:var(--accent); border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.sh-class.can, .sh-prop.can { box-shadow:none; filter:drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 70%, transparent)); }
