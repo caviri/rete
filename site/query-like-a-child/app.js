@@ -5,7 +5,7 @@
 // .rete file through worker.js. Without a file the page still composes a
 // query: empty slots stand for variables and the text is there to copy.
 import {
-  NS, CALC_FNS, CMP_OPS, PATHS, RECIPES, TEXT_OPS,
+  NS, CALC_FNS, CMP_OPS, GENERIC_LABELS, PATHS, RECIPES, TEXT_OPS,
   clone, contains, describe, emptySketch, find, hole, holeName, iri, kindsOf, lit, make,
   nameOf, normVar, prefixer, rename, splitIri, tidy, toSparql, variables, vr, walk,
 } from "./model.js";
@@ -96,6 +96,10 @@ let snap = JSON.stringify(sketch);
 const px = prefixer();    // for showing IRIs short
 
 const ctx = () => ({ labelPredicate: ds && ds.labelPred });
+// A name for an IRI: the label picked with it, the file's own label for it,
+// or its last part put into words.
+const labelOf = (v) => (ds && ds.labels.get(v)) || null;
+const nm = (t) => t.l || labelOf(t.v) || nameOf(t);
 const generated = () => toSparql(sketch, ctx());
 const currentQuery = () => (manual != null ? manual : generated().text);
 
@@ -160,6 +164,7 @@ function dataset(url, r, file) {
   }
   return {
     url, file, card, classes, preds, links, examples,
+    labels: new Map(), hints: new Map(), asked: new Set(), lang: sig.default_lang || "en",
     hasCard: !!r.card,
     name: card.title || decodeURIComponent(url.split("/").pop() || "graph").replace(/\.rete$/, ""),
     labelPred: strip(sig.label_predicate) || null,
@@ -183,6 +188,7 @@ async function openData(url, file) {
     const r = file ? await engine.call("local", { url, file }) : await engine.call("open", { url });
     engine.fresh = false;
     ds = dataset(url, r, file);
+    loadLabels(ds);
     $("#live").checked = ds.fileLength < 2e9;
   } catch (e) {
     ds = null;
@@ -248,6 +254,107 @@ addEventListener("drop", (e) => {
   openData(`rete-local:${++localN}/${f.name}`, f);
 });
 
+// ── names ────────────────────────────────────────────────────────────────
+//
+// A file often names its kinds and properties by identifiers (P170, Q42).
+// When it also holds labels for them, the page uses those. What stays
+// unnamed gets a hint: a few values it has, read with one small query.
+
+const labelPaths = (pre, d) => [...new Set([d.labelPred, ...GENERIC_LABELS].filter(Boolean))].map((l) => pre.term(l)).join("|");
+const langFilter = (d) => `FILTER(LANG(?l) = "" || ${[...new Set([d.lang, "en"])].map((l) => `LANGMATCHES(LANG(?l), "${l}")`).join(" || ")})`;
+
+/** Read the labels the file has for these IRIs into d.labels. */
+async function lookupLabels(d, iris) {
+  const ok = iris.filter((v) => !/[<>"{}|^`\\\s]/.test(v));
+  const best = new Map();
+  for (let i = 0; i < ok.length; i += 60) {
+    if (ds !== d) return;
+    const pre = prefixer();
+    const paths = labelPaths(pre, d);
+    const query = `${pre.header()}\nSELECT ?x ?l WHERE {\n  VALUES ?x { ${ok.slice(i, i + 60).map((v) => `<${v}>`).join(" ")} }\n  ?x ${paths} ?l .\n  ${langFilter(d)}\n}`;
+    try {
+      await ensureOpen();
+      const r = await engine.call("query", { url: d.url, query });
+      for (const row of r.result.rows || []) {
+        const x = strip(row.x), t = parseTerm(row.l);
+        if (!t || t.t !== "lit" || !t.v.trim()) continue;
+        const score = t.lang === d.lang ? 3 : !t.lang ? 2 : 1;
+        if (!best.has(x) || best.get(x).score < score) best.set(x, { score, text: t.v.trim().slice(0, 80) });
+      }
+    } catch { return; }
+  }
+  for (const [x, b] of best) d.labels.set(x, b.text);
+}
+
+const opaque = (v) => { const l = splitIri(v)[1]; return !l || (/^[A-Za-z]{0,3}\d[\w.-]*$/.test(l) && /\d{2,}/.test(l)); };
+
+/** "e.g. A, B, C": what a property points to, or what a kind's things are called. */
+async function hintFor(d, kind, v) {
+  const pre = prefixer();
+  const paths = labelPaths(pre, d);
+  const where = kind === "prop"
+    ? `?s <${v}> ?o .\n  OPTIONAL { ?o ${paths} ?l . ${langFilter(d)} }`
+    : `?o a <${v}> .\n  ?o ${paths} ?l . ${langFilter(d)}`;
+  await ensureOpen();
+  const r = await engine.call("query", { url: d.url, query: `${pre.header()}\nSELECT ?o ?l WHERE {\n  ${where}\n} LIMIT 3` });
+  const seen = new Set();
+  for (const row of r.result.rows || []) {
+    const l = parseTerm(row.l), o = parseTerm(row.o);
+    const text = l && l.v ? l.v : o && o.t === "lit" ? o.v : o && o.t === "iri" ? nameOf({ v: o.v }) : "";
+    if (text) seen.add(text.length > 28 ? text.slice(0, 27) + "…" : text);
+  }
+  return seen.size ? "e.g. " + [...seen].join(", ") : "";
+}
+
+async function loadLabels(d) {
+  await lookupLabels(d, [...d.classes, ...d.preds].map((x) => x.v));
+  if (ds !== d) return;
+  if (d.labels.size) { stampLabels(); renderShelf(); renderSketch(); }
+  let n = 0;
+  for (const [kind, list] of [["prop", d.preds], ["class", d.classes]]) {
+    for (const it of list) {
+      if (n >= 24 || ds !== d) break;
+      if (d.labels.has(it.v) || !opaque(it.v)) continue;
+      n++;
+      try { const hint = await hintFor(d, kind, it.v); if (hint) d.hints.set(it.v, hint); } catch { /* no hint for this one */ }
+    }
+  }
+  if (ds === d && d.hints.size) renderShelf();
+}
+
+/** Give the sketch's IRIs the labels the file has, so they travel with it. */
+function stampLabels() {
+  if (!ds || !ds.labels.size) return;
+  const stamp = (t) => { if (t && t.k === "iri" && !t.l && ds.labels.has(t.v)) t.l = ds.labels.get(t.v); };
+  for (const [b] of walk(sketch.blocks)) { for (const f of ["s", "c", "p", "o", "v"]) stamp(b[f]); (b.vals || []).forEach(stamp); }
+}
+
+/** After a result is shown, name the things in it. */
+async function labelCells(d, rows, vars) {
+  const want = new Set();
+  for (const row of rows.slice(0, ROW_CAP)) {
+    for (const v of vars) {
+      const t = row[v];
+      if (typeof t !== "string" || t[0] !== "<" || t[1] === "<") continue;
+      const i = t.slice(1, -1);
+      if (!d.labels.has(i) && !d.asked.has(i) && !IMAGE.test(i) && want.size < 240) want.add(i);
+    }
+  }
+  if (!want.size) return;
+  for (const i of want) d.asked.add(i);
+  const before = d.labels.size;
+  await lookupLabels(d, [...want]);
+  if (ds === d && d.labels.size > before && run.state === "done") renderRun();
+}
+const IMAGE = /\.(jpe?g|png|gif|webp|svg)(\?.*)?$|Special:FilePath\//i;
+
+/** A variable name from a property's label or last part: "date of birth" → dateOfBirth. */
+function varName(item) {
+  const words = (item.label || nm({ v: item.iri })).split(/[^\p{L}\p{N}]+/u).filter(Boolean).slice(0, 4);
+  const name = words.map((w, i) => (i ? w[0].toUpperCase() + w.slice(1) : w[0].toLowerCase() + w.slice(1))).join("");
+  return normVar(name) || "value";
+}
+
 // ── palette and shelf ────────────────────────────────────────────────────
 
 function renderPalette() {
@@ -269,17 +376,19 @@ function shelfItems() {
   return { classes: COMMON.classes.map((c) => ({ v: expand(c) })), preds: COMMON.preds.map((c) => ({ v: expand(c) })), own: false };
 }
 function itemButton(kind, it) {
-  const name = nameOf({ v: it.v });
-  return h("button", {
+  const name = nm({ v: it.v }), label = labelOf(it.v) || undefined, hint = ds ? ds.hints.get(it.v) : "";
+  const btn = h("button", {
     class: `item k-${kind}`, type: "button", title: `${it.v}\nDrag into the sketch or onto a slot`,
-    "data-drag": JSON.stringify({ type: "item", kind, iri: it.v }),
-    onclick: () => dropItem({ kind, iri: it.v }, sketch.blocks, sketch.blocks.length),
-  }, h("span", {}, name), h("small", {}, it.n != null ? fmtN(it.n) : px.show(it.v)));
+    "data-drag": JSON.stringify({ type: "item", kind, iri: it.v, label }),
+    onclick: () => dropItem({ kind, iri: it.v, label }, sketch.blocks, sketch.blocks.length),
+  }, h("span", {}, name, label ? h("i", {}, " " + px.show(it.v).replace(/^.*[:/#]/, "")) : hint ? h("i", {}, " " + hint) : null), h("small", {}, it.n != null ? fmtN(it.n) : px.show(it.v)));
+  if (hint) btn.title = `${hint}\n${btn.title}`;
+  return btn;
 }
 function renderShelf() {
   const { classes, preds, own } = shelfItems();
   const f = shelfFilter.toLowerCase();
-  const pass = (it) => !f || it.v.toLowerCase().includes(f) || nameOf({ v: it.v }).toLowerCase().includes(f);
+  const pass = (it) => !f || it.v.toLowerCase().includes(f) || nm({ v: it.v }).toLowerCase().includes(f);
   const list = (kind, items) => h("div", { class: "shelf-list" }, items.filter(pass).slice(0, 200).map((it) => itemButton(kind, it)));
   const filter = h("input", { type: "search", placeholder: "Filter…", value: shelfFilter, "aria-label": "Filter kinds and properties",
     oninput: (e) => { shelfFilter = e.target.value; renderShelf(); $("#shelf input").focus(); } });
@@ -334,11 +443,10 @@ function dropItem(item, list, index) {
   const focus = focusVar(list);
   let b;
   if (item.kind === "class") b = { ...make("kind", focus), c: iri(item.iri, item.label) };
-  else if (item.kind === "prop") b = { ...make("link", focus), p: iri(item.iri), o: vr(freshVar(lowerFirst(splitIri(item.iri)[1]) || "value")) };
+  else if (item.kind === "prop") b = { ...make("link", focus), p: iri(item.iri, item.label), o: vr(freshVar(varName(item))) };
   else b = { ...make("is", focus), vals: [iri(item.iri, item.label)] };
   addBlock(list, index, b);
 }
-const lowerFirst = (s) => (s ? s[0].toLowerCase() + s.slice(1) : s);
 
 function listOf(zoneKey) {
   if (zoneKey === "root") return sketch.blocks;
@@ -363,6 +471,7 @@ function moveBlock(id, zoneKey, index) {
 
 /** After any edit: tidy, remember for undo, redraw, save, maybe run. */
 function change() {
+  stampLabels();
   tidy(sketch);
   const now = JSON.stringify(sketch);
   if (now !== snap) { past.push(snap); if (past.length > 100) past.shift(); snap = now; }
@@ -406,7 +515,7 @@ function slot(b, f, role, shape) {
   } else if (t.k === "iri") {
     el.classList.add("is-iri");
     const short = px.show(t.v);
-    el.append(h("span", {}, nameOf(t)), short !== t.v ? h("small", {}, short) : null);
+    el.append(h("span", {}, nm(t)), short !== t.v ? h("small", {}, short) : null);
     el.title = t.v;
   } else {
     el.classList.add("is-lit");
@@ -446,8 +555,8 @@ function renderBlock(b) {
     case "is":
       row = [slot(b, "v", "var", "thing"), w("is exactly"),
         h("span", { class: "vals", "data-vals": b.id },
-          b.vals.map((x, i) => h("span", { class: "val", title: x.v }, nameOf(x),
-            h("button", { type: "button", "aria-label": `Remove ${nameOf(x)}`, onclick: () => { b.vals.splice(i, 1); change(); } }, "×"))),
+          b.vals.map((x, i) => h("span", { class: "val", title: x.v }, nm(x),
+            h("button", { type: "button", "aria-label": `Remove ${nm(x)}`, onclick: () => { b.vals.splice(i, 1); change(); } }, "×"))),
           h("button", { class: "add", type: "button", onclick: (e) => pickThing(e.currentTarget, b) }, b.vals.length ? "+ another" : "+ pick a thing"))];
       break;
     case "text":
@@ -614,9 +723,9 @@ function openPicker(el) {
     const listBox = h("div", { class: "pop-list" });
     const draw = (q) => {
       q = q.toLowerCase();
-      const shown = items.filter((it) => !q || it.v.toLowerCase().includes(q) || nameOf({ v: it.v }).toLowerCase().includes(q)).slice(0, 80);
-      put(listBox, ...(shown.length ? shown.map((it) => h("button", { class: "opt" + (it.fits ? " fits" : ""), type: "button", title: it.v, onclick: () => set(iri(it.v)) },
-        h("span", {}, nameOf({ v: it.v }), h("span", { class: "sub" }, px.show(it.v))),
+      const shown = items.filter((it) => !q || it.v.toLowerCase().includes(q) || nm({ v: it.v }).toLowerCase().includes(q)).slice(0, 80);
+      put(listBox, ...(shown.length ? shown.map((it) => h("button", { class: "opt" + (it.fits ? " fits" : ""), type: "button", title: it.v, onclick: () => set(iri(it.v, labelOf(it.v) || undefined)) },
+        h("span", {}, nm({ v: it.v }), h("span", { class: "sub" }, [px.show(it.v), ds && ds.hints.get(it.v)].filter(Boolean).join(" · "))),
         h("small", {}, it.fits ? "fits · " : "", it.n != null ? fmtN(it.n) : ""))) : [h("p", { class: "hint" }, "Nothing matches.")]));
     };
     draw("");
@@ -688,13 +797,13 @@ function pickThing(anchor, b) {
 
 // What a slot most likely wants, read off the sketch: things of the kind
 // its variable is said to be, or the things a property points to or from.
-const kindSample = (c) => ({ title: nameOf({ v: c }), pattern: (pre) => `?s a ${pre.term(c)} .` });
+const kindSample = (c) => ({ title: nm({ v: c }), pattern: (pre) => `?s a ${pre.term(c)} .` });
 function sampleFor(b, f) {
   if (b.t === "link" && b.p.k === "iri" && (f === "o" || f === "s")) {
     const forward = (f === "o") !== (b.path === "^");
     return forward
-      ? { title: `what “${nameOf(b.p)}” points to`, pattern: (pre) => `?x ${pre.term(b.p.v)} ?s . FILTER(isIRI(?s))` }
-      : { title: `things with “${nameOf(b.p)}”`, pattern: (pre) => `?s ${pre.term(b.p.v)} ?x .` };
+      ? { title: `what “${nm(b.p)}” points to`, pattern: (pre) => `?x ${pre.term(b.p.v)} ?s . FILTER(isIRI(?s))` }
+      : { title: `things with “${nm(b.p)}”`, pattern: (pre) => `?s ${pre.term(b.p.v)} ?x .` };
   }
   if (b.t === "kind" && f === "s" && b.c.k === "iri") return kindSample(b.c.v);
   return b[f] && b[f].k === "var" ? varSample(b[f].v) : null;
@@ -737,7 +846,7 @@ function openFinder({ kinds, sample, onPick }) {
   const input = h("input", { type: "search", placeholder: "Start typing a name…", "aria-label": "Name to look for", spellcheck: false });
   const pick = (x) => { dlg.close(); onPick(x); };
   const option = (x, small) => h("button", { class: "opt", type: "button", title: x.v, onclick: () => pick(x) },
-    h("span", {}, x.l || nameOf({ v: x.v }), h("span", { class: "sub" }, px.show(x.v))), small ? h("small", {}, small) : null);
+    h("span", {}, x.l || nm({ v: x.v }), h("span", { class: "sub" }, px.show(x.v))), small ? h("small", {}, small) : null);
   const none = (text, ...more) => put(body, h("p", { class: "none" }, text), ...more);
 
   const hubs = () => {
@@ -810,7 +919,7 @@ function openFinder({ kinds, sample, onPick }) {
   };
   put(dlg, 
     h("div", { class: "finder-head" }, h("h3", {}, "Find a thing"),
-      h("p", {}, `in ${ds.name}` + (kinds.length ? ` · the wider search keeps to ${nameOf({ v: kinds[0] })}` : "")), input),
+      h("p", {}, `in ${ds.name}` + (kinds.length ? ` · the wider search keeps to ${nm({ v: kinds[0] })}` : "")), input),
     body,
     h("div", { class: "finder-foot" }, foot, h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => dlg.close() }, "Close")));
   hubs();
@@ -1118,10 +1227,11 @@ function cell(tok) {
   if (t.t === "iri") {
     const isImg = /\.(jpe?g|png|gif|webp|svg)(\?.*)?$/i.test(t.v) || /Special:FilePath\//.test(t.v);
     if (isImg) return h("td", {}, h("a", { href: t.v, target: "_blank", rel: "noopener" }, h("img", { src: t.v, alt: "", loading: "lazy", referrerpolicy: "no-referrer" })));
-    const short = px.show(t.v);
-    return h("td", {}, h("a", { class: "cell-iri", href: t.v, target: "_blank", rel: "noopener", title: `${t.v}\nDrag into the sketch to ask about exactly this`,
-      "data-drag": JSON.stringify({ type: "item", kind: "entity", iri: t.v }) }, short !== t.v ? short : nameOf({ v: t.v })),
-      short === t.v ? h("small", {}, " " + (splitIri(t.v)[0].replace(/^https?:\/\//, "").split("/")[0])) : null);
+    const short = px.show(t.v), label = labelOf(t.v);
+    const a = h("a", { class: "cell-iri", href: t.v, target: "_blank", rel: "noopener",
+      "data-drag": JSON.stringify({ type: "item", kind: "entity", iri: t.v, label: label || undefined }) }, label || (short !== t.v ? short : nameOf({ v: t.v })));
+    a.title = t.v + "\nDrag into the sketch to ask about exactly this";
+    return h("td", {}, a, label ? h("small", {}, " " + (short !== t.v ? short : splitIri(t.v)[1])) : short === t.v ? h("small", {}, " " + splitIri(t.v)[0].replace(/^https?:\/\//, "").split("/")[0]) : null);
   }
   if (t.t === "lit") return h("td", { class: t.num ? "num" : null }, t.num && isFinite(Number(t.v)) ? fmtN(Number(t.v)) : t.v, t.lang ? h("small", {}, " @" + t.lang) : null);
   return h("td", {}, t.v);
@@ -1180,6 +1290,7 @@ function renderRun() {
   put(out, h("table", {},
     h("thead", {}, h("tr", {}, vars.map((v) => { const s = h("span", {}, "?" + v); s.style.setProperty("--h", v === "count" ? 15 : hue(v)); return h("th", {}, s); }))),
     h("tbody", {}, rows.slice(0, ROW_CAP).map((row) => h("tr", {}, vars.map((v) => cell(row[v])))))));
+  labelCells(ds, rows, vars);
 }
 
 // ── saving and sharing ───────────────────────────────────────────────────

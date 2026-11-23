@@ -348,3 +348,7 @@ body.matching #canvas .slot:not(.can) { opacity:.3; }
 /* Room for the bar is kept, so a column does not jump when it starts to scroll. */
 .rail, .board, .results { scrollbar-gutter:stable; overscroll-behavior:contain; }
 .shelf-list, .pop-list, .finder-body, .query pre { overscroll-behavior:contain; }
+
+/* A piece named by the file's own label keeps its identifier beside it, small;
+   one without a label shows a few of its values instead. */
+.item i { color:var(--muted); font:normal 11px var(--sans); }
