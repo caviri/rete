@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>Query like a child · rete</title>
+  <meta name="description" content="Sketch a SPARQL query by dragging blocks. Works on its own, and on any .rete file: open one by link and pick its kinds, properties and things." />
+  <link rel="canonical" href="https://caviri.github.io/rete/query-like-a-child/" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect width='120' height='120' rx='28' fill='%232a6df4'/%3E%3Cg fill='%23fff'%3E%3Ccircle cx='60' cy='34' r='11'/%3E%3Ccircle cx='30' cy='77' r='9'/%3E%3Ccircle cx='90' cy='77' r='9'/%3E%3Ccircle cx='60' cy='102' r='8'/%3E%3C/g%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="modulepreload" href="app.js" />
+  <link rel="modulepreload" href="model.js" />
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="../" aria-label="rete, home">
+    <svg class="mark" viewBox="0 0 120 120" aria-hidden="true">
+      <rect width="120" height="120" rx="28" fill="#2a6df4"/>
+      <g stroke="#dce8ff" stroke-width="4" fill="none"><path d="M60 36 32 76M60 36l28 40M32 76h56M32 76l28 26M88 76l-28 26"/></g>
+      <g fill="#fff"><circle cx="60" cy="34" r="11"/><circle cx="30" cy="77" r="9"/><circle cx="90" cy="77" r="9"/><circle cx="60" cy="102" r="8"/></g>
+    </svg>
+    <span>rete</span>
+  </a>
+  <div class="title">
+    <h1>Query like a child</h1>
+    <p>Drag blocks to sketch a question. The SPARQL writes itself.</p>
+  </div>
+  <div class="top-actions">
+    <button class="btn btn-ghost btn-sm" id="undo" type="button" disabled>Undo</button>
+    <button class="btn btn-ghost btn-sm" id="share" type="button">Copy link</button>
+    <a class="btn btn-ghost btn-sm" href="../docs/">Docs</a>
+  </div>
+</header>
+
+<section class="data" id="data" aria-label="The file to ask"></section>
+
+<main class="work">
+  <section class="compose" aria-label="Compose">
+    <aside class="rail" id="rail">
+      <h2>Blocks</h2>
+      <div class="palette" id="palette"></div>
+      <div class="shelf" id="shelf"></div>
+    </aside>
+    <div class="board">
+      <div class="board-head">
+        <h2>Sketch</h2>
+        <div class="board-tools">
+          <label class="sr-only" for="recipe">Start from a recipe</label>
+          <select id="recipe"><option value="">Start from…</option></select>
+          <button class="btn btn-ghost btn-sm" id="clear" type="button">Clear</button>
+        </div>
+      </div>
+      <div class="canvas" id="canvas"></div>
+      <div class="vars" id="vars" aria-label="Variables"></div>
+      <div class="answer" id="answer" aria-label="Answer"></div>
+    </div>
+  </section>
+
+  <section class="results" aria-label="Results">
+    <div class="res-head">
+      <h2>Result</h2>
+      <div class="res-tools">
+        <label class="live"><input type="checkbox" id="live" /> Live</label>
+        <button class="btn btn-primary btn-sm" id="run" type="button">Run</button>
+      </div>
+    </div>
+    <div class="query" id="query"></div>
+    <div class="notes" id="notes"></div>
+    <div class="status" id="status" role="status"></div>
+    <div class="out" id="out"></div>
+  </section>
+</main>
+
+<div class="pop" id="pop" hidden></div>
+<dialog class="finder" id="finder" aria-label="Find a thing"></dialog>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

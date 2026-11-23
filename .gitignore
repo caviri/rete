@@ -123,3 +123,6 @@ clients/python/python/rete_graph/*.pyd
 # 9 MB built playground dropped at the root while testing.
 /hf-space/space/
 /pg.html
+
+# Screenshots of the query-like-a-child browser check
+tests/query-like-a-child/shots/
