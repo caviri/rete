@@ -348,3 +348,38 @@ body.matching #canvas .slot:not(.can) { opacity:.3; }
 /* Room for the bar is kept, so a column does not jump when it starts to scroll. */
 .rail, .board, .results { scrollbar-gutter:stable; overscroll-behavior:contain; }
 .shelf-list, .pop-list, .finder-body, .query pre { overscroll-behavior:contain; }
+
+/* A piece named by the file's own label keeps its identifier beside it, small;
+   one without a label shows a few of its values instead. */
+.item i { color:var(--muted); font:normal 11px var(--sans); }
+
+/* ───────── Examples ───────── */
+.empty h3 { margin:16px 0 0; text-align:left; font:600 11px/1 var(--sans); letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+.empty h3 + .recipes { margin-top:8px; }
+.recipe.mine { border-left:3px solid var(--c-answer); }
+
+/* ───────── Table, cards, graph ───────── */
+.views { display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; margin:0 0 10px; }
+.views button { background:none; border:0; padding:5px 15px; cursor:pointer; font-size:13px; color:var(--muted); }
+.views button[aria-selected=true] { background:var(--accent); color:var(--on-accent); font-weight:600; }
+.cards { columns:3 190px; column-gap:10px; }
+.card { break-inside:avoid; margin:0 0 10px; background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.card > a { display:block; }
+.out .card img { display:block; width:100%; max-width:none; max-height:260px; object-fit:cover; border-radius:0; }
+.card h3 { margin:0; padding:10px 12px 0; font:700 15px/1.3 var(--serif); overflow-wrap:anywhere; }
+.card h3 small, .card dd small { color:var(--muted); font:11px var(--sans); }
+.card dl { margin:0; padding:8px 12px 11px; display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 10px; font-size:13px; }
+.card dl:empty { display:none; }
+.card dt { font:12px var(--mono); color:var(--muted); }
+.card dd { margin:0; overflow-wrap:anywhere; }
+.graph-box { border:1px solid var(--border); border-radius:12px; background:var(--panel-2); overflow:hidden; }
+.graph { display:block; width:100%; height:min(62vh, 640px); cursor:grab; touch-action:none; user-select:none; }
+.graph:active { cursor:grabbing; }
+.g-edge { stroke:color-mix(in srgb, var(--muted) 55%, transparent); stroke-width:1.2; }
+.g-head { fill:color-mix(in srgb, var(--muted) 80%, transparent); }
+.g-tag { fill:var(--muted); font:10px var(--sans); text-anchor:middle; pointer-events:none; }
+.g-node { cursor:pointer; }
+.g-node circle { fill:var(--accent); stroke:var(--panel-2); stroke-width:2; }
+.g-node:hover circle { fill:var(--accent-2); }
+.g-node text { fill:var(--fg); font:11.5px var(--sans); paint-order:stroke; stroke:var(--panel-2); stroke-width:3px; pointer-events:none; }
+.graph-note { margin:0; padding:7px 12px; border-top:1px solid var(--border-2); color:var(--muted); font-size:12px; }

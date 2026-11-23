@@ -291,8 +291,9 @@ function litOut(t, px) {
  * Returns { text, vars, problems[] }; `problems` are plain sentences about
  * what is still open, never a reason not to produce a query.
  */
-export function toSparql(sketch, ctx = {}) {
+export function toSparql(sketch, ctx = {}, opts = {}) {
   const px = prefixer(ctx.prefixes);
+  const tpl = []; // the statements a CONSTRUCT of this sketch writes
   const namer = holeNamer(sketch);
   const problems = [];
   const T = (b, f) => {
@@ -309,16 +310,18 @@ export function toSparql(sketch, ctx = {}) {
     const out = [];
     for (const b of blocks) {
       switch (b.t) {
-        case "kind": out.push(`${pad}${T(b, "s")} a ${T(b, "c")} .`); break;
+        case "kind": out.push(`${pad}${T(b, "s")} a ${T(b, "c")} .`); tpl.push(`${T(b, "s")} a ${T(b, "c")} .`); break;
         case "link": {
           let p = T(b, "p");
           if (b.path && b.p.k !== "iri") problems.push("“" + PATHS.find((x) => x[0] === b.path)[1] + "” needs a named property; it is left out while the property is open.");
           else if (b.path === "^") p = "^" + p;
           else if (b.path) p = p + b.path;
           out.push(`${pad}${T(b, "s")} ${p} ${T(b, "o")} .`);
+          // A path is followed to find the two ends; the statement written is the plain link.
+          tpl.push(b.path === "^" ? `${T(b, "o")} ${T(b, "p")} ${T(b, "s")} .` : `${T(b, "s")} ${T(b, "p")} ${T(b, "o")} .`);
           break;
         }
-        case "name": out.push(`${pad}${T(b, "s")} ${labelPath()} ${T(b, "o")} .`); break;
+        case "name": out.push(`${pad}${T(b, "s")} ${labelPath()} ${T(b, "o")} .`); tpl.push(`${T(b, "s")} ${px.term(ctx.labelPredicate || RDFS_LABEL)} ${T(b, "o")} .`); break;
         case "is":
           if (b.vals.length) out.push(`${pad}VALUES ${T(b, "v")} { ${b.vals.map((x) => px.term(x.v)).join(" ")} }`);
           else problems.push("An “is exactly” block has nothing picked yet, so it is left out.");
@@ -391,9 +394,32 @@ export function toSparql(sketch, ctx = {}) {
   const n = Number(a.limit);
   if (Number.isFinite(n) && n > 0) tail.push("LIMIT " + Math.floor(n));
 
+  if (opts.construct) {
+    const lines = [...new Set(tpl)];
+    if (!lines.length) lines.push("?thing ?property ?value .");
+    const limit = Number.isFinite(n) && n > 0 ? "\nLIMIT " + Math.floor(n) : "";
+    const pre = px.header();
+    const text = (pre ? pre + "\n\n" : "") + "CONSTRUCT {\n" + lines.map((l) => "  " + l).join("\n") + "\n}\nWHERE {\n" + where.join("\n") + "\n}" + limit;
+    return { text, vars: [], problems };
+  }
   const prefixes = px.header();
   const text = (prefixes ? prefixes + "\n\n" : "") + head + "\nWHERE {\n" + where.join("\n") + "\n}" + (tail.length ? "\n" + tail.join("\n") : "");
   return { text, vars, problems };
+}
+
+/**
+ * What a graph of the result draws: the links of the sketch, and the names
+ * it asks for. Open slots appear as the variables they stand for.
+ */
+export function graphTemplate(sketch) {
+  const namer = holeNamer(sketch);
+  const t = (b, f) => (b[f].k === "hole" ? vr(namer(b, f)) : b[f]);
+  const links = [], names = [];
+  for (const [b] of walk(sketch.blocks)) {
+    if (b.t === "link") links.push(b.path === "^" ? { s: t(b, "o"), p: t(b, "p"), o: t(b, "s") } : { s: t(b, "s"), p: t(b, "p"), o: t(b, "o") });
+    else if (b.t === "name") names.push({ s: t(b, "s"), o: t(b, "o") });
+  }
+  return { links, names };
 }
 
 /** Rename a variable everywhere it is used. */
@@ -503,6 +529,90 @@ export const RECIPES = [
       const s = emptySketch();
       s.blocks = [...(d.topClass ? [K("thing", d.topClass)] : []), L("thing", null, "value"), { ...make("compare"), v: vr("value"), op: ">", val: lit("", "number") }];
       s.answer.show = ["thing", "value"]; s.answer.sort = { v: "value", dir: "desc" };
+      return s;
+    },
+  },
+  {
+    id: "either", title: "Either of two kinds", hint: "Things that are one kind or another (a union).",
+    build(d) {
+      const s = emptySketch();
+      s.blocks = [{ ...make("either"), kids: [K("thing", d.topClass)], kids2: [K("thing", null)] }, { ...make("optional"), kids: [N("thing", "name")] }];
+      s.answer.show = ["thing", "name"];
+      return s;
+    },
+  },
+  {
+    id: "anyof", title: "One property or another", hint: "A value found under either of two properties.",
+    build(d) {
+      const s = emptySketch();
+      s.blocks = [{ ...make("either"), kids: [L("thing", d.topLink && d.topLink.p, "value")], kids2: [L("thing", null, "value")] }];
+      s.answer.show = ["thing", "value"];
+      return s;
+    },
+  },
+  {
+    id: "optional", title: "With a detail, if there is one", hint: "Keep every thing, add a value where it exists.",
+    build(d) {
+      const s = emptySketch();
+      s.blocks = [K("thing", d.topClass), N("thing", "name"), { ...make("optional"), kids: [L("thing", null, "detail")] }];
+      s.answer.show = ["thing", "name", "detail"];
+      return s;
+    },
+  },
+  {
+    id: "both", title: "One thing but not another", hint: "Has a property and lacks a second one.",
+    build(d) {
+      const s = emptySketch();
+      s.blocks = [L("thing", d.topLink && d.topLink.p, "value"), { ...make("without"), kids: [make("link")] }];
+      s.answer.show = ["thing", "value"];
+      return s;
+    },
+  },
+  {
+    id: "shared", title: "Two things that share something", hint: "Pairs linked to the same third thing.",
+    build(d) {
+      const s = emptySketch();
+      const p = d.topLink && d.topLink.p;
+      s.blocks = [L("first", p, "shared"), L("second", p, "shared"), { ...make("compare"), v: vr("first"), op: "!=", val: vr("second") }];
+      s.answer.show = ["first", "second", "shared"];
+      return s;
+    },
+  },
+  {
+    id: "chain", title: "Follow a chain", hint: "Everything reached through a property, step after step.",
+    build(d) {
+      const s = emptySketch();
+      const l = L("thing", d.topLink && d.topLink.p, "reached");
+      l.path = "+";
+      s.blocks = [{ ...make("is"), v: vr("thing"), vals: [] }, l, { ...make("optional"), kids: [N("reached", "name")] }];
+      s.answer.show = ["reached", "name"]; s.answer.distinct = true; s.answer.limit = 100;
+      return s;
+    },
+  },
+  {
+    id: "values", title: "Most common values", hint: "Count how often each value of a property appears.",
+    build(d) {
+      const s = emptySketch();
+      s.blocks = [L("thing", d.topLink && d.topLink.p, "value")];
+      s.answer.mode = "count"; s.answer.of = "thing"; s.answer.per = ["value"]; s.answer.limit = 25;
+      return s;
+    },
+  },
+  {
+    id: "years", title: "How many per year", hint: "Take the year of a date and count per year.",
+    build() {
+      const s = emptySketch();
+      s.blocks = [L("thing", null, "date"), { ...make("calc"), fn: "YEAR", v: vr("date"), as: vr("year") }];
+      s.answer.mode = "count"; s.answer.of = "thing"; s.answer.per = ["year"]; s.answer.sort = { v: "year", dir: "asc" }; s.answer.limit = 200;
+      return s;
+    },
+  },
+  {
+    id: "language", title: "Names in one language", hint: "Only the names written in a given language.",
+    build(d) {
+      const s = emptySketch();
+      s.blocks = [K("thing", d.topClass), N("thing", "name"), { ...make("lang"), v: vr("name"), lang: "en" }];
+      s.answer.show = ["thing", "name"];
       return s;
     },
   },
