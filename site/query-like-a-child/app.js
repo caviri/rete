@@ -258,7 +258,9 @@ function renderPalette() {
       title: "Drag into the sketch, or press Enter to add it at the end",
       onclick: () => { addBlock(sketch.blocks, sketch.blocks.length, newBlock(t)); },
     }, h("span", { class: "grip", "aria-hidden": "true" }, "⋮⋮"), label)),
-  ]));
+  ]), h("h3", {}, "Shapes"),
+    h("div", { class: "legend", title: "A piece fits the slots of its own shape. A variable fits anywhere." },
+      [["thing", "thing"], ["class", "kind"], ["prop", "property"], ["value", "value"]].map(([s, text]) => h("span", { class: `slot demo is-hole sh-${s}` }, text))));
 }
 
 let shelfFilter = "";
@@ -381,9 +383,14 @@ function setSketch(s) { sketch = s; change(); }
 
 let info = new Map();
 
-function slot(b, f, role) {
+// The outline of a slot says what fits it: round for a thing, pointed at
+// both ends for a kind, an arrow for a property, square for a value, and
+// round-then-square where either a thing or a value may go. The shelf's
+// kinds and properties carry the same outlines.
+const SHAPE = { thing: "thing", class: "class", prop: "prop", any: "any" };
+function slot(b, f, role, shape) {
   const t = b[f];
-  const el = h("button", { class: "slot", type: "button", "data-b": b.id, "data-f": f, "data-role": role, onclick: () => openPicker(el) });
+  const el = h("button", { class: "slot sh-" + (shape || SHAPE[role] || "value"), type: "button", "data-b": b.id, "data-f": f, "data-role": role, onclick: () => openPicker(el) });
   if (t.k === "var") {
     el.classList.add("is-var");
     el.style.setProperty("--h", hue(t.v));
@@ -437,7 +444,7 @@ function renderBlock(b) {
       break;
     case "name": row = [slot(b, "s", "thing"), w("is called"), slot(b, "o", "var")]; break;
     case "is":
-      row = [slot(b, "v", "var"), w("is exactly"),
+      row = [slot(b, "v", "var", "thing"), w("is exactly"),
         h("span", { class: "vals", "data-vals": b.id },
           b.vals.map((x, i) => h("span", { class: "val", title: x.v }, nameOf(x),
             h("button", { type: "button", "aria-label": `Remove ${nameOf(x)}`, onclick: () => { b.vals.splice(i, 1); change(); } }, "×"))),
@@ -619,7 +626,7 @@ function openPicker(el) {
   }
   if (role === "thing" || role === "any") {
     kids.push(h("h4", {}, "One thing"),
-      ds ? h("button", { class: "opt", type: "button", onclick: () => { closePop(); openFinder({ kinds: [], onPick: (x) => { b[f] = iri(x.v, x.l); change(); } }); } },
+      ds ? h("button", { class: "opt", type: "button", onclick: () => { closePop(); openFinder({ kinds: [], sample: sampleFor(b, f) || anySample(), onPick: (x) => { b[f] = iri(x.v, x.l); change(); } }); } },
         h("span", {}, "Find a thing by name…"), h("small", {}, ds.name)) : null);
   }
   if (role === "any" || role === "value") {
@@ -673,14 +680,57 @@ function nameHole(name) {
 
 function pickThing(anchor, b) {
   const add = (x) => { if (!b.vals.some((y) => y.v === x.v)) b.vals.push(iri(x.v, x.l)); change(); };
-  if (ds) { openFinder({ kinds: b.v.k === "var" ? kindsOf(sketch, b.v.v) : [], onPick: add }); return; }
+  if (ds) { openFinder({ kinds: b.v.k === "var" ? kindsOf(sketch, b.v.v) : [], sample: (b.v.k === "var" && varSample(b.v.v)) || anySample(), onPick: add }); return; }
   openPop(anchor, [h("h4", {}, "An IRI"),
     entryRow("http://… or prefix:name", "Add", (text) => { const v = parseIri(text); if (v) { closePop(); add({ v }); } else toast("That is not an IRI: use http://… or a known prefix:name"); }),
     h("p", { class: "hint" }, "With a file open, this becomes a search by name.")]);
 }
 
+// What a slot most likely wants, read off the sketch: things of the kind
+// its variable is said to be, or the things a property points to or from.
+const kindSample = (c) => ({ title: nameOf({ v: c }), pattern: (pre) => `?s a ${pre.term(c)} .` });
+function sampleFor(b, f) {
+  if (b.t === "link" && b.p.k === "iri" && (f === "o" || f === "s")) {
+    const forward = (f === "o") !== (b.path === "^");
+    return forward
+      ? { title: `what “${nameOf(b.p)}” points to`, pattern: (pre) => `?x ${pre.term(b.p.v)} ?s . FILTER(isIRI(?s))` }
+      : { title: `things with “${nameOf(b.p)}”`, pattern: (pre) => `?s ${pre.term(b.p.v)} ?x .` };
+  }
+  if (b.t === "kind" && f === "s" && b.c.k === "iri") return kindSample(b.c.v);
+  return b[f] && b[f].k === "var" ? varSample(b[f].v) : null;
+}
+function varSample(name) {
+  const kinds = kindsOf(sketch, name);
+  if (kinds.length) return kindSample(kinds[0]);
+  for (const [x] of walk(sketch.blocks)) {
+    if (x.t !== "link" || x.p.k !== "iri") continue;
+    if (x.s.k === "var" && x.s.v === name) return sampleFor(x, "s");
+    if (x.o.k === "var" && x.o.v === name) return sampleFor(x, "o");
+  }
+  return null;
+}
+const anySample = () => (ds && ds.topClass ? kindSample(ds.topClass.v) : null);
+const labelPath = (pre) => (ds.labelPred ? pre.term(ds.labelPred) : ["rdfs:label", "schema:name", "foaf:name", "skos:prefLabel", "dcterms:title"].map((c) => pre.term(expand(c))).join("|"));
+
+/** A handful of instances, read with one small query. */
+async function quickSample(sample) {
+  const pre = prefixer();
+  const where = sample.pattern(pre), labels = labelPath(pre);
+  const query = `${pre.header()}\nSELECT DISTINCT ?s ?l WHERE {\n  ${where}\n  OPTIONAL { ?s ${labels} ?l }\n} LIMIT 40`;
+  await ensureOpen();
+  const r = await engine.call("query", { url: ds.url, query });
+  const seen = new Set(), rows = [];
+  for (const row of r.result.rows || []) {
+    const v = strip(row.s);
+    if (!v || row.s[0] !== "<" || seen.has(v) || rows.length >= 20) continue;
+    seen.add(v);
+    rows.push({ v, l: (parseTerm(row.l) || {}).v });
+  }
+  return { rows, bytes: r.bytes };
+}
+
 let finderSeq = 0;
-function openFinder({ kinds, onPick }) {
+function openFinder({ kinds, sample, onPick }) {
   const dlg = $("#finder");
   const body = h("div", { class: "finder-body" });
   const foot = h("span", {});
@@ -694,16 +744,23 @@ function openFinder({ kinds, onPick }) {
     const seen = new Set(), items = [];
     for (const c of ds.classes) seen.add(c.v);
     for (const x of ds.hubs) if (!seen.has(x.v) && items.length < 14) { seen.add(x.v); items.push(x); }
-    if (items.length) put(body, h("h4", {}, "Well-connected things"), ...items.map((x) => option(x, fmtN(x.n) + " links")));
-    else none("Type the start of a name.");
+    const hubNodes = items.length ? [h("h4", {}, "Well-connected things"), ...items.map((x) => option(x, fmtN(x.n) + " links"))] : [];
     foot.textContent = "Type the start of a name.";
+    if (!sample) { if (hubNodes.length) put(body, hubNodes); else none("Type the start of a name."); return; }
+    put(body, h("p", { class: "none" }, h("span", { class: "spin" }), ` Taking a quick sample of ${sample.title}…`), hubNodes);
+    const my = ++finderSeq;
+    quickSample(sample).then((r) => {
+      if (my !== finderSeq || input.value.trim()) return;
+      put(body, r.rows.length ? [h("h4", {}, `A sample of ${sample.title}`), ...r.rows.map((x) => option(x))] : h("p", { class: "none" }, `Nothing sampled for ${sample.title}.`), hubNodes);
+      foot.textContent = `${r.rows.length} sampled · ${fmtBytes(r.bytes)} read · type to search by name`;
+    }).catch(() => { if (my === finderSeq && !input.value.trim()) { if (hubNodes.length) put(body, hubNodes); else none("Type the start of a name."); } });
   };
 
   const deep = async (q) => {
     const my = ++finderSeq;
     none("Searching inside names…");
     const pre = prefixer();
-    const labels = ds.labelPred ? pre.term(ds.labelPred) : ["rdfs:label", "schema:name", "foaf:name", "skos:prefLabel", "dcterms:title"].map((c) => pre.term(expand(c))).join("|");
+    const labels = labelPath(pre);
     const kind = kinds.length ? `  ?s a ${pre.term(kinds[0])} .\n` : "";
     const where = `${kind}  ?s ${labels} ?l .\n  FILTER(CONTAINS(LCASE(STR(?l)), "${q.toLowerCase().replace(/[\\"]/g, "\\$&")}"))`;
     const query = `${pre.header()}\nSELECT DISTINCT ?s ?l WHERE {\n${where}\n} LIMIT 40`;
@@ -873,6 +930,10 @@ addEventListener("pointermove", (e) => {
     drag.dx = Math.min(drag.x - r.left, 340); drag.dy = drag.y - r.top;
     document.body.append(drag.ghost);
     document.body.classList.add("dragging");
+    if (drag.data.type === "var" || drag.data.type === "item") {
+      document.body.classList.add("matching");
+      document.querySelectorAll("#canvas .slot, .dropvars, [data-vals]").forEach((s) => { if (s !== drag.src && accepts(drag.data, s)) s.classList.add("can"); });
+    }
     if (drag.data.type === "block") shown.classList.add("drag-src");
   }
   e.preventDefault();
@@ -890,7 +951,8 @@ function endDrag(e, cancelled) {
   const d = drag;
   if (d.started) {
     d.ghost.remove();
-    document.body.classList.remove("dragging");
+    document.body.classList.remove("dragging", "matching");
+    document.querySelectorAll(".can").forEach((x) => x.classList.remove("can"));
     document.querySelectorAll(".drag-src").forEach((x) => x.classList.remove("drag-src"));
     const target = cancelled ? null : locate(e.clientX, e.clientY);
     mark(null);
