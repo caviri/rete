@@ -4,7 +4,9 @@ import { resolveSkin } from "./skins.js";
 // group falls back to graphkit's own styling.
 const GROUPS = [["button"], ["buttonPrimary"], ["select"], ["input"], ["panel"], ["segmented", "segmentedItem", "segmentedItemActive"], ["badge"]];
 
-const CLASS_RE = /\.((?:\\.|[A-Za-z0-9_ -￿-])+)/g;
+// CSS class names: ASCII word characters, escapes and any non-ASCII character. Written with escapes:
+// U+FFFF is a Unicode noncharacter, and Chrome refuses an injected script that contains it raw.
+const CLASS_RE = /\.((?:\\.|[A-Za-z0-9_\u00a0-\uffff-])+)/g;
 const BS = String.fromCharCode(92);
 
 function unescapeCss(s) { return s.split(BS).join(""); }

@@ -105,6 +105,22 @@ for (const [name, dir] of [...pkgs].sort()) {
   writeFileSync(join(out, "vendor", "graphkit", `${name.replace("/", "__")}.LICENSE`), `${head}\n\n${body}`);
 }
 
+// Chrome refuses an injected script (a content script, or a file passed to scripting.executeScript)
+// that is not valid UTF-8 or that holds a Unicode noncharacter (U+FDD0..U+FDEF, U+xFFFE, U+xFFFF),
+// and the page says only "It isn't UTF-8 encoded". esbuild's charset: "ascii" escapes strings but
+// leaves regex literals as written, so check what was built instead of trusting the option.
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+for (const f of walk(out).filter((f) => f.endsWith(".js"))) {
+  let text;
+  try { text = utf8.decode(readFileSync(join(out, f))); } catch { throw new Error(`${f}: not valid UTF-8; Chrome will refuse to inject it`); }
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    if ((c >= 0xfdd0 && c <= 0xfdef) || (c & 0xfffe) === 0xfffe) {
+      throw new Error(`${f}: holds the noncharacter U+${c.toString(16).toUpperCase()}; Chrome will refuse to inject it (write it as an escape)`);
+    }
+  }
+}
+
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16);
 console.log(`built ${relative(repo, out)}: Retelens ${version} (manifest ${chromeVersion}), engine ${relative(repo, engine)} sha256 ${sha(engine)}…, graph view with ${pkgs.size} packages`);
 
