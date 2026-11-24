@@ -10,6 +10,21 @@ function openViewer(src, name) {
   window.close();
 }
 
+// read the active page's structured data (the toolbar click granted activeTab for this tab)
+const readBtn = document.getElementById("readpage");
+chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+  if (!tab || (tab.url && !/^https?:\/\//i.test(tab.url))) {
+    readBtn.disabled = true;
+    document.getElementById("readhint").textContent = "Only web pages (http and https) can be read; browser pages and the extension store cannot.";
+    return;
+  }
+  readBtn.onclick = async () => {
+    readBtn.disabled = true;
+    readBtn.textContent = "Reading…";
+    await chrome.runtime.sendMessage({ retelens: "readTab", tabId: tab.id }).catch(() => {});
+    window.close();
+  };
+});
 document.getElementById("open").onclick = () => openViewer(input.value);
 // the file picker lives on the viewer's landing page (a picker opened in a popup would close it)
 document.getElementById("local").onclick = () => { chrome.tabs.create({ url: viewer() + "?pick=1" }); window.close(); };
@@ -149,3 +164,13 @@ async function showUsage() {
 }
 document.getElementById("clear").onclick = async () => { await ReteCache.clear(); showUsage(); };
 loadChunks(); showUsage();
+
+// basemap under maps: a PMTiles URL (lib/maps.js reads basemapUrl; empty = the default open archive)
+const baseIn = document.getElementById("basemap");
+chrome.storage.local.get("basemapUrl").then((st) => { baseIn.value = typeof st.basemapUrl === "string" ? st.basemapUrl : ""; });
+baseIn.addEventListener("change", async () => {
+  const v = baseIn.value.trim();
+  if (v && !/^https?:\/\/\S+$/i.test(v)) { baseIn.setCustomValidity("Needs an http(s) URL"); baseIn.reportValidity(); return; }
+  baseIn.setCustomValidity("");
+  if (v) await chrome.storage.local.set({ basemapUrl: v }); else await chrome.storage.local.remove("basemapUrl");
+});

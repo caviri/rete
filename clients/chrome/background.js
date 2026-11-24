@@ -1,13 +1,16 @@
 // Service worker.
 //  1. injects graphkit.js into a tab's content-script world on request (the Graph view)
-//  2. context menu: "Preview with rete" on .rete links, "Open a .rete file..." on the action icon
-//  3. declarativeNetRequest: top-level navigations to a .rete file (GitHub raw, raw.githubusercontent.com, HF resolve,
+//  2. context menu: "Preview with rete" on .rete and .pmtiles links, "Open a .rete file..." on the action icon
+//  3. declarativeNetRequest: top-level navigations to a .rete or .pmtiles file (GitHub raw, raw.githubusercontent.com, HF resolve,
 //     Zenodo files, and hosts the user allowed) open the viewer in the same tab instead of downloading.
 //     main_frame only; URLs with download=true|1 (the hosts' own Download buttons) are never redirected.
 //  4. downloads: the viewer's Download button (chrome.downloads, so the redirect rules do not apply)
 //  5. "rete viewer" context menu on the supported hosts: turn the inline viewer off/on for a page, a repository /
 //     bucket / record, or a site. Rules live in chrome.storage.local (offRules); the content scripts react live.
 //  6. the .rete link scanner for hosts the user granted (registered as a dynamic content script)
+//  7. "Read this page's data" (context menu, toolbar menu, the popup, a keyboard shortcut): on demand only, with
+//     activeTab. content/extract.js reads the page's JSON-LD, microdata and meta tags; the viewer builds a .rete
+//     from them in the tab (lib/page-data.js). Nothing leaves the browser.
 const VIEWER = () => chrome.runtime.getURL("viewer.html");
 const SETTING = "viewInsteadOfDownload"; // default on
 const HOSTS_KEY = "previewHosts";        // hosts the user allowed: ["example.org", ...]
@@ -29,9 +32,11 @@ chrome.runtime.onInstalled.addListener(() => {
     }
     chrome.contextMenus.create({
       id: "retelens-preview-link", title: "Preview with rete", contexts: ["link"],
-      targetUrlPatterns: ["*://*/*.rete", "*://*/*.rete?*"],
+      targetUrlPatterns: ["*://*/*.rete", "*://*/*.rete?*", "*://*/*.pmtiles", "*://*/*.pmtiles?*"],
     });
     chrome.contextMenus.create({ id: "retelens-open-file", title: "Open a .rete file…", contexts: ["action"] });
+    chrome.contextMenus.create({ id: "retelens-read-page", title: "Read this page's data", contexts: ["page", "selection", "link", "image", "frame"], documentUrlPatterns: ["http://*/*", "https://*/*"] });
+    chrome.contextMenus.create({ id: "retelens-read-page-action", title: "Read this page's data", contexts: ["action"] });
   });
   syncRules();
   syncScanners();
@@ -46,8 +51,38 @@ globalThis.retelensMenuClick = (info, tab) => {
     return chrome.tabs.create({ url: VIEWER() + "?" + new URLSearchParams({ src: info.linkUrl, name, host: "url" }) });
   }
   if (info.menuItemId === "retelens-open-file") return chrome.tabs.create({ url: VIEWER() });
+  if ((info.menuItemId === "retelens-read-page" || info.menuItemId === "retelens-read-page-action") && tab) return readPage(tab);
 };
 chrome.contextMenus.onClicked.addListener((info, tab) => globalThis.retelensMenuClick(info, tab));
+
+// ------------------------------------------------------------------ read a page's structured data (on demand)
+// The extraction goes to chrome.storage.session (memory only, gone when the browser closes; the last few are kept)
+// and the viewer opens next to the page with ?page=<id>. A page that cannot be scripted (chrome://, the Web Store,
+// a PDF) opens the viewer with the reason.
+const PAGE_KEEP = 8;
+async function readPage(tab) {
+  if (!tab || tab.id == null) return;
+  let res;
+  try {
+    const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/extract.js"], world: "ISOLATED" });
+    res = r && r.result;
+    if (!res) res = { error: "The page gave no answer." };
+  } catch (e) {
+    res = { error: String((e && e.message) || e) };
+  }
+  res.url = res.url || tab.url || "";
+  res.title = res.title || tab.title || "";
+  res.readAt = Date.now();
+  const id = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
+  const all = await chrome.storage.session.get(null);
+  const old = Object.entries(all).filter(([k]) => k.startsWith("page:")).sort((a, b) => (b[1].readAt || 0) - (a[1].readAt || 0)).slice(PAGE_KEEP - 1).map(([k]) => k);
+  if (old.length) await chrome.storage.session.remove(old);
+  try { await chrome.storage.session.set({ ["page:" + id]: res }); }
+  catch (e) { await chrome.storage.session.set({ ["page:" + id]: { url: res.url, title: res.title, readAt: res.readAt, error: "The page's data is too big to keep (" + String((e && e.message) || e) + ")." } }); }
+  await chrome.tabs.create({ url: VIEWER() + "?" + new URLSearchParams({ page: id }), index: tab.index + 1, openerTabId: tab.id });
+}
+globalThis.retelensReadPage = readPage;
+chrome.commands && chrome.commands.onCommand.addListener((cmd, tab) => { if (cmd === "read-page") readPage(tab); });
 
 // ------------------------------------------------------------------ turn off / on (per tab state from the content scripts)
 // Chrome has no "menu shown" event: the content script reports its state (page/repo/site keys and which rules match) when
@@ -95,17 +130,17 @@ chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(tabKe
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // [urlRegex (group 1 = the URL to preview), human label]
 const BUILTIN = [
-  String.raw`^(https://github\.com/[^/]+/[^/?#]+/raw/[^?#]+\.rete)(?:\?.*)?$`,
-  String.raw`^(https://raw\.githubusercontent\.com/[^?#]+\.rete)(?:\?.*)?$`,
-  String.raw`^(https://huggingface\.co/(?:datasets|buckets)/[^?#]+/resolve/[^?#]+\.rete)(?:\?.*)?$`,
-  String.raw`^(https://zenodo\.org/records/[0-9]+/files/[^?#]+\.rete)(?:\?.*)?$`,
+  String.raw`^(https://github\.com/[^/]+/[^/?#]+/raw/[^?#]+\.(?:rete|pmtiles))(?:\?.*)?$`,
+  String.raw`^(https://raw\.githubusercontent\.com/[^?#]+\.(?:rete|pmtiles))(?:\?.*)?$`,
+  String.raw`^(https://huggingface\.co/(?:datasets|buckets)/[^?#]+/resolve/[^?#]+\.(?:rete|pmtiles))(?:\?.*)?$`,
+  String.raw`^(https://zenodo\.org/records/[0-9]+/files/[^?#]+\.(?:rete|pmtiles))(?:\?.*)?$`,
 ];
 async function syncRules() {
   const store = await chrome.storage.local.get([SETTING, HOSTS_KEY, ALL_KEY]);
   const on = store[SETTING] !== false;
   const hosts = Array.isArray(store[HOSTS_KEY]) ? store[HOSTS_KEY] : [];
-  const regexes = [...BUILTIN, ...hosts.map((h) => `^(https://${esc(h)}/[^?#]+\\.rete)(?:\\?.*)?$`)];
-  if (store[ALL_KEY] === true) regexes.push(String.raw`^(https?://[^?#]*\.rete)(?:\?[^#]*)?$`);
+  const regexes = [...BUILTIN, ...hosts.map((h) => `^(https://${esc(h)}/[^?#]+\\.(?:rete|pmtiles))(?:\\?.*)?$`)];
+  if (store[ALL_KEY] === true) regexes.push(String.raw`^(https?://[^?#]*\.(?:rete|pmtiles))(?:\?[^#]*)?$`);
   const rules = [];
   let id = 1;
   if (on) {
@@ -164,6 +199,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
+  if (msg?.retelens === "loadMapKit" && sender.tab) {
+    // maps (Leaflet + protomaps-leaflet + pmtiles, about 300 kB), injected like the graph view when first needed
+    chrome.scripting
+      .executeScript({ target: { tabId: sender.tab.id, frameIds: [sender.frameId || 0] }, files: ["lib/mapkit/mapkit.js"], world: "ISOLATED" })
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (msg?.retelens === "readTab" && typeof msg.tabId === "number" && !sender.tab) {
+    // from the popup (an extension page; the toolbar click granted activeTab)
+    chrome.tabs.get(msg.tabId).then((tab) => readPage(tab)).then(() => sendResponse({ ok: true }), (e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   if (msg?.retelens === "download" && typeof msg.url === "string" && /^https?:\/\//i.test(msg.url)) {
     // the URL is requested with download=1 so a redirect rule can never turn it back into a preview
     const u = new URL(msg.url);
@@ -186,12 +234,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // A .rete download we did not start ourselves is cancelled and erased (nothing lands on disk or stays in the list)
 // and the file opens in the viewer instead. Explicit download intent and our own downloads are never touched.
 const INTENT = /[?&](?:download=(?:true|1)|dl=1)(?:&|$)/i;
-const isReteName = (n) => typeof n === "string" && /\.rete$/i.test(n.split(/[?#]/)[0]);
+const isReteName = (n) => typeof n === "string" && /\.(rete|pmtiles)$/i.test(n.split(/[?#]/)[0]);
 const pathEndsRete = (u) => { try { return isReteName(new URL(u).pathname); } catch (_) { return false; } };
 async function interceptable(item) {
   const st = await chrome.storage.local.get(SETTING);
   if (st[SETTING] === false) return false;
   if (item.byExtensionId === chrome.runtime.id) return false;                 // started by our Download button
+  if (/^(blob|data|filesystem):/i.test(item.url || "")) return false;          // a file the viewer made (the page reader's .rete)
   if (INTENT.test(item.url || "") || INTENT.test(item.finalUrl || "")) return false;
   return pathEndsRete(item.url) || pathEndsRete(item.finalUrl) || isReteName(item.filename);
 }

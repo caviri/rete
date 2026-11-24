@@ -41,6 +41,8 @@
     cards: SVG('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', "0 0 24 24", "w-3.5 h-3.5 flex-none"),
     tableView: SVG('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/>', "0 0 24 24", "w-3.5 h-3.5 flex-none"),
     graph: SVG('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7l8 1M7.5 8l3.5 8M16.5 10.5L13.5 16"/>', "0 0 24 24", "w-3.5 h-3.5 flex-none"),
+    map: SVG('<path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/>', "0 0 24 24", "w-3.5 h-3.5 flex-none"),
+    page: SVG('<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>', "0 0 24 24", "w-4 h-4 flex-none"),
     graphChip: SVG('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7l8 1M7.5 8l3.5 8M16.5 10.5L13.5 16"/>', "0 0 24 24", "mr-1 w-3.5 h-3.5 flex-none text-gray-500"),
     license: SVG('<path d="M12 3v18M5 7h14M5 7l-2 8a3.5 3.5 0 0 0 7 0L8 7M19 7l-2 8a3.5 3.5 0 0 0 7 0l-2-8" transform="translate(-1.5 0)"/>', "0 0 24 24", "mr-1 w-3.5 h-3.5 flex-none text-gray-500"),
     size: SVG('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>', "0 0 24 24", "mr-1 w-3.5 h-3.5 flex-none text-gray-500"),

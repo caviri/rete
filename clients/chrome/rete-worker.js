@@ -4,7 +4,8 @@
 //
 // Protocol: main -> worker  {id, op, ...args}
 //           worker -> main  {id, ok:true, result} | {id, ok:false, error:{message, code, detail}}
-// ops: open, card, examples, schema, info, stats, run, page, free
+// ops: open, openLocal, openBytes, buildJsonld, card, meta, examples, schema, info, stats, run, page, search, free,
+//      readRange (bytes of the open file), tiles (a PMTiles archive embedded as a section)
 
 importScripts("rete-xhr-shim.js");   // BEFORE the bundle: the wasm looks XMLHttpRequest up at call time
 importScripts("rete-cache.js");      // IndexedDB chunk cache + settings
@@ -14,6 +15,8 @@ let graph = null;
 let headBytes = null;    // first bytes of the file (magic + format byte)
 let bytesMode = false;   // small files are fetched whole and opened from bytes (no lazy range reads)
 let fileStats = null;    // synthetic stats for bytes mode (graph.stats() is null there)
+let fileBytes = null;    // the whole file in bytes mode (readRange answers from it)
+let tilesFound;          // undefined: not looked for yet; null: none; {offset, length, kind}
 const SMALL = 2000000;   // "small" = under about 2 MB
 const PROBE = 65536;
 let srcUrl = null;       // what the user asked for
@@ -119,9 +122,11 @@ async function openGraph(url) {
   resolvedUrl = p.url;
   headBytes = p.head;
   checkMagic(p.head);
+  fileBytes = null; tilesFound = undefined;
   if (p.bytes) {
     if (self.__reteShim) self.__reteShim.disable();
     bytesMode = true;
+    fileBytes = p.bytes;
     fileStats = { schemaVersion: 1, fileLength: p.bytes.length, bytes: p.bytes.length, requests: p.requests, base: 0 };
     graph = await rete.open(p.bytes);
   } else {
@@ -237,9 +242,11 @@ const ops = {
     const head = new Uint8Array(reader.readAsArrayBuffer(file.slice(0, PROBE)));
     headBytes = head;
     checkMagic(head);
+    fileBytes = null; tilesFound = undefined;
     if (file.size <= SMALL && !lazy) {
       const all = new Uint8Array(reader.readAsArrayBuffer(file));
       bytesMode = true;
+      fileBytes = all;
       fileStats = { schemaVersion: 1, fileLength: all.length, bytes: all.length, requests: 1, base: 0 };
       graph = await rete.open(all);
     } else {
@@ -247,6 +254,69 @@ const ops = {
       graph = await rete.open(LOCAL_HOST + "f/" + encodeURIComponent(file.name));
     }
     return { local: true, size: file.size, engine: "rete-graph __RETE_VERSION__" };
+  },
+  // a .rete built in this tab (the page reader): opened from bytes, nothing is fetched
+  async openBytes({ bytes }) {
+    if (self.__reteShim) self.__reteShim.disable();
+    freeAll();
+    srcUrl = null; localFile = null; resolvedUrl = null;
+    await rete.init();
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    headBytes = b.slice(0, PROBE);
+    checkMagic(headBytes);
+    bytesMode = true; fileBytes = b; tilesFound = undefined;
+    fileStats = { schemaVersion: 1, fileLength: b.length, bytes: b.length, requests: 0, base: 0 };
+    graph = await rete.open(b);
+    return { size: b.length, engine: "rete-graph __RETE_VERSION__" };
+  },
+  // JSON-LD text -> .rete bytes (rete.build). Remote contexts are not loaded: the caller inlines them.
+  async buildJsonld({ text }) {
+    await rete.init();
+    const bytes = await rete.build(text, "jsonld");
+    return { bytes, size: bytes.length };
+  },
+  // bytes [offset, offset+length) of the open file: from memory, the local File, or one Range read through the
+  // XHR shim (its chunk cache and 429 handling apply)
+  async readRange({ offset, length }) {
+    if (!(offset >= 0 && length > 0 && length <= 64 * 1048576)) throw coded("bad range", "range");
+    if (fileBytes) return fileBytes.slice(offset, offset + length).buffer;
+    if (localFile) return new FileReaderSync().readAsArrayBuffer(localFile.slice(offset, offset + length));
+    if (headBytes && offset + length <= headBytes.length) return headBytes.slice(offset, offset + length).buffer; // the probe already read it
+    if (!resolvedUrl) throw coded("no file is open", "range");
+    return guarded(() => {
+      const x = new XMLHttpRequest();
+      x.open("GET", resolvedUrl, false);
+      x.responseType = "arraybuffer";
+      x.setRequestHeader("Range", `bytes=${offset}-${offset + length - 1}`);
+      x.send();
+      if (x.status === 206) return x.response;
+      if (x.status === 200 && x.response) return x.response.slice(offset, offset + length); // the host ignored Range
+      throw coded(`HTTP ${x.status} reading bytes ${offset}-${offset + length - 1}`, "http");
+    });
+  },
+  // A PMTiles archive embedded as a section (scripts/embed_tiles.py; geoadmin-tiles.rete). That script adds an
+  // entry to the 1 KiB header's section directory, which only format 0x05 files use: 0x06 and later keep it empty,
+  // so for them this finds nothing. It writes kind 7, which is also BuildInfo's kind, and another writer may pick
+  // an unknown kind: the candidates are kind 7 and kinds above the known ones (1..11), at least 16 KiB long, and
+  // the section must start with the PMTiles magic. One small read per candidate, once per file.
+  async tiles() {
+    if (tilesFound !== undefined) return tilesFound;
+    const head = new Uint8Array(await ops.readRange({ offset: 0, length: 1024 }));
+    const dv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    tilesFound = null;
+    if (head.length < 1024 || head[0] !== 0x52 || head[1] !== 0x45 || head[2] !== 0x54 || head[3] !== 0x45) return tilesFound;
+    const n = dv.getUint16(44, true);
+    if (64 + n * 24 > 1024) return tilesFound;
+    for (let i = 0; i < n; i++) {
+      const p = 64 + i * 24;
+      const kind = dv.getUint16(p, true);
+      const offset = Number(dv.getBigUint64(p + 8, true)), length = Number(dv.getBigUint64(p + 16, true));
+      // a build record (also kind 7) is a few kB; a tile archive worth drawing is far bigger
+      if (!(kind === 7 || kind > 11) || length < 16384) continue;
+      const m = new Uint8Array(await ops.readRange({ offset, length: 7 }));
+      if (String.fromCharCode(...m) === "PMTiles") { tilesFound = { offset, length, kind }; break; }
+    }
+    return tilesFound;
   },
   async card() { return graph.card(); },
   // Everything the sidebar needs in one round trip.

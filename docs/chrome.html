@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Chrome — Retelens · rete docs</title>
-  <meta name="description" content="Retelens is a browser extension for Chrome and Brave that opens .rete files where they are hosted. A .rete link normally downloads the file." />
+  <meta name="description" content="Retelens is a browser extension for Chrome and Brave that opens .rete files where they are hosted. It also opens PMTiles maps, and on request turns a web page's schema.org data into a graph." />
   <link rel="canonical" href="https://caviri.github.io/rete/docs/chrome.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Chrome — Retelens · rete docs" />
-  <meta property="og:description" content="Retelens is a browser extension for Chrome and Brave that opens .rete files where they are hosted. A .rete link normally downloads the file." />
+  <meta property="og:description" content="Retelens is a browser extension for Chrome and Brave that opens .rete files where they are hosted. It also opens PMTiles maps, and on request turns a web page's schema.org data into a graph." />
   <meta property="og:url" content="https://caviri.github.io/rete/docs/chrome.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/chrome.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Chrome — Retelens · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Chrome — Retelens · rete docs" />
-  <meta name="twitter:description" content="Retelens is a browser extension for Chrome and Brave that opens .rete files where they are hosted. A .rete link normally downloads the file." />
+  <meta name="twitter:description" content="Retelens is a browser extension for Chrome and Brave that opens .rete files where they are hosted. It also opens PMTiles maps, and on request turns a web page's schema.org data into a graph." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/chrome.png" />
   <meta name="rete:section" content="Guides" />
   <script>
@@ -618,6 +618,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 <p class="parent-link"><a href="integrations.html">Back to Tools and integrations</a></p>
 <h1 id="chrome--retelens">Chrome — Retelens</h1>
 <p>Retelens is a browser extension for Chrome and Brave that opens <code>.rete</code> files where they are hosted.
+It also opens PMTiles maps, and on request turns a web page's schema.org data into a graph.
 A <code>.rete</code> link normally downloads the file. With Retelens the page instead
 shows the file's Dataset Card, tables from its example queries, the results as
 a table, cards or a graph, and a SPARQL console. Like the
@@ -645,6 +646,8 @@ writes.</p>
 <tr><td>GitHub</td><td>The viewer inside the file box of a <code>.rete</code> file, with a Data Studio button in its toolbar, in GitHub's light or dark theme; <em>Open in viewer</em> links in folders and READMEs</td></tr>
 <tr><td>Zenodo</td><td>A Preview button on each <code>.rete</code> file, a preview panel above the file list, a graph card in the sidebar and a <code>rete 0x07 · 119.9 M statements</code> label in the header</td></tr>
 <tr><td>Any link ending in <code>.rete</code></td><td>The viewer opens instead of a download, with the file's name, where it lives, its format and size, and a Download button</td></tr>
+<tr><td>Any link ending in <code>.pmtiles</code></td><td>A map of the archive instead of a download (see <a href="#pmtiles">PMTiles</a>)</td></tr>
+<tr><td>Any web page, when you ask</td><td><em>Read this page's data</em> turns the page's schema.org data into a graph (see <a href="#a-pages-data">A page's data</a>)</td></tr>
 </tbody></table>
 <p>On sites other than these, Retelens asks for access before it reads a file.
 The toolbar button opens a URL or a local file. Right-click a <code>.rete</code> link and
@@ -656,10 +659,36 @@ or <a href="https://zenodo.org/records/24131107">Zenodo record 24131107</a>.</p>
 <ul>
 <li><strong>Graph and Query pickers.</strong> The query list shows each example's title,
 description and SPARQL, with Copy and <em>Edit in console</em>.</li>
-<li><strong>Table, Cards, Graph.</strong> Cards show a thumbnail when a column holds image
-links. Search, per-column filters and sorting work on the results; they are
-exact up to 10,000 rows, and above that the bar says so and can write the
-filter into the query instead.</li>
+<li><strong>Table, Cards, Graph, Map.</strong> Search, per-column filters and sorting work on
+the results; they are exact up to 10,000 rows, and above that the bar says so
+and can write the filter into the query instead.</li>
+<li><strong>Column statistics.</strong> Under each column's name, as in Hugging Face's dataset
+viewer: a histogram with the minimum and maximum for numbers and dates, one
+bar per value when a column has few of them, the namespaces of a column of
+IRIs, the string lengths of other text, and the share of empty cells. Hover
+a bar to read its range or value and count; click it to filter the column to
+it, and again to clear. They count every row up to 10,000, else the first
+rows, which a tooltip says.</li>
+<li><strong>Cells.</strong> A value is drawn for what it is, in the table and in the cards: an
+image as a thumbnail (a larger copy on hover, full size on click), a IIIF
+manifest as its first page with the other pages a click away and the
+manifest's metadata, a WKT geometry as a small locator map that opens a full
+map, audio and video as players, a PDF or a web page as a link. Each column's
+menu has <em>Show as</em> to force a type (Text, Link, Button, Image, IIIF, Map,
+Audio, Video, PDF, Page preview, Markdown, Number); the cards' <em>Fields</em> dialog
+sets the same and hides fields.</li>
+<li><strong>Cards.</strong> The first picture fills the top of the card and the fields follow,
+each name above its value. A click opens the card whole, with the others on
+either side: arrow keys, swipe or drag move between them.</li>
+<li><strong>Map.</strong> Offered when a result has a WKT column, or latitude and longitude
+columns: up to 2,000 rows on one map, with a popup per place. The basemap is
+OpenStreetMap (ODbL) as a PMTiles archive in the Protomaps layout: streets,
+water, land use and places, a world extract to zoom 12 (18 GB), on
+<code>data.graphplaza.com/osm-basemap/</code> and in the
+<a href="https://huggingface.co/buckets/katospiegel/rete-public">rete-public</a> bucket.
+Like any file it is read by HTTP <code>Range</code>, only the tiles in view and only
+when a map is open, and drawn in the Protomaps light or dark style. The
+popup's <em>Advanced</em> section takes the URL of another archive.</li>
 <li><strong>Graph view.</strong> Force, hierarchical, radial, circle, grid, tree, hive plot,
 circos and chord layouts. It can group nodes by class, namespace, community
 or component, colour and size them by degree, and expand a node to its
@@ -669,6 +698,36 @@ SVG or JSON. It draws up to 1,500 nodes and 3,000 edges.</li>
 Card: attribution, licence, provenance and statistics. On Zenodo the card is
 merged with the record's metadata, and both are shown where they disagree.</li>
 </ul>
+<h2 id="pmtiles">PMTiles</h2>
+<p>A <code>.pmtiles</code> link (or file dropped on the viewer) opens as a map: the archive's
+header and metadata next to it (tile type, zooms, bounds, attribution), each
+vector layer in its own colour with its fields, and the features under a click.
+Raster archives are drawn as images; an archive in the Protomaps basemap layout
+gets the Protomaps style. Tiles are read by HTTP <code>Range</code>, a few at a time.</p>
+<p>A <code>.rete</code> file can also carry a PMTiles archive as a section of its own
+(<a href="https://github.com/caviri/rete/blob/main/scripts/embed_tiles.py"><code>scripts/embed_tiles.py</code></a>,
+as in the playground's <code>geoadmin-tiles</code>). The Map view then draws those tiles
+under the result, and the features whose properties match a value of the
+result are drawn on top.</p>
+<h2 id="a-pages-data">A page's data</h2>
+<p>Many pages describe what they show for search engines: a recipe, a product, an
+event, an article, in schema.org JSON-LD or microdata. Right-click a page and
+choose <em>Read this page's data</em> (or use the toolbar button, or a keyboard
+shortcut you set in <code>chrome://extensions/shortcuts</code>). A new tab shows:</p>
+<ul>
+<li><strong>Reader</strong>: the things the page describes, without the page around them. A
+recipe reads as its photo, times, yield and rating, the ingredients and the
+steps in the page's order; reviews are folded away. The page's own site and
+breadcrumbs are under <em>About the page itself</em>.</li>
+<li><strong>Explore the graph</strong>: the same data as a <code>.rete</code> file built in the tab, with
+the viewer: starter queries, Table, Cards, Graph and the SPARQL console.</li>
+<li><strong>Download .rete</strong> and <strong>JSON-LD</strong>.</li>
+</ul>
+<p>Retelens reads the page only when you ask, and nothing leaves the browser. It
+reads JSON-LD, microdata, and Open Graph and description meta tags (the page
+itself, as one node). JSON-LD is read as written, with two repairs it lists
+under <em>What was read</em>: schema.org's context is used inline (it is never
+fetched), and relative links resolve against the page's address.</p>
 <h2 id="turning-it-off">Turning it off</h2>
 <p>On Hugging Face, GitHub and Zenodo, right-click the page and use <em>rete viewer</em>
 to turn the viewer off for that page, that repository (dataset, bucket or
@@ -682,13 +741,16 @@ visit to the same file costs one request. The popup's <em>Advanced</em> section 
 the chunk size per site and clears the cache.</p>
 <h2 id="privacy-and-permissions">Privacy and permissions</h2>
 <p>Retelens has no server and collects nothing. Queries run in the browser, and
-files are read directly from the site that hosts them.</p>
+files are read directly from the site that hosts them. Pictures, IIIF manifests
+and media in a result load from the sites they name; a map reads its basemap
+archive (by default from <code>data.graphplaza.com</code>) when it is opened.</p>
 <table><thead><tr><th>Permission</th><th>Why</th></tr></thead><tbody>
 <tr><td>huggingface.co, hf.co, github.com, raw.githubusercontent.com, zenodo.org</td><td>Show the viewer in those pages and read their files (Zenodo's file URLs send no CORS headers)</td></tr>
 <tr><td>All sites (optional, asked for)</td><td>Read a <code>.rete</code> file from any other site, and mark <code>.rete</code> links there</td></tr>
 <tr><td><code>declarativeNetRequestWithHostAccess</code></td><td>Open a <code>.rete</code> link in the viewer instead of downloading it</td></tr>
 <tr><td><code>downloads</code></td><td>The viewer's Download button</td></tr>
-<tr><td><code>scripting</code></td><td>Load the graph view into a page only when it is first opened</td></tr>
+<tr><td><code>scripting</code></td><td>Load the graph view and the maps into a page only when they are first opened; read a page's data when you ask</td></tr>
+<tr><td><code>activeTab</code></td><td><em>Read this page's data</em>: access to the page you are on, only when you choose it</td></tr>
 <tr><td><code>contextMenus</code>, <code>storage</code></td><td>The right-click menus; settings, recent files and the off switches</td></tr>
 </tbody></table>
 <h2 id="limits">Limits</h2>
@@ -698,6 +760,15 @@ error that names its format.</li>
 <li>Private and gated files are not supported: no credentials are passed to the
 engine.</li>
 <li>Reads are serial, and nothing cancels a running query.</li>
+<li>On GitHub, the page's rules can block pictures from other sites; Retelens
+says so and offers the file in its own viewer, where they load.</li>
+<li>Tiles inside a <code>.rete</code> are found in format 0x05 files only: the later formats
+keep no section directory for <code>embed_tiles.py</code> to add to.</li>
+<li><em>Read this page's data</em> does not read RDFa yet, nor JSON-LD remote contexts
+other than schema.org's (their terms are read in the context's namespace).
+Browser pages and the extension stores cannot be read.</li>
+<li><code>.pmtiles</code> links open in the viewer, but pages are not scanned for them as
+they are for <code>.rete</code> names.</li>
 <li>A CONSTRUCT or DESCRIBE without a <code>LIMIT</code> on a file over 5 MB asks before it
 runs.</li>
 <li>The page integrations follow each site's markup. A redesign of Hugging Face,

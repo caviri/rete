@@ -17,7 +17,10 @@
     "d3-shape": "3.2.0",
     "dagre": "0.8.5",
     "graphology": "0.25.4",
-    "graphology-communities-louvain": "2.0.1"
+    "graphology-communities-louvain": "2.0.1",
+    "leaflet": "1.9.4",
+    "pmtiles": "3.2.1",
+    "protomaps-leaflet": "5.1.0"
   },
   "devDependencies": {
     "esbuild": "0.24.2",

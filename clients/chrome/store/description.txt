@@ -5,10 +5,14 @@ A .rete file is one RDF graph in a single file that you can query with SPARQL st
 What it does
 • On Hugging Face (datasets and storage buckets), GitHub and Zenodo, a viewer appears inside the page and follows the site's own look, light or dark.
 • Tables from the example queries stored in the file, each with its description and SPARQL.
-• Results as a table, as cards or as a graph. Search, filter and sort the results.
+• Results as a table, as cards or as a graph. Search, filter and sort the results. Each column shows its statistics (a histogram or its values); click a bar to filter.
 • Graph view: force, hierarchical, radial, circle, hive plot, circos and chord layouts; group by class, namespace or community; legend, minimap, zoom, fullscreen; export as PNG, SVG or JSON.
 • A SPARQL console, the schema, and the file's Dataset Card (attribution, license, provenance) in the sidebar.
 • A link ending in .rete opens in the viewer, with the file's details and a Download button. Right-click any .rete link and choose "Preview with rete", or open a URL or a local file from the toolbar button.
+• Results drawn for what they are: image thumbnails, IIIF manuscripts and books you can page through, small maps for geometries, audio and video players; pick how each column is shown.
+• Cards with the picture first; open one to see it whole and swipe to the next.
+• A Map view for results with places or shapes, and a map viewer for .pmtiles files.
+• Read this page's data: right-click any web page to see what it describes for search engines (schema.org JSON-LD or microdata), without the page around it. A recipe becomes its photo, times, ingredients and steps. The same data is a graph you can query and download as a .rete file. Read only when you ask, and only in your browser.
 • Right-click a page to turn the viewer off for that page, repository or site.
 
 Try it
@@ -20,6 +24,6 @@ Try it
 • A raw link that would normally download: https://github.com/caviri/rete/raw/refs/heads/main/docs/plaza/data/linked-jazz.rete
 
 Privacy
-Retelens has no server and collects nothing. Queries run in your browser, and files are read directly from the site that hosts them. Your settings and a cache of file parts stay in your browser. Retelens works on Hugging Face, GitHub and Zenodo out of the box; it asks before reading .rete files from any other site.
+Retelens has no server and collects nothing. Queries run in your browser, and files are read directly from the site that hosts them. Pictures load from the sites they come from, and maps read an open OpenStreetMap basemap archive (from data.graphplaza.com), when you open them. Your settings and a cache of file parts stay in your browser. Retelens works on Hugging Face, GitHub and Zenodo out of the box; it asks before reading .rete files from any other site.
 
 Retelens is experimental, and so is the .rete format.

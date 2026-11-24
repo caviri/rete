@@ -4,8 +4,8 @@
 //
 // Three inputs, all from the commit being built:
 //   - this folder's sources, copied as they are (RUNTIME below);
-//   - the graph view, bundled here from lib/graphkit/src with esbuild, plus the licence of every
-//     package that ends up in the bundle;
+//   - the graph view, bundled here from lib/graphkit/src with esbuild, and the map libraries from
+//     lib/mapkit/src, plus the licence of every package that ends up in a bundle;
 //   - the engine: clients/js/dist/rete-graph.min.js, the single-file rete-graph build with the wasm
 //     embedded (`bash clients/js/build-wasm.sh && node clients/js/build.mjs`). Never npm's copy: the
 //     extension ships the engine of its own commit, like clients/mcpb.
@@ -45,10 +45,11 @@ const walk = (dir) => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).is
 const RUNTIME = ["background.js", "content", "engine.html", "engine-frame.js", "fonts", "icons", "lib", "popup.html", "popup.js",
   "rete-cache.js", "rete-worker.js", "rete-xhr-shim.js", "shim.css", "viewer.html", "viewer.js", "vendor"];
 const GRAPHKIT = join("lib", "graphkit");
+const MAPKIT = join("lib", "mapkit");
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-for (const entry of RUNTIME) cpSync(join(here, entry), join(out, entry), { recursive: true, filter: (src) => relative(here, src) !== GRAPHKIT });
+for (const entry of RUNTIME) cpSync(join(here, entry), join(out, entry), { recursive: true, filter: (src) => relative(here, src) !== GRAPHKIT && relative(here, src) !== MAPKIT });
 
 // The engine label the status line shows ("rete-graph 0.8.0").
 for (const f of walk(out).filter((f) => f.endsWith(".js"))) {
@@ -87,23 +88,34 @@ mkdirSync(join(out, GRAPHKIT), { recursive: true });
 writeFileSync(join(out, GRAPHKIT, "graphkit-worker.js"), workerJs);
 writeFileSync(join(out, GRAPHKIT, "graphkit.js"), kit.outputFiles[0].text);
 
-// Licences of exactly the packages esbuild put in the two bundles.
-const pkgs = new Map();
-for (const r of [worker, kit]) {
-  for (const input of Object.keys(r.metafile.inputs)) {
-    const p = input.replace(/\\/g, "/");
-    const m = p.match(/^(.*?node_modules\/((?:@[^/]+\/)?[^/]+))\//);
-    if (m) pkgs.set(m[2], resolve(m[1]));
+// Maps: Leaflet, protomaps-leaflet and pmtiles in one IIFE (window.RetelensMapKit, Leaflet's CSS as text), loaded
+// when a map is first opened (lib/maps.js): injected into a host page like graphkit.js, a script tag in the viewer.
+const mapkit = await build({ ...common, entryPoints: [join(here, MAPKIT, "src", "index.js")], loader: { ".css": "text" } });
+mkdirSync(join(out, MAPKIT), { recursive: true });
+writeFileSync(join(out, MAPKIT, "mapkit.js"), mapkit.outputFiles[0].text);
+
+// Licences of exactly the packages esbuild put in each bundle: vendor/graphkit/ and vendor/mapkit/.
+function licences(results, dirName) {
+  const pkgs = new Map();
+  for (const r of results) {
+    for (const input of Object.keys(r.metafile.inputs)) {
+      const p = input.replace(/\\/g, "/");
+      const m = p.match(/^(.*?node_modules\/((?:@[^/]+\/)?[^/]+))\//);
+      if (m) pkgs.set(m[2], resolve(m[1]));
+    }
   }
+  mkdirSync(join(out, "vendor", dirName), { recursive: true });
+  for (const [name, dir] of [...pkgs].sort()) {
+    const pj = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    const lic = readdirSync(dir).find((f) => /^licen[cs]e/i.test(f));
+    const head = `${name} ${pj.version} ${pj.license || ""}`.trim();
+    const body = lic ? readFileSync(join(dir, lic), "utf8") : "(no licence file shipped; declared in package.json)\n";
+    writeFileSync(join(out, "vendor", dirName, `${name.replace("/", "__")}.LICENSE`), `${head}\n\n${body}`);
+  }
+  return pkgs;
 }
-mkdirSync(join(out, "vendor", "graphkit"), { recursive: true });
-for (const [name, dir] of [...pkgs].sort()) {
-  const pj = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-  const lic = readdirSync(dir).find((f) => /^licen[cs]e/i.test(f));
-  const head = `${name} ${pj.version} ${pj.license || ""}`.trim();
-  const body = lic ? readFileSync(join(dir, lic), "utf8") : "(no licence file shipped; declared in package.json)\n";
-  writeFileSync(join(out, "vendor", "graphkit", `${name.replace("/", "__")}.LICENSE`), `${head}\n\n${body}`);
-}
+const pkgs = licences([worker, kit], "graphkit");
+const mapPkgs = licences([mapkit], "mapkit");
 
 // Chrome refuses an injected script (a content script, or a file passed to scripting.executeScript)
 // that is not valid UTF-8 or that holds a Unicode noncharacter (U+FDD0..U+FDEF, U+xFFFE, U+xFFFF),
@@ -122,7 +134,7 @@ for (const f of walk(out).filter((f) => f.endsWith(".js"))) {
 }
 
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16);
-console.log(`built ${relative(repo, out)}: Retelens ${version} (manifest ${chromeVersion}), engine ${relative(repo, engine)} sha256 ${sha(engine)}…, graph view with ${pkgs.size} packages`);
+console.log(`built ${relative(repo, out)}: Retelens ${version} (manifest ${chromeVersion}), engine ${relative(repo, engine)} sha256 ${sha(engine)}…, graph view with ${pkgs.size} packages, maps with ${mapPkgs.size} (${(Buffer.byteLength(mapkit.outputFiles[0].text) / 1e3).toFixed(0)} kB)`);
 
 if (zipAt) {
   zip(out, zipAt);
