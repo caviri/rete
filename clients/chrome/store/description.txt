@@ -1,0 +1,25 @@
+Retelens opens .rete graph files where they are hosted, instead of downloading them.
+
+A .rete file is one RDF graph in a single file that you can query with SPARQL straight from its URL (rete: https://github.com/caviri/rete). Retelens reads only the parts of the file a query needs. The 1.6 GB Wikidata file on Zenodo answers its first query after reading about 12 MB.
+
+What it does
+• On Hugging Face (datasets and storage buckets), GitHub and Zenodo, a viewer appears inside the page and follows the site's own look, light or dark.
+• Tables from the example queries stored in the file, each with its description and SPARQL.
+• Results as a table, as cards or as a graph. Search, filter and sort the results.
+• Graph view: force, hierarchical, radial, circle, hive plot, circos and chord layouts; group by class, namespace or community; legend, minimap, zoom, fullscreen; export as PNG, SVG or JSON.
+• A SPARQL console, the schema, and the file's Dataset Card (attribution, license, provenance) in the sidebar.
+• A link ending in .rete opens in the viewer, with the file's details and a Download button. Right-click any .rete link and choose "Preview with rete", or open a URL or a local file from the toolbar button.
+• Right-click a page to turn the viewer off for that page, repository or site.
+
+Try it
+• Hugging Face dataset: https://huggingface.co/datasets/katospiegel/rete-graphs
+• Full-width Data Studio: https://huggingface.co/datasets/katospiegel/rete-graphs/viewer
+• GitHub file: https://github.com/caviri/rete/blob/main/docs/plaza/data/linked-jazz.rete
+• GitHub folder: https://github.com/caviri/rete/tree/main/docs/plaza/data
+• Zenodo record (1.6 GB Wikidata extract): https://zenodo.org/records/24131107
+• A raw link that would normally download: https://github.com/caviri/rete/raw/refs/heads/main/docs/plaza/data/linked-jazz.rete
+
+Privacy
+Retelens has no server and collects nothing. Queries run in your browser, and files are read directly from the site that hosts them. Your settings and a cache of file parts stay in your browser. Retelens works on Hugging Face, GitHub and Zenodo out of the box; it asks before reading .rete files from any other site.
+
+Retelens is experimental, and so is the .rete format.

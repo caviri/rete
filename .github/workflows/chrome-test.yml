@@ -1,0 +1,69 @@
+name: Chrome extension tests
+
+# Retelens (clients/chrome) is built in release.yml from the engine of the
+# tagged commit. This runs the same build and the same Chromium smoke test when
+# the extension, the JS client it bundles, or the engine under both changes, so
+# a change reaches a tag already checked: build the engine fresh, the client,
+# then the extension, load it into Chromium and query a file.
+on:
+  push:
+    branches: [main, "release-*"]
+    paths:
+      - "clients/chrome/**"
+      - "clients/js/**"
+      - "crates/rete-wasm/**"
+      - "crates/rete-core/**"
+      - ".github/workflows/chrome-test.yml"
+  pull_request:
+    paths:
+      - "clients/chrome/**"
+      - "clients/js/**"
+      - "crates/rete-wasm/**"
+      - "crates/rete-core/**"
+      - ".github/workflows/chrome-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build + Chromium smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      # The repo's rust-toolchain.toml pins the toolchain + wasm target.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            clients/js/package-lock.json
+            clients/chrome/package-lock.json
+      - name: Build the wasm engine from the checked-out crates
+        run: bash clients/js/build-wasm.sh
+      - name: Build the JS client, then the extension and its zip
+        run: |
+          npm --prefix clients/js ci --no-audit --no-fund
+          node clients/js/build.mjs
+          npm --prefix clients/chrome ci --no-audit --no-fund
+          node clients/chrome/build.mjs --zip dist/retelens.zip
+      - name: Load it into Chromium and query a file
+        working-directory: clients/chrome
+        run: |
+          npx playwright install --with-deps chromium
+          xvfb-run -a node --test --test-timeout=300000 test/*.test.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: retelens-${{ github.sha }}
+          path: dist/retelens.zip
+          if-no-files-found: error

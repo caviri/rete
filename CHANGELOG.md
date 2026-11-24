@@ -7,6 +7,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **Retelens, a Chrome extension** (`clients/chrome`). It opens `.rete` files
+  where they are hosted instead of downloading them: on Hugging Face datasets
+  and buckets, GitHub and Zenodo inside the page, in each site's look, and any
+  other `.rete` link in a viewer with a Download button. It shows the file's
+  Dataset Card, tables from its example queries, results as a table, cards or
+  a graph (force, hierarchical, radial, hive plot, circos and chord layouts),
+  and a SPARQL console. Every release attaches `retelens-<version>.zip` and
+  `retelens.zip`, built with the engine of the same commit.
 - **Query like a child**, a page that sketches a SPARQL query by dragging
   blocks (`site/query-like-a-child/`, served at `/query-like-a-child/`). It
   works without a file: open slots stand for variables and the query can be

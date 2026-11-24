@@ -63,6 +63,10 @@ path = "clients/mcpb"
 ships = "the Claude Desktop extension (rete.mcpb), whose server bundles @modelcontextprotocol/sdk and zod"
 
 [[npm]]
+path = "clients/chrome"
+ships = "Retelens, the Chrome extension (retelens.zip), whose graph view bundles cytoscape, dagre, d3 and graphology; esbuild and Playwright only build and test it"
+
+[[npm]]
 path = "web/playground-src/cm6"
 ships = "the CodeMirror bundle inlined into docs/playground.html"
 

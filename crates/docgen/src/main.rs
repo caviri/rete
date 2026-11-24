@@ -77,6 +77,7 @@ const PAGES: &[(&str, &str)] = &[
     ("comunica.md", "Comunica — RDF/JS source"),
     ("r.md", "R — rete"),
     ("blender.md", "Blender — graphs as scenes"),
+    ("chrome.md", "Chrome — Retelens"),
     ("agents.md", "Agents — MCP, plugin & skills"),
     ("agent-frameworks.md", "LangChain & Pydantic AI"),
     ("fallacies.md", "Experiment: graphs from speech"),
@@ -418,6 +419,7 @@ fn parent_for(md: &str) -> Option<&'static str> {
         "agents.md"
         | "agent-frameworks.md"
         | "blender.md"
+        | "chrome.md"
         | "comunica.md"
         | "plaza-guide.md"
         | "file-explorer.md"

@@ -134,6 +134,7 @@ All of these run the same engine.
 - **Browser, no install**: the [playground](https://caviri.github.io/rete/docs/playground.html) and a [SPARQL IDE](https://caviri.github.io/rete/docs/yasgui.html) query any `.rete` URL.
 - **Claude Desktop**: download [rete.mcpb](https://github.com/caviri/rete/releases/latest/download/rete.mcpb) and double-click it; the engine runs on your machine ([docs](https://caviri.github.io/rete/docs/agents.html)).
 - **Blender**: an add-on from the [releases page](https://github.com/caviri/rete/releases) that turns query results into 3D scenes ([docs](https://caviri.github.io/rete/docs/blender.html)).
+- **Chrome**: [Retelens](https://github.com/caviri/rete/releases/latest/download/retelens.zip) opens `.rete` files where they are hosted (Hugging Face, GitHub, Zenodo or any link) with their card, example tables, a graph view and a SPARQL console ([docs](https://caviri.github.io/rete/docs/chrome.html)).
 - **Hosted gateway**: [katospiegel-rete.hf.space](https://katospiegel-rete.hf.space/) serves MCP, a REST API and a SPARQL endpoint for each published dataset.
 
 ## Claude Code plugin

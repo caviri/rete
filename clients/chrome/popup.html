@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Retelens</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { width: 380px; margin: 0; padding: 14px; font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  p { margin: 0 0 8px; color: GrayText; font-size: 12px; }
+  input { width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid #d1d5db; border-radius: 6px; font: 12px ui-monospace, Consolas, monospace; }
+  .row { display: flex; gap: 8px; margin-top: 8px; }
+  button { padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; background: #111827; color: #fff; cursor: pointer; font: inherit; }
+  button.sec { background: transparent; color: inherit; }
+  .opt { display: flex; gap: 6px; align-items: center; margin-top: 12px; font-size: 12px; }
+  .opt input { width: auto; }
+  h2 { font-size: 12px; margin: 14px 0 4px; color: GrayText; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li button { display: block; width: 100%; text-align: left; background: none; color: inherit; border: 0; border-bottom: 1px solid rgba(128,128,128,.25); border-radius: 0; padding: 5px 2px; }
+  li .t { font-size: 13px; }
+  .opt2 { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
+  .opt2 select { font: inherit; }
+  #adv { margin-top: 14px; font-size: 12px; }
+  #adv summary { cursor: pointer; color: GrayText; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  #usage { align-self: center; color: GrayText; font-size: 12px; }
+  #offs li { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid rgba(128,128,128,.25); padding: 4px 2px; font-size: 12px; }
+  #offs li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #offs li button { width: auto; padding: 2px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
+  li .u { font: 11px ui-monospace, Consolas, monospace; color: GrayText; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <h1>Retelens</h1>
+  <p>Paste the URL of a .rete file (any server that answers Range requests), or open one from your computer. Nothing is uploaded.</p>
+  <input id="url" type="url" placeholder="Paste a .rete URL" autofocus>
+  <div class="row">
+    <button id="open">Open viewer</button>
+    <button id="local" class="sec" type="button">Open local file…</button>
+  </div>
+  <label class="opt"><input type="checkbox" id="redirect"> Open .rete links in the viewer instead of downloading</label>
+  <label class="opt"><input type="checkbox" id="allsites"> Preview .rete files on every website (asks for access to all sites)</label>
+  <div id="here" hidden>
+    <h2>On this page</h2>
+    <label class="opt"><input type="checkbox" id="t-page"> <span id="l-page">Show the viewer on this page</span></label>
+    <label class="opt"><input type="checkbox" id="t-repo"> <span id="l-repo">Show the viewer on this repository</span></label>
+    <label class="opt"><input type="checkbox" id="t-site"> <span id="l-site">Show the viewer on this site</span></label>
+  </div>
+  <p id="nothere" hidden>The inline viewer is not active on this tab (it works on huggingface.co, github.com and zenodo.org).</p>
+  <h2 id="oh" hidden>Turned off on</h2>
+  <ul id="offs"></ul>
+  <h2 id="hh" hidden>Always previewed from</h2>
+  <ul id="hosts"></ul>
+  <h2 id="rh" hidden>Recent</h2>
+  <ul id="recent"></ul>
+  <details id="adv">
+    <summary>Advanced</summary>
+    <label class="opt2">Read chunk size on zenodo.org
+      <select id="chunk-zenodo"><option value="">1 MiB (default)</option><option value="auto">Auto</option><option value="1">1 MiB</option><option value="4">4 MiB</option><option value="8">8 MiB</option><option value="16">16 MiB</option></select></label>
+    <label class="opt2">Read chunk size on other hosts
+      <select id="chunk-other"><option value="">Auto (default)</option><option value="auto">Auto</option><option value="1">1 MiB</option><option value="4">4 MiB</option><option value="8">8 MiB</option><option value="16">16 MiB</option></select></label>
+    <p>Bigger chunks mean fewer requests (zenodo.org limits them) but more bytes per read. Takes effect the next time a file is opened.</p>
+    <div class="row"><button id="clear" class="sec" type="button">Clear cache</button><span id="usage"></span></div>
+  </details>
+  <script src="rete-cache.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+{
+  "manifest_version": 3,
+  "name": "Retelens",
+  "version": "0.0.0",
+  "description": "View .rete graph files where they are hosted: dataset card, example tables, graph view and a SPARQL console.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Retelens: open a .rete file",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    },
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "scripting",
+    "contextMenus",
+    "storage",
+    "downloads",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "host_permissions": [
+    "https://huggingface.co/*",
+    "https://*.hf.co/*",
+    "https://*.huggingface.co/*",
+    "https://github.com/*",
+    "https://raw.githubusercontent.com/*",
+    "https://zenodo.org/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "engine.html",
+        "viewer.html"
+      ],
+      "matches": [
+        "https://huggingface.co/*",
+        "https://github.com/*",
+        "https://zenodo.org/*"
+      ]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://huggingface.co/datasets/*",
+        "https://huggingface.co/buckets/*"
+      ],
+      "css": [
+        "content/retelens.css",
+        "lib/rl-common.css"
+      ],
+      "js": [
+        "lib/format.js",
+        "lib/theme.js",
+        "lib/results.js",
+        "lib/results-ui.js",
+        "lib/engine.js",
+        "lib/views.js",
+        "lib/graph-view.js",
+        "lib/card-sidebar.js",
+        "lib/query.js",
+        "lib/explorer.js",
+        "content/scanner.js",
+        "content/adapters/hf.js",
+        "content/main.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://github.com/*"
+      ],
+      "css": [
+        "content/github.css",
+        "lib/rl-common.css"
+      ],
+      "js": [
+        "lib/format.js",
+        "lib/octicons.js",
+        "lib/theme.js",
+        "lib/results.js",
+        "lib/results-ui.js",
+        "lib/engine.js",
+        "lib/views.js",
+        "lib/graph-view.js",
+        "lib/card-sidebar.js",
+        "lib/query.js",
+        "lib/explorer.js",
+        "content/scanner.js",
+        "content/adapters/github.js",
+        "content/main.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://zenodo.org/*"
+      ],
+      "css": [
+        "content/zenodo.css",
+        "lib/rl-common.css"
+      ],
+      "js": [
+        "lib/format.js",
+        "lib/theme.js",
+        "lib/results.js",
+        "lib/results-ui.js",
+        "lib/engine.js",
+        "lib/views.js",
+        "lib/graph-view.js",
+        "lib/card-sidebar.js",
+        "lib/query.js",
+        "lib/explorer.js",
+        "content/scanner.js",
+        "content/adapters/zenodo.js",
+        "content/main.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+/* Zenodo (Semantic UI) look for the shared components. Hand-written, appended after the generated utilities,
+   scoped under [data-retelens]. Only Zenodo's own tokens: Helvetica 14px, #2f6fa7 links, .285714rem radius. */
+[data-retelens] { font-family: Helvetica, "Helvetica Neue", Arial, sans-serif; font-size: 14px; line-height: 1.4285em; color: rgba(0,0,0,.87); text-align: left; }
+[data-retelens] *, [data-retelens] *::before, [data-retelens] *::after { box-sizing: border-box; border-width: 0; border-style: solid; border-color: #e3e3e3; }
+[data-retelens] a { color: #2f6fa7; text-decoration: none; }
+[data-retelens] a:hover { color: #246298; text-decoration: none; }
+[data-retelens] button, [data-retelens] select, [data-retelens] input, [data-retelens] textarea { font: inherit; color: inherit; margin: 0; }
+[data-retelens] h1, [data-retelens] h2, [data-retelens] h3, [data-retelens] h4, [data-retelens] p, [data-retelens] ul, [data-retelens] dl, [data-retelens] dd { margin: 0; padding: 0; }
+[data-retelens] ul { list-style: none; }
+[data-retelens] pre, [data-retelens] code, [data-retelens] textarea, [data-retelens] .iri { font-family: Menlo, Consolas, Monaco, monospace; }
+[data-retelens] table { border-collapse: collapse; }
+[data-retelens] details > summary { list-style: revert; cursor: pointer; }
+[data-retelens] .divider-column-vertical { margin: .75rem 0; height: 1px; background: #e3e3e3; }
+[data-retelens] .shadow-xs { box-shadow: none; }
+
+/* HF component classes the shared markup carries, in Semantic's vocabulary */
+[data-retelens] .btn { display: inline-flex; align-items: center; cursor: pointer; background: #e0e1e2; color: rgba(0,0,0,.6); border-radius: .285714rem; border: 0; padding: .5em .9em; font-weight: 700; font-size: .857rem; line-height: 1em; box-shadow: none; }
+[data-retelens] .btn:hover { background: #cacbcd; color: rgba(0,0,0,.8); }
+[data-retelens] .tag { display: inline-flex; align-items: center; background: #ededed; color: #696969; border-radius: .285714rem; padding: .3em .6em; font-size: .857rem; font-weight: 700; }
+[data-retelens] .tag-white { background: #ededed; }
+/* the Data Studio pill (box header) as a Semantic compact mini button */
+[data-retelens] a.rounded-full[href] { border: 0; border-radius: .285714rem; background: #e0e1e2; color: rgba(0,0,0,.6); padding: .55em .9em; font-size: .857rem; font-weight: 700; line-height: 1em; background-image: none; }
+[data-retelens] a.rounded-full[href]:hover { background: #cacbcd; color: rgba(0,0,0,.8); box-shadow: none; }
+[data-retelens] [class*="bg-gradient-to-b"] { background-image: none; }
+[data-retelens] select { border-radius: .285714rem; }
+[data-retelens] a[download] { background: #2f6fa7; color: #fff; border-radius: .285714rem; border-color: #2f6fa7; }
+[data-retelens] a[download]:hover { background: #246298; color: #fff; }
+/* the engine's status / notice line under the viewer */
+[data-retelens] .rl-zen-note { font-size: .857rem; color: #696969; padding: .4em .8em; border-top: 1px solid #e3e3e3; }
+[data-retelens] .rl-zen-note.warn { color: #9f3a38; background: #fff6f6; }

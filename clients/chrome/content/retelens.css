@@ -1,0 +1,137 @@
+[data-retelens] .pointer-events-none {
+  pointer-events: none
+}
+
+[data-retelens] .z-\[2147483000\] {
+  z-index: 2147483000
+}
+
+[data-retelens] .-mb-px {
+  margin-bottom: -1px
+}
+
+[data-retelens] .mb-3 {
+  margin-bottom: 0.75rem
+}
+
+[data-retelens] .mr-1 {
+  margin-right: 0.25rem
+}
+
+[data-retelens] .flex {
+  display: flex
+}
+
+[data-retelens] .table {
+  display: table
+}
+
+[data-retelens] .h-10 {
+  height: 2.5rem
+}
+
+[data-retelens] .max-h-\[24rem\] {
+  max-height: 24rem
+}
+
+[data-retelens] .max-h-\[26rem\] {
+  max-height: 26rem
+}
+
+[data-retelens] .min-h-\[10rem\] {
+  min-height: 10rem
+}
+
+[data-retelens] .min-h-\[18rem\] {
+  min-height: 18rem
+}
+
+[data-retelens] .min-h-\[24rem\] {
+  min-height: 24rem
+}
+
+[data-retelens] .min-h-\[380px\] {
+  min-height: 380px
+}
+
+[data-retelens] .min-w-\[10rem\] {
+  min-width: 10rem
+}
+
+[data-retelens] .max-w-0 {
+  max-width: 0px
+}
+
+[data-retelens] .max-w-\[3rem\] {
+  max-width: 3rem
+}
+
+[data-retelens] .max-w-\[65\%\] {
+  max-width: 65%
+}
+
+[data-retelens] .max-w-\[calc\(100vw-1rem\)\] {
+  max-width: calc(100vw - 1rem)
+}
+
+[data-retelens] .flex-wrap {
+  flex-wrap: wrap
+}
+
+[data-retelens] .items-center {
+  align-items: center
+}
+
+[data-retelens] .border-dotted {
+  border-style: dotted
+}
+
+[data-retelens] .p-4 {
+  padding: 1rem
+}
+
+[data-retelens] .py-8 {
+  padding-top: 2rem;
+  padding-bottom: 2rem
+}
+
+[data-retelens] .text-center {
+  text-align: center
+}
+
+[data-retelens] .dark\:border-amber-900:is(.dark *) {
+  --tw-border-opacity: 1;
+  border-color: rgb(120 53 15 / var(--tw-border-opacity, 1))
+}
+
+[data-retelens] .dark\:bg-amber-950:is(.dark *) {
+  --tw-bg-opacity: 1;
+  background-color: rgb(69 26 3 / var(--tw-bg-opacity, 1))
+}
+
+@media (min-width: 768px) {
+  [data-retelens] .md\:h-\[calc\(100vh-49px\)\] {
+    height: calc(100vh - 49px)
+  }
+
+  [data-retelens] .md\:h-\[var\(--rl-h\)\] {
+    height: var(--rl-h)
+  }
+
+  [data-retelens] .md\:w-\[420px\] {
+    width: 420px
+  }
+
+  [data-retelens] .md\:w-\[480px\] {
+    width: 480px
+  }
+}
+
+@media (min-width: 1536px) {
+  [data-retelens] .\32xl\:grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr))
+  }
+}
+/* hand-written leftovers, scoped */
+[data-retelens] details > summary { list-style: revert; }
+[data-retelens] .divider-column-vertical { margin: .75rem 0; }

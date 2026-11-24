@@ -662,6 +662,7 @@ that happened to match.</p>
 <tr><td><code>release.yml</code> / <code>release identity</code></td><td>checks the tag equals <code>v</code> + the <code>[workspace.package]</code> version, then <code>--check-tag</code></td></tr>
 <tr><td><code>release.yml</code> / <code>draft GitHub release</code></td><td>extracts the <code>## [X.Y.Z]</code> section of <code>CHANGELOG.md</code> (the job <strong>fails</strong> if it is missing or empty) and creates a <strong>draft</strong> release named <code>Rete X.Y.Z</code>, or reuses the one the tag already has</td></tr>
 <tr><td><code>release.yml</code> / native targets, <code>browser WASM bundle</code>, <code>Claude Desktop extension</code></td><td>build the six native archives, the wasm bundle and the <code>.mcpb</code> (<code>rete-X.Y.Z.mcpb</code> and <code>rete.mcpb</code>)</td></tr>
+<tr><td><code>release.yml</code> / <code>Chrome extension</code></td><td>builds the wasm engine and the JS client from the tagged commit, then Retelens on top of them; loads it into Chromium and queries a file before packing <code>retelens-X.Y.Z.zip</code> and <code>retelens.zip</code></td></tr>
 <tr><td><code>release.yml</code> / <code>rete-graph wheels</code> → <code>Blender add-on</code></td><td>builds the four native <code>rete-graph</code> wheels from the tagged commit (<code>python-wheels.yml</code>), tests the add-on against them, and bundles exactly those wheels into <code>rete-blender-X.Y.Z.zip</code></td></tr>
 <tr><td><code>desktop-release.yml</code> / <code>resolve release</code></td><td>never creates a <code>v*</code> release: it waits (up to 20 min) for the draft and hands its id to the macOS and Windows builders, which upload the File Explorer installers into it</td></tr>
 <tr><td><code>release.yml</code> / <code>checksums, SBOM, attestations, and GitHub release</code></td><td>uploads the archives, WASM bundle, extensions, <code>SHA256SUMS</code> and SBOM with <code>--clobber</code>, then publishes the draft</td></tr>
@@ -728,16 +729,23 @@ serves the Latest release's bundle; that is the link the README and docs
 advertise. This is the bundle's only publication channel: the R2 copies
 under <code>data.graphplaza.com/mcpb/</code> were uploaded by hand through 0.3.5 and
 are frozen there.</li>
+<li><code>retelens-&lt;version&gt;.zip</code> — <strong>Retelens, the Chrome extension</strong>, which opens
+<code>.rete</code> files where they are hosted (Hugging Face, GitHub, Zenodo, any URL).
+It carries the engine of the same commit. Unzip it and load the folder in
+<code>chrome://extensions</code> with <em>Load unpacked</em>. See the <a href="chrome.html">Chrome guide</a>.
+The same bytes are attached as <code>retelens.zip</code>, so
+<code>https://github.com/caviri/rete/releases/latest/download/retelens.zip</code> always
+serves the Latest release's extension.</li>
 <li><code>rete_graph-&lt;version&gt;-cp39-abi3-{pyemscripten_2025_0,pyemscripten_2026_0,pyodide_2025_0}_wasm32.whl</code>
 — the <strong>browser Python (Pyodide) wheels</strong>: the two on PyPI and the copy
 retagged for Pyodide 0.29, which is published nowhere else
 (<a href="#the-pyodide-fallback-wheel">why</a>). From the release after 0.3.6.</li>
 </ul>
-<p><code>SHA256SUMS</code> covers every archive, the WASM bundle, and both extensions (the
-<code>.mcpb</code> under both names). A
+<p><code>SHA256SUMS</code> covers every archive, the WASM bundle, and the extensions (the
+<code>.mcpb</code> and the Retelens zip under both names). A
 CycloneDX JSON SBOM and GitHub artifact attestations are published with the
 release; the SBOM describes the Rust dependency graph and is bound to the
-native and WASM archives, while the extension carries build provenance only.
+native and WASM archives, while the extensions carry build provenance only.
 The Pyodide wheels come from <code>python-client-publish.yml</code>, not from the
 workflow that writes <code>SHA256SUMS</code>, so they are in neither the checksums nor the
 attestations; GitHub shows each release asset's sha256 digest, and PyPI lists

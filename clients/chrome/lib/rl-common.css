@@ -1,0 +1,29 @@
+/* Host-independent rules for every retelens surface (HF, GitHub, standalone). Hand-written, not generated.
+   Colours come from currentColor or from host variables with a fallback, so light and dark follow the host. */
+
+/* Scrollbars: thin, rounded, the host's text colour at ~40% (65% on hover) on a transparent track.
+   Chrome 121+ ignores ::-webkit-scrollbar once scrollbar-width / scrollbar-color are set, which would lose the
+   rounded thumb and the hover shade, so the standard properties are only the fallback for browsers without
+   the pseudo-elements. Covers the table (both axes), side panel, dropdowns, cards grid and console editor. */
+[data-retelens]::-webkit-scrollbar, [data-retelens] *::-webkit-scrollbar { width: 8px; height: 8px; }
+[data-retelens]::-webkit-scrollbar-track, [data-retelens] *::-webkit-scrollbar-track { background: transparent; }
+[data-retelens]::-webkit-scrollbar-corner, [data-retelens] *::-webkit-scrollbar-corner { background: transparent; }
+[data-retelens]::-webkit-scrollbar-thumb, [data-retelens] *::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, currentColor 40%, transparent); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; min-height: 24px; min-width: 24px;
+}
+[data-retelens]::-webkit-scrollbar-thumb:hover, [data-retelens] *::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, currentColor 65%, transparent); }
+@supports not selector(::-webkit-scrollbar) {
+  [data-retelens], [data-retelens] * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, currentColor 40%, transparent) transparent; }
+}
+
+/* search hits (text-node splitting, see lib/results.js highlight()) */
+[data-retelens] mark[data-rl="hit"] { background-color: var(--bgColor-attention-muted, rgb(250 204 21 / .38)); color: inherit; border-radius: 2px; padding: 0 1px; box-shadow: 0 0 0 1px var(--borderColor-attention-muted, transparent); }
+
+/* column header controls */
+[data-retelens] [data-rl="sort"] { background: transparent; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+[data-retelens] [data-rl="sort"]:hover { text-decoration: none; }
+[data-retelens] [data-rl="colfilter"] { background: transparent; border: 0; cursor: pointer; line-height: 0; }
+[data-retelens] [data-rl="colfilter"]:hover { text-decoration: none; }
+[data-retelens] [data-rl="chip"] button { background: transparent; border: 0; padding: 0; cursor: pointer; line-height: 0; }
+[data-retelens] [data-rl="fbar"] button[data-rl="clearfilters"], [data-retelens] [data-rl="rnote"] button { background: transparent; border: 0; padding: 0; cursor: pointer; font: inherit; }
+[data-retelens] [data-rl="facets"] input[type="checkbox"], [data-retelens] [data-rl="colmenu"] input[type="checkbox"], [data-retelens] [data-rl="colmenu"] input[type="radio"] { accent-color: currentColor; }

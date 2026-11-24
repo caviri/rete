@@ -1,0 +1,114 @@
+/* Primer look for the shared components. Hand-written, appended after the generated utilities,
+   scoped under [data-retelens]. Colours, fonts, radii and shadows come only from Primer CSS variables. */
+[data-retelens] { font-family: var(--fontStack-sansSerif, var(--fontStack-system, -apple-system, "Segoe UI", sans-serif)); font-size: var(--text-body-size-medium, 14px); line-height: 1.5; color: var(--fgColor-default); text-align: left; }
+[data-retelens] *, [data-retelens] *::before, [data-retelens] *::after { box-sizing: border-box; border-width: 0; border-style: solid; border-color: var(--borderColor-default); }
+[data-retelens] a { color: var(--fgColor-accent); text-decoration: none; }
+[data-retelens] a:hover { text-decoration: underline; }
+[data-retelens] button, [data-retelens] select, [data-retelens] input, [data-retelens] textarea { font: inherit; color: inherit; margin: 0; }
+[data-retelens] .octicon { display: inline-block; vertical-align: text-bottom; fill: currentColor; }
+[data-retelens] .f6 { font-size: var(--text-body-size-small, 12px); color: var(--fgColor-muted); }
+[data-retelens] .color-fg-muted { color: var(--fgColor-muted); }
+[data-retelens] .text-mono, [data-retelens] .iri, [data-retelens] pre, [data-retelens] textarea { font-family: var(--fontStack-monospace, ui-monospace, SFMono-Regular, monospace); }
+
+/* Primer .btn, .btn-sm, .btn-primary, .btn-octicon */
+[data-retelens] .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--base-size-4, 4px); position: relative; cursor: pointer; white-space: nowrap; vertical-align: middle; user-select: none;
+  padding: 5px 16px; font-size: var(--text-body-size-medium, 14px); font-weight: 500; line-height: 20px; border: 1px solid var(--button-default-borderColor-rest, var(--borderColor-default)); border-radius: var(--borderRadius-medium, 6px);
+  background: var(--button-default-bgColor-rest, var(--bgColor-muted)); color: var(--button-default-fgColor-rest, var(--fgColor-default)); box-shadow: var(--shadow-resting-small, none); }
+[data-retelens] .btn:hover { background: var(--button-default-bgColor-hover, var(--bgColor-neutral-muted)); text-decoration: none; }
+[data-retelens] .btn:disabled { opacity: .6; cursor: default; }
+[data-retelens] .btn-sm { padding: 3px 12px; font-size: var(--text-body-size-small, 12px); line-height: 20px; }
+[data-retelens] .btn-octicon { padding: 5px 7px; color: var(--fgColor-muted); background: transparent; border-color: transparent; box-shadow: none; }
+[data-retelens] .btn-octicon:hover { color: var(--fgColor-accent); background: var(--bgColor-neutral-muted); }
+[data-retelens] a[download] { background: var(--button-primary-bgColor-rest, var(--bgColor-success-emphasis)); color: var(--button-primary-fgColor-rest, var(--fgColor-onEmphasis)); border-color: var(--button-primary-borderColor-rest, transparent); border-radius: var(--borderRadius-medium, 6px); font-weight: 500; text-decoration: none; }
+[data-retelens] a[download]:hover { background: var(--button-primary-bgColor-hover, var(--button-primary-bgColor-rest)); text-decoration: none; }
+[data-retelens] .btn-primary { background: var(--button-primary-bgColor-rest, var(--bgColor-success-emphasis)); color: var(--button-primary-fgColor-rest, var(--fgColor-onEmphasis)); border-color: var(--button-primary-borderColor-rest, transparent); }
+[data-retelens] [data-rl="btn"] { padding: 3px 12px; font-size: var(--text-body-size-small, 12px); }
+
+/* Label and Counter */
+[data-retelens] .Label { display: inline-block; padding: 0 7px; font-size: var(--text-body-size-small, 12px); font-weight: 500; line-height: 18px; border: 1px solid var(--borderColor-default); border-radius: 2em; color: var(--fgColor-muted); background: transparent; white-space: nowrap; }
+[data-retelens] .Counter { display: inline-block; min-width: 20px; padding: 0 6px; font-size: var(--text-body-size-small, 12px); font-weight: 500; line-height: 18px; text-align: center; border-radius: 2em; color: var(--fgColor-default); background: var(--bgColor-neutral-muted); }
+[data-retelens] .tag { display: inline-flex; align-items: center; border: 1px solid var(--borderColor-default); border-radius: 2em; padding: 0 .6em; font-size: var(--text-body-size-small, 12px); background: var(--bgColor-neutral-muted); color: var(--fgColor-muted); }
+[data-retelens] .divider-column-vertical { margin: 12px 0; height: 1px; background: var(--borderColor-muted); }
+[data-retelens] details > summary { list-style: revert; cursor: pointer; }
+
+/* SegmentedControl (Table | Cards | Graph) */
+[data-retelens] [data-rl="seg"] { display: inline-flex; padding: 2px; gap: 2px; overflow: visible; border: 1px solid var(--controlTrack-borderColor-rest, var(--borderColor-default)); border-radius: var(--borderRadius-medium, 6px); background: var(--controlTrack-bgColor-rest, var(--bgColor-muted)); }
+[data-retelens] [data-rl="seg-item"] { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; height: 24px; font-size: var(--text-body-size-small, 12px); font-weight: 400; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--fgColor-muted); cursor: pointer; }
+[data-retelens] [data-rl="seg-item"]:hover { background: var(--controlTrack-bgColor-hover, var(--bgColor-neutral-muted)); }
+[data-retelens] [data-rl="seg-item"][aria-pressed="true"] { background: var(--controlKnob-bgColor-rest, var(--bgColor-default)); border-color: var(--controlKnob-borderColor-rest, var(--borderColor-default)); color: var(--fgColor-default); font-weight: 600; }
+
+/* UnderlineNav (side panel tabs) */
+[data-retelens] .UnderlineNav, [data-retelens] [data-rl="utabs"] { display: flex; gap: 8px; padding: 0 8px; border-bottom: 1px solid var(--borderColor-muted); overflow-x: auto; }
+[data-retelens] [data-rl="utab"] { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; height: 40px; position: relative; font-size: var(--text-body-size-medium, 14px); background: transparent; color: var(--fgColor-default); border: 0; cursor: pointer; white-space: nowrap; }
+[data-retelens] [data-rl="utab"]:hover { background: var(--bgColor-neutral-muted); border-radius: var(--borderRadius-medium, 6px); }
+[data-retelens] [data-rl="utab"][aria-selected="true"] { font-weight: 600; }
+[data-retelens] [data-rl="utab"][aria-selected="true"]::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; background: var(--underlineNav-borderColor-active, var(--fgColor-accent)); border-radius: 6px 6px 0 0; }
+[data-retelens] [data-rl="side"] { border-color: var(--borderColor-default); }
+[data-retelens] [data-rl="resizer"] { background: transparent; border-left: 1px solid var(--borderColor-default); }
+[data-retelens] [data-rl="resizer"]:hover { background: var(--bgColor-neutral-muted); border-left-color: var(--fgColor-accent); }
+
+/* borders, striped bordered tables like GitHub's markdown / CSV rendering */
+[data-retelens] .border, [data-retelens] .border-t, [data-retelens] .border-b, [data-retelens] .border-l, [data-retelens] .border-r { border-color: var(--borderColor-default); }
+[data-retelens] table { border-collapse: collapse; font-family: var(--fontStack-sansSerif, inherit); font-size: var(--text-body-size-medium, 14px); }
+[data-retelens] table th, [data-retelens] table td { border: 1px solid var(--borderColor-default); padding: 6px 13px; }
+[data-retelens] table thead th { background: var(--bgColor-muted); font-weight: 600; }
+[data-retelens] table thead th .font-bold { font-weight: 600; }
+[data-retelens] table tbody tr.group { background: var(--bgColor-default); border: 0; }
+[data-retelens] table tbody tr.group:nth-child(2n) { background: var(--bgColor-muted); }
+[data-retelens] table tbody tr.group:hover { background: var(--bgColor-neutral-muted); }
+[data-retelens] table .iri { font-size: 12px; }
+
+/* cards: like GitHub's pinned-repository cards */
+[data-retelens] [data-rl="card"] { border: 1px solid var(--borderColor-default); border-radius: var(--borderRadius-medium, 6px); background: var(--bgColor-default); padding: var(--base-size-16, 16px); box-shadow: none; }
+[data-retelens] [data-rl="card"]:hover { border-color: var(--borderColor-emphasis, var(--borderColor-default)); }
+[data-retelens] [data-rl="card-title"] { font-family: var(--fontStack-sansSerif, inherit); font-size: var(--text-body-size-medium, 14px); font-weight: 600; color: var(--fgColor-accent); }
+[data-retelens] [data-rl="card-meta"] { font-size: var(--text-body-size-small, 12px); color: var(--fgColor-muted); }
+
+/* selected-query block: like a GitHub code block */
+[data-retelens] [data-rl="qblock"] p { color: var(--fgColor-muted); }
+[data-retelens] [data-rl="code"] { background: var(--bgColor-muted); border: 1px solid var(--borderColor-muted); border-radius: var(--borderRadius-medium, 6px); padding: var(--base-size-16, 16px); font-size: 85%; line-height: 1.45; color: var(--fgColor-default); }
+[data-retelens] [data-rl="status"] { color: var(--fgColor-muted); }
+
+/* inputs, editor */
+[data-retelens] textarea, [data-retelens] input, [data-retelens] select { background: var(--control-bgColor-rest, var(--bgColor-default)); color: var(--fgColor-default); border: 1px solid var(--control-borderColor-rest, var(--borderColor-default)); border-radius: var(--borderRadius-medium, 6px); }
+[data-retelens] input[type="search"][data-rl="search"] { border-color: transparent; background: transparent; outline: none; }
+[data-retelens] textarea:focus, [data-retelens] input:focus { outline: 2px solid var(--fgColor-accent); outline-offset: -1px; }
+
+/* popover / dropdown: Primer ActionList overlay */
+[data-retelens] [role="dialog"] { background: var(--overlay-bgColor, var(--bgColor-default)); border: 1px solid var(--overlay-borderColor, var(--borderColor-default)); border-radius: 12px; box-shadow: var(--shadow-floating-small, 0 6px 12px -3px rgb(1 4 9 / .04)); color: var(--fgColor-default); }
+[data-retelens] [role="option"] { cursor: pointer; border-color: var(--borderColor-muted); }
+[data-retelens] [role="option"][aria-selected="true"] { background: var(--control-transparent-bgColor-selected, var(--bgColor-neutral-muted)); }
+[data-retelens] [role="presentation"] { background: transparent; color: var(--fgColor-muted); font-weight: 600; text-transform: none; letter-spacing: 0; font-size: var(--text-body-size-small, 12px); }
+
+/* errors, warnings, query highlight colours: Primer semantic colours */
+[data-retelens] .bg-red-50 { background: var(--bgColor-danger-muted); border-color: var(--borderColor-danger-muted, var(--borderColor-default)); }
+[data-retelens] .text-red-800, [data-retelens] .text-red-600 { color: var(--fgColor-danger); }
+[data-retelens] .border-red-200 { border-color: var(--borderColor-danger-muted, var(--borderColor-default)); }
+[data-retelens] .text-amber-700 { color: var(--fgColor-attention); }
+[data-retelens] .text-green-700 { color: var(--fgColor-success); }
+[data-retelens] .text-purple-700 { color: var(--fgColor-done); }
+[data-retelens] .text-blue-700 { color: var(--fgColor-accent); }
+[data-retelens] .bg-gray-50, [data-retelens] .bg-white { background-color: var(--bgColor-default); }
+[data-retelens] .bg-gray-50 { background-color: var(--bgColor-muted); }
+[data-retelens] .rounded-lg, [data-retelens] .rounded-md, [data-retelens] .rounded-sm { border-radius: var(--borderRadius-medium, 6px); }
+[data-retelens] [data-rl="qblock"] .btn, [data-retelens] [data-rl="status"] .btn { padding: 3px 12px; font-size: var(--text-body-size-small, 12px); }
+[data-retelens] [data-rl="qblock"] button:not(.btn) { background: transparent; border: 0; padding: 0; color: var(--fgColor-muted); font-weight: 600; }
+[data-retelens] [data-rl="box"] a[download], [data-retelens] [data-rl="studio"] a[download] { padding: 3px 8px; }
+
+/* ActionMenu-style pills (Graph / Query): a regular Primer button with a caret */
+[data-retelens] [data-rl="pill"] { padding: 5px 12px; font-size: var(--text-body-size-medium, 14px); }
+[data-retelens] [data-rl="pill"] .Counter { margin-left: 2px; }
+/* UnderlineNav markup: nav > ul.UnderlineNav-body > li > .UnderlineNav-item */
+[data-retelens] .UnderlineNav-body { display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; }
+[data-retelens] .UnderlineNav-li { display: flex; }
+/* the table like GitHub's CSV renderer: sans text, compact rows, no outer edge against the file Box */
+[data-retelens] table.font-mono { font-family: var(--fontStack-sansSerif, inherit); font-size: var(--text-body-size-medium, 14px); line-height: 20px; }
+[data-retelens] table tbody.h-16 { height: auto; }
+[data-retelens] table tr > :first-child { border-left-width: 0; }
+[data-retelens] table tr > :last-child { border-right-width: 0; }
+[data-retelens] table thead tr:first-child th { border-top-width: 0; }
+[data-retelens] table th .text-xs { font-weight: 400; font-size: var(--text-body-size-small, 12px); color: var(--fgColor-muted); }
+[data-retelens] table td { vertical-align: top; }
+[data-retelens] table th .mb-2 { margin-bottom: 0; }
+/* the shared select rule above resets the shorthand background: keep Primer's caret from repeating */
+[data-retelens] select { background-repeat: no-repeat; background-position: right 8px center; background-size: 16px; }
