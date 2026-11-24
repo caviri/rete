@@ -1,6 +1,6 @@
 # Chrome — Retelens
 
-Retelens is a Chrome extension that opens `.rete` files where they are hosted.
+Retelens is a browser extension for Chrome and Brave that opens `.rete` files where they are hosted.
 A `.rete` link normally downloads the file. With Retelens the page instead
 shows the file's Dataset Card, tables from its example queries, the results as
 a table, cards or a graph, and a SPARQL console. Like the
@@ -15,7 +15,7 @@ first query after reading about 12 MB.
 
 1. Download [retelens.zip](https://github.com/caviri/rete/releases/latest/download/retelens.zip)
    from the latest release and unzip it.
-2. Open `chrome://extensions` and turn on **Developer mode**.
+2. Open `chrome://extensions` (in Brave, `brave://extensions`) and turn on **Developer mode**.
 3. Choose **Load unpacked** and pick the unzipped folder.
 
 Each release attaches the same extension as `retelens-<version>.zip`. It is

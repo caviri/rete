@@ -7,7 +7,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
-- **Retelens, a Chrome extension** (`clients/chrome`). It opens `.rete` files
+- **Retelens, a browser extension for Chrome and Brave** (`clients/chrome`). It opens `.rete` files
   where they are hosted instead of downloading them: on Hugging Face datasets
   and buckets, GitHub and Zenodo inside the page, in each site's look, and any
   other `.rete` link in a viewer with a Download button. It shows the file's

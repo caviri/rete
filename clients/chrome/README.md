@@ -1,12 +1,12 @@
-# Retelens, the Chrome extension
+# Retelens, the browser extension
 
-Retelens opens `.rete` graph files where they are hosted, instead of downloading them. It shows the file's Dataset Card, tables from its example queries, results as a table, cards or a graph, and a SPARQL console. It works on Hugging Face (datasets and storage buckets), GitHub and Zenodo inside the page, in each site's own look. Any other `.rete` URL opens in a standalone viewer with a Download button. User guide: [docs/chrome.md](../../docs/chrome.md).
+Retelens is a Chromium extension (tested in Chrome and Brave) that opens `.rete` graph files where they are hosted, instead of downloading them. It shows the file's Dataset Card, tables from its example queries, results as a table, cards or a graph, and a SPARQL console. It works on Hugging Face (datasets and storage buckets), GitHub and Zenodo inside the page, in each site's own look. Any other `.rete` URL opens in a standalone viewer with a Download button. User guide: [docs/chrome.md](../../docs/chrome.md).
 
 The engine is `rete-graph` (`clients/js`) built from the same commit, so the extension always carries the engine of its release, as the Claude Desktop extension does.
 
 ## Install
 
-Every release attaches `retelens-<version>.zip`, and `retelens.zip` under a fixed name: https://github.com/caviri/rete/releases/latest/download/retelens.zip. Unzip it, open `chrome://extensions`, turn on Developer mode, choose **Load unpacked** and pick the unzipped folder.
+Every release attaches `retelens-<version>.zip`, and `retelens.zip` under a fixed name: https://github.com/caviri/rete/releases/latest/download/retelens.zip. Unzip it, open `chrome://extensions` (`brave://extensions` in Brave), turn on Developer mode, choose **Load unpacked** and pick the unzipped folder.
 
 ## Build
 
@@ -101,7 +101,7 @@ Regenerate CSS: `docker run --rm --memory 4g -v "$PWD/clients/chrome:/ext" node:
 ## Known limits
 
 - Reads the formats its engine reads (0x05 to 0x08). Older files show an error naming the format.
-- Graph view is GraphKit (lib/graphkit): at most 1,500 nodes / 3,000 edges per result. graphkit.js (1.4 MB) is injected into the page when a Graph view is first opened (as a manifest content script it made Chrome refuse to load the extension); the bundle must be pure ASCII (a raw U+FFFF in it triggers "isn't UTF-8", so build.mjs uses `charset: "ascii"`).
+- Graph view is GraphKit (lib/graphkit): at most 1,500 nodes / 3,000 edges per result. graphkit.js (1.4 MB) is injected into the page when a Graph view is first opened (as a manifest content script it made Chrome refuse to load the extension); Chrome refuses an injected script that holds a Unicode noncharacter (a raw U+FFFF gives "It isn't UTF-8 encoded"). esbuild's `charset: "ascii"` escapes strings but not regex literals, so build.mjs checks every built script and fails on one.
 - Reads are serial synchronous XHR; nothing cancels a running query.
 - Search, filters and sort are exact up to 10,000 rows (all rows are fetched in batches); above that they apply to the first 10,000 loaded rows and the bar says so, with "Add as FILTER to the query" writing the rewritten SPARQL into the console (never run for you). State is in the URL (`rq`, `rf`, `rs`).
 - A CONSTRUCT/DESCRIBE without a LIMIT over a file larger than 5 MB is not started by itself: a hint shows first, with a Run anyway button.

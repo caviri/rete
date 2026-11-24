@@ -10,7 +10,7 @@ or giving an agent access to graph data.
 |---|---|
 | [Playground](playground-guide.md) | Explore a dataset, run queries and share results |
 | [Plaza](plaza-guide.md) | Browse published datasets and their cards |
-| [Retelens (Chrome)](chrome.md) | Open `.rete` files where they are hosted: Hugging Face, GitHub, Zenodo or any URL |
+| [Retelens (Chrome, Brave)](chrome.md) | Open `.rete` files where they are hosted: Hugging Face, GitHub, Zenodo or any URL |
 | [File Explorer](file-explorer.md) | Inspect local or remote graphs through a file-oriented interface |
 | [SPARQL IDE](yasgui-guide.md) | Write and compare queries in tabs |
 | [Comunica](comunica.md) | Use a `.rete` file as an RDF/JS source |
