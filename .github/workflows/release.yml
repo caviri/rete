@@ -5,8 +5,9 @@ name: Release
 # because their registries bind trusted publishing to a workflow file:
 #
 #   release.yml                native archives, wasm bundle, Claude Desktop
-#                              extension, Blender add-on, SBOM/attestations,
-#                              the GitHub release, then crates.io
+#                              extension, Chrome extension, Blender add-on,
+#                              SBOM/attestations, the GitHub release, then
+#                              crates.io
 #   desktop-release.yml        File Explorer installers, into the same release
 #   python-client-publish.yml  PyPI (native + Pyodide wheels, sdist)
 #   js-client-publish.yml      npm
@@ -246,6 +247,48 @@ jobs:
             dist/rete.mcpb
           if-no-files-found: error
 
+  # Retelens, the Chrome extension: its pages, the graph view bundled from
+  # clients/chrome, and the rete-graph engine built from this commit, never
+  # npm's copy (the same engine build as the .mcpb above). The zip is what
+  # "Load unpacked" takes and what the Chrome Web Store takes.
+  chrome:
+    name: Chrome extension
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the wasm engine in the pinned image
+        run: |
+          docker build -t rete-dev-release -f .devcontainer/Dockerfile .
+          docker run --rm --user root             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup             -e CARGO_TARGET_DIR=/work/target             -v "$PWD:/work" -w /work rete-dev-release             sh -lc 'git config --global --add safe.directory /work &&
+                    wasm-pack build crates/rete-wasm --target web --no-opt                       --out-dir /work/clients/js/vendor/pkg -- --features unicode-regex'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Build the JS client, then the extension
+        run: |
+          npm --prefix clients/js ci --no-audit --no-fund
+          node clients/js/build.mjs
+          npm --prefix clients/chrome ci --no-audit --no-fund
+          node clients/chrome/build.mjs --zip "dist/retelens-${{ needs.meta.outputs.version }}.zip"
+      - name: Load it into Chromium and query a file before shipping it
+        working-directory: clients/chrome
+        run: |
+          npx playwright install --with-deps chromium
+          xvfb-run -a node --test --test-timeout=300000 test/*.test.mjs
+      # Same bytes under a fixed name, for the README's
+      # releases/latest/download/retelens.zip link (as rete.mcpb).
+      - name: Add the version-less retelens.zip for the latest-release link
+        run: cp "dist/retelens-${{ needs.meta.outputs.version }}.zip" dist/retelens.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rete-chrome
+          path: |
+            dist/retelens-${{ needs.meta.outputs.version }}.zip
+            dist/retelens.zip
+          if-no-files-found: error
+
   # The rete-graph wheels the Blender add-on bundles, built here from the
   # tagged commit by the same reusable workflow that builds the PyPI upload.
   # Until 0.3.6 the add-on downloaded them from PyPI, which is why the `v*` tag
@@ -327,7 +370,7 @@ jobs:
 
   assemble:
     name: checksums, SBOM, attestations, and GitHub release
-    needs: [meta, release, native, wasm, mcpb, blender]
+    needs: [meta, release, native, wasm, mcpb, chrome, blender]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -363,10 +406,11 @@ jobs:
             dist/*.mcpb
             dist/SHA256SUMS
       # The SBOM describes the Rust dependency graph, so it binds to the native
-      # archives only. The two extensions carry build provenance instead (both
-      # .mcpb names, rete-<version>.mcpb and rete.mcpb, via the step above): the
-      # .mcpb ships the wasm engine and the Blender .zip ships Python wheels,
-      # neither of which this dependency graph describes.
+      # archives only. The three extensions carry build provenance instead (both
+      # .mcpb names, rete-<version>.mcpb and rete.mcpb, and both retelens zips,
+      # via the step above): the .mcpb and the Chrome zip ship the wasm engine
+      # and the Blender .zip ships Python wheels, none of which this dependency
+      # graph describes.
       - name: Bind the CycloneDX SBOM to every native release archive
         uses: actions/attest@v4
         with:

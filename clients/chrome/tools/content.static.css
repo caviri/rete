@@ -1,0 +1,3 @@
+/* hand-written leftovers, scoped */
+[data-retelens] details > summary { list-style: revert; }
+[data-retelens] .divider-column-vertical { margin: .75rem 0; }

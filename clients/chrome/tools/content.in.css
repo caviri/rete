@@ -1,0 +1,5 @@
+@tailwind utilities;
+@layer utilities {
+  .shadow-xs { box-shadow: 0 1px 2px 0 rgb(0 0 0 / .05); }
+  .text-smd { font-size: .9375rem; line-height: 1.5rem; }
+}

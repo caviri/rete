@@ -16,6 +16,7 @@ clients/
   java/          # Java API and a separately built C-ABI WASM module
   blender/       # Blender integration
   mcpb/          # MCP bundle and stdio integration
+  chrome/        # Retelens, the Chrome extension
   relay/         # HTTP/SPARQL/MCP service
   tauri/         # desktop application
 ```

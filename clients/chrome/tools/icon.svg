@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Retelens: the rete mark (a graph inside one rounded file tile) with a lens over it.
+       96x96 artwork inside 16px of transparent padding, as the Chrome Web Store asks. -->
+  <rect x="16" y="16" width="96" height="96" rx="22" fill="#2a6df4"/>
+  <g stroke="#dce8ff" stroke-width="2.6" fill="none" stroke-linecap="round">
+    <path d="M58 40 L36 72"/>
+    <path d="M58 40 L80 72"/>
+    <path d="M36 72 L80 72"/>
+    <path d="M36 72 L58 92"/>
+    <path d="M80 72 L58 92"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="58" cy="39" r="8.5"/>
+    <circle cx="35" cy="72" r="7"/>
+    <circle cx="58" cy="93" r="6.2"/>
+  </g>
+  <!-- lens around the right node, handle toward the tile corner -->
+  <circle cx="80" cy="72" r="13" fill="#2a6df4" stroke="#ffffff" stroke-width="5"/>
+  <circle cx="80" cy="72" r="6.5" fill="#ffffff"/>
+  <path d="M89.5 81.5 L101 93" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,4 @@
+@tailwind utilities;
+@layer utilities {
+  .text-smd { font-size: 1rem; line-height: 1.4; }
+}
