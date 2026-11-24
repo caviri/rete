@@ -43,6 +43,10 @@
     }
     open(url) { return this.call("open", { url }); }
     openLocal(file, opts) { return this.call("openLocal", { file, lazy: !!(opts && opts.lazy) }); }
+    openBytes(bytes) { return this.call("openBytes", { bytes }); }
+    buildJsonld(text) { return this.call("buildJsonld", { text }); }
+    tiles() { return this.call("tiles"); }
+    readRange(offset, length) { return this.call("readRange", { offset, length }); }
     meta() { return this.call("meta"); }
     examples() { return this.call("examples"); }
     schema() { return this.call("schema"); }

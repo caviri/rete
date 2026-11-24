@@ -15,6 +15,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   a graph (force, hierarchical, radial, hive plot, circos and chord layouts),
   and a SPARQL console. Every release attaches `retelens-<version>.zip` and
   `retelens.zip`, built with the engine of the same commit.
+  Each table column shows its statistics under its name, as Hugging Face's
+  dataset viewer does (a histogram or the values, % empty), and a click on a
+  bar filters the column. Maps use an open PMTiles basemap: OpenStreetMap
+  as the Protomaps basemap (zoom 0 to 12) on data.graphplaza.com and in the
+  rete-public bucket, or any archive set in the popup.
+  Results are drawn as in the playground: thumbnails, IIIF manifests as paged
+  viewers, WKT geometries as locator maps, audio and video players, a render
+  type per column, cards with the picture first and a swipeable focus view,
+  and a Map view for results with geometry. `.pmtiles` links open as a map,
+  and a PMTiles archive inside a `.rete` is drawn under the result. On request,
+  *Read this page's data* turns a web page's schema.org JSON-LD and microdata
+  into a reader view (a recipe as its ingredients and steps, without the page
+  around them) and a `.rete` built in the tab, to query or download.
 - **Query like a child**, a page that sketches a SPARQL query by dragging
   blocks (`site/query-like-a-child/`, served at `/query-like-a-child/`). It
   works without a file: open slots stand for variables and the query can be

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Retelens",
   "version": "0.0.0",
-  "description": "View .rete graph files where they are hosted: dataset card, example tables, graph view and a SPARQL console.",
+  "description": "View .rete graph files and PMTiles maps where they are hosted, and read a page's schema.org data as a graph, on demand.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -22,6 +22,7 @@
   },
   "permissions": [
     "scripting",
+    "activeTab",
     "contextMenus",
     "storage",
     "downloads",
@@ -63,7 +64,8 @@
       ],
       "css": [
         "content/retelens.css",
-        "lib/rl-common.css"
+        "lib/rl-common.css",
+        "lib/rl-rich.css"
       ],
       "js": [
         "lib/format.js",
@@ -71,7 +73,10 @@
         "lib/results.js",
         "lib/results-ui.js",
         "lib/engine.js",
+        "lib/cells.js",
+        "lib/stats.js",
         "lib/views.js",
+        "lib/maps.js",
         "lib/graph-view.js",
         "lib/card-sidebar.js",
         "lib/query.js",
@@ -88,7 +93,8 @@
       ],
       "css": [
         "content/github.css",
-        "lib/rl-common.css"
+        "lib/rl-common.css",
+        "lib/rl-rich.css"
       ],
       "js": [
         "lib/format.js",
@@ -97,7 +103,10 @@
         "lib/results.js",
         "lib/results-ui.js",
         "lib/engine.js",
+        "lib/cells.js",
+        "lib/stats.js",
         "lib/views.js",
+        "lib/maps.js",
         "lib/graph-view.js",
         "lib/card-sidebar.js",
         "lib/query.js",
@@ -114,7 +123,8 @@
       ],
       "css": [
         "content/zenodo.css",
-        "lib/rl-common.css"
+        "lib/rl-common.css",
+        "lib/rl-rich.css"
       ],
       "js": [
         "lib/format.js",
@@ -122,7 +132,10 @@
         "lib/results.js",
         "lib/results-ui.js",
         "lib/engine.js",
+        "lib/cells.js",
+        "lib/stats.js",
         "lib/views.js",
+        "lib/maps.js",
         "lib/graph-view.js",
         "lib/card-sidebar.js",
         "lib/query.js",
@@ -133,5 +146,10 @@
       ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "commands": {
+    "read-page": {
+      "description": "Read this page's data"
+    }
+  }
 }

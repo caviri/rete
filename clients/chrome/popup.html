@@ -27,17 +27,25 @@
   #offs li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #offs li button { width: auto; padding: 2px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
   li .u { font: 11px ui-monospace, Consolas, monospace; color: GrayText; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page { margin: 0 0 12px; padding: 0 0 12px; border-bottom: 1px solid rgba(128,128,128,.25); }
+  .page button { width: 100%; }
+  .page button:disabled { opacity: .5; cursor: default; }
+  .page p { margin: 6px 0 0; }
 </style>
 </head>
 <body>
   <h1>Retelens</h1>
+  <div class="page">
+    <button id="readpage" type="button">Read this page's data</button>
+    <p id="readhint">The things this page describes for search engines (schema.org JSON-LD, microdata), without the page around them: a clean view, a graph to query, a .rete to download. Read in your browser only.</p>
+  </div>
   <p>Paste the URL of a .rete file (any server that answers Range requests), or open one from your computer. Nothing is uploaded.</p>
   <input id="url" type="url" placeholder="Paste a .rete URL" autofocus>
   <div class="row">
     <button id="open">Open viewer</button>
     <button id="local" class="sec" type="button">Open local file…</button>
   </div>
-  <label class="opt"><input type="checkbox" id="redirect"> Open .rete links in the viewer instead of downloading</label>
+  <label class="opt"><input type="checkbox" id="redirect"> Open .rete and .pmtiles links in the viewer instead of downloading</label>
   <label class="opt"><input type="checkbox" id="allsites"> Preview .rete files on every website (asks for access to all sites)</label>
   <div id="here" hidden>
     <h2>On this page</h2>
@@ -60,6 +68,9 @@
       <select id="chunk-other"><option value="">Auto (default)</option><option value="auto">Auto</option><option value="1">1 MiB</option><option value="4">4 MiB</option><option value="8">8 MiB</option><option value="16">16 MiB</option></select></label>
     <p>Bigger chunks mean fewer requests (zenodo.org limits them) but more bytes per read. Takes effect the next time a file is opened.</p>
     <div class="row"><button id="clear" class="sec" type="button">Clear cache</button><span id="usage"></span></div>
+    <label class="opt2" for="basemap">Basemap under maps (a PMTiles URL)</label>
+    <input id="basemap" type="url" placeholder="https://data.graphplaza.com/osm-basemap/osm-basemap-z12-2026-11-24.pmtiles">
+    <p>Any PMTiles archive that answers Range requests. Empty: OpenStreetMap (ODbL) as the Protomaps basemap, zoom 0 to 12, on data.graphplaza.com. An archive in the Protomaps layout is drawn in the Protomaps style, any other vector archive in a plain one.</p>
   </details>
   <script src="rete-cache.js"></script>
   <script src="popup.js"></script>

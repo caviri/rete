@@ -56,6 +56,8 @@
         }
         return section(title, box);
       };
+      // how the column's values are drawn (lib/cells.js), shared with the Cards view
+      if (api.type) body.append(section("Show as", window.RetelensViews.typeSelect(api.type.current, api.type.auto, (ty) => api.type.set(ty))));
       // text
       {
         const sel = h("select", { class: INPUT + " w-28 flex-none", "aria-label": "Match" }, h("option", { value: "c" }, "contains"), h("option", { value: "e" }, "equals"), h("option", { value: "s" }, "starts with"));
@@ -118,13 +120,13 @@
   const SORT_ICON = { asc: "sortAsc", desc: "sortDesc", none: "sortNone" };
   function sortState(model, v) { return model.sort && model.sort.v === v ? model.sort.dir : "none"; }
   // the column name as a button: click cycles asc -> desc -> none
-  function headerSort(model, v, onSort) {
+  function headerSort(model, v, onSort, label) {
     const st = sortState(model, v);
     const ic = icon(SORT_ICON[st]);
     ic.classList.add("w-3", "h-3"); ic.classList.remove("w-4", "h-4");
     if (st === "none") ic.classList.add("opacity-30");
     const b = h("button", { type: "button", "data-rl": "sort", "data-sort": st, class: "group/sort flex min-w-0 items-center gap-1 text-left font-bold hover:text-blue-600 dark:hover:text-blue-400", title: "Sort by " + v + (st === "asc" ? " (ascending)" : st === "desc" ? " (descending)" : ""), "aria-label": "Sort by " + v, onclick: () => onSort(v) },
-      h("span", { class: "min-w-0 truncate" }, v), ic);
+      h("span", { class: "min-w-0 truncate", title: label && label !== v ? "?" + v : null }, label || v), ic);
     return b;
   }
   function filterButton(model, v, onOpen) {

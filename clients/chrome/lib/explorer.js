@@ -49,10 +49,14 @@
     async open(i) {
       this.idx = i; this.meta = null; this.examples = [];
       const f = this.files[i];
-      if (f.local) await this.engine.openLocal(f.local, { lazy: f.lazy }); else await this.engine.open(f.src);
+      this.tilesP = null;
+      if (f.bytes) await this.engine.openBytes(f.bytes);
+      else if (f.local) await this.engine.openLocal(f.local, { lazy: f.lazy });
+      else await this.engine.open(f.src);
       this.meta = await this.engine.meta();
       this.examples = normalizeExamples(await this.engine.examples()); // card `queries` + `example_queries`, merged by the engine
       this.starters = false;
+      if (!this.examples.length && f.examples) this.examples = f.examples.map((e) => ({ group: "Starter queries", curated: true, starter: true, ...e }));
       if (!this.examples.length) {
         let schema = null;
         try { schema = await this.engine.schema(); } catch (_) {}
@@ -64,6 +68,19 @@
       for (const fn of this.listeners) fn(this);
     }
     get file() { return this.files[this.idx]; }
+    // a PMTiles archive embedded in the open file, opened once: {pm, header, meta, length} or null
+    tiles() {
+      if (!this.tilesP) {
+        this.tilesP = this.engine.tiles().then(async (sec) => {
+          if (!sec) return null;
+          const kit = await window.RetelensMaps.ensure();
+          const key = (this.file?.src || this.file?.path || "file") + "#tiles@" + sec.offset;
+          const t = await window.RetelensMaps.openPmtiles(kit, window.RetelensMaps.engineSource(this.engine, key, sec.offset));
+          return { ...t, length: sec.length };
+        }).catch(() => null);
+      }
+      return this.tilesP;
+    }
     get fileLength() { return this.meta?.stats?.fileLength || 0; }
     cardData() { return { ...this.meta, fileLength: this.fileLength, name: this.file?.label }; }
     async collect(query, limit) {
@@ -102,6 +119,10 @@
       this.urlFilters = this.urlKeys.size > 0; // search / filter / sort ride along in the URL where the view state does
       this.isDark = opts.isDark || (() => document.documentElement.classList.contains("dark"));
       this.view = null; this.explicitView = false;
+      this.colTypes = {}; this.cardHidden = new Set(); this.hasTiles = false; // render type per variable name; fields the cards leave out
+      // the host page's CSP refused pictures (lib/cells.js): say so once, with the file in the extension's viewer
+      this.mediaBlocked = false;
+      document.addEventListener("retelens:media-blocked", () => { this.mediaBlocked = true; if (this.toolbar) this.renderToolbar(); });
       this.q = 0; this.page = 1; this.tok = 0; this.result = null; this.gv = null; this.status = {};
       this.sideTab = "examples";
       this.qmenu = new window.RetelensQuery.QueryMenu(this);
@@ -367,7 +388,7 @@
         b.append(icon(ic), label);
         return b;
       };
-      this.toolbar.append(h("div", { "data-rl": "seg", class: "inline-flex overflow-hidden rounded-md border dark:border-gray-800", role: "group", "aria-label": "Result view" }, mk("table", "Table", "tableView"), mk("cards", "Cards", "cards"), mk("graph", "Graph", "graph")));
+      this.toolbar.append(h("div", { "data-rl": "seg", class: "inline-flex overflow-hidden rounded-md border dark:border-gray-800", role: "group", "aria-label": "Result view" }, mk("table", "Table", "tableView"), mk("cards", "Cards", "cards"), mk("graph", "Graph", "graph"), this.mapAvailable() ? mk("map", "Map", "map") : null));
       const r = this.result;
       if (r) {
         const parts = [];
@@ -376,9 +397,32 @@
         this.toolbar.append(h("div", { class: "ml-auto flex items-center gap-3 text-gray-500" }, parts));
       }
       if (r && r.hint) this.toolbar.append(h("div", { class: "basis-full text-amber-700 dark:text-amber-400" }, r.hint));
+      const f = this.s.file;
+      if (this.mediaBlocked && f && f.src && safeUrl(f.src)) {
+        const open = h("button", { type: "button", "data-rl": "open-viewer", class: "btn shadow-xs ml-1 rounded-sm border px-2 py-0.5 text-xs font-normal text-gray-700 dark:text-gray-300",
+          onclick: () => chrome.runtime.sendMessage({ retelens: "openViewer", src: f.src, name: f.label || f.path || "" }) }, "Open in the Retelens viewer");
+        this.toolbar.append(h("div", { "data-rl": "media-blocked", class: "basis-full text-gray-500" }, "This site's page rules block pictures from other websites, so some are not shown here.", open));
+      }
       for (const w of (r && r.warnings) || []) this.toolbar.append(h("div", { class: "basis-full text-gray-500" }, (w.severity === "hint" ? "Hint: " : "Warning: ") + (w.message || w.hint)));
     }
 
+    // the Map view is offered when the result has a geometry (WKT, or latitude + longitude) or the file carries tiles
+    mapAvailable() { return this.view === "map" || this.hasTiles || !!(this.result && this.result.geo); }
+    // a click on a bar of a column's statistics: filter the column to that value or range (again: clear it)
+    pickStat(v, f) {
+      const m = this.model;
+      if (!m) return;
+      const keep = {};
+      for (const [k, x] of Object.entries(m.filters[v] || {})) if (!["set", "ns", "min", "max", "from", "to"].includes(k)) keep[k] = x;
+      m.setFilter(v, f ? { ...keep, ...f } : keep);
+      if (m.changed) m.changed();
+      this.apply();
+    }
+    setColType(v, ty) {
+      if (!ty || ty === "auto") delete this.colTypes[v]; else this.colTypes[v] = ty;
+      this.renderToolbar();
+      this.renderResults();
+    }
     setView(v, explicit) {
       if (this.view === v) return;
       this.view = v;
@@ -429,7 +473,7 @@
       let i = want ? s.files.findIndex((f) => f.path === want) : 0;
       if (i < 0) i = 0;
       const v = this.params.get("view");
-      if (v === "table" || v === "cards" || v === "graph") { this.view = v; this.explicitView = true; }
+      if (v === "table" || v === "cards" || v === "graph" || v === "map") { this.view = v; this.explicitView = true; }
       const qi = parseInt(this.params.get("q") || "0", 10);
       if (this.params.get("console") === "1" && this.sidePanel) this.sideTab = "console";
       if (this.sidePanel) this.buildSideTabs();
@@ -449,12 +493,18 @@
       if (this.sideBody) this.renderSide();
       this.started = true;
     }
-    afterOpen() { this.setStatus({ stats: this.s.meta.stats }); this.renderPills(); if (this.sideBody) this.renderSide(); }
+    afterOpen() {
+      this.setStatus({ stats: this.s.meta.stats }); this.renderPills(); if (this.sideBody) this.renderSide();
+      // tiles embedded in the file (lib/maps.js): looked for once, in the background
+      this.hasTiles = false;
+      const file = this.s.file;
+      this.s.tiles().then((t) => { if (t && this.s.file === file) { this.hasTiles = true; this.renderToolbar(); } });
+    }
 
     async switchFile(i) {
       const s = this.s;
       this.page = 1; this.q = 0; this.result = null; this.openError = null; this.model = null; this.colMenu.close(); this.fbar.update();
-      this.gv && this.gv.destroy(); this.gv = null;
+      this.gv && this.gv.destroy(); this.gv = null; this.mv && this.mv.destroy(); this.mv = null;
       this.area.textContent = ""; this.area.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Opening " + s.files[i].label + "…"));
       s.idx = i; this.renderPills();
       try { await s.open(i); } catch (e) { this.area.textContent = ""; this.area.append(this.errorBox(e)); this.openError = e; this.renderPills(); this.renderToolbar(); this.renderSide && this.sideBody && this.renderSide(); this.writeUrl(); return; }
@@ -521,7 +571,7 @@
       await this.freeResult();
       this.model = null; this.loading = null; this.rewritten = null; this.colMenu.close();
       if (this.constructGuard(query, opts)) {
-        this.gv && this.gv.destroy(); this.gv = null;
+        this.gv && this.gv.destroy(); this.gv = null; this.mv && this.mv.destroy(); this.mv = null;
         this.area.textContent = ""; this.pager.textContent = ""; this.pager.hidden = true;
         this.renderPills(); this.renderToolbar(); this.fbar.update();
         this.area.append(h("div", { "data-rl": "construct-hint", class: "m-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300" },
@@ -533,7 +583,7 @@
       this.area.textContent = ""; this.area.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Running…"));
       let res;
       try { res = await this.s.engine.run(query); }
-      catch (e) { if (tok !== this.tok) return; this.gv && this.gv.destroy(); this.gv = null; this.area.textContent = ""; this.area.append(this.errorBox(e)); this.pager.textContent = ""; this.renderPills(); this.renderToolbar(); return; }
+      catch (e) { if (tok !== this.tok) return; this.gv && this.gv.destroy(); this.gv = null; this.mv && this.mv.destroy(); this.mv = null; this.area.textContent = ""; this.area.append(this.errorBox(e)); this.pager.textContent = ""; this.renderPills(); this.renderToolbar(); return; }
       if (tok !== this.tok) { if (res.handle != null) this.s.engine.free(res.handle); return; }
       res.query = query;
       if ((res.form === "CONSTRUCT" || res.form === "DESCRIBE") && this.s.fileLength > BIG_FILE) {
@@ -545,7 +595,7 @@
       this.setStatus({ ms: res.ms, stats: res.stats });
       this.newModel(res);
       this.renderPills(); this.renderToolbar();
-      if (res.form === "ASK") { this.gv && this.gv.destroy(); this.gv = null; this.area.textContent = ""; this.area.append(h("div", { class: "p-4 text-2xl font-semibold" }, res.boolean ? "true" : "false")); this.pager.textContent = ""; return; }
+      if (res.form === "ASK") { this.gv && this.gv.destroy(); this.gv = null; this.mv && this.mv.destroy(); this.mv = null; this.area.textContent = ""; this.area.append(h("div", { class: "p-4 text-2xl font-semibold" }, res.boolean ? "true" : "false")); this.pager.textContent = ""; return; }
       await this.renderResults();
       if (tok !== this.tok) return;
       const m = this.model;
@@ -616,7 +666,8 @@
       await this.ensureLoaded();
       if (!this.model || !this.model.rows.length) return;
       const anchor = btn.isConnected ? btn : this.area.querySelector('[data-rl="colfilter"][data-col="' + CSS.escape(v) + '"]') || btn;
-      this.colMenu.open(anchor, v, { model: this.model, short: this.short, setFilter: (col, f) => { this.model.setFilter(col, f); this.apply(); } });
+      this.colMenu.open(anchor, v, { model: this.model, short: this.short, setFilter: (col, f) => { this.model.setFilter(col, f); this.apply(); },
+        type: { current: this.colTypes[v] || "auto", auto: window.RetelensCells.columnAuto(this.model.rows, v), set: (ty) => this.setColType(v, ty) } });
     }
     async toggleFacets() { this.facetsOpen = !this.facetsOpen; if (this.facetsOpen) await this.ensureLoaded(); this.fbar.update(); await this.renderResults(); }
     // "Add as FILTER to the query": the rewritten SPARQL goes to the console for the user to run; nothing runs by itself
@@ -639,26 +690,29 @@
       const tok = this.tok;
       const view = this.view;
       const m = this.model;
-      const size = view === "cards" ? 36 : view === "graph" ? (r.form === "SELECT" ? 200 : 800) : 100;
+      const size = view === "cards" ? 36 : view === "graph" ? (r.form === "SELECT" ? 200 : 800) : view === "map" ? 2000 : 100;
+      const whole = view === "graph" || view === "map"; // one batch from the start, no pager
       const local = this.useModel();
       let pg, total;
       if (local) {
         const all = m.viewRows();
         total = all.length;
-        pg = { rows: view === "graph" ? all.slice(0, size) : all.slice((this.page - 1) * size, this.page * size) };
+        pg = { rows: whole ? all.slice(0, size) : all.slice((this.page - 1) * size, this.page * size) };
       } else {
         total = r.length;
-        const offset = view === "graph" ? 0 : (this.page - 1) * size;
+        const offset = whole ? 0 : (this.page - 1) * size;
         try { pg = await this.fetchRows(offset, size); }
         catch (e) { this.area.textContent = ""; this.area.append(this.errorBox(e)); return; }
         if (tok !== this.tok || view !== this.view) return;
         if (pg.stats) this.setStatus({ stats: pg.stats });
         if (pg.warnings && pg.warnings.length) { r.warnings = pg.warnings; this.renderToolbar(); }
       }
-      this.gv && this.gv.destroy(); this.gv = null;
+      this.gv && this.gv.destroy(); this.gv = null; this.mv && this.mv.destroy(); this.mv = null;
       this.area.textContent = "";
       const hl = local && m.q ? m.q : "";
-      const o = { model: m, hl, filtered: local && m.active(), onSort: (v) => this.toggleSort(v), onFilter: (b, v) => this.openColumnMenu(b, v), maxHeight: this.mode === "box" ? "24rem" : null };
+      const o = { model: m, hl, filtered: local && m.active(), onSort: (v) => this.toggleSort(v), onFilter: (b, v) => this.openColumnMenu(b, v), maxHeight: this.mode === "box" ? "24rem" : null,
+        types: this.colTypes, setType: (v, ty) => this.setColType(v, ty),
+        hidden: this.cardHidden, setHidden: (v, hide) => { if (hide) this.cardHidden.add(v); else this.cardHidden.delete(v); this.renderResults(); } };
       let comp;
       if (view === "cards") comp = V.CardsView(pg.rows, r.vars, this.ctx, { ...o, facets: this.facetsOpen && local ? UI.FacetsPanel(this) : null });
       else if (view === "graph") {
@@ -666,9 +720,20 @@
         if (tok !== this.tok || view !== this.view) return;
         comp = this.gv = window.RetelensGraph.GraphView({ form: r.form, length: total }, pg.rows, r.vars, this.ctx);
       }
-      else comp = V.TableView(pg.rows, r.vars, this.ctx, o);
+      else if (view === "map") {
+        comp = this.mv = window.RetelensMaps.MapView(pg.rows, r.vars, this.ctx, { tiles: () => this.s.tiles(), height: this.mode === "box" ? "24rem" : null, total });
+      }
+      else {
+        // column statistics (lib/stats.js) on every loaded row, or on this page until they are loaded
+        const statRows = m && m.rows.length ? m.rows : pg.rows;
+        const partial = m && m.complete ? 0 : statRows.length;
+        o.stats = (v) => window.RetelensStats.chart(window.RetelensStats.summarize(statRows, v, this.short), { current: m && m.filters[v], partial, onPick: m ? (f) => this.pickStat(v, f) : null });
+        comp = V.TableView(pg.rows, r.vars, this.ctx, o);
+      }
       this.area.append(comp.el);
-      this.renderPager(total, size, view === "graph");
+      this.renderPager(total, size, whole);
+      // a geometry noticed in the rows: offer the Map view
+      if (!r.geo && r.vars && view !== "map" && window.RetelensMaps.geoColumns(r.vars, pg.rows)) { r.geo = true; this.renderToolbar(); }
       this.lastPageMs = pg.ms;
       this.fbar.update();
       this.colMenu.reanchor(this.area);

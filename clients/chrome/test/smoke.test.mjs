@@ -62,7 +62,13 @@ after(async () => {
 test("the service worker starts as Retelens with the workspace version", async () => {
   const sw = ctx.serviceWorkers()[0] || (await ctx.waitForEvent("serviceworker", { timeout: 30000 }));
   extId = new URL(sw.url()).host;
-  const m = await sw.evaluate(() => chrome.runtime.getManifest());
+  // the worker can be listed a moment before the extension APIs are bound in it: ask until they are
+  let m = null;
+  for (let i = 0; i < 40 && !m; i++) {
+    m = await sw.evaluate(() => (globalThis.chrome && chrome.runtime ? chrome.runtime.getManifest() : null)).catch(() => null);
+    if (!m) await new Promise((r) => setTimeout(r, 250));
+  }
+  assert.ok(m, "the service worker never exposed chrome.runtime");
   assert.equal(m.name, "Retelens");
   assert.equal(m.version, version.match(/^\d+\.\d+\.\d+/)[0]);
 });

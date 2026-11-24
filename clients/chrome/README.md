@@ -29,7 +29,64 @@ docker run --rm --ipc=host -v "$PWD:/work" -w /work mcr.microsoft.com/playwright
 
 `--zip <file>` packs `build/` with sorted entries and a fixed date, so the same tree gives the same bytes.
 
-`test/smoke.test.mjs` loads `build/` into Chromium and serves `docs/plaza/data/linked-jazz.rete` from a local Range server. It checks the manifest, the first example query's answer, the engine version in the status line and the Graph view. It needs no network. The host pages themselves (Hugging Face, GitHub, Zenodo) change under us, so they are checked by hand before a release.
+`test/smoke.test.mjs` loads `build/` into Chromium and serves `docs/plaza/data/linked-jazz.rete` from a local Range server. It checks the manifest, the first example query's answer, the engine version in the status line and the Graph view. It needs no network.
+
+`test/rich.test.mjs` builds its fixtures in memory (`test/fixtures.mjs`: PNGs, a one-tile PMTiles archive, a IIIF v3 manifest, a page with JSON-LD, microdata and Open Graph) and checks the cells (images, IIIF, locator maps, Markdown from the column menu), the column statistics (a click on a bar filters), the cards and their focus view, the Map view over a basemap set as the popup does (its own archive, so no network), the PMTiles viewer, and *Read this page's data* end to end (reader, graph, download). Set `RETELENS_SHOTS=<dir>` to keep screenshots. Tiles embedded in a `.rete` (0x05 only) and the host pages are checked by hand: `geoadmin-tiles.rete` and `geoadmin.pmtiles` on data.graphplaza.com. The host pages themselves (Hugging Face, GitHub, Zenodo) change under us, so they are checked by hand before a release.
+
+## Cells, cards and maps (from the playground)
+
+`lib/cells.js` draws every value of a result, in the Table and the Cards alike, the way the playground learnt to:
+images as thumbnails (Commons `Special:FilePath` and IIIF Image API URLs scaled by the server; a larger copy on hover
+on fine pointers; a lightbox on click; an *Open image* link under each), IIIF manifests (Presentation v2 and v3) as a
+paged thumbnail that opens a paged viewer with the manifest's metadata, WKT geometries as an offline locator map,
+audio and video players, PDF and web links, opt-in Markdown and page previews (a sandboxed frame), numbers. The
+column menu's *Show as* and the cards' *Fields* dialog force a type per variable (kept across queries by name).
+Manifests and page previews load when their cell comes near the viewport. On a host page whose CSP refuses outside
+images, an image is fetched from the content script and shown from a `blob:` URL; when that fails too (no CORS),
+the explorer says so and offers the file in the extension's viewer.
+
+`lib/views.js` builds the cards: the first image / IIIF / video field fills the top, a title from the first name-like
+literal, then the fields label over value; a click opens the focus view (native horizontal scroll with snap; arrow
+keys, Shift+wheel, drag).
+
+`lib/maps.js` adds the Map view (a WKT column, or latitude + longitude columns; 2,000 rows), the map a geometry cell
+opens, and PMTiles. Leaflet, protomaps-leaflet and pmtiles are bundled by `build.mjs` from `lib/mapkit/src` into
+`lib/mapkit/mapkit.js` (300 kB) and injected like the graph view when a map is first opened. The basemap is an open
+PMTiles archive (`basemapUrl` in `chrome.storage.local`, set in the popup). The default is OpenStreetMap as the
+Protomaps basemap: `pmtiles extract https://build.protomaps.com/20261124.pmtiles … --maxzoom=12` (18 GB; z11 is
+8.1 GB, z13 36 GB), at `https://data.graphplaza.com/osm-basemap/osm-basemap-z12-2026-11-24.pmtiles` and `rete/osm-basemap/` in the rete-public bucket, drawn with protomaps-leaflet's
+light or dark flavour. Another archive in the Protomaps layout gets the same; any other vector archive a quiet style
+derived from its tilestats (the coarsest polygon layer as land, finer ones as borders by zoom, named points
+labelled), e.g. `data.graphplaza.com/geoadmin/geoadmin.pmtiles`. No raster service: from an extension page
+Carto answers "API key required" and tile.openstreetmap.org "Access blocked" (measured 2026-11-24).
+
+`lib/stats.js` puts column statistics under each table header, as Hugging Face's viewer does: a histogram (numbers,
+dates, string lengths; at most 12 bins with nice steps, min and max under it), one bar per value for columns with at
+most 12 distinct values, namespaces for IRI columns, % empty. Hover a bar for its range and count; a click sets the
+column's filter to exactly the rows of that bar (the bin's smallest and largest value, the value, or the namespace)
+and a second click clears it. Computed on the model's rows (every row up to 10,000) or the page before they load.
+A `.pmtiles` URL or file opens the PMTiles viewer (header, metadata, layers with their fields and colour, features
+under a click). A PMTiles archive embedded in a `.rete` (`scripts/embed_tiles.py`, format 0x05 only) is found by
+the worker (`tiles` op: kind 7 or an unknown kind, at least 16 KiB, PMTiles magic) and read through the engine
+(`readRange` op, so the chunk cache and 429 handling apply); the Map view draws it under the result and draws the
+features whose properties match a value of the result on top.
+
+## Reading a page's data
+
+On request only (context menu *Read this page's data*, the popup, the `read-page` command; `activeTab`), the service
+worker injects `content/extract.js` into the tab. It returns the text of every JSON-LD block, the microdata items as
+JSON-LD with absolute IRIs (WHATWG microdata values), the Open Graph / description meta tags and the canonical link.
+The result goes to `chrome.storage.session` (the last 8 pages) and `viewer.html?page=<id>` opens next to the tab.
+
+`lib/page-data.js` prepares the JSON-LD for `rete.build(..., "jsonld")` (the engine loads no remote context): the
+schema.org context becomes its inline equivalent (the official context is `@vocab` `http://schema.org/` with no
+coercions), `@base` is the page URL, blocks are parsed leniently (raw newlines, trailing commas), `{@context, @graph}`
+wrappers are opened, other remote contexts are read as their namespace, and every repair is listed. The worker builds
+one `.rete` from all of it (`buildJsonld`), or, when the engine refuses that, from the documents it accepts one by
+one, and opens it from bytes (`openBytes`). The reader renders the JSON objects, not the graph (RDF keeps no order):
+the main things first (named as `mainEntity`, else typed nodes nobody points to that are not site furniture, richest
+first), ISO 8601 durations and dates, ratings, prices, quantities, addresses as one line, lists of strings and of
+steps in order, long lists folded. Starter queries: things on the page, every statement, pictures, links.
 
 ## What it does on Hugging Face
 
@@ -72,7 +129,13 @@ engine.html, engine-frame.js   hidden extension iframe, ONE per host page: owns 
 rete-worker.js            classic Worker: owns the rete-graph Graph (sync XHR range reads only work in a worker)
 lib/engine.js             promise client over a Worker or a MessagePort
 lib/format.js             DOM builder (text nodes only), http(s)-only URLs, static icons, IRI shortening
-lib/views.js              Table and Cards views (sort/filter controls in the header)
+lib/cells.js              one value as DOM: images, IIIF, WKT locator, media, links, Markdown, page preview; render types, hover zoom, dialogs
+lib/views.js              Table and Cards views (sort/filter controls in the header), the card focus view and Fields dialog
+lib/maps.js               Map view, geometry map, PMTiles viewer and layers (loads lib/mapkit/mapkit.js on first use)
+lib/page-data.js          a page's structured data: JSON-LD preparation, the reader, starter queries (viewer only)
+lib/mapkit/src/           Leaflet + protomaps-leaflet + pmtiles; build.mjs bundles it to lib/mapkit/mapkit.js
+lib/rl-rich.css, rl-reader.css   styles of the cells, cards, dialogs and maps; of the reader (hand-written)
+content/extract.js        injected on request: a page's JSON-LD, microdata and meta tags
 lib/results.js, results-ui.js  search / per-column filters / sort model, filter bar, column menu, Cards facets, Add-as-FILTER
 lib/graph-view.js         Graph view: rows -> GraphKit nodes/edges, expand through the shared engine, host tokens + skin
 lib/theme.js              host colour/font tokens, theme-change watcher, class vocabulary of the page
