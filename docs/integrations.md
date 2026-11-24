@@ -12,6 +12,7 @@ or giving an agent access to graph data.
 | [Plaza](plaza-guide.md) | Browse published datasets and their cards |
 | [File Explorer](file-explorer.md) | Inspect local or remote graphs through a file-oriented interface |
 | [SPARQL IDE](yasgui-guide.md) | Write and compare queries in tabs |
+| [Query like a child](query-like-a-child.md) | Build a query from blocks, without writing SPARQL |
 | [Comunica](comunica.md) | Use a `.rete` file as an RDF/JS source |
 
 For an existing triple store or SPARQL client,

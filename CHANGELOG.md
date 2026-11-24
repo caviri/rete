@@ -12,7 +12,8 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   works without a file: open slots stand for variables and the query can be
   copied. With a `.rete` link it lists the file's kinds and properties from
   its card, ranks the properties that fit a kind, finds things by name, and
-  shows the rows beside the sketch.
+  shows the rows beside the sketch. Documented in
+  `docs/query-like-a-child.md`, under Tools and integrations.
 
 ### Changed
 
