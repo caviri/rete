@@ -53,8 +53,8 @@
 
 /* geometry locator */
 .rl-geo { display: inline-flex; flex-direction: column; gap: 1px; }
-.rl-geo-svg { width: 114px; height: 108px; display: block; }
-.rl-geo-card .rl-geo-svg { width: 152px; height: 144px; }
+.rl-geo-svg { width: auto; height: 108px; display: block; }
+.rl-geo-card .rl-geo-svg { width: auto; height: 144px; }
 .rl-geo-grid { stroke: currentColor; stroke-opacity: .14; stroke-width: .5; }
 .rl-geo-bd { fill: none; stroke: currentColor; stroke-opacity: .35; stroke-width: .6; }
 .rl-geo-poly { fill: var(--rl-acc); fill-opacity: .25; stroke: var(--rl-acc); stroke-width: .9; vector-effect: non-scaling-stroke; }
@@ -175,3 +175,14 @@ ol.rl-md-list { list-style: decimal; }
 .rl-stat-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rl-stat-r { flex: none; max-width: 65%; overflow: hidden; text-overflow: ellipsis; }
 .rl-stat[data-kind="few"] .rl-stat-cap, .rl-stat[data-kind="unique"] .rl-stat-cap, .rl-stat[data-kind="empty"] .rl-stat-cap { margin-top: 0; }
+
+/* query hints (lib/hints.js): the view a query suits and its explained columns, as chips in the query lists; the
+   column notes under the selected query */
+.rl-qtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.rl-qtag { display: inline-flex; align-items: center; gap: 3px; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--rl-line); border-radius: 999px; padding: 0 7px; font-size: 11px; line-height: 17px; opacity: .85; }
+.rl-qtag-view { border-color: color-mix(in srgb, var(--rl-acc) 45%, transparent); color: var(--rl-acc); opacity: 1; }
+.rl-qtag-guess { border-style: dashed; }
+.rl-qtag svg { width: 11px; height: 11px; }
+.rl-qcols { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 1px 10px; margin: 6px 0 2px; font-size: 12px; }
+.rl-qcols dt { font-weight: 600; }
+.rl-qcols dd { margin: 0; opacity: .75; }

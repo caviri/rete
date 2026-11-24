@@ -26,6 +26,8 @@ chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
   };
 });
 document.getElementById("open").onclick = () => openViewer(input.value);
+// the default example (the same as on the viewer's start page)
+document.getElementById("example").onclick = (e) => { e.preventDefault(); openViewer("https://huggingface.co/datasets/katospiegel/rete-graphs/resolve/main/antequera/antequera-2026-11-24.rete", "antequera-2026-11-24.rete"); };
 // the file picker lives on the viewer's landing page (a picker opened in a popup would close it)
 document.getElementById("local").onclick = () => { chrome.tabs.create({ url: viewer() + "?pick=1" }); window.close(); };
 input.addEventListener("input", () => input.setCustomValidity(""));

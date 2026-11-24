@@ -697,7 +697,7 @@ newlines.</p>
 <tr><td><code>source_date</code>, <code>derived_from</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The source data's own snapshot date (distinct from <code>created</code> and from the build timestamp), and what this file was derived from (<code>prov:wasDerivedFrom</code>) — dumps, endpoints, or the shards a <code>rete merge</code> folded in.</td></tr>
 <tr><td><code>keywords</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Free-text tags (<code>dcat:keyword</code> / <code>schema:keywords</code> in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (<code>dcat:keyword</code> is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build.</td></tr>
 <tr><td><code>theme</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td><strong>IRIs into a controlled vocabulary</strong> (<code>dcat:theme</code>), e.g. the <a href="http://publications.europa.eu/resource/authority/data-theme">EU data themes</a>. IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at <code>keywords</code>; the agreed concept scheme is the whole value <code>dcat:theme</code> adds. <a href="#where-to-get-theme-iris">Where to get one</a>. Canonicalized like <code>keywords</code>. (There is deliberately <strong>no curated language field</strong>: in RDF the language rides on every literal, so the card <em>measures</em> it — see the <code>languages</code> row below and <a href="#first-class-field-or-the-bag-the-rule">the rule</a>.)</td></tr>
-<tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
+<tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run. Comment lines in them can carry <a href="#hints-in-example-queries">hints for viewers</a>.</td></tr>
 <tr><td><code>base_iri</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Overrides the derived <code>signals.base_iri</code> (an absolute IRI). See below.</td></tr>
 <tr><td><code>extra</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Publisher-defined <strong>custom fields</strong> — one bounded bag, see <a href="#custom-fields-the-extra-bag">Custom fields</a>.</td></tr>
 <tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
@@ -992,6 +992,32 @@ answer different questions and are never merged:</p>
 <code>format_version</code> is stamped by the builder and changes only when the format
 does. <code>builder</code> lives in the unhashed build-info section because it is a fact
 about one build, not about the data.</p>
+<h2 id="hints-in-example-queries">Hints in example queries</h2>
+<p>An example query is SPARQL text, and a viewer can learn more from its comment
+lines. This is a convention, not a card field: the card stores the query as it
+is, and every SPARQL engine ignores comments, so a query with hints runs
+everywhere. Retelens reads them:</p>
+<pre><code class="language-sparql">PREFIX ant: &lt;https://w3id.org/rete/antequera/&gt;
+PREFIX geo: &lt;http://www.opengis.net/ont/geosparql#&gt;
+PREFIX schema: &lt;http://schema.org/&gt;
+# Protected natural areas
+# The official polygons, largest first.
+# view: map
+# column ?km2: Area (km²) — of the polygon
+# column ?shape: Shape
+SELECT ?name ?km2 ?shape WHERE { ?a a ant:EspacioProtegido ; schema:name ?name ; ant:areaKm2 ?km2 ; geo:asWKT ?shape }
+ORDER BY DESC(?km2)
+</code></pre>
+<ul>
+<li>The first comment line is the title (as before); further plain comment
+lines are the description.</li>
+<li><code># view: table|cards|graph|map</code> names the view that suits the result.</li>
+<li><code># column ?var: Label — note</code> names a column and says what it holds.</li>
+</ul>
+<p>The <a href="chrome.html#the-example-the-comarca-de-antequera">Antequera example</a> uses
+all three in every query. A card field for them (a query as an object with a
+view and column notes) would let other tools read them without parsing
+comments; it is not part of the format yet.</p>
 <h2 id="the-description-markdown-not-html">The description: Markdown, not HTML</h2>
 <p><code>description</code> is the one curated field long enough to want structure, so it is
 read as <strong>Markdown</strong>. The card viewer renders headings, lists, links and code;

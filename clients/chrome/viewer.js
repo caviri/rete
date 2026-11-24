@@ -13,6 +13,8 @@
   document.documentElement.classList.toggle("dark", dark);
   const app = document.getElementById("app");
   const REPO = "https://github.com/caviri/rete";
+  // the default example: a small map graph with every kind of geospatial data (lib docs: docs/chrome.md)
+  const EXAMPLE = { name: "antequera-2026-11-24.rete", src: "https://huggingface.co/datasets/katospiegel/rete-graphs/resolve/main/antequera/antequera-2026-11-24.rete" };
   const { Explorer, Session } = window.RetelensExplorer;
 
   // ---------------------------------------------------------------- source description
@@ -110,6 +112,11 @@
     app.append(h("div", { class: "mx-auto w-full max-w-2xl px-4 py-10" },
       h("div", { class: "mb-4 flex items-center gap-2" }, h("a", { href: REPO, class: "flex items-center gap-1 rounded-md border px-1.5 text-sm font-semibold hover:no-underline dark:border-gray-700" }, icon("graphChip"), "rete"), h("h1", { class: "text-xl font-semibold" }, "Preview a .rete file")),
       h("div", { class: "flex gap-2" }, input, h("button", { type: "button", class: "btn rounded-md border px-3 py-1.5 text-sm font-medium", onclick: () => open(input.value) }, "Open")),
+      h("a", { "data-rl": "example", class: "mt-5 block rounded-lg border p-4 hover:bg-gray-50 hover:no-underline dark:border-gray-700 dark:hover:bg-gray-900", href: EXAMPLE.src,
+        onclick: (e) => { e.preventDefault(); location.search = "?" + new URLSearchParams({ src: EXAMPLE.src, name: EXAMPLE.name, host: "url" }); } },
+        h("div", { class: "text-xs font-semibold uppercase tracking-wide text-gray-400" }, "Example"),
+        h("div", { class: "mt-1 font-semibold" }, "Comarca de Antequera: El Chorro, Fuente de Piedra, El Torcal"),
+        h("div", { class: "mt-1 text-sm text-gray-500" }, "A small map graph with points, lines, polygons and a raster: natural areas, wetlands, trails, the Caminito del Rey, peaks and an elevation model, with example queries for the Map, Table, Cards and Graph views.")),
       drop, h("h2", { class: "mt-6 text-xs font-semibold uppercase tracking-wide text-gray-400" }, "Recent"), recents));
     try {
       const { recents: list } = await chrome.storage.local.get("recents");

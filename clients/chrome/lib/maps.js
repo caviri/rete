@@ -205,6 +205,16 @@
     if (lat && lon && rows.slice(0, 200).some((r) => isNumTerm(r[lat]) && isNumTerm(r[lon]) && Math.abs(+r[lat].value) <= 90 && Math.abs(+r[lon].value) <= 180)) return { lat, lon };
     return null;
   }
+  // distinct .pmtiles URLs in a result (at most 4): layers to draw under it
+  function layerUrls(rows, vars) {
+    const out = [];
+    for (const r of rows.slice(0, 1000)) for (const v of vars) {
+      const u = C().urlOf(r[v]);
+      if (u && /\.pmtiles$/i.test(u.split(/[?#]/)[0]) && !out.includes(u)) out.push(u);
+      if (out.length >= 4) return out;
+    }
+    return out;
+  }
   function labelVar(vars, geo) {
     const skip = new Set([geo.wkt, geo.lat, geo.lon]);
     const rest = vars.filter((v) => !skip.has(v));
@@ -275,7 +285,7 @@
     if (o.features && o.features.length) {
       const col = accent(el);
       fl = L.geoJSON({ type: "FeatureCollection", features: o.features }, {
-        style: () => ({ color: col, weight: 1.6, opacity: 0.9, fillColor: col, fillOpacity: 0.22 }),
+        style: () => ({ color: col, weight: 1.6, opacity: 0.9, fillColor: col, fillOpacity: o.overLayer ? 0.05 : 0.22 }), // a raster under the result stays readable
         pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 5, color: dark ? "#0b0f19" : "#ffffff", weight: 1.5, fillColor: col, fillOpacity: 0.9 }),
         onEachFeature: (f, layer) => {
           if (f.properties.label) layer.bindTooltip(h("span", null, f.properties.label), { sticky: true, direction: "top" });
@@ -323,7 +333,7 @@
       if (dead) return;
       const feats = geo ? toFeatures(rows, vars, geo, ctx.short) : [];
       const hits = tiles ? resultValues(rows, vars, geo) : null;
-      m = buildMap(kit, mapEl, { features: feats, tiles, hits, popup: (f) => rowPopup(f.properties.row, vars, ctx, geo),
+      m = buildMap(kit, mapEl, { features: feats, tiles, hits, overLayer: layerUrls(rows, vars).length > 0, popup: (f) => rowPopup(f.properties.row, vars, ctx, geo),
         onBaseError: (e) => bar.append(h("span", { class: "rl-err" }, "The basemap could not be read (" + String(e.message || e).slice(0, 120) + ").")) });
       bar.textContent = "";
       bar.append(baseSelect(tiles ? "tiles" : "map", !!tiles, (id) => m.setBase(id)));
@@ -332,6 +342,23 @@
       if (tiles) parts.push(`vector tiles from a PMTiles section inside this file (${bytes(tiles.length)})${hits && hits.size ? ", features named in the result drawn on top" : ""}`);
       if (!geo && !tiles) parts.push("No geometry in this result: the Map view needs a WKT column or latitude and longitude columns.");
       bar.append(h("span", { class: "rl-muted" }, parts.join(" · ")));
+      // layers the result points to: a column of .pmtiles URLs (a raster such as an elevation model, or vector
+      // tiles) is drawn between the basemap and the result's own shapes, each with a switch
+      for (const url of layerUrls(rows, vars)) {
+        const sw = h("input", { type: "checkbox", checked: true, "aria-label": "Show the layer" });
+        const label = h("label", { class: "rl-mapctl", title: url }, sw, h("span", null, "Layer: " + decodeURIComponent(url.split(/[?#]/)[0].split("/").pop())));
+        bar.append(label);
+        openPmtiles(kit, new kit.pmtiles.FetchSource(url)).then((t) => {
+          if (dead) return;
+          if (t.meta && t.meta.name) label.lastChild.textContent = "Layer: " + String(t.meta.name).slice(0, 80);
+          const attribution = t.meta && t.meta.attribution ? escHtml(String(t.meta.attribution).replace(/<[^>]*>/g, "")) : "";
+          const layer = t.header.tileType !== kit.pmtiles.TileType.Mvt
+            ? kit.pmtiles.leafletRasterLayer(t.pm, { attribution, opacity: 0.85, maxNativeZoom: t.header.maxZoom, maxZoom: 20 })
+            : pmtilesLayer(kit, t, { dark: isDark(el) });
+          layer.addTo(m.map);
+          sw.addEventListener("change", () => (sw.checked ? layer.addTo(m.map) : m.map.removeLayer(layer)));
+        }).catch((e) => { label.append(h("span", { class: "rl-err" }, " (could not be read: " + String(e.message || e).slice(0, 80) + ")")); sw.disabled = true; });
+      }
     })().catch((e) => { if (!dead) { bar.textContent = ""; bar.append(h("span", { class: "rl-err" }, String(e.message || e))); } });
     return { el, destroy: () => { dead = true; if (m) m.destroy(); } };
   }

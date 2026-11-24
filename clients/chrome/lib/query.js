@@ -78,6 +78,7 @@
           const el = h("div", { role: "option", id: "rl-opt-" + idx, "aria-selected": String(idx === ex.q), class: "cursor-pointer border-b px-3 py-2 dark:border-gray-800 " + (idx === ex.q ? "bg-gray-50 dark:bg-gray-900" : "") },
             h("div", { class: "font-medium" }, it.title),
             it.question ? h("div", { class: "text-xs text-gray-500" }, it.question) : null,
+            it.view && window.RetelensHints ? window.RetelensHints.chips(it, h, window.RetelensFmt.icon) : null,
             pv ? h("pre", { class: "mt-1 line-clamp-3 whitespace-pre-wrap break-all font-mono text-xs text-gray-600 dark:text-gray-400" }, pv) : null);
           const o = { el, idx };
           opts.push(o);

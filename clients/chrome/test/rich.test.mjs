@@ -201,6 +201,27 @@ test("column statistics: a histogram, the values, a click filters", async () => 
   await page.close();
 });
 
+test("query hints pick the view and name the columns; a .pmtiles column is a map layer", async () => {
+  const page = await openViewer({ src: `${base}/rich.rete`, name: "rich.rete", host: "url" });
+  await page.waitForSelector("table td", { timeout: 90000 });
+  await runQuery(page, `PREFIX schema: <http://schema.org/> PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+# Places with a layer
+# view: map
+# column ?name: Nombre — the place's name
+# column ?layer: Capa — vector tiles drawn under the places
+SELECT ?name ?shape ?layer WHERE { ?s schema:name ?name ; geo:asWKT ?shape . BIND(<${base}/test.pmtiles> AS ?layer) }`);
+  // the hint chose the Map view, and the layer column is drawn under the result
+  await page.locator('[data-rl="seg-item"][data-view="map"][aria-pressed="true"]').waitFor({ timeout: 30000 });
+  await page.locator(".rl-mapbar", { hasText: "Layer: Test shapes" }).waitFor({ timeout: 30000 });
+  assert.match(await page.locator('[data-rl="qcols"]').innerText(), /Nombre[\s\S]*the place's name[\s\S]*Capa/);
+  // the table names the columns as the hints say, and shows the layer as a button
+  await page.locator('button[data-view="table"]').first().click();
+  await page.locator("thead", { hasText: "Nombre" }).waitFor({ timeout: 10000 });
+  assert.ok(await page.locator("td .rl-btnlink", { hasText: "Map layer" }).count(), "a Map layer button in the table");
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test("a .pmtiles URL opens the map viewer with its layers", async () => {
   const page = await openViewer({ src: `${base}/test.pmtiles`, name: "test.pmtiles", host: "url" });
   await page.locator(".rl-pmside", { hasText: "Test shapes" }).waitFor({ timeout: 30000 });
