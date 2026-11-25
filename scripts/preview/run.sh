@@ -7,6 +7,7 @@
 #   scripts/preview/run.sh cards             # answers.json -> docs/og/*.png
 #   scripts/preview/run.sh pages             # answers.json -> docs/q/*.html + docs/d/*.html
 #   scripts/preview/run.sh build             # inject + cards + pages (no re-capture)
+#   scripts/preview/run.sh landing           # landing_card.html -> site/landing/og.png
 #   scripts/preview/run.sh all               # capture + build
 #
 # `cargo run -p docgen` must have run first: the docs cards are rendered from the
@@ -102,10 +103,11 @@ case "${CMD}" in
   pages)    ensure_deps; run_in_docker "node /work/scripts/preview/build_pages.mjs $*" ;;
   check)    ensure_deps; run_in_docker "node /work/tests/gate/checks/check_social_previews.mjs" ;;
   build)    ensure_deps; build_all "$@" ;;
+  landing)  ensure_deps; run_in_docker "${PNGQUANT_SETUP}; node /work/scripts/preview/landing_card.mjs $*" ;;
   all)
     ensure_deps
     run_in_docker "node /work/scripts/preview/capture.mjs $*"
     build_all
     ;;
-  *) echo "usage: $0 {capture|finalize|inject|cards|pages|build|check|all} [flags]" >&2; exit 2 ;;
+  *) echo "usage: $0 {capture|finalize|inject|cards|pages|build|landing|check|all} [flags]" >&2; exit 2 ;;
 esac
