@@ -225,3 +225,6 @@ ol.rl-md-list { list-style: decimal; }
 .rl-ph-bars span:nth-child(1) { width: 92%; } .rl-ph-bars span:nth-child(2) { width: 76%; } .rl-ph-bars span:nth-child(3) { width: 84%; } .rl-ph-bars span:nth-child(4) { width: 58%; }
 @keyframes rl-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .rl-ph-bars span { animation: none; } }
+
+/* the PMTiles viewer inside a host page (a .pmtiles file page on Hugging Face or GitHub): a fixed height, the page scrolls */
+.rl-pmviewer.rl-pm-inline { height: min(640px, 78vh); }

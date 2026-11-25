@@ -19,10 +19,22 @@
   const RE_DATASET_VIEWER = /^\/datasets\/([^/]+)\/([^/]+)\/viewer\/?$/;
   const RE_DATASET_TREE = /^\/datasets\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.*))?$/;
   const RE_DATASET_BLOB = /^\/datasets\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+\.rete)$/;
+  const RE_DATASET_BLOB_PM = /^\/datasets\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+\.pmtiles)$/i;
   const RE_BUCKET_ROOT = /^\/buckets\/([^/]+)\/([^/]+)\/?$/;
   const RE_BUCKET_TREE = /^\/buckets\/([^/]+)\/([^/]+)\/tree\/(.+)$/;
 
   const isRete = (p) => /\.rete$/i.test(p.split("?")[0]);
+  const isPmtiles = (p) => /\.pmtiles$/i.test(p.split("?")[0]);
+
+  // a PMTiles archive on its file page: the map viewer (lib/maps.js PmtilesViewer: the map, the archive's layers,
+  // zooms, bounds and attribution beside it), read by HTTP Range like a .rete; in place of HF's "binary file" box
+  function pmtilesPreview(ctx, target, src, cls) {
+    const v = window.RetelensMaps.PmtilesViewer(src, {});
+    v.el.classList.add("rl-pm-inline");
+    ctx.hide(target);
+    target.before(wrap(v.el, cls));
+    return v;
+  }
   const encPath = (p) => p.split("/").map(encodeURIComponent).join("/");
   const resolveDataset = (ns, name, rev, path) => `${ORIGIN}/datasets/${ns}/${name}/resolve/${encodeURIComponent(rev)}/${encPath(path)}`;
   const resolveBucket = (ns, name, path) => `${ORIGIN}/buckets/${ns}/${name}/resolve/${encPath(path)}`;
@@ -368,6 +380,30 @@
     await ex.start();
   }
 
+  async function datasetBlobPmtiles(ctx, m) {
+    const menu = await ctx.waitFor('[data-target="BlobDownloadMenu"]');
+    if (!menu) return;
+    let src;
+    try {
+      const p = JSON.parse(menu.getAttribute("data-props") || "{}");
+      src = new URL(p.resolvePath || p.downloadUrl, ORIGIN).href.replace(/\?download=true$/, "");
+    } catch (_) {}
+    src = src || resolveDataset(m[1], m[2], m[3], m[4]);
+    const region = menu.parentElement.nextElementSibling;
+    const target = region && (region.querySelector("div.p-4.py-8.text-center") || region.firstElementChild);
+    if (target) pmtilesPreview(ctx, target, src, "m-3");
+  }
+  async function bucketPmtiles(ctx) {
+    const dl = await ctx.waitFor('a[download][href*="/buckets/"][href*="/resolve/"]');
+    if (!dl) return false;
+    const src = new URL(dl.getAttribute("href"), ORIGIN).href.replace(/\?download=true$/, "");
+    const region = await ctx.waitFor('div[class*="min-h-[100px]"][class*="rounded-b-lg"]', 6000);
+    const target = region && (region.querySelector("p.text-center")?.parentElement || region.firstElementChild || region);
+    if (!target) return false;
+    pmtilesPreview(ctx, target, src, "w-full");
+    return true;
+  }
+
   // ----------------------------------------------------- bucket file + studio
   async function bucketFile(ctx, m) {
     const dl = await ctx.waitFor('a[download][href*="/buckets/"][href*="/resolve/"]');
@@ -539,10 +575,12 @@
       if ((m = path.match(RE_DATASET_VIEWER))) return datasetViewerPage(ctx, m[1], m[2]);
       if ((m = path.match(RE_DATASET_HOME))) return datasetHome(ctx, m[1], m[2]);
       if ((m = path.match(RE_DATASET_BLOB))) return datasetBlob(ctx, m);
+      if ((m = path.match(RE_DATASET_BLOB_PM))) return datasetBlobPmtiles(ctx, m);
       if ((m = path.match(RE_DATASET_TREE))) return listLike(ctx, '[data-target="ViewerIndexTreeList"]', "li a[href$='.rete']", datasetRowHref(m[1], m[2]));
       if ((m = path.match(RE_BUCKET_ROOT))) return bucketFolder(ctx, m, false);
       if ((m = path.match(RE_BUCKET_TREE))) {
         if (isRete(path) && (await bucketFile(ctx, m))) return;
+        if (isPmtiles(path) && (await bucketPmtiles(ctx))) return;
         return bucketFolder(ctx, m, true);
       }
     },

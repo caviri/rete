@@ -15,6 +15,7 @@
   const { Explorer, Session } = window.RetelensExplorer;
 
   const RE_BLOB = /^\/([^/]+)\/([^/]+)\/blob\/(.+\.rete)$/;
+  const RE_BLOB_PM = /^\/([^/]+)\/([^/]+)\/blob\/(.+\.pmtiles)$/i;
   const RE_TREE = /^\/([^/]+)\/([^/]+)\/tree\/.+/;
   const RE_RELEASES = /^\/([^/]+)\/([^/]+)\/releases(\/|$)/;
   const isRete = (p) => /\.rete$/i.test(p.split("?")[0]);
@@ -24,7 +25,7 @@
     let u; try { u = new URL(href, location.href); } catch (_) { return null; }
     const m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/raw\/(.+)$/);
     if (u.hostname === "github.com" && m) return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}`;
-    if (u.hostname === "raw.githubusercontent.com") return u.href;
+    if (u.hostname === "raw.githubusercontent.com" || u.hostname === "media.githubusercontent.com") return u.href;
     return null;
   }
 
@@ -117,6 +118,32 @@
       const addCleanup = (f) => cleanups.push(f);
       const cleanup = () => { for (const f of cleanups.splice(0)) { try { f(); } catch (_) {} } };
       const inStudio = () => new URLSearchParams(location.search).get("studio") === "1";
+
+      // ------------------------------------------------------ a .pmtiles blob page
+      // the map viewer (lib/maps.js PmtilesViewer) as the file's body, where GitHub says it cannot show a binary file.
+      // A file kept with Git LFS is read from its media.githubusercontent.com address (the Raw link's redirect target,
+      // which answers Range with CORS); raw.githubusercontent.com would serve the LFS pointer instead.
+      async function blobPmtiles(m) {
+        const raw = await ctx.waitFor('a[data-testid="raw-button"]', 10000);
+        if (!raw || location.pathname !== "/" + m[1] + "/" + m[2] + "/blob/" + m[3]) return;
+        const lfs = !!document.querySelector('[data-testid="lfs-pointer"], [aria-label*="Git LFS"]') || /Stored with Git LFS/i.test(document.querySelector('section[aria-labelledby*="file-name-id"]')?.textContent || "");
+        let src = rawSource(raw.getAttribute("href"));
+        if (src && lfs && /^https:\/\/raw\.githubusercontent\.com\//.test(src)) src = src.replace("https://raw.githubusercontent.com/", "https://media.githubusercontent.com/media/");
+        if (!src) return;
+        let v = null, el = null;
+        const mount = () => {
+          const section = document.querySelector('section[aria-labelledby*="file-name-id"]');
+          if (!section || !section.parentElement) return;
+          if (el && el.isConnected && section.style.display === "none") return;
+          ctx.hide(section);
+          if (!v) { v = window.RetelensMaps.PmtilesViewer(src, {}); v.el.classList.add("rl-pm-inline"); el = wrap(v.el, ""); }
+          el.firstElementChild.style.marginTop = getComputedStyle(section).marginTop;
+          if (!el.isConnected) section.after(el);
+        };
+        mount();
+        const mo = ctx.observe(document.body, { childList: true, subtree: true }, () => { if (!(el && el.isConnected)) mount(); });
+        addCleanup(() => { if (mo) mo.disconnect(); if (v) v.destroy(); el && el.remove(); const sec = document.querySelector('section[aria-labelledby*="file-name-id"]'); if (sec) ctx.show(sec); });
+      }
 
       // ------------------------------------------------------------ blob page
       async function blob(m) {
@@ -217,6 +244,7 @@
         const path = location.pathname;
         let m;
         if ((m = path.match(RE_BLOB))) { blob(m); return; }
+        if ((m = path.match(RE_BLOB_PM))) { blobPmtiles(m); return; }
         if (RE_TREE.test(path)) {
           rows('a[href*="/blob/"][href$=".rete"]', (href) => href.split("?")[0] + "?studio=1");
           return;
