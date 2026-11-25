@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>rete landing card</title>
+<!--
+  The link preview of the landing page (site/index.html), rendered to
+  site/landing/og.png by landing_card.mjs. 1200 x 630, no network.
+
+  The graph is real: sixteen musicians from Linked Jazz
+  (data.graphplaza.com/linked-jazz/linked-jazz-2026-06-13.rete, CC BY-SA 3.0)
+  and the ties between them, from
+
+    PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+    PREFIX rel:  <http://purl.org/vocab/relationship/>
+    PREFIX lj:   <http://linkedjazz.org/ontology/>
+    SELECT DISTINCT ?a ?p ?b WHERE {
+      VALUES ?p { rel:influencedBy rel:friendOf lj:playedTogether }
+      ?x ?p ?y . ?x foaf:name ?a . ?y foaf:name ?b .
+      # ?a and ?b restricted to the names below
+    }
+
+  A subset of its answer is drawn (one tie per pair). mentorOf is left out:
+  in this data its direction reads backwards ("Herbie Hancock mentorOf Miles
+  Davis").
+-->
+<style>
+  :root {
+    --bg:#0b1411; --fg:#e6f0eb; --muted:#a6b9b0; --accent:#35b299; --deep:#7fdcc7;
+    --infl:#6fcdb6; --play:#e57e5e; --friend:#8abcf3;
+    --serif:Georgia,"Times New Roman",serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:"Cascadia Mono","SF Mono",Consolas,ui-monospace,monospace;
+  }
+  html, body { margin:0; width:1200px; height:630px; overflow:hidden; background:var(--bg); }
+  .card { position:relative; width:1200px; height:630px; overflow:hidden; color:var(--fg); font-family:var(--sans);
+    background:
+      radial-gradient(620px 460px at 900px 260px, rgba(53,178,153,.20), transparent 70%),
+      radial-gradient(520px 380px at 80px 640px, rgba(42,109,244,.10), transparent 70%),
+      var(--bg); }
+  .bar { position:absolute; inset:0 0 auto 0; height:10px; background:linear-gradient(90deg, #0e5f50, #147d69 40%, #1b8f78); }
+  svg.bgnet, svg.graph { position:absolute; inset:0; }
+  .text { position:absolute; left:64px; top:58px; width:560px; }
+  .brand { display:flex; align-items:center; gap:14px; font:700 34px/1 var(--serif); letter-spacing:-.01em; }
+  .brand svg { width:46px; height:46px; }
+  .eyebrow { display:inline-block; margin:34px 0 0; padding:7px 14px; border:1px solid rgba(53,178,153,.45);
+    border-radius:999px; background:rgba(53,178,153,.10); color:#cfe9e0; font:600 14px/1 var(--mono); letter-spacing:.08em; }
+  h1 { margin:22px 0 0; font:700 60px/1.04 var(--serif); letter-spacing:-.015em; }
+  h1 em { display:block; margin-top:8px; color:var(--deep); font-style:italic; font-size:52px; }
+  .lede { margin:26px 0 0; width:500px; color:var(--muted); font:21px/1.45 var(--sans); }
+  .foot { position:absolute; left:64px; right:56px; bottom:38px; display:flex; align-items:baseline; justify-content:space-between; }
+  .url { font:600 20px/1 var(--mono); color:var(--deep); }
+  .legend { display:flex; gap:18px; font:14px/1 var(--mono); color:var(--muted); }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .legend i { display:inline-block; width:18px; height:3px; border-radius:2px; }
+  .source { position:absolute; right:56px; bottom:66px; font:13px/1 var(--sans); color:#7f938a; }
+</style>
+</head>
+<body>
+<div class="card">
+  <svg class="bgnet" id="bgnet" width="1200" height="630" aria-hidden="true"></svg>
+  <svg class="graph" id="graph" width="1200" height="630" aria-hidden="true"></svg>
+  <div class="bar"></div>
+  <div class="text">
+    <div class="brand">
+      <svg viewBox="0 0 120 120" aria-hidden="true">
+        <rect width="120" height="120" rx="28" fill="#2a6df4"/>
+        <g stroke="#dce8ff" stroke-width="4" fill="none"><path d="M60 36 32 76M60 36l28 40M32 76h56M32 76l28 26M88 76l-28 26"/></g>
+        <g fill="#fff"><circle cx="60" cy="34" r="11"/><circle cx="30" cy="77" r="9"/><circle cx="90" cy="77" r="9"/><circle cx="60" cy="102" r="8"/></g>
+      </svg>
+      <span>rete</span>
+    </div>
+    <div class="eyebrow">OPEN SOURCE · RDF · SPARQL</div>
+    <h1>Your RDF graph<br>in one file.<em>Host it anywhere.<br>Query it everywhere.</em></h1>
+    <p class="lede">No database to run. Each SPARQL query reads only the parts of the file it needs.</p>
+  </div>
+  <div class="source">Graph: Linked Jazz (CC BY-SA 3.0)</div>
+  <div class="foot">
+    <div class="url">caviri.github.io/rete</div>
+    <div class="legend">
+      <span><i style="background:var(--infl)"></i>rel:influencedBy</span>
+      <span><i style="background:var(--play)"></i>lj:playedTogether</span>
+      <span><i style="background:var(--friend)"></i>rel:friendOf</span>
+    </div>
+  </div>
+</div>
+<script>
+const EDGES = [
+  ["Roy Eldridge", "influencedBy", "Louis Armstrong"],
+  ["Mary Lou Williams", "influencedBy", "Louis Armstrong"],
+  ["Lionel Hampton", "influencedBy", "Louis Armstrong"],
+  ["Dave Brubeck", "influencedBy", "Louis Armstrong"],
+  ["Lionel Hampton", "influencedBy", "Duke Ellington"],
+  ["Dave Brubeck", "influencedBy", "Duke Ellington"],
+  ["Lionel Hampton", "influencedBy", "Benny Goodman"],
+  ["Lionel Hampton", "influencedBy", "Coleman Hawkins"],
+  ["Oscar Peterson", "influencedBy", "Count Basie"],
+  ["Herbie Hancock", "influencedBy", "Miles Davis"],
+  ["Herbie Hancock", "influencedBy", "Oscar Peterson"],
+  ["Roy Eldridge", "influencedBy", "Billie Holiday"],
+  ["Oscar Peterson", "friendOf", "Duke Ellington"],
+  ["Oscar Peterson", "friendOf", "Ella Fitzgerald"],
+  ["Roy Eldridge", "friendOf", "Charlie Parker"],
+  ["Roy Eldridge", "friendOf", "Dizzy Gillespie"],
+  ["Roy Eldridge", "friendOf", "Coleman Hawkins"],
+  ["Dave Brubeck", "friendOf", "Miles Davis"],
+  ["Dave Brubeck", "friendOf", "Dizzy Gillespie"],
+  ["Roy Eldridge", "playedTogether", "Ella Fitzgerald"],
+  ["Roy Eldridge", "playedTogether", "Count Basie"],
+  ["Roy Eldridge", "playedTogether", "Lionel Hampton"],
+  ["Roy Eldridge", "playedTogether", "Benny Goodman"],
+  ["Roy Eldridge", "playedTogether", "Oscar Peterson"],
+  ["Lionel Hampton", "playedTogether", "Count Basie"],
+];
+const COLOR = { influencedBy: "#6fcdb6", playedTogether: "#e57e5e", friendOf: "#8abcf3" };
+
+// Seeded random, so the card renders the same every time.
+let seed = Number(new URLSearchParams(location.search).get("seed") || 7);
+const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+const NS = "http://www.w3.org/2000/svg";
+const el = (name, attrs, parent) => {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+
+// ── Background: a faint net, like the landing hero.
+{
+  const g = document.getElementById("bgnet");
+  const pts = Array.from({ length: 46 }, () => [rnd() * 1200, rnd() * 630]);
+  for (let i = 0; i < pts.length; i++) {
+    const near = pts.map((q, j) => [Math.hypot(q[0] - pts[i][0], q[1] - pts[i][1]), j])
+      .sort((a, b) => a[0] - b[0]).slice(1, 3);
+    for (const [, j] of near) el("line", {
+      x1: pts[i][0], y1: pts[i][1], x2: pts[j][0], y2: pts[j][1],
+      stroke: "#5fae9a", "stroke-opacity": .10, "stroke-width": 1,
+    }, g);
+    el("circle", { cx: pts[i][0], cy: pts[i][1], r: 2.2, fill: "#9fcfc2", "fill-opacity": .22 }, g);
+  }
+}
+
+// ── The graph: a small force layout, fitted with its labels into the
+// right-hand box.
+const BOX = { x0: 600, y0: 58, x1: 1172, y1: 522 };
+const names = [...new Set(EDGES.flatMap(([a, , b]) => [a, b]))];
+const deg = Object.fromEntries(names.map((n) => [n, 0]));
+for (const [a, , b] of EDGES) { deg[a]++; deg[b]++; }
+const nodes = names.map((name) => ({ name, x: rnd() - .5, y: rnd() - .5, vx: 0, vy: 0 }));
+const at = Object.fromEntries(nodes.map((n) => [n.name, n]));
+const links = EDGES.map(([a, p, b]) => ({ s: at[a], t: at[b], p }));
+
+for (let step = 0; step < 900; step++) {
+  const cool = 1 - step / 900;
+  for (const a of nodes) for (const b of nodes) {
+    if (a === b) continue;
+    const dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy + 1e-4;
+    a.vx += (dx / d2) * .012; a.vy += (dy / d2) * .012;
+  }
+  for (const l of links) {
+    const dx = l.t.x - l.s.x, dy = l.t.y - l.s.y, d = Math.hypot(dx, dy) + 1e-6;
+    const f = (d - .42) * .06;
+    l.s.vx += dx / d * f; l.s.vy += dy / d * f;
+    l.t.vx -= dx / d * f; l.t.vy -= dy / d * f;
+  }
+  for (const n of nodes) {
+    n.vx -= n.x * .01; n.vy -= n.y * .014;          // keep it together, a little wider than tall
+    n.x += Math.max(-.05, Math.min(.05, n.vx)) * cool;
+    n.y += Math.max(-.05, Math.min(.05, n.vy)) * cool;
+    n.vx *= .6; n.vy *= .6;
+  }
+}
+const svg = document.getElementById("graph");
+const maxDeg = Math.max(...Object.values(deg));
+const GAP = 8;
+const midx = nodes.reduce((s, n) => s + n.x, 0) / nodes.length;
+for (const n of nodes) {
+  n.hub = deg[n.name] >= 6;
+  n.r = 6 + 10 * Math.sqrt(deg[n.name] / maxDeg);
+  n.right = n.x >= midx;               // label on the side away from the middle
+  const t = el("text", { "font-size": n.hub ? 17 : 15, "font-weight": n.hub ? 700 : 500, class: "measure",
+    "font-family": "system-ui,-apple-system,Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif" }, svg);
+  t.textContent = n.name;
+  n.w = t.getComputedTextLength();
+  t.remove();
+  n.ext = { left: n.r + (n.right ? 0 : GAP + n.w), right: n.r + (n.right ? GAP + n.w : 0) };
+}
+{
+  // X = A + S x: the widest S for which every node and its label fit
+  // between BOX.x0 and BOX.x1, then centred. Y simply fills the box.
+  let S = Infinity;
+  for (const i of nodes) for (const j of nodes) {
+    if (i.x > j.x) S = Math.min(S, (BOX.x1 - BOX.x0 - i.ext.right - j.ext.left) / (i.x - j.x));
+  }
+  const lo = Math.max(...nodes.map((n) => BOX.x0 + n.ext.left - S * n.x));
+  const hi = Math.min(...nodes.map((n) => BOX.x1 - n.ext.right - S * n.x));
+  const A = (lo + hi) / 2;
+  const ys = nodes.map((n) => n.y), ay = Math.min(...ys), by = Math.max(...ys);
+  for (const n of nodes) {
+    n.X = A + S * n.x;
+    n.Y = BOX.y0 + (n.y - ay) * (BOX.y1 - BOX.y0) / (by - ay);
+  }
+}
+
+const defs = el("defs", {}, svg);
+const glow = el("radialGradient", { id: "glow" }, defs);
+el("stop", { offset: "0%", "stop-color": "#35b299", "stop-opacity": .55 }, glow);
+el("stop", { offset: "100%", "stop-color": "#35b299", "stop-opacity": 0 }, glow);
+
+const edgeLayer = el("g", {}, svg), nodeLayer = el("g", {}, svg), labelLayer = el("g", {}, svg);
+for (const l of links) {
+  // A slight bend, so parallel-ish lines stay apart.
+  const mx = (l.s.X + l.t.X) / 2, my = (l.s.Y + l.t.Y) / 2;
+  const dx = l.t.X - l.s.X, dy = l.t.Y - l.s.Y, d = Math.hypot(dx, dy);
+  const cx = mx - dy / d * d * .08, cy = my + dx / d * d * .08;
+  el("path", {
+    d: `M${l.s.X},${l.s.Y} Q${cx},${cy} ${l.t.X},${l.t.Y}`,
+    fill: "none", stroke: COLOR[l.p], "stroke-opacity": .72, "stroke-width": 2.2, "stroke-linecap": "round",
+  }, edgeLayer);
+}
+for (const n of nodes) {
+  const r = n.r;
+  if (n.hub) el("circle", { cx: n.X, cy: n.Y, r: r * 3.2, fill: "url(#glow)" }, nodeLayer);
+  el("circle", { cx: n.X, cy: n.Y, r, fill: "#10201b", stroke: "#7fdcc7", "stroke-width": 2.4 }, nodeLayer);
+  el("circle", { cx: n.X, cy: n.Y, r: Math.max(2.5, r * .38), fill: "#dff5ee" }, nodeLayer);
+}
+for (const n of nodes) {
+  const t = el("text", {
+    x: n.X + (n.right ? n.r + GAP : -(n.r + GAP)), y: n.Y + 5,
+    "text-anchor": n.right ? "start" : "end",
+    fill: "#e6f0eb", "font-size": n.hub ? 17 : 15, "font-weight": n.hub ? 700 : 500,
+    "font-family": "system-ui,-apple-system,Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif",
+    stroke: "#0b1411", "stroke-width": 5, "stroke-linejoin": "round", "paint-order": "stroke",
+  }, labelLayer);
+  t.textContent = n.name;
+}
+
+// Labels that touch another label or another node. A different seed or edge
+// list can crowd the layout; landing_card.mjs reports it.
+{
+  const hit = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+  const boxes = [...labelLayer.children].map((t) => t.getBBox());
+  const clashes = [];
+  nodes.forEach((n, i) => {
+    boxes.forEach((b, j) => { if (j > i && hit(boxes[i], b)) clashes.push(`${n.name} / ${nodes[j].name}`); });
+    for (const m of nodes) {
+      if (m !== n && hit(boxes[i], { x: m.X - m.r, y: m.Y - m.r, width: 2 * m.r, height: 2 * m.r })) clashes.push(`${n.name} / node ${m.name}`);
+    }
+  });
+  document.body.dataset.clashes = clashes.join("; ");
+}
+document.body.dataset.ready = "1";
+</script>
+</body>
+</html>

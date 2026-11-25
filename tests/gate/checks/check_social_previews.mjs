@@ -9,7 +9,8 @@
 //   1. every catalog example/dataset has a share page under docs/q | docs/d,
 //   2. every page that declares an og:image under og/ has that PNG on disk,
 //   3. every og:image / og:url is absolute (a relative one is dropped silently),
-//   4. every docgen-rendered page and pre-built app page carries the tags.
+//   4. every docgen-rendered page and pre-built app page carries the tags,
+//   5. so does the landing page (site/index.html), and its card exists.
 //
 // Run standalone:  node tests/gate/checks/check_social_previews.mjs
 import fs from "node:fs";
@@ -99,6 +100,23 @@ for (const entry of APP_PAGES) {
   if (!meta(html, "og:image")) {
     fail(`${entry.page}: app page lost its social tags (run scripts/preview/run.sh inject)`);
   }
+}
+
+// ---- 5. the landing page (site/, served at the site root) ----
+{
+  const html = head(path.join(ROOT, "site", "index.html"));
+  const image = meta(html, "og:image");
+  if (!image) fail("site/index.html: the landing page has no og:image");
+  else if (!image.startsWith(BASE)) fail(`site/index.html: og:image is relative or off-site (${image})`);
+  else {
+    const local = path.join(ROOT, "site", image.slice(BASE.length));
+    if (!fs.existsSync(local)) fail(`site/index.html: og:image 404s — site/${image.slice(BASE.length)} does not exist (run scripts/preview/run.sh landing)`);
+    else checkedImages++;
+  }
+  if (!/^https?:\/\//.test(meta(html, "og:url"))) fail("site/index.html: og:url is missing or relative");
+  if (!meta(html, "og:title")) fail("site/index.html: no og:title");
+  if (!meta(html, "og:description")) fail("site/index.html: no og:description");
+  if (meta(html, "twitter:card") !== "summary_large_image") fail("site/index.html: twitter:card is not summary_large_image");
 }
 
 const verdict = failures.length ? "FAIL" : "PASS";

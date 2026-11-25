@@ -38,6 +38,7 @@ scripts/preview/run.sh check           # the same assertions the gate makes
 | inject | `inject_og.mjs` | tags in the pre-built app pages **and their `web/*.template.html`** |
 | cards | `render_cards.mjs` | `docs/og/{q,d,doc}/*.png` |
 | pages | `build_pages.mjs` | `docs/q/*.html`, `docs/d/*.html`, `docs/shared.html` |
+| landing | `landing_card.mjs` | `site/landing/og.png`, the site root's card |
 
 `card.mjs` holds the model and the markup; `ogHtml()` renders the PNG and
 `pageHtml()` (in `build_pages.mjs`) renders the landing page from the *same*
@@ -68,6 +69,10 @@ hand-maintained:
 - **card images** — `docs_models.mjs` reads the tags back out of the shipped
   HTML. A page opts into a card simply by pointing `og:image` at
   `og/doc/<slug>.png`.
+- **the landing page** (`site/index.html`, the site root) — its tags are
+  written by hand, and its card is its own page, `landing_card.html`: the
+  headline from the hero and a real Linked Jazz subgraph (the query is in the
+  file). `run.sh landing` renders it; it warns when labels overlap.
 
 ## Re-running it
 
@@ -151,8 +156,8 @@ fresh build.
 
 `tests/gate/checks/check_social_previews.mjs` (tier G0) fails if a catalog
 example has no share page or no card, if any `og:image` 404s or is relative
-(unfurlers drop relative URLs silently), or if a rendered docs page or app page
-lost its tags. It is a static check — no browser, no network.
+(unfurlers drop relative URLs silently), or if a rendered docs page, an app page
+or the landing page lost its tags. It is a static check — no browser, no network.
 
 `tests/gate/checks/check_catalog_answers.mjs` (tier G0) reads the ANSWERS. A
 shipped catalog example must have a recorded, successful one. It may not be
