@@ -30,6 +30,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   bar filters the column. Maps use an open PMTiles basemap: OpenStreetMap
   as the Protomaps basemap (zoom 0 to 12) on data.graphplaza.com and in the
   rete-public bucket, or any archive set in the popup.
+  The SPARQL console colours the query and numbers its lines. On a
+  Hugging Face dataset with nothing its own viewer can tabulate, Retelens
+  takes the viewer box at once (about 0.8 s after the page loads, from 3.3 s),
+  and says what it is doing while a file opens.
   When a page has several `.rete` files, Retelens opens none of them: it
   lists them and asks which one to open, each with an About that shows its
   card (title, description, statements, licence) read on its own, a few kB.

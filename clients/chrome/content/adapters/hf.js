@@ -72,6 +72,9 @@
 
   // HF's viewer "works" only if it renders a real data table (never decide from its message or status kind)
   const hfShowsTable = async (ctx, root, ms = 2500) => !!(await ctx.waitFor("table, tr[data-row-idx]", ms, root));
+  // files HF's own viewer can turn into a table: with none of them in the repo there is nothing to wait for
+  const TABULAR = /\.(parquet|csv|tsv|json|jsonl|ndjson|arrow|txt|xlsx?|h5|hdf5|lance|zip|tar|gz|webdataset)$/i;
+
 
   // ----------------------------------------------------------------- chips
   // HF may already show a group with the same label (the repo README can carry its own tags and license).
@@ -229,7 +232,10 @@
     };
 
     const island = document.querySelector('[data-target="DatasetViewer"]');
-    const noHfViewer = !!island && !(await hfShowsTable(ctx, island));
+    // a repo with nothing HF can tabulate: take its viewer box at once (the viewer's own loading box says what is
+    // happening), not after waiting 2.5 s for a table that cannot come
+    const hfCould = (info.siblings || []).some((s) => TABULAR.test(s.rfilename) && !isRete(s.rfilename));
+    const noHfViewer = !!island && (!hfCould || !(await hfShowsTable(ctx, island)));
 
     installSidebar(session);
     session.onChange(() => {

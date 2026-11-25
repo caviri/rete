@@ -714,6 +714,13 @@ result's shapes, with a switch; in the table it is a <em>Map layer</em> button.<
 <li><strong>Side panel.</strong> Examples, the SPARQL console, the schema, and the Dataset
 Card: attribution, licence, provenance and statistics. On Zenodo the card is
 merged with the record's metadata, and both are shown where they disagree.</li>
+<li><strong>SPARQL console.</strong> The query is coloured as in the query block (keywords,
+IRIs, literals, variables, comments) and its lines are numbered;
+<code>Ctrl</code>/<code>Cmd</code>+<code>Enter</code> runs it, <code>Tab</code> indents.</li>
+<li><strong>While a file opens</strong> the viewer says so (the engine starts, then reads
+the file's header and card). On a Hugging Face dataset with no file its own
+viewer can turn into a table, Retelens takes the viewer box at once instead
+of first waiting to see whether that viewer shows one.</li>
 </ul>
 <h2 id="the-example-the-comarca-de-antequera">The example: the comarca de Antequera</h2>
 <p>The viewer's start page and the popup open an example, also the default file of
