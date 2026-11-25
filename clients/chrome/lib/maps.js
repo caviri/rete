@@ -44,6 +44,13 @@
     }
     return kit;
   }
+  // an archive's attribution is often HTML ("&copy; OpenStreetMap contributors"): its tags dropped and its entities
+  // read, then shown as text (or escaped again for Leaflet's innerHTML)
+  const ENT = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", copy: "©", reg: "®", trade: "™", ndash: "–", mdash: "—" };
+  const plainAttr = (s) => String(s).replace(/<[^>]*>/g, "").replace(/&(#d{1,7}|#x[0-9a-f]{1,6}|[a-z]+);/gi, (m, e) => {
+    if (e[0] === "#") { const n = /^#x/i.test(e) ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10); return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : m; }
+    return ENT[e.toLowerCase()] ?? m;
+  });
   const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const isDark = (el) => { try { return window.RetelensTheme.tokens(el || document.body).dark; } catch (_) { return matchMedia("(prefers-color-scheme: dark)").matches; } };
   function accent(el) { try { return window.RetelensTheme.tokens(el || document.body).accent; } catch (_) { return "#2563eb"; } }
@@ -105,7 +112,7 @@
   // number field, the bigger places first and the small ones only zoomed in).
   function basemapLayer(kit, t, dark) {
     const { P, pmtiles } = kit;
-    const attribution = t.url === DEFAULT_BASEMAP ? DEFAULT_ATTR : t.meta && t.meta.attribution ? escHtml(String(t.meta.attribution).replace(/<[^>]*>/g, "")) : "PMTiles";
+    const attribution = t.url === DEFAULT_BASEMAP ? DEFAULT_ATTR : t.meta && t.meta.attribution ? escHtml(plainAttr(t.meta.attribution)) : "PMTiles";
     if (t.header.tileType !== pmtiles.TileType.Mvt) return rasterLayer(kit, t.pm, { attribution, maxNativeZoom: t.header.maxZoom, maxZoom: 20 });
     const layers = vectorLayers(t);
     const ids = layers.map((l) => l.id);
@@ -160,7 +167,7 @@
   // vector archive with one colour per layer (polygons, lines, points), `hits` drawn on top in the accent colour
   function pmtilesLayer(kit, t, opts = {}) {
     const { P, pmtiles } = kit;
-    const attribution = t.meta && t.meta.attribution ? escHtml(String(t.meta.attribution).replace(/<[^>]*>/g, "")) : "PMTiles";
+    const attribution = t.meta && t.meta.attribution ? escHtml(plainAttr(t.meta.attribution)) : "PMTiles";
     if (t.header.tileType !== pmtiles.TileType.Mvt) {
       return rasterLayer(kit, t.pm, { attribution, maxNativeZoom: t.header.maxZoom, maxZoom: Math.max(t.header.maxZoom + 3, 18) });
     }
@@ -377,7 +384,7 @@
         openPmtiles(kit, new kit.pmtiles.FetchSource(url)).then((t) => {
           if (dead) return;
           if (t.meta && t.meta.name) label.lastChild.textContent = "Layer: " + String(t.meta.name).slice(0, 80);
-          const attribution = t.meta && t.meta.attribution ? escHtml(String(t.meta.attribution).replace(/<[^>]*>/g, "")) : "";
+          const attribution = t.meta && t.meta.attribution ? escHtml(plainAttr(t.meta.attribution)) : "";
           const layer = t.header.tileType !== kit.pmtiles.TileType.Mvt
             ? rasterLayer(kit, t.pm, { attribution, opacity: 0.85, maxNativeZoom: t.header.maxZoom, maxZoom: 20 })
             : pmtilesLayer(kit, t, { dark: isDark(el) });
@@ -425,8 +432,10 @@
       const hidden = new Set();
       const dark = isDark(el);
       const layers = vectorLayers(t);
-      m = buildMap(kit, mapEl, { tiles: t, hiddenLayers: hidden, basemap: "none" });
-      let base = "none";
+      // a raster archive is read best over the map; a vector one is a map already
+      const first = t.header.tileType !== kit.pmtiles.TileType.Mvt ? "map" : "none";
+      m = buildMap(kit, mapEl, { tiles: t, hiddenLayers: hidden, basemap: first });
+      let base = first;
       const redraw = () => {
         if (m.tilesLayer) m.map.removeLayer(m.tilesLayer);
         m.tilesLayer = pmtilesLayer(kit, t, { dark, hidden, plain: plain.checked });
@@ -435,7 +444,7 @@
       };
       m.map.off("click");
       m.map.on("click", (ev) => pickPopup(kit, m.map, m.tilesLayer, ev));
-      bar.append(baseSelect("none", false, (id) => { base = id; m.setBase(id); }));
+      bar.append(baseSelect(first, false, (id) => { base = id; m.setBase(id); }));
       const plain = h("input", { type: "checkbox" });
       const isBasemap = layers.some((l) => l.id === "earth") && layers.some((l) => l.id === "water");
       if (isBasemap) { plain.addEventListener("change", redraw); bar.append(h("label", { class: "rl-mapctl" }, plain, h("span", null, "One colour per layer"))); }
@@ -455,7 +464,7 @@
         hd.numTileContents ? ["Distinct tiles", num(hd.numTileContents)] : null,
         opts.size ? ["File", bytes(opts.size)] : null,
         ["PMTiles", "v" + hd.specVersion],
-        md.attribution ? ["Attribution", String(md.attribution).replace(/<[^>]*>/g, "")] : null,
+        md.attribution ? ["Attribution", plainAttr(md.attribution)] : null,
         md.generator ? ["Made with", String(md.generator)] : null,
       ].filter(Boolean);
       side.append(h("dl", { class: "rl-dl" }, facts.flatMap(([k, v]) => [h("dt", null, k), h("dd", null, v)])));

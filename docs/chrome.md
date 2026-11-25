@@ -133,8 +133,13 @@ name the `.rete` file. It comes first in the list of graphs, with its card.
 A `.pmtiles` link (or file dropped on the viewer) opens as a map: the archive's
 header and metadata next to it (tile type, zooms, bounds, attribution), each
 vector layer in its own colour with its fields, and the features under a click.
-Raster archives are drawn as images; an archive in the Protomaps basemap layout
-gets the Protomaps style. Tiles are read by HTTP `Range`, a few at a time.
+Raster archives are drawn as images, over the open basemap; an archive in the
+Protomaps basemap layout gets the Protomaps style. Tiles are read by HTTP
+`Range`, a few at a time.
+
+The same map replaces the "binary file" box on a `.pmtiles` file page: a
+Hugging Face dataset or bucket file, and a GitHub file (one kept with Git LFS is
+read from its `media.githubusercontent.com` address, where its bytes are).
 
 A `.rete` file can also carry a PMTiles archive as a section of its own
 ([`scripts/embed_tiles.py`](https://github.com/caviri/rete/blob/main/scripts/embed_tiles.py),
