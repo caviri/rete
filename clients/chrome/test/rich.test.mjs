@@ -246,6 +246,31 @@ test("a .pmtiles URL opens the map viewer with its layers", async () => {
   await page.close();
 });
 
+test("the SPARQL console colours the query and numbers its lines", async () => {
+  const page = await openViewer({ src: `${base}/rich.rete`, name: "rich.rete", host: "url" });
+  await page.waitForSelector("table td", { timeout: 90000 });
+  await page.locator('button[data-tab="console"]').click();
+  const q = "PREFIX schema: <http://schema.org/>\n# names\nSELECT ?s ?name WHERE {\n  ?s schema:name ?name .\n  FILTER(?name != \"x\")\n}\nLIMIT 5";
+  await page.fill('textarea[aria-label="SPARQL query"]', q);
+  const ed = page.locator("[data-rl=editor]");
+  assert.equal((await ed.locator(".rl-ed-gutter").textContent()).split("\n").length, 7, "one number per line");
+  const spans = await ed.locator(".rl-ed-hl span").evaluateAll((els) => els.map((e) => [e.textContent, e.className]));
+  const cls = (t) => (spans.find(([x]) => x === t) || [])[1] || "";
+  assert.match(cls("SELECT"), /text-purple-700/, "a keyword");
+  assert.match(cls("<http://schema.org/>"), /text-green-700/, "an IRI");
+  assert.match(cls("?name"), /text-blue-700/, "a variable");
+  assert.match(cls("# names"), /text-gray-400/, "a comment");
+  assert.match(cls('"x"'), /text-amber-700/, "a literal");
+  // the copy under the textarea is exactly its text, so the colours sit under the right characters
+  assert.equal(await ed.locator(".rl-ed-hl code").evaluate((c) => c.textContent), q + "\n");
+  // a value set from code (here an example chosen) redraws the copy and the numbers
+  await page.evaluate(() => { const t = document.querySelector('textarea[aria-label="SPARQL query"]'); t.value = "ASK { ?s ?p ?o }"; });
+  assert.equal(await ed.locator(".rl-ed-gutter").textContent(), "1");
+  assert.equal(await ed.locator(".rl-ed-hl code").evaluate((c) => c.textContent), "ASK { ?s ?p ?o }\n");
+  await shot(page, "console");
+  await page.close();
+});
+
 test("several files: nothing opens until the user picks one; About reads a file's card", async () => {
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(String(e)));

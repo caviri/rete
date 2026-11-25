@@ -102,6 +102,13 @@ or [Zenodo record 24131107](https://zenodo.org/records/24131107).
 - **Side panel.** Examples, the SPARQL console, the schema, and the Dataset
   Card: attribution, licence, provenance and statistics. On Zenodo the card is
   merged with the record's metadata, and both are shown where they disagree.
+- **SPARQL console.** The query is coloured as in the query block (keywords,
+  IRIs, literals, variables, comments) and its lines are numbered;
+  `Ctrl`/`Cmd`+`Enter` runs it, `Tab` indents.
+- **While a file opens** the viewer says so (the engine starts, then reads
+  the file's header and card). On a Hugging Face dataset with no file its own
+  viewer can turn into a table, Retelens takes the viewer box at once instead
+  of first waiting to see whether that viewer shows one.
 
 ## The example: the comarca de Antequera
 

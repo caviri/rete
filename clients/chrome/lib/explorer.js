@@ -484,7 +484,7 @@
       if (this.params.get("console") === "1" && this.sidePanel) this.sideTab = "console";
       if (this.sidePanel) this.buildSideTabs();
       this.renderPills();
-      this.area.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Opening " + (s.files[i]?.label || "file") + "…"));
+      this.area.append(this.loadingBox(s.files[i]?.label || "the file"));
       try { if (!(s.idx === i && s.meta)) await s.open(i); }
       catch (e) { this.area.textContent = ""; this.area.append(this.errorBox(e)); this.openError = e; this.renderPills(); this.renderToolbar(); if (this.sideBody) this.renderSide(); return; }
       this.q = Number.isInteger(qi) && qi >= 0 && qi < s.examples.length ? qi : 0;
@@ -505,6 +505,14 @@
       this.hasTiles = false;
       const file = this.s.file;
       this.s.tiles().then((t) => { if (t && this.s.file === file) { this.hasTiles = true; this.renderToolbar(); } });
+    }
+
+    // what the viewer shows while a file opens: the engine starting (the first time), then the file's header and card
+    loadingBox(label) {
+      return h("div", { class: "rl-ph p-4", "data-rl": "loading", role: "status", "aria-live": "polite" },
+        h("div", { class: "text-sm font-medium" }, "Opening " + label + "…"),
+        h("div", { class: "text-xs text-gray-500" }, "Retelens is bringing up the graph viewer: the rete engine reads the file's header and card, then its first query. Nothing is downloaded: a query reads only the bytes it needs."),
+        h("div", { class: "rl-ph-bars", "aria-hidden": "true" }, h("span"), h("span"), h("span"), h("span")));
     }
 
     // ---- the file chooser: the files, each with its card on request (About reads only the card: a few kB)
@@ -593,7 +601,7 @@
       if (this.choosing) return this.choose(i); // picked from the Graph menu while the chooser shows
       this.page = 1; this.q = 0; this.result = null; this.openError = null; this.model = null; this.colMenu.close(); this.fbar.update();
       this.gv && this.gv.destroy(); this.gv = null; this.mv && this.mv.destroy(); this.mv = null;
-      this.area.textContent = ""; this.area.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Opening " + s.files[i].label + "…"));
+      this.area.textContent = ""; this.area.append(this.loadingBox(s.files[i].label));
       s.idx = i; this.renderPills();
       try { await s.open(i); } catch (e) { this.area.textContent = ""; this.area.append(this.errorBox(e)); this.openError = e; this.renderPills(); this.renderToolbar(); this.renderSide && this.sideBody && this.renderSide(); this.writeUrl(); return; }
       this.explicitView = this.explicitView; this.writeUrl();
@@ -891,7 +899,9 @@
             window.RetelensHints.chips(ex, h, icon)));
         });
       } else if (this.sideTab === "console") {
-        this.editor = h("textarea", { class: "h-56 w-full resize-y rounded-lg border bg-gray-50 p-2 font-mono text-xs leading-snug outline-none focus:border-gray-400 dark:border-gray-800 dark:bg-gray-900", spellcheck: "false", "aria-label": "SPARQL query" });
+        // coloured, with line numbers (lib/editor.js); this.editor stays the textarea
+        const ed = window.RetelensEditor.create({ label: "SPARQL query" });
+        this.editor = ed.textarea;
         this.editor.value = this.lastEditor ?? (typeof this.q === "number" ? s.examples[this.q]?.sparql || "" : "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 20");
         const run = () => { this.lastEditor = this.editor.value; if (this.editor.value.trim()) this.runCustom(this.editor.value); };
         this.editor.addEventListener("input", () => (this.lastEditor = this.editor.value));
@@ -902,7 +912,7 @@
         const hasLimit = () => /\bLIMIT\b/i.test(this.editor.value);
         const hint = h("div", { class: "text-xs text-gray-400" });
         this.editor.addEventListener("input", () => { hint.textContent = /\bSELECT\b/i.test(this.editor.value) && !hasLimit() ? "No LIMIT: every row is computed (the table pages it). The query is never changed for you." : ""; });
-        b.append(h("div", { class: "p-3" }, this.editor,
+        b.append(h("div", { class: "p-3" }, ed.el,
           h("div", { class: "mt-2 flex items-center gap-3" }, h("button", { type: "button", class: "btn shadow-xs rounded-sm border px-3 py-1 text-sm font-medium", onclick: run }, "Run ", h("span", { class: "ml-1 text-xs text-gray-400" }, "Ctrl+Enter")), hint)));
       } else if (this.sideTab === "schema") {
         b.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Reading schema…"));

@@ -202,5 +202,26 @@ ol.rl-md-list { list-style: decimal; }
 .rl-choice-info { padding: 2px 12px 10px; background: var(--rl-soft); }
 .rl-choice-info[hidden] { display: none; }
 .rl-choice-title { font-weight: 600; margin: 6px 0 2px; }
-.rl-choice-desc { max-height: 220px; overflow: auto; font-size: 12.5px; }
+.rl-choice-desc { max-width: none; font-size: 12.5px; } /* the whole width of the row, read straight through: .rl-md alone is sized for a table cell */
 .rl-choice-facts { margin-top: 6px; font-size: 12px; }
+
+/* the SPARQL console's editor (lib/editor.js): a transparent textarea over its coloured copy, line numbers beside.
+   Both layers share font, size, line height and padding exactly; the copy's extra bottom/right padding lets it scroll
+   as far as the textarea, whose scrollbars take room the copy does not have. */
+.rl-ed { display: flex; height: 14rem; min-height: 6rem; resize: vertical; overflow: hidden; border: 1px solid var(--rl-line); border-radius: 8px; background: var(--rl-soft); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.5; }
+.rl-ed:focus-within { border-color: color-mix(in srgb, currentColor 45%, transparent); }
+.rl-ed .rl-ed-gutter { flex: none; min-width: 2.4em; padding: 8px 6px 40px 8px; overflow: hidden; white-space: pre; text-align: right; opacity: .45; user-select: none; border-right: 1px solid var(--rl-line); font-variant-numeric: tabular-nums; }
+.rl-ed .rl-ed-body { position: relative; flex: 1; min-width: 0; }
+.rl-ed .rl-ed-hl, .rl-ed .rl-ed-ta { position: absolute; inset: 0; box-sizing: border-box; margin: 0; padding: 8px; border: 0; border-radius: 0; font: inherit; line-height: inherit; letter-spacing: 0; tab-size: 2; white-space: pre; overflow-wrap: normal; word-wrap: normal; text-align: left; }
+.rl-ed .rl-ed-hl { overflow: hidden; pointer-events: none; padding-bottom: 40px; padding-right: 40px; background: none; color: inherit; }
+.rl-ed .rl-ed-hl code { font: inherit; background: none; padding: 0; border: 0; color: inherit; white-space: inherit; }
+.rl-ed .rl-ed-hl span { font-weight: inherit !important; }
+.rl-ed .rl-ed-ta, .rl-ed .rl-ed-ta:focus { width: 100%; height: 100%; resize: none; overflow: auto; background: transparent; color: transparent; caret-color: currentColor; outline: none; box-shadow: none; -webkit-text-fill-color: transparent; }
+.rl-ed .rl-ed-ta::selection { background: color-mix(in srgb, var(--rl-acc) 28%, transparent); }
+
+/* the viewer's loading box (lib/explorer.js loadingBox): a few shimmering bars while a file opens */
+.rl-ph-bars { display: grid; gap: 8px; margin-top: 14px; }
+.rl-ph-bars span { display: block; height: 12px; border-radius: 4px; background: linear-gradient(90deg, var(--rl-soft) 25%, color-mix(in srgb, currentColor 13%, transparent) 50%, var(--rl-soft) 75%); background-size: 200% 100%; animation: rl-shimmer 1.3s ease-in-out infinite; }
+.rl-ph-bars span:nth-child(1) { width: 92%; } .rl-ph-bars span:nth-child(2) { width: 76%; } .rl-ph-bars span:nth-child(3) { width: 84%; } .rl-ph-bars span:nth-child(4) { width: 58%; }
+@keyframes rl-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .rl-ph-bars span { animation: none; } }
