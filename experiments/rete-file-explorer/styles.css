@@ -421,6 +421,7 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .dl:hover { border-color: var(--accent); color: var(--accent-ink); }
 .dl.graphit { border-color: rgba(53, 178, 153, .5); color: var(--accent-ink); }
 .dl.graphit:hover { background: var(--accent); color: var(--on-accent); }
+.dl.hinted { font-weight: 600; box-shadow: inset 0 0 0 1px rgba(53, 178, 153, .6); }
 .preview { flex: 1; overflow: auto; padding: 0 16px 24px; }
 
 .tabs { display: flex; gap: 2px; padding: 8px 0; position: sticky; top: 0; background: var(--bg); }

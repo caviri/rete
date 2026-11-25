@@ -70,5 +70,6 @@
     return box;
   }
 
-  window.RetelensHints = { parse, infer, annotate, chips, VIEW_LABEL };
+  // globalThis: the same object as window in a page; in Node (clients/mcpb's server) it is where the hints are read
+  globalThis.RetelensHints = { parse, infer, annotate, chips, VIEW_LABEL };
 })();

@@ -7,6 +7,15 @@
 // Term tokens (N-Triples-shaped strings, as the engine emits them) are read
 // with a parser the host passes in: `parse(token)` → { kind, value, lang }.
 
+import "../../chrome/lib/hints.js"; // Retelens query hints (# view: map, # column ?v: Label — note): globalThis.RetelensHints
+
+/** The tab a query's hints name (# view: table | cards | graph | map), unless the options name one. */
+export const withHintedView = (options, text) => {
+  if (options?.view || !text) return options;
+  const view = globalThis.RetelensHints.parse(text).view;
+  return view ? { ...options, view } : options;
+};
+
 export const MAX_NODES = 1500; // per view; more is unreadable on a canvas anyway
 export const MAX_EDGES = 4000;
 export const MAX_ROWS = 5000; // table rows a view keeps
@@ -333,12 +342,35 @@ export function graphReaders(parse) {
     return t.kind === "literal" ? literalText(t) : t.value;
   };
 
-  /** Table rows as plain display strings. */
+  /** A cell as the Retelens cells take it: { kind, value, datatype?, lang? } (a quoted triple is shown as text). */
+  const termOf = (token) => {
+    const t = parse(token);
+    const o = { kind: t.kind === "triple" ? "literal" : t.kind, value: t.value };
+    if (t.datatype) o.datatype = t.datatype;
+    if (t.lang) o.lang = t.lang;
+    return o;
+  };
+
+  /**
+   * Table rows: `rows` as plain display strings (filter, sort, CSV), `terms` the
+   * same cells typed (the table's rich cells and column statistics, the cards, the map).
+   */
   function tableOf(env) {
     if (env.kind === "construct") {
-      return { vars: ["subject", "predicate", "object"], rows: env.triples.slice(0, MAX_ROWS).map((t) => Object.fromEntries(["subject", "predicate", "object"].map((k, i) => [k, display(t[i])]))) };
+      const spo = ["subject", "predicate", "object"];
+      const triples = env.triples.slice(0, MAX_ROWS);
+      return {
+        vars: spo,
+        rows: triples.map((t) => Object.fromEntries(spo.map((k, i) => [k, display(t[i])]))),
+        terms: triples.map((t) => Object.fromEntries(spo.map((k, i) => [k, termOf(t[i])]))),
+      };
     }
-    return { vars: env.vars, rows: env.rows.slice(0, MAX_ROWS).map((r) => Object.fromEntries(env.vars.map((v) => [v, r[v] === undefined ? "" : display(r[v])]))) };
+    const rows = env.rows.slice(0, MAX_ROWS);
+    return {
+      vars: env.vars,
+      rows: rows.map((r) => Object.fromEntries(env.vars.map((v) => [v, r[v] === undefined ? "" : display(r[v])]))),
+      terms: rows.map((r) => Object.fromEntries(env.vars.filter((v) => r[v] !== undefined).map((v) => [v, termOf(r[v])]))),
+    };
   }
 
   /** Elements and table rows of a finished query's envelope. */
@@ -353,10 +385,13 @@ export function graphReaders(parse) {
 
 /**
  * Put a finished query's results into a view: added, or replacing what it
- * holds. `elementsOf` is a graphReaders() one.
+ * holds. `elementsOf` is a graphReaders() one. `query`, the SPARQL text, rides
+ * with the table: its comments can name the columns (Retelens query hints,
+ * clients/chrome/lib/hints.js).
  */
-export function loadInto(view, elementsOf, env, mode) {
+export function loadInto(view, elementsOf, env, mode, query) {
   const { graph, table } = elementsOf(env);
+  if (table && query) table.query = String(query).slice(0, 20000);
   if (mode === "replace") {
     view.clear();
     const added = view.add(graph);
@@ -366,7 +401,15 @@ export function loadInto(view, elementsOf, env, mode) {
   }
   const added = view.add(graph);
   if (table) {
-    view.table = view.table && view.table.vars.join() === table.vars.join() ? { vars: table.vars, rows: [...view.table.rows, ...table.rows].slice(0, MAX_ROWS) } : table;
+    view.table =
+      view.table && view.table.vars.join() === table.vars.join()
+        ? {
+            vars: table.vars,
+            rows: [...view.table.rows, ...table.rows].slice(0, MAX_ROWS),
+            terms: [...(view.table.terms ?? []), ...(table.terms ?? [])].slice(0, MAX_ROWS),
+            ...(view.table.query ? { query: view.table.query } : {}),
+          }
+        : table;
   }
   view.patch({ op: "add", nodes: added.nodes, edges: added.edges, table: view.table });
   return { ...added, rows: table.rows.length, truncated: view.nodes.size >= MAX_NODES || view.edges.size >= MAX_EDGES };

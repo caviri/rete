@@ -12,6 +12,18 @@ import cytoscape from "cytoscape";
 import * as Cards from "./cards.js";
 import { hivePositions, layeredPositions } from "./layout.js";
 
+// Retelens (clients/chrome/lib), bundled as they are — one copy for the browser extension, this view in Claude and
+// the file explorer: result cells (pictures, IIIF manifests, geometries as small maps, Markdown, links), column
+// statistics, query hints (# view:, # column ?v: Label — note) and maps (an open OpenStreetMap basemap read as
+// PMTiles, .pmtiles columns as layers). Each sets a window.Retelens* object; the order is their dependency order.
+import "../../../chrome/lib/octicons.js";
+import "../../../chrome/lib/format.js";
+import "../../../chrome/lib/results.js";
+import "../../../chrome/lib/cells.js";
+import "../../../chrome/lib/stats.js";
+import "../../../chrome/lib/hints.js";
+import "../../../chrome/lib/maps.js";
+
 const PALETTE = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#2f4b7c", "#a05195", "#5fa2ce"];
 const OTHER = "#a8a8a8";
 const MAX_PROPS = 40; // shown in the selection panel
@@ -69,6 +81,8 @@ const S = {
   uploading: false,
   labelled: new Set(), // node ids whose labels were asked for
   sort: { col: null, desc: false },
+  rich: { key: null }, // the rows as Retelens terms: { key, data, model, short, colInfo } (richModel)
+  map: null, // the Map tab's map, while it shows
   hive: null, // the hive layout's last plan: { pos, axes, bow, by }
   cards: { viewerTimeout: 45000, shown: Cards.CARDS_FIRST, io: null, live: [], fieldsKey: "", blocked: new Set() },
   lastActivity: Date.now(),
@@ -79,6 +93,31 @@ const S = {
 window.__reteView = S; // tests read the view through this
 
 const $ = (id) => document.getElementById(id);
+
+// What the Retelens libraries ask of the page that hosts them: start the map library this page carries as text (as
+// the 3D viewer is), show a .pmtiles column's layer (on the Map tab), and the theme (this page's, not the system's).
+window.RetelensHost = {
+  loadMapKit() {
+    if (window.RetelensMapKit) return Promise.resolve();
+    const source = document.getElementById("mapkit-src")?.textContent;
+    if (!source) return Promise.reject(new Error("the map library is not in this page"));
+    try {
+      const script = document.createElement("script");
+      script.textContent = source;
+      document.head.append(script);
+    } catch {
+      /* a host that forbids inline scripts leaves it undefined */
+    }
+    return window.RetelensMapKit ? Promise.resolve() : Promise.reject(new Error("the map library could not start in this host"));
+  },
+  openLayer: () => showTab("map"),
+};
+window.RetelensTheme = {
+  tokens: () => ({
+    dark: document.documentElement.dataset.theme === "dark",
+    accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#d97757",
+  }),
+};
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 /** A web address to open, or null: only http(s) leaves the view, whatever scheme an IRI has. */
 const webUrl = (u) => {
@@ -1339,31 +1378,94 @@ const requestLabels = debounce(async () => {
 
 // --- table -------------------------------------------------------------------------------
 
+/** A cell given only as text (the graph's own edges, an older server): an IRI when it looks like one. */
+const textTerm = (s) => {
+  const v = String(s);
+  return /^(https?|urn|mailto|ftp):\S+$/i.test(v) ? { kind: "iri", value: v } : { kind: "literal", value: v };
+};
+const termsOf = (vars, rows) => rows.map((r) => Object.fromEntries(vars.filter((v) => r[v] !== "" && r[v] != null).map((v) => [v, textTerm(r[v])])));
+
+/** The rows the table, the cards and the map show: { vars, rows (text), terms (typed), query? }. */
 function tableData() {
-  if (S.table?.vars?.length) return S.table;
+  if (S.table?.vars?.length) {
+    S.table.terms ??= termsOf(S.table.vars, S.table.rows);
+    return S.table;
+  }
+  const vars = ["subject", "predicate", "object"];
   const rows = [...S.edges.values()].map((e) => ({
     subject: nodeLabel(S.nodes.get(e.source) ?? { id: e.source }),
     predicate: e.p ?? e.label,
     object: nodeLabel(S.nodes.get(e.target) ?? { id: e.target }),
   }));
-  return { vars: ["subject", "predicate", "object"], rows };
+  return { vars, rows, terms: termsOf(vars, rows) };
 }
 
+/**
+ * The rows as Retelens holds a result (lib/results.js ResultModel: text search, column filters, sort), the
+ * column names and notes the query's hints give (lib/hints.js), and how IRIs are shortened (the query's prefixes).
+ * Made again only when the rows change.
+ */
+function richModel() {
+  const key = S.table?.vars?.length ? S.table : `edges:${S.edges.size}:${S.nodes.size}`;
+  const r = S.rich;
+  if (r.key === key) return r;
+  const data = tableData();
+  const prefixes = new window.RetelensFmt.Prefixes();
+  if (data.query) prefixes.learn(data.query);
+  r.key = key;
+  r.data = data;
+  r.short = (iri) => prefixes.shorten(iri);
+  r.model = new window.RetelensResults.ResultModel(data.vars, r.short);
+  r.model.setRows(data.terms);
+  r.colInfo = data.query ? window.RetelensHints.parse(data.query).columns : {};
+  return r;
+}
+
+/** A column's name: the query's hint (# column ?v: Label — note), else the variable. */
+const columnLabel = (v) => S.rich.colInfo?.[v]?.label || v;
+
 function renderTable() {
-  const { vars, rows } = tableData();
+  const r = richModel();
+  const { vars } = r.data;
+  const m = r.model;
   const q = $("table-filter").value.trim().toLowerCase();
-  let shown = q ? rows.filter((r) => vars.some((v) => String(r[v] ?? "").toLowerCase().includes(q))) : rows.slice();
-  if (S.sort.col) {
-    const c = S.sort.col;
-    shown.sort((a, b) => String(a[c] ?? "").localeCompare(String(b[c] ?? ""), undefined, { numeric: true }) * (S.sort.desc ? -1 : 1));
+  m.q = q;
+  m.sort = S.sort.col ? { v: S.sort.col, dir: S.sort.desc ? "desc" : "asc" } : null;
+  m.changed();
+  const shown = m.view();
+  const filtered = m.activeCols();
+  $("table-count").textContent = `${shown.length} of ${m.rows.length} rows${shown.length > MAX_TABLE ? ` (first ${MAX_TABLE} drawn)` : ""}${filtered.length ? ` · filtered by ${filtered.map(columnLabel).join(", ")}` : ""}`;
+  $("table-clear").hidden = !filtered.length;
+  const ctx = { short: r.short };
+  // the header: the column's name (sorts on click), then a chart of its values (a click on a bar filters the rows)
+  const head = el("tr");
+  for (const v of vars) {
+    const info = r.colInfo[v];
+    const th = el("th");
+    th.dataset.col = v;
+    th.title = `?${v}${info?.note ? ` — ${info.note}` : ""}`;
+    const name = el("div", "th-name");
+    name.append(el("span", "", columnLabel(v)), el("span", "dir", S.sort.col === v ? (S.sort.desc ? " ▼" : " ▲") : ""));
+    th.append(name);
+    const stats = window.RetelensStats;
+    th.append(stats.chart(stats.summarize(m.rows, v, r.short), { current: m.filters[v], onPick: (f) => (m.setFilter(v, f), renderTable(), renderMapIfShown()) }));
+    head.append(th);
   }
-  $("table-count").textContent = `${shown.length} of ${rows.length} rows${shown.length > MAX_TABLE ? ` (first ${MAX_TABLE} drawn)` : ""}`;
-  const head = `<thead><tr>${vars.map((v) => `<th data-col="${esc(v)}">${esc(v)} <span class="dir">${S.sort.col === v ? (S.sort.desc ? "▼" : "▲") : ""}</span></th>`).join("")}</tr></thead>`;
-  const body = shown
-    .slice(0, MAX_TABLE)
-    .map((r) => `<tr data-first="${esc(r[vars[0]] ?? "")}">${vars.map((v) => `<td>${esc(trunc(r[v] ?? "", 400))}</td>`).join("")}</tr>`)
-    .join("");
-  $("rows").innerHTML = `${head}<tbody>${body}</tbody>`;
+  const body = document.createElement("tbody");
+  for (const i of shown.slice(0, MAX_TABLE)) {
+    const tr = el("tr");
+    tr.dataset.first = r.data.rows[i]?.[vars[0]] ?? "";
+    for (const v of vars) {
+      const td = el("td");
+      const t = m.rows[i][v];
+      if (t) td.append(window.RetelensCells.render(t, "auto", ctx, { hl: q }));
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+  const thead = document.createElement("thead");
+  thead.append(head);
+  $("rows").replaceChildren(thead, body);
   $("csv").hidden = !S.app?.getHostCapabilities()?.downloadFile;
 }
 
@@ -1374,7 +1476,8 @@ function csvText() {
 }
 
 function showTab(tab) {
-  S.options.view = tab === "table" || tab === "cards" ? tab : "graph";
+  S.options.view = ["table", "cards", "map"].includes(tab) ? tab : "graph";
+  syncMapTab();
   for (const b of document.querySelectorAll(".tabs button")) {
     b.classList.toggle("on", b.dataset.tab === S.options.view);
     b.setAttribute("aria-selected", String(b.dataset.tab === S.options.view));
@@ -1382,6 +1485,7 @@ function showTab(tab) {
   $("graph").hidden = S.options.view !== "graph";
   $("table").hidden = S.options.view !== "table";
   $("cards").hidden = S.options.view !== "cards";
+  $("map").hidden = S.options.view !== "map";
   if (S.options.view === "graph") {
     S.cy?.resize();
     if (S.options.layout === "hive") runLayout(false);
@@ -1390,13 +1494,53 @@ function showTab(tab) {
   if (S.options.view === "cards") renderCards(true);
   else stopCards();
   if (S.options.view === "table") renderTable();
+  if (S.options.view === "map") renderMap();
+  else stopMap();
 }
 
 /** The rows' tab that is showing, drawn again after the data changed. */
 function renderRows() {
+  syncMapTab();
   if (S.options.view === "table") renderTable();
   else if (S.options.view === "cards") renderCards(false);
+  else if (S.options.view === "map") renderMap();
 }
+
+// --- map ------------------------------------------------------------------------------------
+// The rows on a map (Retelens lib/maps.js MapView): a WKT column, or latitude and longitude columns, drawn over an
+// open OpenStreetMap basemap read as PMTiles; a column of .pmtiles URLs (a raster such as an elevation model, or
+// vector tiles) drawn under them as layers. It shows the rows the table's search and column filters let through.
+// The basemap and the layers are fetched by HTTP Range from the sites this view declares (src/views.mjs).
+
+/** Whether the rows have something to map: a geometry, a position, or a layer. */
+function hasMap() {
+  const r = richModel();
+  const M = window.RetelensMaps;
+  return !!(M.geoColumns(r.data.vars, r.model.rows) || M.layerUrls(r.model.rows, r.data.vars).length);
+}
+
+/** The Map tab is offered when the rows have something to map (or Claude asked for it). */
+function syncMapTab() {
+  const b = document.querySelector('.tabs button[data-tab="map"]');
+  if (b) b.hidden = S.options.view !== "map" && !hasMap();
+}
+
+function stopMap() {
+  S.map?.destroy();
+  S.map = null;
+}
+
+function renderMap() {
+  stopMap();
+  const r = richModel();
+  const m = r.model;
+  m.q = $("table-filter").value.trim().toLowerCase();
+  m.changed();
+  S.map = window.RetelensMaps.MapView(m.viewRows(), r.data.vars, { short: r.short });
+  $("map").replaceChildren(S.map.el);
+}
+
+const renderMapIfShown = () => S.options.view === "map" && renderMap();
 
 // --- cards --------------------------------------------------------------------------------
 // One card per row of the table, as the playground's Cards output does: the fields
@@ -1414,16 +1558,17 @@ function stopCards() {
 
 /** The card view's fields: the table's columns, and how each is drawn. */
 function renderCards(reset) {
-  const { vars, rows } = tableData();
+  richModel(); // the columns' names from the query's hints
+  const { vars, rows, terms } = tableData();
   const q = $("cards-filter").value.trim().toLowerCase();
-  const found = q ? rows.filter((r) => vars.some((v) => String(r[v] ?? "").toLowerCase().includes(q))) : rows;
+  const found = rows.map((r, i) => [r, terms?.[i]]).filter(([r]) => !q || vars.some((v) => String(r[v] ?? "").toLowerCase().includes(q)));
   const c = S.cards;
   if (reset) c.shown = Cards.CARDS_FIRST;
   const n = Cards.cardsShown(found.length, c.shown);
   stopCards();
   const types = S.options.card_fields ?? {};
   const grid = $("cards-grid");
-  grid.replaceChildren(...found.slice(0, n).map((row) => cardElement(vars, row, types)));
+  grid.replaceChildren(...found.slice(0, n).map(([row, term]) => cardElement(vars, row, types, term)));
   grid.hidden = !found.length;
   $("cards-count").textContent = `${found.length} of ${rows.length} cards${found.length > Cards.CARDS_MAX ? ` (first ${Cards.CARDS_MAX} drawn)` : ""}`;
   const more = $("cards-more");
@@ -1444,24 +1589,29 @@ const el = (tag, className, text) => {
 
 const prettyName = (v) => String(v).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/^./, (ch) => ch.toUpperCase());
 
-function cardElement(vars, row, types) {
+function cardElement(vars, row, types, terms) {
   const card = el("article", "rcard");
   card.tabIndex = 0;
   card.dataset.first = row[vars[0]] ?? "";
   const fields = Cards.cardFields(vars, row, types);
-  for (const f of fields) card.append(fieldElement(f));
+  for (const f of fields) card.append(fieldElement(f, terms?.[f.name]));
   if (!fields.length) card.append(el("div", "cf-v", "(empty row)"));
   card.setAttribute("aria-label", trunc(String(row[vars.find((v) => row[v]) ?? ""] ?? "card"), 80));
   return card;
 }
 
-function fieldElement(f) {
+function fieldElement(f, term) {
   const wrap = el("div", "cf");
-  const key = el("div", "cf-k", prettyName(f.name));
-  key.title = f.name.startsWith("?") ? f.name : `?${f.name}`;
+  const info = S.rich.colInfo?.[f.name];
+  const key = el("div", "cf-k", info?.label || prettyName(f.name));
+  key.title = (f.name.startsWith("?") ? f.name : `?${f.name}`) + (info?.note ? ` — ${info.note}` : "");
   const value = el("div", "cf-v");
   wrap.append(key, value);
-  if (Cards.isMedia(f.type)) {
+  if (Cards.isRich(f.type)) {
+    // a IIIF manifest's pictures, a geometry's map, Markdown, a map layer: the Retelens cells
+    value.classList.add("cf-rich");
+    value.append(window.RetelensCells.render(term ?? textTerm(f.value), f.type, { short: S.rich.short ?? ((x) => x) }, { card: true }));
+  } else if (Cards.isMedia(f.type)) {
     value.classList.add("cf-media");
     const slot = el("div", "media-slot", f.type === "model3d" ? "3D" : f.type);
     slot.dataset.kind = f.type;
@@ -1747,6 +1897,8 @@ function applyTheme(redraw = true) {
   const chosen = THEMES[S.options.theme] ? S.options.theme : "auto";
   const system = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   document.documentElement.dataset.theme = chosen === "auto" ? (S.host.theme ?? system) : chosen;
+  document.documentElement.classList.toggle("dark", document.documentElement.dataset.theme === "dark"); // Retelens' styles
+  if (S.options.view === "map") renderMap(); // the basemap has a light and a dark style
   const [icon, title] = THEMES[chosen];
   $("theme").textContent = icon;
   $("theme").title = `${title} — click to change`;
@@ -1948,6 +2100,24 @@ function wire() {
   });
 
   $("table-filter").addEventListener("input", debounce(renderTable, 150));
+  $("table-clear").addEventListener("click", () => {
+    const m = richModel().model;
+    for (const v of m.activeCols()) m.setFilter(v, null);
+    renderTable();
+  });
+  // A web link drawn by the Retelens cells (in the table, the cards, a map popup or a picture's dialog) opens
+  // through the host, as every link here does: the sandbox lets nothing navigate on its own.
+  document.addEventListener(
+    "click",
+    (e) => {
+      const a = e.target.closest?.("a[href]");
+      if (!a || a.hasAttribute("data-open") || !webUrl(a.getAttribute("href"))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openUrl(a.getAttribute("href")).catch((error) => setNote(error.message));
+    },
+    true,
+  );
   $("rows").addEventListener("click", (e) => {
     const th = e.target.closest("th");
     if (th) {

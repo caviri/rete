@@ -46,7 +46,23 @@ export const BUNDLED = [
   ["three", "3D models in the card view"],
   ["lit", "3D models in the card view"],
   ["@monogrid/gainmap-js", "3D models in the card view"],
+  ["leaflet", "the Map tab"],
+  ["protomaps-leaflet", "the Map tab: vector tiles drawn on canvas"],
+  ["pmtiles", "the Map tab: PMTiles archives read by HTTP Range"],
+  ["@mapbox/point-geometry", "the Map tab"],
+  ["@mapbox/vector-tile", "the Map tab"],
+  ["pbf", "the Map tab"],
+  ["potpack", "the Map tab"],
+  ["rbush", "the Map tab"],
+  ["quickselect", "the Map tab"],
+  ["color2k", "the Map tab"],
+  ["@protomaps/basemaps", "the Map tab: the basemap's style"],
 ];
+
+// The result cells, column statistics, query hints and maps of Retelens (clients/chrome/lib): one copy, bundled
+// into this page as they are. The map libraries (Leaflet, protomaps-leaflet, pmtiles) ride along as text, like the
+// 3D viewer, and start when the Map tab first opens (src/view/app.js: RetelensHost.loadMapKit).
+export const RETELENS = join(repo, "clients", "chrome", "lib");
 
 export function packageOf(name) {
   const at = [join(here, "node_modules", name), ...BUNDLED.map(([p]) => join(here, "node_modules", p, "node_modules", name))]
@@ -123,8 +139,22 @@ export async function buildViewHtml(about) {
     write: false,
     legalComments: "none",
   });
+  const mapkit = await build({
+    entryPoints: [join(RETELENS, "mapkit", "src", "index.js")],
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    target: "es2020",
+    minify: true,
+    write: false,
+    charset: "ascii",
+    legalComments: "none",
+    loader: { ".css": "text" },
+    nodePaths: [join(here, "node_modules")], // the packages are this package's dependencies (package.json)
+  });
   const view = await build({
     entryPoints: [join(here, "src", "view", "app.js")],
+    nodePaths: [join(here, "node_modules")],
     bundle: true,
     platform: "browser",
     format: "iife",
@@ -135,7 +165,8 @@ export async function buildViewHtml(about) {
     define: { __RETE_ABOUT__: JSON.stringify(about) },
   });
   return readFileSync(join(here, "src", "view", "index.html"), "utf8")
-    .replace("/*STYLE*/", () => readFileSync(join(here, "src", "view", "style.css"), "utf8"))
+    .replace("/*STYLE*/", () => ["rl-common.css", "rl-rich.css"].map((f) => readFileSync(join(RETELENS, f), "utf8")).join("\n") + "\n" + readFileSync(join(here, "src", "view", "style.css"), "utf8"))
+    .replace("/*MAPKIT*/", () => escapeScript(mapkit.outputFiles[0].text))
     .replace("/*MODELVIEWER*/", () => escapeScript(viewer.outputFiles[0].text))
     .replace("/*SCRIPT*/", () => escapeScript(view.outputFiles[0].text));
 }

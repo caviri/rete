@@ -100,6 +100,46 @@ beside it. It stays a graph: select, hover, pan and zoom work as in the other
 layouts. `options.layout: "hive"`, `hive_axes`, `hive_order`; the arithmetic
 is `src/view/hive.js`.
 
+### Table, map and query hints
+
+The rows are drawn by the same code as the [Retelens](../chrome) browser
+extension: `clients/chrome/lib/` (cells, column statistics, hints, maps),
+bundled into the page as it is.
+
+- **Table.** Each value is drawn for what it is: a picture as a thumbnail, a
+  IIIF manifest as its first page, a WKT geometry as a small map with its
+  coordinates (a click opens it on a map), audio and video as players, a web
+  address as a link. Under each column's name, a chart of its values, as
+  Hugging Face's dataset viewer draws them: a histogram for numbers and dates,
+  the values with their counts when there are few, the namespaces of IRIs, the
+  lengths of text, and the share left empty. A click on a bar keeps the rows
+  it counts (**Clear filters** undoes it); the column name sorts. The search
+  box, the column filters and the sort apply to the table and to the map.
+- **Map.** Offered when the rows have a WKT column, latitude and longitude
+  columns, or `.pmtiles` addresses. The shapes are drawn over an open
+  OpenStreetMap basemap read as PMTiles from `data.graphplaza.com`
+  (Protomaps, zoom 0 to 12, light or dark with the view); a click on a shape
+  shows its row. A column of `.pmtiles` addresses (a raster such as an
+  elevation model, or vector tiles) is drawn under the shapes as layers, each
+  with a switch. Leaflet, protomaps-leaflet and pmtiles ride in the page as
+  text, like the 3D viewer, and start when a map is first shown; raster tiles
+  are painted on a canvas, so a policy that refuses `blob:` images does not
+  stop them.
+- **Query hints.** A query's comment lines can say how to show it, and every
+  SPARQL engine ignores them: `# view: map` (or `table`, `cards`,
+  `graph`) opens that tab when Claude does not name one, and
+  `# column ?km2: Area (km²) — of the polygon` names a column in the table
+  and the cards, the note shown on hover.
+  [Hints in example queries](../../docs/dataset-card-reference.md#hints-in-example-queries)
+  has the convention; the example queries of the
+  [Antequera graph](https://huggingface.co/datasets/katospiegel/rete-graphs)
+  use it.
+
+`options.view: "map"` opens the view on the map. The server sends the rows
+with their terms typed (`table.terms`: IRI, literal, datatype, language), so
+numbers, dates and geometries are known for what they are, and the query text
+with them (`table.query`) for its hints.
+
 ### Cards
 
 The **Cards** tab draws the rows of the table, one card per row, as the
@@ -107,14 +147,16 @@ playground's Cards output does: the fields stacked, in a masonry on a wide page
 and in one column on a narrow one. A card is a row, so clicking one selects its
 entity in the graph. **⚙ Fields** sets how each column is drawn, with the
 playground's field types that make sense in an offline page: Auto, Text, Link,
-Button, Image, Audio, Video, 3D, PDF (a link) and Number. Auto looks at the value
-only (a file extension, or a Commons `Special:FilePath` address, never a dataset
-or a predicate): `.jpg` `.png` `.svg` … is an image, `.mp3` … audio, `.mp4`
-`.webm` … video, `.glb` `.gltf` a 3D model (drawn with
+Button, Image, IIIF, Map, Audio, Video, 3D, PDF (a link), Markdown, Map layer and
+Number. Auto looks at the value only (a file extension, or a Commons
+`Special:FilePath` address, never a dataset or a predicate): `.jpg` `.png`
+`.svg` … is an image, a IIIF manifest address its pictures, a WKT geometry a
+small map, a `.pmtiles` address a map layer (a button to the Map tab), `.mp3` …
+audio, `.mp4` `.webm` … video, `.glb` `.gltf` a 3D model (drawn with
 [`<model-viewer>`](https://modelviewer.dev), built into the page and started
 the first time a model is shown), `.pdf` a link, another web address a link, the
-rest text. IIIF, maps, molecular structures, PDF.js and page previews are not
-in the extension. `options.view: "cards"` and `options.card_fields`
+rest text. IIIF, maps and Markdown are drawn by the Retelens cells; molecular
+structures, PDF.js and page previews are not in the extension. `options.view: "cards"` and `options.card_fields`
 (`{ "photo": "image" }`) let Claude open the view on cards and set the fields;
 `graph_view_state` reports what the user set.
 
@@ -129,9 +171,12 @@ has an **Open … ↗** link under it, which opens through the host.
 policy the host builds from what the extension declares in `_meta.ui.csp`; a
 host enforces exactly those origins, so a site that is not declared cannot be
 reached. The extension declares `resourceDomains` (pictures, audio, video) and
-`connectDomains` (the fetch of a 3D model) for Wikimedia, graphplaza.com,
-Hugging Face, archive.org and GitHub user content (`MEDIA_DOMAINS` in
-`src/views.mjs`). `RETE_VIEW_MEDIA_DOMAINS` replaces the list for a build or a
+`connectDomains` (the fetch of a 3D model, a IIIF manifest, the basemap and
+map layers, read by HTTP Range) for Wikimedia, graphplaza.com (the basemap),
+Hugging Face (`*.hf.co` included, where its files redirect), archive.org and
+GitHub user content (`MEDIA_DOMAINS` in `src/views.mjs`). A IIIF manifest or a
+map layer on another site does not load in Claude; the cell says so and links
+to it. `RETE_VIEW_MEDIA_DOMAINS` replaces the list for a build or a
 server process (comma separated CSP origins, `https://*.example.org` for
 subdomains, `https:` for any https site, `none` for no network at all); a 3D
 model also needs the site to send CORS headers, and a Draco-compressed model

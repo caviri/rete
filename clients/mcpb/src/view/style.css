@@ -63,7 +63,15 @@ label.chk:has(input:disabled) { color: var(--muted); }
 main { flex: 1; display: flex; min-height: 0; position: relative; }
 #graph { flex: 1; min-width: 0; position: relative; }
 #table { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-#table[hidden], #graph[hidden], #cards[hidden] { display: none; }
+#table[hidden], #graph[hidden], #cards[hidden], #map[hidden] { display: none; }
+#map { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#map .rl-map { flex: 1; height: auto; min-height: 240px; }
+/* the view's accent in light and dark (Retelens' own .dark rule is more specific than a plain [data-retelens]) */
+#table, #cards, #map, :root:root .rl-modal, :root:root .rl-zoom { --rl-acc: var(--accent); }
+th .th-name { white-space: nowrap; }
+th .rl-stat { margin-top: 4px; cursor: default; }
+td .rl-thumb { max-height: 56px; }
+.cf-rich { overflow: hidden; }
 .table-bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 #table-count { color: var(--muted); }
 .table-wrap { flex: 1; overflow: auto; }
@@ -197,3 +205,16 @@ details.menu-right .menu-body { left: auto; right: 0; max-height: 60vh; overflow
 #hive-axes line { stroke: var(--edge); stroke-width: 1.5; stroke-linecap: round; opacity: .55; }
 #hive-axes text { fill: var(--muted); font-size: 11px; text-anchor: middle; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
 label.hive-opt[hidden] { display: none; }
+
+/* The few Tailwind classes the Retelens cells and dialogs carry (Hugging Face and the Retelens viewer define them),
+   mapped to this page's colours, which follow its light and dark themes. */
+.ml-1 { margin-left: 4px; }
+.text-sm { font-size: 13px; }
+.text-gray-400, .text-gray-500 { color: var(--muted); }
+.text-gray-900, .dark\:text-gray-100 { color: var(--fg); }
+.text-blue-600, .dark\:text-blue-400 { color: var(--accent); }
+.hover\:underline:hover { text-decoration: underline; }
+.border, .dark\:border-gray-800 { border: 1px solid var(--border); }
+.rounded-lg { border-radius: 8px; }
+.bg-white, .dark\:bg-gray-950 { background: var(--bg); }
+.shadow-lg { box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }

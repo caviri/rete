@@ -71,6 +71,16 @@ the worker (`tiles` op: kind 7 or an unknown kind, at least 16 KiB, PMTiles magi
 (`readRange` op, so the chunk cache and 429 handling apply); the Map view draws it under the result and draws the
 features whose properties match a value of the result on top.
 
+## Shared with the Claude extension and the file explorer
+
+`lib/octicons.js`, `format.js`, `results.js`, `cells.js`, `stats.js`, `hints.js` and `maps.js` (with
+`lib/mapkit/src`, `rl-common.css`, `rl-rich.css`) are also bundled into the graph view of the Claude Desktop extension
+by `clients/mcpb/view-build.mjs`, and through it into the file explorer and the desktop app. They stay free of
+`chrome.*` except where a host can answer first: `window.RetelensHost.loadMapKit()` starts the map library a page
+carries, `RetelensHost.openLayer(url, name)` is what a *Map layer* button does, `window.RetelensTheme.tokens()` says
+light or dark. `hints.js` sets `globalThis.RetelensHints`, so the extension's server reads hints in Node. A change here
+runs the extension's tests too (`.github/workflows/mcpb-test.yml`).
+
 ## Query hints, layers, the example
 
 `lib/hints.js` reads a query's comments: the title (first line), a description (more plain lines), `# view:` (table,

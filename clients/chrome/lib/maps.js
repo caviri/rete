@@ -18,6 +18,8 @@
     if (window.RetelensMapKit) return Promise.resolve(withCss(window.RetelensMapKit));
     kitP = kitP || new Promise((resolve, reject) => {
       const done = () => (window.RetelensMapKit ? resolve(withCss(window.RetelensMapKit)) : reject(new Error("the map library did not load")));
+      // a page that carries the library itself (the graph view in Claude and in the file explorer) starts it here
+      if (window.RetelensHost && window.RetelensHost.loadMapKit) { Promise.resolve(window.RetelensHost.loadMapKit()).then(done, reject); return; }
       if (EXT_PAGE) {
         const s = document.createElement("script");
         s.src = chrome.runtime.getURL("lib/mapkit/mapkit.js");
@@ -73,6 +75,30 @@
     light: { water: "#e4ebf1", land: "#f8f7f4", border: ["#a59e93", "#cbc5bb", "#e0dbd3"], dot: "#6b6f76", text: "#4b5563", halo: "#ffffff" },
     dark: { water: "#0e151d", land: "#1b212a", border: ["#5a6474", "#3b4451", "#2c333d"], dot: "#a3acb7", text: "#c4cbd4", halo: "#0e151d" },
   };
+  // Raster tiles of a PMTiles archive, drawn on canvas: each tile is decoded with createImageBitmap and painted, so
+  // no blob: or data: URL is made (pmtiles' own leafletRasterLayer sets img.src to a blob: URL, which a strict content
+  // security policy refuses). Deeper zooms than the archive's are the same tiles scaled (Leaflet's maxNativeZoom).
+  function rasterLayer(kit, pm, o) {
+    const L = kit.L;
+    const Layer = L.GridLayer.extend({
+      createTile(coords, done) {
+        const c = document.createElement("canvas");
+        const size = this.getTileSize();
+        c.width = size.x; c.height = size.y;
+        pm.getZxy(coords.z, coords.x, coords.y).then(async (r) => {
+          if (r && r.data) {
+            const bmp = await createImageBitmap(new Blob([r.data]));
+            c.getContext("2d").drawImage(bmp, 0, 0, size.x, size.y);
+            if (bmp.close) bmp.close();
+          }
+          done(null, c);
+        }).catch((e) => done(e, c));
+        return c;
+      },
+    });
+    return new Layer({ attribution: o.attribution, opacity: o.opacity == null ? 1 : o.opacity, maxNativeZoom: o.maxNativeZoom, maxZoom: o.maxZoom });
+  }
+
   // A quiet style for any vector archive, so the data drawn on top stands out: polygon layers ordered by feature
   // count (the archive's tilestats), the coarsest filled as land from z0, the next ones as borders from z3, z6, z8;
   // line layers as thin lines; point layers as dots from z2 and labels from z3 (a name field; with a population-like
@@ -80,7 +106,7 @@
   function basemapLayer(kit, t, dark) {
     const { P, pmtiles } = kit;
     const attribution = t.url === DEFAULT_BASEMAP ? DEFAULT_ATTR : t.meta && t.meta.attribution ? escHtml(String(t.meta.attribution).replace(/<[^>]*>/g, "")) : "PMTiles";
-    if (t.header.tileType !== pmtiles.TileType.Mvt) return pmtiles.leafletRasterLayer(t.pm, { attribution, maxNativeZoom: t.header.maxZoom, maxZoom: 20 });
+    if (t.header.tileType !== pmtiles.TileType.Mvt) return rasterLayer(kit, t.pm, { attribution, maxNativeZoom: t.header.maxZoom, maxZoom: 20 });
     const layers = vectorLayers(t);
     const ids = layers.map((l) => l.id);
     if (ids.includes("earth") && ids.includes("water")) return P.leafletLayer({ url: t.pm, flavor: dark ? "dark" : "light", lang: "en", attribution, maxDataZoom: t.header.maxZoom });
@@ -136,7 +162,7 @@
     const { P, pmtiles } = kit;
     const attribution = t.meta && t.meta.attribution ? escHtml(String(t.meta.attribution).replace(/<[^>]*>/g, "")) : "PMTiles";
     if (t.header.tileType !== pmtiles.TileType.Mvt) {
-      return pmtiles.leafletRasterLayer(t.pm, { attribution, maxNativeZoom: t.header.maxZoom, maxZoom: Math.max(t.header.maxZoom + 3, 18) });
+      return rasterLayer(kit, t.pm, { attribution, maxNativeZoom: t.header.maxZoom, maxZoom: Math.max(t.header.maxZoom + 3, 18) });
     }
     const layers = vectorLayers(t);
     const ids = layers.map((l) => l.id);
@@ -353,7 +379,7 @@
           if (t.meta && t.meta.name) label.lastChild.textContent = "Layer: " + String(t.meta.name).slice(0, 80);
           const attribution = t.meta && t.meta.attribution ? escHtml(String(t.meta.attribution).replace(/<[^>]*>/g, "")) : "";
           const layer = t.header.tileType !== kit.pmtiles.TileType.Mvt
-            ? kit.pmtiles.leafletRasterLayer(t.pm, { attribution, opacity: 0.85, maxNativeZoom: t.header.maxZoom, maxZoom: 20 })
+            ? rasterLayer(kit, t.pm, { attribution, opacity: 0.85, maxNativeZoom: t.header.maxZoom, maxZoom: 20 })
             : pmtilesLayer(kit, t, { dark: isDark(el) });
           layer.addTo(m.map);
           sw.addEventListener("change", () => (sw.checked ? layer.addTo(m.map) : m.map.removeLayer(layer)));
@@ -453,5 +479,5 @@
     return { el, destroy: () => m && m.destroy() };
   }
 
-  window.RetelensMaps = { ensure, MapView, geoColumns, openGeometry, PmtilesViewer, engineSource, openPmtiles, pmtilesLayer };
+  window.RetelensMaps = { ensure, MapView, geoColumns, layerUrls, openGeometry, PmtilesViewer, engineSource, openPmtiles, pmtilesLayer };
 })();

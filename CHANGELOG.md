@@ -7,6 +7,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The graph view in Claude Desktop, the file explorer and the desktop app
+  draws rows as Retelens does.** The table draws pictures, IIIF manifests,
+  geometries as small maps and links in its cells, with a chart of each
+  column's values under its name (a click on a bar filters the rows); cards
+  gain IIIF, Map, Markdown and Map layer fields; a new Map tab draws WKT
+  geometries or latitude and longitude over the open OpenStreetMap basemap,
+  with `.pmtiles` columns as layers. A query's hints choose the tab
+  (`# view: map`, also `graph_view`'s `options.view: "map"`) and name the
+  columns. In the file explorer and the desktop app, a SPARQL result opens on
+  Graph, Table, Cards or Map.
 - **Retelens, a browser extension for Chrome and Brave** (`clients/chrome`). It opens `.rete` files
   where they are hosted instead of downloading them: on Hugging Face datasets
   and buckets, GitHub and Zenodo inside the page, in each site's look, and any
