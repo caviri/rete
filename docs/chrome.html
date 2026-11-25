@@ -741,8 +741,12 @@ name the <code>.rete</code> file. It comes first in the list of graphs, with its
 <p>A <code>.pmtiles</code> link (or file dropped on the viewer) opens as a map: the archive's
 header and metadata next to it (tile type, zooms, bounds, attribution), each
 vector layer in its own colour with its fields, and the features under a click.
-Raster archives are drawn as images; an archive in the Protomaps basemap layout
-gets the Protomaps style. Tiles are read by HTTP <code>Range</code>, a few at a time.</p>
+Raster archives are drawn as images, over the open basemap; an archive in the
+Protomaps basemap layout gets the Protomaps style. Tiles are read by HTTP
+<code>Range</code>, a few at a time.</p>
+<p>The same map replaces the "binary file" box on a <code>.pmtiles</code> file page: a
+Hugging Face dataset or bucket file, and a GitHub file (one kept with Git LFS is
+read from its <code>media.githubusercontent.com</code> address, where its bytes are).</p>
 <p>A <code>.rete</code> file can also carry a PMTiles archive as a section of its own
 (<a href="https://github.com/caviri/rete/blob/main/scripts/embed_tiles.py"><code>scripts/embed_tiles.py</code></a>,
 as in the playground's <code>geoadmin-tiles</code>). The Map view then draws those tiles
