@@ -186,3 +186,21 @@ ol.rl-md-list { list-style: decimal; }
 .rl-qcols { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 1px 10px; margin: 6px 0 2px; font-size: 12px; }
 .rl-qcols dt { font-weight: 600; }
 .rl-qcols dd { margin: 0; opacity: .75; }
+
+/* the file chooser (lib/explorer.js renderChooser): several graphs on a page, the user picks one */
+.rl-chooser { padding: 14px 16px; font-size: 13px; }
+.rl-choose-q { font-weight: 600; font-size: 14px; }
+.rl-choose-note { margin: 2px 0 10px; font-size: 12px; }
+.rl-choose-filter { font: inherit; font-size: 12px; color: inherit; background: transparent; border: 1px solid var(--rl-line); border-radius: 6px; padding: 4px 8px; margin-bottom: 8px; width: min(320px, 100%); }
+.rl-choices { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rl-line); border-radius: 8px; overflow: hidden; }
+.rl-choice + .rl-choice { border-top: 1px solid var(--rl-line); }
+.rl-choice[hidden] { display: none; }
+.rl-choice-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; }
+.rl-choice-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-choice-file { font-weight: 600; }
+.rl-choice-open { font-weight: 600; border-color: var(--rl-acc); color: var(--rl-acc); }
+.rl-choice-info { padding: 2px 12px 10px; background: var(--rl-soft); }
+.rl-choice-info[hidden] { display: none; }
+.rl-choice-title { font-weight: 600; margin: 6px 0 2px; }
+.rl-choice-desc { max-height: 220px; overflow: auto; font-size: 12.5px; }
+.rl-choice-facts { margin-top: 6px; font-size: 12px; }

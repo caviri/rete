@@ -67,7 +67,7 @@
     const first = defaultFile(card, paths);
     const order = rank(paths);
     if (first) order.sort((a, b) => (b === first) - (a === first));
-    return order.map((p) => { const src = resolveDataset(ns, name, "main", p); return { path: p, src, label: p, download: src + "?download=true" }; });
+    return order.map((p) => { const src = resolveDataset(ns, name, "main", p); return { path: p, src, label: p, download: src + "?download=true", default: p === first }; });
   };
 
   // HF's viewer "works" only if it renders a real data table (never decide from its message or status kind)

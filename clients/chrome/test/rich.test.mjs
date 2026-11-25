@@ -57,6 +57,12 @@ ex:a schema:name "Alpha" ; schema:image <${base}/img/a.png> ; ex:manifest <${bas
 ex:b schema:name "Beta" ; schema:image <${base}/img/b.png> ; geo:asWKT "POLYGON((-10 -10, 10 -10, 10 10, -10 10, -10 -10))"^^geo:wktLiteral ; ex:note "plain" ; ex:place "Elsewhere" .`;
   const built = Buffer.from(await rete.build(ttl, "ttl"));
   files.set("/rich.rete", { body: built, type: "application/octet-stream" });
+  const otherNt = [
+    '<http://example.org/x> <http://schema.org/name> "Other" .',
+    '<http://example.org/y> <http://schema.org/name> "Another" .',
+    "<http://example.org/x> <http://example.org/knows> <http://example.org/y> .",
+  ].join("\n") + "\n";
+  files.set("/other.rete", { body: Buffer.from(await rete.build(otherNt, "nt")), type: "application/octet-stream" });
   files.set("/test.pmtiles", { body: pm, type: "application/octet-stream" });
   files.set("/img/a.png", { body: png(64, 48, [42, 111, 176]), type: "image/png" });
   files.set("/img/b.png", { body: png(48, 64, [200, 100, 30]), type: "image/png" });
@@ -237,6 +243,30 @@ test("a .pmtiles URL opens the map viewer with its layers", async () => {
   await page.locator(".rl-popup", { hasText: "Testland" }).waitFor({ timeout: 10000 });
   await shot(page, "pmtiles");
   assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test("several files: nothing opens until the user picks one; About reads a file's card", async () => {
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => errors.push(String(e)));
+  const q = new URLSearchParams([["src", `${base}/rich.rete`], ["name", "rich.rete"], ["src", `${base}/other.rete`], ["name", "other.rete"], ["host", "url"]]);
+  await page.goto(`chrome-extension://${extId}/viewer.html?` + q);
+  await page.waitForSelector("[data-rl=chooser]", { timeout: 60000 });
+  assert.match(await page.locator(".rl-choose-q").textContent(), /has 2 graphs. Which one do you want to open?/);
+  assert.equal(await page.locator("[data-rl=choice]").count(), 2);
+  assert.deepEqual(await page.evaluate(() => [window.__retelens.session.idx, window.__retelens.session.meta]), [-1, null], "no file opened");
+  // About reads only the card: the second file has 3 statements
+  await page.locator("[data-rl=choice][data-name='other.rete']").locator("[data-rl=about]").click();
+  await page.locator("[data-rl=choice][data-name='other.rete']").locator("[data-rl=choice-info]", { hasText: "statements" }).waitFor({ timeout: 30000 });
+  assert.match(await page.locator("[data-rl=choice][data-name='other.rete']").locator("[data-rl=choice-info]").textContent(), /3 statements/);
+  assert.deepEqual(await page.evaluate(() => [window.__retelens.session.idx, window.__retelens.session.meta]), [-1, null], "still nothing opened");
+  await shot(page, "chooser");
+  // Open: that file, its first rows
+  await page.locator("[data-rl=choice][data-name='other.rete']").locator("[data-rl=open-choice]").click();
+  await page.waitForFunction(() => window.__retelens.session.idx === 1 && !!window.__retelens.session.meta, null, { timeout: 60000 });
+  await page.waitForSelector("table td", { timeout: 60000 });
+  assert.equal(await page.locator("[data-rl=chooser]").count(), 0);
+  assert.match(await page.locator("body").textContent(), /other.rete/);
   await page.close();
 });
 

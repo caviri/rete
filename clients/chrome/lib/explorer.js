@@ -365,7 +365,7 @@
       const s = this.s;
       const files = s.files;
       const quads = s.meta?.info?.quads;
-      const g = this.pill(`Graph (${files.length})`, s.file?.label || "-", quads != null ? num(quads) + " quads" : "…",
+      const g = this.pill(`Graph (${files.length})`, this.choosing ? "Choose a graph" : s.file?.label || "-", this.choosing ? "" : quads != null ? num(quads) + " quads" : "…",
         files.map((f, i) => [String(i), f.label, i === s.idx]), (v) => this.switchFile(+v));
       let qLine1, qLine2 = this.result && this.result.length != null ? num(this.result.length) + (this.result.form === "SELECT" ? " rows" : " triples") : this.result?.form === "ASK" ? "ASK" : "…";
       const opts = s.examples.map((e, i) => [String(i), e.title, this.q === i]);
@@ -469,10 +469,14 @@
     }
 
     // --- lifecycle
-    async start() {
+    // chosen: the file the user picked in the chooser. Several files and none named in the URL: ask which one first,
+    // nothing is opened before (renderChooser).
+    async start(chosen) {
       const s = this.s;
       const want = this.params.get("file");
-      let i = want ? s.files.findIndex((f) => f.path === want) : 0;
+      if (chosen != null) this.chosenIdx = chosen;
+      if (this.chosenIdx == null && !want && s.files.length > 1) return this.renderChooser();
+      let i = this.chosenIdx != null ? this.chosenIdx : want ? s.files.findIndex((f) => f.path === want) : 0;
       if (i < 0) i = 0;
       const v = this.params.get("view");
       if (v === "table" || v === "cards" || v === "graph" || v === "map") { this.view = v; this.explicitView = true; }
@@ -503,8 +507,90 @@
       this.s.tiles().then((t) => { if (t && this.s.file === file) { this.hasTiles = true; this.renderToolbar(); } });
     }
 
+    // ---- the file chooser: the files, each with its card on request (About reads only the card: a few kB)
+    renderChooser() {
+      const s = this.s, files = s.files;
+      this.choosing = true;
+      this.renderPills();
+      if (this.sideBody) this.renderSide();
+      const where = this.skinName === "github" ? "repository" : this.skinName === "zenodo" ? "record" : files.some((f) => /huggingface\.co\/buckets\//.test(f.src || "")) ? "bucket" : "dataset";
+      const list = h("ul", { class: "rl-choices", "data-rl": "choices" });
+      const filter = files.length > 8 ? h("input", { type: "search", placeholder: "Filter the files", "aria-label": "Filter the files", class: "rl-choose-filter" }) : null;
+      const box = h("div", { class: "rl-chooser", "data-rl": "chooser" },
+        h("div", { class: "rl-choose-q" }, `This ${where} has ${files.length} graphs. Which one do you want to open?`),
+        h("div", { class: "rl-muted rl-choose-note" }, "No graph is opened until you choose one. About reads only that file's card (a few kB): its title, description, licence and size."),
+        filter, list);
+      // the default file first, then by path (the session keeps its own order: indexes stay the files')
+      const order = files.map((f, i) => [f, i]).sort((a, b) => (b[0].default ? 1 : 0) - (a[0].default ? 1 : 0) || String(a[0].label || a[0].path).localeCompare(String(b[0].label || b[0].path), undefined, { numeric: true }));
+      for (const [f, i] of order) list.append(this.choiceRow(f, i));
+      if (filter) filter.addEventListener("input", () => {
+        const w = filter.value.trim().toLowerCase();
+        for (const li of list.children) li.hidden = !!w && !li.dataset.name.includes(w);
+      });
+      this.area.textContent = "";
+      this.area.append(box);
+      // the file the dataset names as its default, its card shown already
+      if (order.length && order[0][0].default) list.children[0].querySelector("[data-rl=about]").click();
+    }
+    choiceRow(f, i) {
+      const s = this.s;
+      const parts = String(f.label || f.path || "file").split("/");
+      const name = parts.pop(), folder = parts.join("/");
+      const info = h("div", { class: "rl-choice-info", "data-rl": "choice-info", hidden: true });
+      const sizeEl = h("span", { class: "rl-muted rl-num" }, f.size ? bytes(f.size) : "");
+      const about = h("button", { type: "button", class: "rl-btnlink", "data-rl": "about", "aria-expanded": "false" }, "About");
+      const open = h("button", { type: "button", class: "rl-btnlink rl-choice-open", "data-rl": "open-choice" }, "Open");
+      const li = h("li", { class: "rl-choice", "data-rl": "choice", "data-name": String(f.label || f.path || "").toLowerCase() },
+        h("div", { class: "rl-choice-row" },
+          h("div", { class: "rl-choice-name" }, h("span", { class: "rl-choice-file" }, name), folder ? h("span", { class: "rl-muted" }, " " + folder + "/") : null,
+            f.default ? h("span", { class: "rl-typetag", title: "The file this dataset's README names as its default (configs: default: true)" }, "default") : null),
+          sizeEl, about, open),
+        info);
+      let read = null;
+      about.addEventListener("click", () => {
+        const show = info.hidden;
+        info.hidden = !show; about.setAttribute("aria-expanded", String(show));
+        if (!show || read) return;
+        if (!f.src) { info.append(h("div", { class: "rl-muted" }, "Open it to read its card.")); read = true; return; }
+        info.append(h("div", { class: "rl-muted" }, "Reading the card…"));
+        read = s.engine.peekCard(f.src).then((r) => {
+          info.textContent = "";
+          const c = r.card || {};
+          if (r.size && !f.size) sizeEl.textContent = bytes(r.size);
+          if (c.title) info.append(h("div", { class: "rl-choice-title" }, String(c.title)));
+          if (c.description) {
+            const md = window.RetelensCells.markdown(String(c.description).slice(0, 4000));
+            md.classList.add("rl-choice-desc");
+            info.append(md);
+          } else info.append(h("div", { class: "rl-muted" }, "This file's card has no description."));
+          const facts = [];
+          const n = c.quad_count != null ? c.quad_count : c.triple_count != null ? c.triple_count : r.info && r.info.quads;
+          if (n != null) facts.push(num(n) + " statements");
+          const terms = c.term_count != null ? c.term_count : r.info && r.info.terms;
+          if (terms != null) facts.push(num(terms) + " terms");
+          if (c.graph_count) facts.push(num(c.graph_count) + " named graphs");
+          if (c.examples) facts.push(c.examples + " example quer" + (c.examples === 1 ? "y" : "ies"));
+          if (c.license) facts.push("licence " + String(c.license));
+          if (c.source_date) facts.push("source " + String(c.source_date));
+          if (c.format_version != null) facts.push("format 0x0" + Number(c.format_version).toString(16));
+          if (facts.length) info.append(h("div", { class: "rl-muted rl-choice-facts" }, facts.join(" · ")));
+          const src = safeUrl(c.source);
+          if (src) info.append(h("div", { class: "rl-choice-facts" }, h("a", { href: src, class: "rl-msrc" }, "Source ↗")));
+          if (Array.isArray(c.keywords) && c.keywords.length) info.append(h("div", { class: "rl-qtags" }, ...c.keywords.slice(0, 12).map((k) => h("span", { class: "rl-qtag" }, String(k)))));
+        }, (e) => { info.textContent = ""; info.append(h("div", { class: "rl-err" }, "The card could not be read: " + String(e.message || e).slice(0, 200))); });
+      });
+      open.addEventListener("click", () => this.choose(i));
+      return li;
+    }
+    choose(i) {
+      this.choosing = false;
+      this.area.textContent = "";
+      return this.start(i);
+    }
+
     async switchFile(i) {
       const s = this.s;
+      if (this.choosing) return this.choose(i); // picked from the Graph menu while the chooser shows
       this.page = 1; this.q = 0; this.result = null; this.openError = null; this.model = null; this.colMenu.close(); this.fbar.update();
       this.gv && this.gv.destroy(); this.gv = null; this.mv && this.mv.destroy(); this.mv = null;
       this.area.textContent = ""; this.area.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Opening " + s.files[i].label + "…"));
@@ -792,6 +878,7 @@
       const b = this.sideBody, s = this.s;
       b.textContent = "";
       if (this.openError) { b.append(h("div", { class: "p-4 text-sm text-gray-500" }, "The file could not be opened.")); return; }
+      if (this.choosing) { b.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Choose a graph to see its example queries, its schema and its card.")); return; }
       if (!s.meta) { b.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Loading…")); return; }
       if (this.sideTab === "examples") {
         if (!s.examples.length) b.append(h("div", { class: "p-4 text-sm text-gray-500" }, "This file has no example queries."));

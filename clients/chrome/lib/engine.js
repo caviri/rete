@@ -48,6 +48,7 @@
     tiles() { return this.call("tiles"); }
     readRange(offset, length) { return this.call("readRange", { offset, length }); }
     meta() { return this.call("meta"); }
+    peekCard(url) { return this.call("peekCard", { url }); }
     examples() { return this.call("examples"); }
     schema() { return this.call("schema"); }
     run(query) { return this.call("run", { query }); }

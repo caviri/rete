@@ -157,6 +157,13 @@
     saveRecent(name, src);
     const desc = describe(src);
     if (/\.pmtiles$/i.test(src.split(/[?#]/)[0])) return startPmtiles(name, desc, false, null, src);
+    // several src parameters (?src=a&src=b, with as many name parameters): a set of files, chosen from first
+    const more = q.getAll("src").slice(1).filter((u) => safeUrl(u));
+    if (more.length) {
+      const names = q.getAll("name");
+      const list = [src, ...more].map((u, i) => { const nm = names[i] || decodeURIComponent(u.split("?")[0].split("/").pop() || "graph.rete"); return { path: nm, src: u, label: nm, download: describe(u).download }; });
+      return show(list.length + " graphs", { where: null, download: null }, false, list);
+    }
     show(name, desc, false, [{ path: name, src, label: name, download: desc.download }]);
   }
 

@@ -45,6 +45,14 @@ or [Zenodo record 24131107](https://zenodo.org/records/24131107).
 
 ## The viewer
 
+- **Several graphs.** When a dataset, repository, record or bucket has more
+  than one `.rete` file, Retelens opens none of them: it lists them and asks
+  which one to open. **About** shows a file's card (its title, description,
+  statements, licence, keywords) by reading only that card, a few kB; **Open**
+  opens it. The file the README names as its default (below) comes first,
+  marked, its card already shown; a box filters a long list. A link that
+  names a file (`?file=` in the Data Studio, a file row on Zenodo) opens that
+  one directly, and the Graph picker switches between them afterwards.
 - **Graph and Query pickers.** The query list shows each example's title,
   description and SPARQL, with Copy and *Edit in console*.
 - **Table, Cards, Graph, Map.** Search, per-column filters and sorting work on
@@ -109,9 +117,9 @@ every polygon and point computed from it). Its twelve example queries carry
 hints, so each opens in its view. Sources: REDIAM (Junta de Andalucía),
 OpenStreetMap, Wikidata and the Copernicus DEM, credited in the file's card.
 
-A dataset README chooses which file Retelens shows first the way it chooses
-Hugging Face's default subset: a `configs` entry with `default: true` whose
-`data_files` name the `.rete` file.
+A dataset README marks a default file the way it chooses Hugging Face's
+default subset: a `configs` entry with `default: true` whose `data_files`
+name the `.rete` file. It comes first in the list of graphs, with its card.
 
 ## PMTiles
 
