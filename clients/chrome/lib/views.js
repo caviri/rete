@@ -25,6 +25,9 @@
     return kinds.size > 2 ? "mixed" : [...kinds].join(" · ");
   }
   const typeFor = (opts, v) => (opts.types && opts.types[v]) || "auto";
+  // a column's name for people: the query's "# column ?v: Label — note" hint, else the variable prettified
+  const labelFor = (opts, v) => (opts.colInfo && opts.colInfo[v] && opts.colInfo[v].label) || C.prettyLabel(v);
+  const titleFor = (opts, v) => "?" + v + (opts.colInfo && opts.colInfo[v] && opts.colInfo[v].note ? " — " + opts.colInfo[v].note : "");
 
   // ------------------------------------------------------------------ table
   // opts: {model, hl, onSort(v), onFilter(button, v), maxHeight, types}. The header row sticks inside the box; the
@@ -38,7 +41,7 @@
       const forced = typeFor(opts, v) !== "auto";
       return h("th", { class: "h-full max-w-sm p-2 text-left relative w-auto" + (i ? " border-l dark:border-gray-800" : ""), "aria-sort": model && model.sort && model.sort.v === v ? (model.sort.dir === "asc" ? "ascending" : "descending") : null },
         h("div", { class: "flex min-w-0 items-center justify-between gap-1" },
-          model && opts.onSort ? UI.headerSort(model, v, opts.onSort, C.prettyLabel(v)) : h("span", { class: "min-w-0 truncate font-bold", title: "?" + v }, C.prettyLabel(v)),
+          model && opts.onSort ? UI.headerSort(model, v, opts.onSort, labelFor(opts, v), titleFor(opts, v)) : h("span", { class: "min-w-0 truncate font-bold", title: titleFor(opts, v) }, labelFor(opts, v)),
           model && opts.onFilter ? UI.filterButton(model, v, (btn) => opts.onFilter(btn, v)) : null),
         h("div", { class: "mb-2 whitespace-nowrap text-xs font-normal text-gray-500" }, h("span", null, typeOf(rows.map((r) => r[v]))),
           forced ? h("span", { class: "rl-typetag", title: "Shown as " + C.TYPE_LABEL[typeFor(opts, v)] + " (column menu)" }, C.TYPE_LABEL[typeFor(opts, v)]) : null),
@@ -96,7 +99,7 @@
     const cap = full ? rest.length : 8;
     const dl = h("dl", { "data-rl": "card-meta", class: "rl-fields text-gray-500 dark:text-gray-400" });
     for (const v of rest.slice(0, cap)) {
-      dl.append(h("div", { class: "rl-f" }, h("dt", { title: "?" + v }, C.prettyLabel(v)),
+      dl.append(h("div", { class: "rl-f" }, h("dt", { title: titleFor(opts, v) }, labelFor(opts, v)),
         h("dd", { class: "text-gray-900 dark:text-gray-100" }, C.render(row[v], typeFor(opts, v), ctx, { hl: opts.hl, card: true, eager: full, caption: titleText }))));
     }
     body.append(dl);

@@ -53,7 +53,22 @@
       return db - da || (a < b ? 1 : a > b ? -1 : 0);
     });
   }
-  const datasetFiles = (ns, name, paths) => rank(paths).map((p) => { const src = resolveDataset(ns, name, "main", p); return { path: p, src, label: p, download: src + "?download=true" }; });
+  // The dataset README can name the file to show first, the way it names the default subset for HF's own viewer: a
+  // configs entry with default: true whose data_files match a .rete path (cardData is the README's YAML, parsed by HF).
+  function defaultFile(card, paths) {
+    const cfg = card && Array.isArray(card.configs) ? card.configs.find((c) => c && c.default === true) : null;
+    if (!cfg) return null;
+    const pats = [].concat(cfg.data_files || []).flatMap((d) => (typeof d === "string" ? [d] : d && d.path ? [].concat(d.path) : []));
+    const rx = (g) => new RegExp("^" + String(g).split("*").map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*") + "$");
+    for (const g of pats) { const hit = paths.find((p) => p === g || rx(g).test(p)); if (hit) return hit; }
+    return null;
+  }
+  const datasetFiles = (ns, name, paths, card) => {
+    const first = defaultFile(card, paths);
+    const order = rank(paths);
+    if (first) order.sort((a, b) => (b === first) - (a === first));
+    return order.map((p) => { const src = resolveDataset(ns, name, "main", p); return { path: p, src, label: p, download: src + "?download=true" }; });
+  };
 
   // HF's viewer "works" only if it renders a real data table (never decide from its message or status kind)
   const hfShowsTable = async (ctx, root, ms = 2500) => !!(await ctx.waitFor("table, tr[data-row-idx]", ms, root));
@@ -201,7 +216,7 @@
     const info = await getJson(`/api/datasets/${ns}/${name}`);
     const paths = (info.siblings || []).map((s) => s.rfilename).filter(isRete);
     if (!paths.length) return; // not a rete dataset: leave the page alone
-    const files = datasetFiles(ns, name, paths);
+    const files = datasetFiles(ns, name, paths, info.cardData);
     const session = new Session(ctx.engine(), files);
     const base = `/datasets/${ns}/${name}`;
     const viewerHref = (st) => {
@@ -270,7 +285,7 @@
     dbg("taking over, files", paths.length);
     const base = `/datasets/${ns}/${name}`;
 
-    const session = new Session(ctx.engine(), datasetFiles(ns, name, paths));
+    const session = new Session(ctx.engine(), datasetFiles(ns, name, paths, info.cardData));
     ctx.hide(body);
     const shell = studioShell(ctx, header, body);
     const ex = new Explorer({ session, mode: "studio", urlKeys: ["file", "q", "view"] });

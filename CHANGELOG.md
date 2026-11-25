@@ -20,6 +20,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   bar filters the column. Maps use an open PMTiles basemap: OpenStreetMap
   as the Protomaps basemap (zoom 0 to 12) on data.graphplaza.com and in the
   rete-public bucket, or any archive set in the popup.
+  Example queries can carry hints in their comments (`# view: map`,
+  `# column ?var: Label — note`): the query lists show the suited view and
+  the explained columns, and each query opens in its view. A column of
+  `.pmtiles` URLs is drawn as a map layer. The default example is the comarca
+  de Antequera (points, lines, polygons and a relief raster), the first file
+  of the rete-graphs dataset on Hugging Face.
   Results are drawn as in the playground: thumbnails, IIIF manifests as paged
   viewers, WKT geometries as locator maps, audio and video players, a render
   type per column, cards with the picture first and a swipeable focus view,

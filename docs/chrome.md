@@ -82,9 +82,36 @@ or [Zenodo record 24131107](https://zenodo.org/records/24131107).
   or component, colour and size them by degree, and expand a node to its
   neighbours. It has a legend, a minimap, zoom, fullscreen, and export as PNG,
   SVG or JSON. It draws up to 1,500 nodes and 3,000 edges.
+- **Query hints.** Each query in the lists shows the view that suits it (Map,
+  Table, Cards, Graph) and what its columns hold, and opens in that view. A
+  query states them in comments, so every SPARQL tool ignores them; without a
+  `view:` line the view is guessed from the query (a WKT geometry: Map; a
+  CONSTRUCT: Graph; pictures: Cards). See
+  [Hints in example queries](dataset-card-reference.md#hints-in-example-queries).
+- **Layers.** A column of `.pmtiles` URLs (a raster such as an elevation model,
+  or vector tiles) is drawn in the Map view between the basemap and the
+  result's shapes, with a switch; in the table it is a *Map layer* button.
 - **Side panel.** Examples, the SPARQL console, the schema, and the Dataset
   Card: attribution, licence, provenance and statistics. On Zenodo the card is
   merged with the record's metadata, and both are shown where they disagree.
+
+## The example: the comarca de Antequera
+
+The viewer's start page and the popup open an example, also the default file of
+the [katospiegel/rete-graphs](https://huggingface.co/datasets/katospiegel/rete-graphs)
+dataset: the comarca de Antequera (Málaga) with El Chorro and the Desfiladero
+de los Gaitanes, Fuente de Piedra and El Torcal. It has every kind of
+geospatial data a graph can hold: polygons (the comarca, its municipalities,
+the protected natural areas, Natura 2000 sites and wetlands), lines (trails,
+the Caminito del Rey, rivers), points (towns, peaks, viewpoints) and a raster
+(an elevation model as a PMTiles file the graph points to, and the elevation of
+every polygon and point computed from it). Its twelve example queries carry
+hints, so each opens in its view. Sources: REDIAM (Junta de Andalucía),
+OpenStreetMap, Wikidata and the Copernicus DEM, credited in the file's card.
+
+A dataset README chooses which file Retelens shows first the way it chooses
+Hugging Face's default subset: a `configs` entry with `default: true` whose
+`data_files` name the `.rete` file.
 
 ## PMTiles
 

@@ -74,6 +74,7 @@
     if (isWkt(t)) return "geo";
     const u = urlOf(t);
     if (u) {
+      if (/.pmtiles$/i.test(path(u))) return "layer";
       if (looksImage(u)) return "image";
       if (looksIiif(u)) return "iiif";
       if (looksAudio(u)) return "audio";
@@ -422,13 +423,15 @@
     return isFinite(minX) ? { minX, maxX, minY, maxY } : null;
   }
   const decimate = (r, cap) => { if (r.length <= cap) return r; const step = r.length / cap, out = []; for (let k = 0; k < r.length - 1; k += step) out.push(r[Math.floor(k)]); out.push(r[r.length - 1]); return out; };
+  // round ticks at a step no smaller than span / want (so at most want + 1 of them), each printed with as many decimals
+  // as the step needs: a 0.02° step over a small area reads 37.04°, 37.06°, not 37.0°, 37.1°, 37.1°
   function ticks(lo, hi, want) {
-    const span = hi - lo; if (!(span > 0)) return [lo];
-    const raw = span / want, mag = Math.pow(10, Math.floor(Math.log10(raw))), nrm = raw / mag, step = (nrm >= 5 ? 5 : nrm >= 2 ? 2 : 1) * mag;
-    const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 && out.length < 8; v += step) out.push(Math.round(v / step) * step);
-    return out;
+    const span = hi - lo; if (!(span > 0)) return Object.assign([lo], { dec: 0 });
+    const raw = span / want, mag = Math.pow(10, Math.floor(Math.log10(raw))), nrm = raw / mag, step = (nrm > 5 ? 10 : nrm > 2 ? 5 : nrm > 1 ? 2 : 1) * mag;
+    const out = []; for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9 && out.length < 8; v += step) out.push(Math.round(v / step) * step);
+    return Object.assign(out, { dec: step >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log10(step) - 1e-9)) });
   }
-  const fmtDeg = (v) => (Math.abs(v) < 1e-9 ? "0" : (v < 0 ? "−" : "") + (Math.abs(v) % 1 ? Math.abs(v).toFixed(1) : String(Math.abs(v)))) + "°";
+  const fmtDeg = (v, dec) => (Math.abs(v) < Math.pow(10, -(dec || 0) - 1) ? "0" : (v < 0 ? "−" : "") + Math.abs(v).toFixed(dec || 0)) + "°";
   const svg = (tag, attrs) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, String(v)); return e; };
   // A small locator: the shape fitted to its own box on a lat/lon graticule; a point sits in a 20° window with
   // its coordinates. Offline: no basemap is fetched until the map is opened.
@@ -439,17 +442,20 @@
     parts = parts.sort((a, b) => b.c.length - a.c.length).slice(0, 40).map((p) => ({ k: p.k, c: decimate(p.c, 120) }));
     const b = bounds(parts);
     const isPoint = parts.length === 1 && parts[0].k === "pt";
-    const gutL = 18, gutB = 12, W = 96, H = 96, vbW = gutL + W, vbH = H + gutB;
     const ext = Math.max(b.maxX - b.minX, b.maxY - b.minY);
     const half = isPoint || ext < 5e-4 ? 10 : ext * 0.58;
     const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+    const lonT = ticks(cx - half, cx + half, 3), latT = ticks(cy - half, cy + half, 3);
+    // the left margin fits the longest latitude label (7-unit text, about 3.9 units a character); the right one half a
+    // longitude label
+    const chars = (list) => Math.max(0, ...list.map((v) => fmtDeg(v, list.dec).length));
+    const gutL = Math.max(18, 3 + chars(latT) * 3.9), padR = chars(lonT) * 2, gutB = 12, W = 96, H = 96, vbW = gutL + W + padR, vbH = H + gutB;
     const sx = (lon) => gutL + ((lon - (cx - half)) / (2 * half)) * W;
     const sy = (lat) => ((cy + half - lat) / (2 * half)) * H;
-    const root = svg("svg", { viewBox: `0 0 ${vbW} ${vbH}`, class: "rl-geo-svg", role: "img" });
+    const root = svg("svg", { viewBox: `0 0 ${vbW.toFixed(1)} ${vbH}`, class: "rl-geo-svg", role: "img" });
     const clipId = "rlgc" + Math.random().toString(36).slice(2, 9);
     const cp = svg("clipPath", { id: clipId }); cp.append(svg("rect", { x: gutL, y: 0, width: W, height: H })); root.append(cp);
     const gr = svg("g", { "clip-path": `url(#${clipId})` });
-    const lonT = ticks(cx - half, cx + half, 3), latT = ticks(cy - half, cy + half, 3);
     for (const lon of lonT) gr.append(svg("line", { class: "rl-geo-grid", x1: sx(lon).toFixed(1), y1: 0, x2: sx(lon).toFixed(1), y2: H }));
     for (const lat of latT) gr.append(svg("line", { class: "rl-geo-grid", x1: gutL, y1: sy(lat).toFixed(1), x2: vbW, y2: sy(lat).toFixed(1) }));
     for (const p of parts) {
@@ -458,8 +464,8 @@
       gr.append(svg(p.k === "pg" ? "polygon" : "polyline", { class: p.k === "pg" ? "rl-geo-poly" : "rl-geo-line", points: pts }));
     }
     root.append(gr, svg("rect", { class: "rl-geo-bd", x: gutL, y: 0, width: W, height: H }));
-    for (const lon of lonT) { const x = sx(lon); if (x < gutL - 1 || x > vbW + 1) continue; const tx = svg("text", { class: "rl-geo-tick", x: Math.min(vbW - 1, Math.max(gutL + 1, x)).toFixed(1), y: vbH - 2, "text-anchor": "middle" }); tx.textContent = fmtDeg(lon); root.append(tx); }
-    for (const lat of latT) { const y = sy(lat); if (y < -1 || y > H + 1) continue; const tx = svg("text", { class: "rl-geo-tick", x: gutL - 2, y: Math.min(H - 1, Math.max(6, y + 2)).toFixed(1), "text-anchor": "end" }); tx.textContent = fmtDeg(lat); root.append(tx); }
+    for (const lon of lonT) { const x = sx(lon); if (x < gutL - 1 || x > vbW + 1) continue; const tx = svg("text", { class: "rl-geo-tick", x: Math.min(vbW - 1, Math.max(gutL + 1, x)).toFixed(1), y: vbH - 2, "text-anchor": "middle" }); tx.textContent = fmtDeg(lon, lonT.dec); root.append(tx); }
+    for (const lat of latT) { const y = sy(lat); if (y < -1 || y > H + 1) continue; const tx = svg("text", { class: "rl-geo-tick", x: gutL - 2, y: Math.min(H - 1, Math.max(6, y + 2)).toFixed(1), "text-anchor": "end" }); tx.textContent = fmtDeg(lat, latT.dec); root.append(tx); }
     const label = isPoint ? `${b.minY.toFixed(4)}, ${b.minX.toFixed(4)}` : `${b.minY.toFixed(3)},${b.minX.toFixed(3)} … ${b.maxY.toFixed(3)},${b.maxX.toFixed(3)}`;
     const btn = h("button", { type: "button", class: "rl-geo" + (opts.card ? " rl-geo-card" : ""), title: (isPoint ? "Point " : "Box ") + label + " · click to open the map" }, root);
     if (isPoint) btn.append(h("span", { class: "rl-geo-xy" }, label));
@@ -560,6 +566,18 @@
         if (!url) return textOf();
         const el = h("video", { controls: true, preload: "metadata", playsinline: true, class: opts.card ? "rl-cvideo" : "rl-video" }); el.src = up(url);
         return h("div", { class: "rl-media" }, el, sourceLink(url, "video"));
+      }
+      case "layer": {
+        // a PMTiles archive (a raster or vector layer): the Map view draws it; here a button opens it in the viewer
+        if (!url) return textOf();
+        const name = decodeURIComponent(path(url).split("/").pop());
+        const b = h("button", { type: "button", class: "rl-btnlink", title: url }, "Map layer ↗");
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (EXT_PAGE) window.open(chrome.runtime.getURL("viewer.html") + "?" + new URLSearchParams({ src: url, name, host: "url" }), "_blank", "noopener");
+          else chrome.runtime.sendMessage({ retelens: "openViewer", src: url, name });
+        });
+        return h("div", { class: "rl-media" }, b, h("span", { class: "rl-host" }, name));
       }
       case "pdf": return url ? h("div", { class: "rl-media" }, h("a", { href: url, class: "rl-btnlink", title: url }, "PDF ↗"), h("span", { class: "rl-host" }, hostOf(url))) : textOf();
       case "page": return url ? pagePreview(url) : textOf();

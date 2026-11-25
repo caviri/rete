@@ -71,6 +71,25 @@ the worker (`tiles` op: kind 7 or an unknown kind, at least 16 KiB, PMTiles magi
 (`readRange` op, so the chunk cache and 429 handling apply); the Map view draws it under the result and draws the
 features whose properties match a value of the result on top.
 
+## Query hints, layers, the example
+
+`lib/hints.js` reads a query's comments: the title (first line), a description (more plain lines), `# view:` (table,
+cards, graph, map) and `# column ?var: Label — note`. Without a view line the view is guessed (WKT -> map,
+CONSTRUCT/DESCRIBE -> graph, picture predicates -> cards, a starter query's `dimension`). The examples panel and the
+query popover show the view and the explained columns as chips; selecting an example (or running a console query with a
+view line) opens it in that view; the table, cards and map popups use the column labels and notes. The convention is
+documented for card authors in docs/dataset-card-reference.md.
+
+A column of `.pmtiles` URLs is drawn by the Map view as layers (raster via `pmtiles.leafletRasterLayer`, vector with
+the generic style) between the basemap and the result, each with a switch; a cell shows a *Map layer* button that opens
+the PMTiles viewer.
+
+The default example is `https://huggingface.co/datasets/katospiegel/rete-graphs/resolve/main/antequera/antequera-2026-11-24.rete` (viewer start page, popup). On Hugging Face, `content/adapters/hf.js` puts first
+the file named by the README's `configs` entry with `default: true` (the API's `cardData`). The example is built by
+`data/antequera/build2.mjs` (outside this repository, like the catalog's pipelines): REDIAM WFS (RENPA, Red Natura
+2000, humedales, senderos, equipamientos), Overpass, Wikidata, Copernicus GLO-30 with GDAL (relief tiles and zonal
+elevation).
+
 ## Reading a page's data
 
 On request only (context menu *Read this page's data*, the popup, the `read-page` command; `activeTab`), the service

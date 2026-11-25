@@ -20,7 +20,7 @@
       if (!title) { const m = sparql.match(/^\s*#\s*(.+)$/m); title = m ? m[1].trim() : "Untitled query"; }
       return { ...e, title, group: e.dimension || "card examples", curated: !e.id };
     });
-    return [...out.filter((e) => e.curated), ...out.filter((e) => !e.curated)];
+    return [...out.filter((e) => e.curated), ...out.filter((e) => !e.curated)].map((e) => window.RetelensHints.annotate(e));
   }
 
   // Files whose card has no example queries get generated starters built from schema() and info().
@@ -56,11 +56,11 @@
       this.meta = await this.engine.meta();
       this.examples = normalizeExamples(await this.engine.examples()); // card `queries` + `example_queries`, merged by the engine
       this.starters = false;
-      if (!this.examples.length && f.examples) this.examples = f.examples.map((e) => ({ group: "Starter queries", curated: true, starter: true, ...e }));
+      if (!this.examples.length && f.examples) this.examples = f.examples.map((e) => window.RetelensHints.annotate({ group: "Starter queries", curated: true, starter: true, ...e }));
       if (!this.examples.length) {
         let schema = null;
         try { schema = await this.engine.schema(); } catch (_) {}
-        this.examples = starterQueries(schema);
+        this.examples = starterQueries(schema).map((e) => window.RetelensHints.annotate(e));
         this.starters = true;
       }
       const c = this.meta.card || {};
@@ -337,6 +337,8 @@
         el.append(h("div", { class: "flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400" }, "Custom query.",
           h("button", { type: "button", class: "text-blue-600 hover:underline dark:text-blue-400", onclick: () => this.selectExample(this.lastExample || 0) }, "Reset to example")));
       } else if (ex.question) el.append(h("p", { class: "text-sm text-gray-600 dark:text-gray-400" }, ex.question));
+      const cols = Object.entries(window.RetelensHints.parse(text).columns);
+      if (cols.length) el.append(h("dl", { class: "rl-qcols", "data-rl": "qcols" }, cols.flatMap(([v, c]) => [h("dt", { title: "?" + v }, c.label), h("dd", null, c.note || "?" + v)])));
       const pre = h("pre", { "data-rl": "code", id: "rl-sparql-" + this.tok, class: "mt-1 max-h-56 overflow-auto whitespace-pre-wrap rounded-md border bg-gray-50 p-2 font-mono text-xs leading-snug dark:border-gray-800 dark:bg-gray-900", hidden: !this.sparqlOpen }, ...window.RetelensQuery.highlight(text));
       const toggle = h("button", { type: "button", class: "flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-700 dark:hover:text-gray-300", "aria-expanded": String(this.sparqlOpen), "aria-controls": pre.id }, this.sparqlOpen ? "▾ SPARQL" : "▸ SPARQL");
       toggle.addEventListener("click", () => { this.sparqlOpen = !this.sparqlOpen; pre.hidden = !this.sparqlOpen; toggle.setAttribute("aria-expanded", String(this.sparqlOpen)); toggle.textContent = this.sparqlOpen ? "▾ SPARQL" : "▸ SPARQL"; });
@@ -516,6 +518,7 @@
     async selectExample(i, initial) {
       const ex = this.s.examples[i];
       if (!ex) return;
+      if (!(initial && this.explicitView) && ex.view) this.pendingView = ex.view;
       this.q = i;
       this.lastExample = i;
       if (this.searchInput) this.searchInput.value = "";
@@ -525,6 +528,8 @@
     }
 
     async runCustom(text) {
+      const hinted = window.RetelensHints.parse(text).view; // "# view: map" in a console query picks the view too
+      if (hinted) this.pendingView = hinted;
       this.q = "custom";
       this.writeUrl();
       await this.run(text, { force: true }); // the user pressed Run: no guard
@@ -590,7 +595,8 @@
         res.hint = "CONSTRUCT over a large file can be slow or fail on this engine version. SELECT ?s ?p ?o … LIMIT n gives the same triples and the Graph view draws it just as well.";
       }
       this.result = res;
-      if (!this.explicitView) this.view = res.form === "SELECT" ? "table" : "graph";
+      if (this.pendingView) { this.view = res.form === "ASK" ? "table" : this.pendingView; this.pendingView = null; }
+      else if (!this.explicitView) this.view = res.form === "SELECT" ? "table" : "graph";
       this.page = 1;
       this.setStatus({ ms: res.ms, stats: res.stats });
       this.newModel(res);
@@ -711,7 +717,7 @@
       this.area.textContent = "";
       const hl = local && m.q ? m.q : "";
       const o = { model: m, hl, filtered: local && m.active(), onSort: (v) => this.toggleSort(v), onFilter: (b, v) => this.openColumnMenu(b, v), maxHeight: this.mode === "box" ? "24rem" : null,
-        types: this.colTypes, setType: (v, ty) => this.setColType(v, ty),
+        types: this.colTypes, setType: (v, ty) => this.setColType(v, ty), colInfo: r.query ? window.RetelensHints.parse(r.query).columns : {},
         hidden: this.cardHidden, setHidden: (v, hide) => { if (hide) this.cardHidden.add(v); else this.cardHidden.delete(v); this.renderResults(); } };
       let comp;
       if (view === "cards") comp = V.CardsView(pg.rows, r.vars, this.ctx, { ...o, facets: this.facetsOpen && local ? UI.FacetsPanel(this) : null });
@@ -794,7 +800,8 @@
           const grp = ex.starter ? "Starter queries" : ex.curated ? "Card examples" : ex.group;
           if (grp !== g) { g = grp; b.append(h("div", { class: "bg-gray-50 px-3 py-1 text-xs uppercase tracking-wide text-gray-400 dark:bg-gray-900" }, grp)); }
           b.append(h("button", { type: "button", class: "block w-full border-b px-3 py-2 text-left hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900 " + (this.q === i ? "bg-gray-50 dark:bg-gray-900" : ""), onclick: () => this.selectExample(i) },
-            h("div", { class: "text-sm font-medium" }, ex.title), ex.question ? h("div", { class: "text-xs text-gray-500" }, ex.question) : null));
+            h("div", { class: "text-sm font-medium" }, ex.title), ex.question ? h("div", { class: "text-xs text-gray-500" }, ex.question) : null,
+            window.RetelensHints.chips(ex, h, icon)));
         });
       } else if (this.sideTab === "console") {
         this.editor = h("textarea", { class: "h-56 w-full resize-y rounded-lg border bg-gray-50 p-2 font-mono text-xs leading-snug outline-none focus:border-gray-400 dark:border-gray-800 dark:bg-gray-900", spellcheck: "false", "aria-label": "SPARQL query" });

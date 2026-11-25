@@ -96,7 +96,7 @@ newlines.
 | `source_date`, `derived_from` | **curated** (`--card-file` only) | The source data's own snapshot date (distinct from `created` and from the build timestamp), and what this file was derived from (`prov:wasDerivedFrom`) — dumps, endpoints, or the shards a `rete merge` folded in. |
 | `keywords` | **curated** (`--card-file` only) | Free-text tags (`dcat:keyword` / `schema:keywords` in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (`dcat:keyword` is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build. |
 | `theme` | **curated** (`--card-file` only) | **IRIs into a controlled vocabulary** (`dcat:theme`), e.g. the [EU data themes](http://publications.europa.eu/resource/authority/data-theme). IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at `keywords`; the agreed concept scheme is the whole value `dcat:theme` adds. [Where to get one](#where-to-get-theme-iris). Canonicalized like `keywords`. (There is deliberately **no curated language field**: in RDF the language rides on every literal, so the card *measures* it — see the `languages` row below and [the rule](#first-class-field-or-the-bag-the-rule).) |
-| `example_queries` | **curated** (`--card-file` only) | Sample queries a consumer can run. |
+| `example_queries` | **curated** (`--card-file` only) | Sample queries a consumer can run. Comment lines in them can carry [hints for viewers](#hints-in-example-queries). |
 | `base_iri` | **curated** (`--card-file` only) | Overrides the derived `signals.base_iri` (an absolute IRI). See below. |
 | `extra` | **curated** (`--card-file` only) | Publisher-defined **custom fields** — one bounded bag, see [Custom fields](#custom-fields-the-extra-bag). |
 | `triple_count` | derived | Triples in the **default graph**. |
@@ -443,6 +443,36 @@ answer different questions and are never merged:
 `format_version` is stamped by the builder and changes only when the format
 does. `builder` lives in the unhashed build-info section because it is a fact
 about one build, not about the data.
+
+## Hints in example queries
+
+An example query is SPARQL text, and a viewer can learn more from its comment
+lines. This is a convention, not a card field: the card stores the query as it
+is, and every SPARQL engine ignores comments, so a query with hints runs
+everywhere. Retelens reads them:
+
+```sparql
+PREFIX ant: <https://w3id.org/rete/antequera/>
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX schema: <http://schema.org/>
+# Protected natural areas
+# The official polygons, largest first.
+# view: map
+# column ?km2: Area (km²) — of the polygon
+# column ?shape: Shape
+SELECT ?name ?km2 ?shape WHERE { ?a a ant:EspacioProtegido ; schema:name ?name ; ant:areaKm2 ?km2 ; geo:asWKT ?shape }
+ORDER BY DESC(?km2)
+```
+
+- The first comment line is the title (as before); further plain comment
+  lines are the description.
+- `# view: table|cards|graph|map` names the view that suits the result.
+- `# column ?var: Label — note` names a column and says what it holds.
+
+The [Antequera example](chrome.md#the-example-the-comarca-de-antequera) uses
+all three in every query. A card field for them (a query as an object with a
+view and column notes) would let other tools read them without parsing
+comments; it is not part of the format yet.
 
 ## The description: Markdown, not HTML
 
