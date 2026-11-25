@@ -33,6 +33,22 @@
     if (!m) return null;
     return (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
   };
+  // Any CSS colour as rgb()/rgba(). Hugging Face moved to Tailwind v4, whose colours compute to oklch(...); a canvas
+  // keeps such a colour as written in fillStyle, and cytoscape (the graph view) cannot read it and draws black, so the
+  // colour is painted on one pixel and read back. rgb() and #hex pass through.
+  let pix = null;
+  function toRgb(c) {
+    const s = String(c || "").trim();
+    if (!s || /^(rgba?\(|#[0-9a-f]{3,8}$)/i.test(s) || s === "transparent") return s;
+    try {
+      if (!pix) { const cv = document.createElement("canvas"); cv.width = cv.height = 1; pix = cv.getContext("2d", { willReadFrequently: true }); }
+      pix.clearRect(0, 0, 1, 1);
+      pix.fillStyle = "#000"; pix.fillStyle = s;
+      pix.fillRect(0, 0, 1, 1);
+      const d = pix.getImageData(0, 0, 1, 1).data;
+      return d[3] === 255 ? `rgb(${d[0]}, ${d[1]}, ${d[2]})` : `rgba(${d[0]}, ${d[1]}, ${d[2]}, ${+(d[3] / 255).toFixed(3)})`;
+    } catch (_) { return s; }
+  }
   const opaque = (c) => c && c !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(c) && !/\/\s*0\s*\)$/.test(c);
 
   function tokens(el, skin) {
@@ -52,9 +68,9 @@
     (el.isConnected ? el : document.body).append(probe);
     const out = {};
     const cs = (n) => getComputedStyle(n);
-    for (const k of Object.keys(TW)) out[k] = cs(kids[k])[(github ? PRIMER : TW)[k][github ? 2 : 1]];
+    for (const k of Object.keys(TW)) out[k] = toRgb(cs(kids[k])[(github ? PRIMER : TW)[k][github ? 2 : 1]]);
     // pick the fallback set from the page's own luminance when the page did not give a surface colour
-    const dark0 = lum(getComputedStyle(document.body).backgroundColor);
+    const dark0 = lum(toRgb(getComputedStyle(document.body).backgroundColor));
     const fb = FALLBACK[dark0 != null && dark0 < 0.4 ? "dark" : "light"];
     for (const k of Object.keys(TW)) if (!opaque(out[k])) out[k] = fb[k];
     out.fontSans = cs(el.isConnected ? el : document.body).fontFamily || "system-ui, sans-serif";
@@ -108,5 +124,5 @@
     return { ok, missing };
   }
 
-  window.RetelensTheme = { tokens, watch, classSet, checkSkin, resetClassCache: () => { cached = null; } };
+  window.RetelensTheme = { tokens, toRgb, watch, classSet, checkSkin, resetClassCache: () => { cached = null; } };
 })();

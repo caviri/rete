@@ -890,14 +890,33 @@
       if (!s.meta) { b.append(h("div", { class: "p-4 text-sm text-gray-500" }, "Loading…")); return; }
       if (this.sideTab === "examples") {
         if (!s.examples.length) b.append(h("div", { class: "p-4 text-sm text-gray-500" }, "This file has no example queries."));
-        let g = null;
-        s.examples.forEach((ex, i) => {
-          const grp = ex.starter ? "Starter queries" : ex.curated ? "Card examples" : ex.group;
-          if (grp !== g) { g = grp; b.append(h("div", { class: "bg-gray-50 px-3 py-1 text-xs uppercase tracking-wide text-gray-400 dark:bg-gray-900" }, grp)); }
-          b.append(h("button", { type: "button", class: "block w-full border-b px-3 py-2 text-left hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900 " + (this.q === i ? "bg-gray-50 dark:bg-gray-900" : ""), onclick: () => this.selectExample(i) },
+        // a filter over the queries (words, and a view), shared with the Query pill's list; the list redraws as it is typed
+        const Q = window.RetelensQuery, qf = this.qf || (this.qf = { text: "", view: null });
+        const list = h("div", { "data-rl": "examples" });
+        const views = h("div");
+        const input = h("input", { type: "search", "data-rl": "qfilter", class: "h-8 w-full min-w-0 rounded-md border border-gray-200 bg-white px-2 text-sm outline-none placeholder:text-gray-400 focus:border-gray-400 dark:border-gray-800 dark:bg-gray-900", placeholder: "Filter queries: words, a column…", "aria-label": "Filter the example queries" });
+        input.value = qf.text;
+        if (s.examples.length > 3) b.append(h("div", { class: "space-y-1.5 border-b px-3 py-2 dark:border-gray-800" }, input, views));
+        const draw = () => {
+          views.textContent = "";
+          views.append(Q.viewChips(s.examples, qf, (v) => { qf.view = v; draw(); }));
+          list.textContent = "";
+          const f = (qf.text.trim() || qf.view) ? qf : null;
+          let g = null, shown = 0;
+          s.examples.forEach((ex, i) => {
+            if (f && !Q.matches(ex, f)) return;
+            shown++;
+            const grp = ex.starter ? "Starter queries" : ex.curated ? "Card examples" : ex.group;
+            if (grp !== g) { g = grp; list.append(h("div", { class: "bg-gray-50 px-3 py-1 text-xs uppercase tracking-wide text-gray-400 dark:bg-gray-900" }, grp)); }
+            list.append(h("button", { type: "button", class: "block w-full border-b px-3 py-2 text-left hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900 " + (this.q === i ? "bg-gray-50 dark:bg-gray-900" : ""), onclick: () => this.selectExample(i) },
             h("div", { class: "text-sm font-medium" }, ex.title), ex.question ? h("div", { class: "text-xs text-gray-500" }, ex.question) : null,
-            window.RetelensHints.chips(ex, h, icon)));
-        });
+              window.RetelensHints.chips(ex, h, icon)));
+          });
+          if (f && !shown) list.append(h("div", { class: "p-4 text-sm text-gray-500" }, "No query matches."));
+        };
+        input.addEventListener("input", () => { qf.text = input.value; draw(); });
+        draw();
+        b.append(list);
       } else if (this.sideTab === "console") {
         // coloured, with line numbers (lib/editor.js); this.editor stays the textarea
         const ed = window.RetelensEditor.create({ label: "SPARQL query" });

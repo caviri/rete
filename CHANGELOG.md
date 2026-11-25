@@ -30,6 +30,9 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   bar filters the column. Maps use an open PMTiles basemap: OpenStreetMap
   as the Protomaps basemap (zoom 0 to 12) on data.graphplaza.com and in the
   rete-public bucket, or any archive set in the popup.
+  The query list and the Examples panel filter queries by words and by view.
+  The graph view's labels stay light in dark mode on Hugging Face, whose
+  colours are now oklch (Tailwind v4), which the graph drew as black.
   A `.pmtiles` file page on Hugging Face (dataset or bucket) or GitHub shows
   the archive as a map with its header, layers and attribution, where the
   site says it cannot display a binary file; a raster archive is drawn over
