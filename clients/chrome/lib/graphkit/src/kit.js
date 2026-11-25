@@ -45,9 +45,20 @@ function injectCss(host) {
 }
 
 let _cctx;
+// a colour cytoscape can read: #rrggbb or rgb(a). A canvas keeps a colour outside sRGB notation (oklch, lab, color())
+// as written in fillStyle, so such a one is painted on a pixel and read back (Tailwind v4 hosts compute to oklch).
 function normColor(c) {
-  try { _cctx = _cctx || document.createElement("canvas").getContext("2d"); _cctx.fillStyle = "#000000"; _cctx.fillStyle = c; return _cctx.fillStyle; } catch (e) { return c; }
+  try {
+    _cctx = _cctx || document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    _cctx.fillStyle = "#000000"; _cctx.fillStyle = c;
+    const fs = _cctx.fillStyle;
+    if (/^(#[0-9a-f]{6}|rgba?\()/i.test(fs)) return fs;
+    _cctx.clearRect(0, 0, 1, 1); _cctx.fillRect(0, 0, 1, 1);
+    const d = _cctx.getImageData(0, 0, 1, 1).data;
+    return d[3] === 255 ? `rgb(${d[0]}, ${d[1]}, ${d[2]})` : `rgba(${d[0]}, ${d[1]}, ${d[2]}, ${+(d[3] / 255).toFixed(3)})`;
+  } catch (e) { return c; }
 }
+export { normColor };
 const frames = (n) => new Promise((res) => { const f = () => (--n <= 0 ? res() : requestAnimationFrame(f)); requestAnimationFrame(f); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

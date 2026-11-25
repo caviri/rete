@@ -113,6 +113,12 @@ after(async () => {
 const shots = process.env.RETELENS_SHOTS; // a folder: save screenshots there to look at
 const shot = async (page, name) => { if (shots) await page.screenshot({ path: join(shots, name + ".png") }); };
 
+// waitForFunction evaluates a string, which an extension page's policy refuses: poll with evaluate instead
+async function until(page, fn, ms = 60000, what = "the page") {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (await page.evaluate(fn).catch(() => false)) return; await page.waitForTimeout(150); }
+  throw new Error("timed out waiting for " + what);
+}
 async function openViewer(params) {
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -246,6 +252,49 @@ test("a .pmtiles URL opens the map viewer with its layers", async () => {
   await page.close();
 });
 
+test("dark mode on a host whose colours are oklch (Tailwind v4, Hugging Face): the graph labels stay light", async () => {
+  const page = await openViewer({ src: `${base}/rich.rete`, name: "rich.rete", host: "url" });
+  await page.waitForSelector("table td", { timeout: 90000 });
+  // what HF computes now: Tailwind v4 colours as oklch()
+  await page.addStyleTag({ content: ".dark .dark\\:text-gray-100{color:oklch(0.967 0.003 264.542)!important}.dark .dark\\:bg-gray-950{background-color:oklch(0.13 0.028 261.692)!important}.text-gray-900{color:oklch(0.21 0.034 264.665)!important}" });
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  assert.match(await page.evaluate(() => window.RetelensTheme.toRgb("oklch(0.967 0.003 264.542)")), /^rgb\(2[34]\d, 2[34]\d, 2[34]\d\)$/, "oklch read as rgb");
+  // the probe classes compute to oklch now, as on HF: the tokens the graph gets are rgb all the same
+  assert.match(await page.evaluate(() => window.RetelensTheme.tokens(document.body).text), /^rgb\(/);
+  await page.locator('[data-rl="seg-item"][data-view="graph"]').first().click();
+  await until(page, () => !!(window.__retelensKit && window.__retelensKit.cy && window.__retelensKit.cy.nodes().length), 60000, "the graph");
+  await page.waitForTimeout(800);
+  const c = await page.evaluate(() => window.__retelensKit.cy.nodes()[0].style("color"));
+  const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(c);
+  assert.ok(m, "a colour cytoscape reads: " + c);
+  const lum = (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
+  assert.ok(lum > 0.7, `light labels in dark mode (${c})`);
+  await page.close();
+});
+
+test("the query list filters by words and by view", async () => {
+  const page = await openViewer({ src: `${base}/rich.rete`, name: "rich.rete", host: "url" });
+  await page.waitForSelector("table td", { timeout: 90000 });
+  const ex = await page.evaluate(() => window.__retelens.session.examples.map((e) => ({ title: e.title, view: e.view })));
+  // the Query pill opens the list
+  await page.locator('button[aria-haspopup="listbox"]', { hasText: /Query|Starter queries/ }).first().click();
+  const list = page.locator("#rl-qlist");
+  await list.waitFor({ timeout: 10000 });
+  const opts = () => page.locator("#rl-qlist [role=option]").count();
+  assert.equal(await opts(), ex.length);
+  // the view buttons: All, then the views the queries suit, each with its count
+  const views = await page.locator("[data-rl=qviews] button").allTextContents();
+  assert.match(views[0], new RegExp("^All " + ex.length));
+  const word = ex[0].title.split(/s+/)[0];
+  await page.fill("input[aria-label=\"Filter queries\"]", word);
+  assert.equal(await opts(), ex.filter((e) => e.title.toLowerCase().includes(word.toLowerCase())).length || 0);
+  await page.fill("input[aria-label=\"Filter queries\"]", "");
+  const v = ex[ex.length - 1].view;
+  await page.locator(`[data-rl=qviews] button[data-view="${v}"]`).click();
+  assert.equal(await opts(), ex.filter((e) => e.view === v).length);
+  await page.close();
+});
+
 test("the SPARQL console colours the query and numbers its lines", async () => {
   const page = await openViewer({ src: `${base}/rich.rete`, name: "rich.rete", host: "url" });
   await page.waitForSelector("table td", { timeout: 90000 });
@@ -288,7 +337,7 @@ test("several files: nothing opens until the user picks one; About reads a file'
   await shot(page, "chooser");
   // Open: that file, its first rows
   await page.locator("[data-rl=choice][data-name='other.rete']").locator("[data-rl=open-choice]").click();
-  await page.waitForFunction(() => window.__retelens.session.idx === 1 && !!window.__retelens.session.meta, null, { timeout: 60000 });
+  await until(page, () => window.__retelens.session.idx === 1 && !!window.__retelens.session.meta, 60000, "the chosen file");
   await page.waitForSelector("table td", { timeout: 60000 });
   assert.equal(await page.locator("[data-rl=chooser]").count(), 0);
   assert.match(await page.locator("body").textContent(), /other.rete/);

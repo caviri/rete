@@ -54,7 +54,10 @@ or [Zenodo record 24131107](https://zenodo.org/records/24131107).
   names a file (`?file=` in the Data Studio, a file row on Zenodo) opens that
   one directly, and the Graph picker switches between them afterwards.
 - **Graph and Query pickers.** The query list shows each example's title,
-  description and SPARQL, with Copy and *Edit in console*.
+  description and SPARQL, with Copy and *Edit in console*. A box filters the
+  queries by words (in the title, description, SPARQL or a column's name) and
+  buttons by the view they suit (Map, Table, Cards, Graph); the Examples panel
+  has the same filter.
 - **Table, Cards, Graph, Map.** Search, per-column filters and sorting work on
   the results; they are exact up to 10,000 rows, and above that the bar says so
   and can write the filter into the query instead.

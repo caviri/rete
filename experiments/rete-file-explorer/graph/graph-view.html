@@ -266,6 +266,12 @@ ol.rl-md-list { list-style: decimal; }
 /* the PMTiles viewer inside a host page (a .pmtiles file page on Hugging Face or GitHub): a fixed height, the page scrolls */
 .rl-pmviewer.rl-pm-inline { height: min(640px, 78vh); }
 
+/* the query filter's view buttons (lib/query.js viewChips): in the Query list and the Examples panel */
+.rl-qviews { display: flex; flex-wrap: wrap; gap: 4px; }
+.rl-qview { font: inherit; font-size: 12px; color: inherit; background: transparent; border: 1px solid var(--rl-line); border-radius: 999px; padding: 0 8px; line-height: 20px; cursor: pointer; }
+.rl-qview:hover { background: var(--rl-soft); }
+.rl-qview.rl-on { border-color: var(--rl-acc); color: var(--rl-acc); font-weight: 600; }
+
 :root {
   --bg: #ffffff;
   --panel: #f7f7f8;

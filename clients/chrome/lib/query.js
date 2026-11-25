@@ -27,6 +27,31 @@
     return out;
   }
 
+  // ---- filtering the queries: words (all of them, in the title, description, SPARQL or a column's name) and a view
+  function matches(it, f) {
+    if (f && f.view && it.view !== f.view) return false;
+    const words = String((f && f.text) || "").toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    const hay = [it.title, it.question || "", it.sparql, ...Object.values(it.columns || {}).map((c) => c.label + " " + (c.note || ""))].join("\n").toLowerCase();
+    return words.every((w) => hay.includes(w));
+  }
+  const VIEWS = [["map", "Map"], ["table", "Table"], ["cards", "Cards"], ["graph", "Graph"]];
+  // the row of view buttons, with how many queries suit each (views no query has are left out)
+  function viewChips(items, f, onPick) {
+    const n = {};
+    for (const it of items) if (it.view) n[it.view] = (n[it.view] || 0) + 1;
+    const row = h("div", { class: "rl-qviews", "data-rl": "qviews", role: "group", "aria-label": "Show the queries of one view" });
+    const btn = (view, label, count) => {
+      const on = (f.view || null) === view;
+      const b = h("button", { type: "button", class: "rl-qview" + (on ? " rl-on" : ""), "aria-pressed": String(on), "data-view": view || "all" }, label + " ", h("span", { class: "rl-muted" }, String(count)));
+      b.addEventListener("click", (e) => { e.stopPropagation(); onPick(view); });
+      return b;
+    };
+    row.append(btn(null, "All", items.length));
+    for (const [v, label] of VIEWS) if (n[v]) row.append(btn(v, label, n[v]));
+    return row;
+  }
+
   // the query without PREFIX/BASE lines and comment-only lines, trimmed
   function preview(src) {
     return String(src).split("\n").filter((l) => !/^\s*(PREFIX|BASE)\b/i.test(l) && !/^\s*#/.test(l)).join("\n").replace(/^\s+|\s+$/g, "");
@@ -47,9 +72,12 @@
       this.anchor = anchor;
       const root = h("div", { "data-retelens": "" });
       const panel = h("div", { class: "fixed z-[2147483000] flex flex-col overflow-hidden rounded-lg border bg-white text-sm text-gray-900 shadow-lg dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100", role: "dialog", "aria-label": "Choose a query" });
-      const input = h("input", { type: "text", class: "w-full flex-none border-b bg-transparent px-3 py-2 outline-none placeholder:text-gray-400 dark:border-gray-800", placeholder: "Filter by title, description or query", role: "combobox", "aria-expanded": "true", "aria-controls": "rl-qlist", "aria-autocomplete": "list", "aria-label": "Filter queries" });
+      const qf = ex.qf || (ex.qf = { text: "", view: null }); // the same filter as the Examples panel
+      const input = h("input", { type: "text", class: "w-full flex-none border-b bg-transparent px-3 py-2 outline-none placeholder:text-gray-400 dark:border-gray-800", placeholder: "Filter by title, description, query or column", role: "combobox", "aria-expanded": "true", "aria-controls": "rl-qlist", "aria-autocomplete": "list", "aria-label": "Filter queries" });
+      input.value = qf.text;
+      const views = h("div", { class: "flex-none border-b px-3 py-1.5 dark:border-gray-800" });
       const list = h("div", { id: "rl-qlist", role: "listbox", class: "min-h-0 flex-1 overflow-auto" });
-      panel.append(input, list);
+      panel.append(input, views, list);
       root.append(panel);
       document.body.append(root);
       this.root = root; this.panel = panel;
@@ -68,10 +96,13 @@
       const choose = (idx) => { this.close(); ex.selectExample(idx); };
       const render = (filter) => {
         list.textContent = ""; opts = [];
-        const f = filter.trim().toLowerCase();
+        qf.text = filter;
+        const f = (qf.text.trim() || qf.view) ? qf : null;
+        views.textContent = "";
+        views.append(viewChips(items, qf, (v) => { qf.view = v; render(input.value); input.focus(); }));
         let lastGroup = null, n = 0;
         items.forEach((it, idx) => {
-          if (f && !(`${it.title}\n${it.question || ""}\n${it.sparql}`.toLowerCase().includes(f))) return;
+          if (f && !matches(it, f)) return;
           const g = groupOf(it);
           if (g !== lastGroup) { lastGroup = g; list.append(h("div", { role: "presentation", class: "bg-gray-50 px-3 py-1 text-xs uppercase tracking-wide text-gray-400 dark:bg-gray-900" }, g)); }
           const pv = preview(it.sparql);
@@ -88,10 +119,12 @@
           n++;
         });
         if (!n) list.append(h("div", { class: "px-3 py-4 text-center text-gray-500" }, "No query matches."));
+        if (ex.sideTab === "examples" && ex.renderSide) ex.renderSide(); // the Examples panel shows the same filter
         const sel = opts.findIndex((o) => o.idx === ex.q);
         setActive(f ? (opts.length ? 0 : -1) : sel >= 0 ? sel : (opts.length ? 0 : -1), true);
       };
       input.addEventListener("input", () => render(input.value));
+      render(input.value);
       panel.addEventListener("keydown", (e) => {
         if (e.key === "ArrowDown") { e.preventDefault(); if (opts.length) setActive(Math.min(opts.length - 1, active + 1), true); }
         else if (e.key === "ArrowUp") { e.preventDefault(); if (opts.length) setActive(Math.max(0, active - 1), true); }
@@ -132,5 +165,5 @@
     }
   }
 
-  window.RetelensQuery = { highlight, preview, QueryMenu, groupOf };
+  window.RetelensQuery = { highlight, preview, QueryMenu, groupOf, matches, viewChips };
 })();
