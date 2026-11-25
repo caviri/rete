@@ -6,9 +6,11 @@
 // The field types and the way a value is recognised follow the playground's Cards
 // output (web/playground-src/app.js: COL_TYPES, autoCell, looksImageUrl,
 // looksAudioUrl, looksVideoUrl, looksMeshUrl): the same names, the same file
-// extensions. What is left out is what needs a network service or a library the
-// page cannot carry (IIIF manifests, maps, molecular structures, PDF.js, Page
-// preview) and what names a dataset (the playground's per-host image rules).
+// extensions. IIIF manifests, WKT geometries (a small map), Markdown and PMTiles
+// map layers are drawn by the Retelens cells (clients/chrome/lib/cells.js, bundled
+// into the page): this file only recognises them. What is left out is what needs
+// a library the page does not carry (molecular structures, PDF.js, Page preview)
+// and what names a dataset (the playground's per-host image rules).
 
 /** [type, label]: the playground's column types that make sense in an offline page. */
 export const FIELD_TYPES = [
@@ -17,10 +19,14 @@ export const FIELD_TYPES = [
   ["link", "Link"],
   ["button", "Button"],
   ["image", "Image"],
+  ["iiif", "IIIF"],
+  ["geo", "Map"],
   ["audio", "Audio"],
   ["video", "Video"],
   ["model3d", "3D"],
   ["pdf", "PDF"],
+  ["markdown", "Markdown"],
+  ["layer", "Map layer"],
   ["number", "Number"],
 ];
 export const FIELD_TYPE_NAMES = FIELD_TYPES.map(([t]) => t);
@@ -37,6 +43,11 @@ const MESH_EXT = /\.(glb|gltf)$/i; // what <model-viewer> reads; the playground 
 const PDF_EXT = /\.pdf$/i;
 const COMMONS_FILE = /^https?:\/\/commons\.wikimedia\.org\/wiki\/Special:FilePath\//i;
 const DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|avif|svg\+xml)[;,]/i;
+// A WKT geometry: the value starts with one (after an optional CRS IRI, as GeoSPARQL writes it).
+const WKT = /^\s*(<[^>\s]*>\s*)?(POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION)\s*[ZM]*\s*\(/i;
+// A IIIF manifest or collection, by its path (Retelens' looksIiif).
+const IIIF = (path) => /\/manifest(\.json(ld)?)?$/i.test(path) || /\/iiif\//i.test(path) || /iiif.*\/collection(\.json)?$/i.test(path);
+const PMTILES_EXT = /\.pmtiles$/i;
 
 /** The path of a URL without query and fragment, for the extension test. */
 const pathOf = (url) => String(url).split(/[?#]/)[0];
@@ -70,15 +81,18 @@ export const isWebUrl = (value) => {
 };
 
 /**
- * What a value is, from the value alone: "image", "audio", "video", "model3d",
- * "pdf", "link" or "text". No dataset names, no predicates.
+ * What a value is, from the value alone: "image", "iiif", "geo", "layer", "audio",
+ * "video", "model3d", "pdf", "link" or "text". No dataset names, no predicates.
  */
 export function detect(value) {
   const s = String(value ?? "");
   if (DATA_IMAGE.test(s) && safeUrl(s, { data: true })) return "image";
+  if (WKT.test(s)) return "geo";
   if (!isWebUrl(s)) return "text";
   const path = pathOf(s);
   if (COMMONS_FILE.test(s) || IMAGE_EXT.test(path)) return "image";
+  if (PMTILES_EXT.test(path)) return "layer";
+  if (IIIF(path)) return "iiif";
   if (MESH_EXT.test(path)) return "model3d";
   if (AUDIO_EXT.test(path)) return "audio";
   if (VIDEO_EXT.test(path)) return "video";
@@ -94,6 +108,9 @@ export function thumbnail(url, width = 480) {
 const MEDIA = new Set(["image", "audio", "video", "model3d"]);
 /** What the card does with a type: "media" loads something, "link" opens it, "text" shows it. */
 export const isMedia = (type) => MEDIA.has(type);
+const RICH = new Set(["iiif", "geo", "markdown", "layer"]);
+/** Types the Retelens cells draw: a IIIF manifest's pictures, a geometry's map, Markdown, a map layer. */
+export const isRich = (type) => RICH.has(type);
 
 /**
  * One field of one card: { name, value, type, src, link }. `type` is what it is
@@ -107,6 +124,9 @@ export function field(name, value, forced = "auto") {
   const src = safeUrl(value, { data: image, upgrade: true });
   const link = safeUrl(value);
   let type = type0;
+  // the Retelens cells take these from the value itself; an address type on a value that is no address is text
+  if (type === "geo" || type === "markdown") return { name, value: String(value), type, src: null, link: null };
+  if ((type === "iiif" || type === "layer") && link) return { name, value: String(value), type, src: null, link };
   if (type !== "text" && type !== "number" && !src) type = "text";
   if (type === "number" && !Number.isFinite(Number(value))) type = "text";
   return { name, value: String(value), type, src: isMedia(type) ? src : null, link: type === "text" || type === "number" ? null : link };

@@ -156,9 +156,14 @@ so `graph_view` shows a query's results, an entity's neighbourhood or a
 dataset's schema as an interactive graph in the conversation: as dots, as boxes
 listing each entity's properties, or as a class diagram. The user can change
 labels, layers and layout (including a hive plot), search, expand and aggregate
-nodes, switch to a table or to cards (a card per row, with pictures, audio, video
-and 3D models where the values are addresses), and send a selection back to the
-chat; Claude changes the open view with
+nodes, switch to a table (pictures, IIIF manifests, geometries as small maps and
+links in the cells, a chart of each column's values under its name, a click on a
+bar to filter), to cards (a card per row, with pictures, IIIF, maps, audio, video
+and 3D models), or to a map (WKT geometries or latitude and longitude over an
+OpenStreetMap basemap, `.pmtiles` columns as layers), and send a selection back
+to the chat. A query's comments can choose the tab (`# view: map`) and name the
+columns (`# column ?v: Label — note`), as in
+[example queries](dataset-card-reference.md#hints-in-example-queries). Claude changes the open view with
 `graph_view_update` and reads what the user selected with `graph_view_state`.
 The view fetches its data with tools only it can call, so the triples never
 pass through the model. Details in `clients/mcpb/README.md`.

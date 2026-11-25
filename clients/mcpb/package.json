@@ -15,6 +15,9 @@
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cytoscape": "^3.31.0",
+    "leaflet": "1.9.4",
+    "pmtiles": "3.2.1",
+    "protomaps-leaflet": "5.1.0",
     "three": "0.183.2",
     "zod": "^4.4.3"
   },

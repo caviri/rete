@@ -13,6 +13,7 @@
       <button type="button" data-tab="graph" class="on">Graph</button>
       <button type="button" data-tab="table">Table</button>
       <button type="button" data-tab="cards">Cards</button>
+      <button type="button" data-tab="map" hidden>Map</button>
     </div>
     <label class="sel">Draw
       <select id="opt-diagram" title="Dots, a box per entity with its properties, or a class diagram">
@@ -90,16 +91,17 @@
   <main>
     <section id="graph" aria-label="graph"></section>
     <svg id="hive-axes" aria-hidden="true" hidden></svg>
-    <section id="table" hidden>
+    <section id="table" data-retelens hidden>
       <div class="table-bar">
         <input id="table-filter" type="search" placeholder="Filter rows" autocomplete="off">
         <span id="table-count"></span>
         <span class="grow"></span>
+        <button type="button" id="table-clear" hidden title="Clear the column filters (set by clicking a bar of a column's chart)">Clear filters</button>
         <button type="button" id="csv" hidden>CSV</button>
       </div>
       <div class="table-wrap"><table id="rows"></table></div>
     </section>
-    <section id="cards" aria-label="cards" hidden>
+    <section id="cards" aria-label="cards" data-retelens hidden>
       <div class="table-bar">
         <input id="cards-filter" type="search" placeholder="Filter cards" autocomplete="off">
         <span id="cards-count"></span>
@@ -115,6 +117,7 @@
         <button type="button" id="cards-more" hidden></button>
       </div>
     </section>
+    <section id="map" aria-label="map" data-retelens hidden></section>
     <aside id="side">
       <section id="layers">
         <h3>Layers <span class="links"><a href="#" id="layers-all">all</a> · <a href="#" id="layers-none">none</a></span></h3>
@@ -149,6 +152,7 @@
 </div>
 <div id="ctx" role="menu" hidden></div>
 <script type="text/plain" id="model-viewer-src">/*MODELVIEWER*/</script>
+<script type="text/plain" id="mapkit-src">/*MAPKIT*/</script>
 <script>/*SCRIPT*/</script>
 </body>
 </html>

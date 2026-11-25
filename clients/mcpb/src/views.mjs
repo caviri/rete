@@ -25,6 +25,7 @@ import { AttachmentError, uploadLimit } from "./graphs.mjs";
 import { FIELD_TYPE_NAMES } from "./view/cards.js";
 import { HIVE_AXES, HIVE_ORDERS } from "./view/hive.js";
 import {
+  withHintedView,
   LABEL_BATCH,
   LABELS,
   MAX_EDGES,
@@ -96,7 +97,14 @@ const optionsSchema = z
       .optional()
       .describe("hive layout: what puts a node on an axis — type (its class), role (sources / both / sinks), kind (resource / literal / …), degree (thirds by links); auto (default) takes the first that tells two groups apart"),
     hive_order: z.enum(HIVE_ORDERS).optional().describe("hive layout: what orders nodes along an axis, from the centre out — degree (links, default), in, out, name"),
-    view: z.enum(["graph", "table", "cards"]).optional().describe("which tab is shown: the graph, the rows as a table, or the rows as cards (pictures, video, audio and 3D models drawn where the values are addresses)"),
+    view: z
+      .enum(["graph", "table", "cards", "map"])
+      .optional()
+      .describe(
+        "which tab is shown: the graph, the rows as a table (pictures, IIIF manifests, geometries and links drawn in the cells, a chart of each column's values under its name), " +
+          "the rows as cards (pictures, IIIF, maps, video, audio and 3D models drawn where the values are addresses or geometries), or a map (WKT geometries, or latitude and longitude columns, " +
+          "on an OpenStreetMap basemap; a column of .pmtiles URLs is drawn as layers under them). A query's hints choose it when this is not given: a comment line '# view: map'",
+      ),
     card_fields: z
       .record(z.string(), z.enum(FIELD_TYPE_NAMES))
       .optional()
@@ -209,7 +217,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
   }
 
   /** Put a finished query's results into a view: added, or replacing what it holds. */
-  const load = (view, env, mode) => loadInto(view, elementsOf, env, mode);
+  const load = (view, env, mode, text) => loadInto(view, elementsOf, env, mode, text);
 
   /** Run `query` into `view`; a query still running at the deadline lands when it finishes. */
   async function query(view, text, mode) {
@@ -220,7 +228,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       job.settled.then(() => {
         if (job.state === "done") {
           view.status = "";
-          load(view, job.env, mode);
+          load(view, job.env, mode, text);
         } else {
           view.status = `the query ${job.state}${job.error ? `: ${job.error}` : ""}`;
           view.patch({ op: "status", status: view.status });
@@ -228,7 +236,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       });
       return { pending: true };
     }
-    return load(view, job.env, mode);
+    return load(view, job.env, mode, text);
   }
 
   /** A node's statements, both directions, into the view. */
@@ -392,6 +400,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       _meta: { ui: { resourceUri: VIEW_URI } },
     },
     guard(async ({ dataset: name, query: text, iri, schema, title, options = {} }) => {
+      options = withHintedView(options, text);
       let source;
       try {
         source = await store.resolve(name);

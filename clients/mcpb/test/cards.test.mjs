@@ -20,7 +20,7 @@ import {
 } from "../src/view/cards.js";
 
 test("the field types are the playground's, less what needs a service the page cannot reach", () => {
-  assert.deepEqual(FIELD_TYPE_NAMES, ["auto", "text", "link", "button", "image", "audio", "video", "model3d", "pdf", "number"]);
+  assert.deepEqual(FIELD_TYPE_NAMES, ["auto", "text", "link", "button", "image", "iiif", "geo", "audio", "video", "model3d", "pdf", "markdown", "layer", "number"]);
 });
 
 test("a value is recognised from the value alone", () => {
@@ -34,6 +34,12 @@ test("a value is recognised from the value alone", () => {
     "https://example.org/model.glb": "model3d",
     "https://example.org/model.gltf?v=2": "model3d",
     "https://example.org/paper.pdf": "pdf",
+    "https://iiif.example.org/iiif/2/abc/manifest.json": "iiif",
+    "https://example.org/objects/42/manifest": "iiif",
+    "https://example.org/relief.pmtiles": "layer",
+    "POINT(-4.56 37.02)": "geo",
+    "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((0 0, 1 0, 1 1, 0 0))": "geo",
+    "a point (not a geometry)": "text",
     "https://example.org/page": "link",
     "http://ex/thing": "text", // a toy namespace: no dotted host
     "Ada Lovelace": "text",

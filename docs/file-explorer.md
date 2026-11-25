@@ -161,10 +161,15 @@ the same page, which the explorer hosts the way Claude does (it is an
 open file instead of from the extension. Everything the view does in Claude works
 here: double-click a node to bring in its links, search for a name, group nodes
 into coloured layers, draw dots, boxes or a class diagram, change the layout,
-hide, remove and aggregate nodes, switch to a table or to cards and save the
-table as CSV. Cards load pictures, audio, video and 3D models from any `https`
-address (Claude Desktop only from the sites the extension declares). What
-needs a conversation (sending a selection to the chat) is left out.
+hide, remove and aggregate nodes, switch to a table, to cards or to a map and
+save the table as CSV. The table draws pictures, IIIF manifests, geometries
+(as small maps) and links in its cells and a chart of each column's values
+under its name (a click on a bar filters the rows); the map draws geometries
+or latitude and longitude over an OpenStreetMap basemap, with `.pmtiles`
+columns as layers. Pictures, IIIF, maps, audio, video and 3D models load from
+any `https` address (Claude Desktop only from the sites the extension
+declares). What needs a conversation (sending a selection to the chat) is left
+out.
 
 An entity adds to the picture, so walking from one thing to the next builds it
 up; a schema, a sample or a query replaces it. The copy lives in
@@ -204,6 +209,10 @@ tab is the escape hatch: an editor seeded from the file's own biggest class,
 `Ctrl`/`Cmd`+`Enter` to run, results as a table whose IRIs are clickable — so you
 can query your way to something and then keep walking the graph from it.
 `CONSTRUCT` and `DESCRIBE` come back as Turtle. Results export as CSV or JSON.
+**Graph**, **Table**, **Cards** and **Map** (when the result has geometries,
+positions or `.pmtiles` layers) open the result in the graph view on that tab;
+a query whose comments name a view (`# view: map`) shows that button in bold,
+and its `# column` hints name the columns.
 
 See [SPARQL support](sparql.md) for what the engine accepts.
 

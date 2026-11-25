@@ -576,7 +576,7 @@ test("cards: one per row, a masonry, lazy media, fields that can be set, nothing
   // The Fields menu: the same types as the playground's; a field's type is set per column.
   await view.locator("#cards-fields-menu summary").click();
   const opts = await view.locator('#cards-fields select[data-field="photo"] option').allTextContents();
-  assert.deepEqual(opts, ["Auto", "Text", "Link", "Button", "Image", "Audio", "Video", "3D", "PDF", "Number"]);
+  assert.deepEqual(opts, ["Auto", "Text", "Link", "Button", "Image", "IIIF", "Map", "Audio", "Video", "3D", "PDF", "Markdown", "Map layer", "Number"]);
   await view.locator('#cards-fields select[data-field="photo"]').selectOption("link");
   await until(() => window.__reteView.options.card_fields.photo === "link", null, "the setting kept");
   assert.equal(await inView(() => document.querySelectorAll("#cards-grid .rcard:first-child .media-slot[data-kind=image]").length), 1, "only the picture that is not there is left");
@@ -746,4 +746,63 @@ test("a 3D model the policy will not let the viewer fetch, or that never arrives
   await hung.inView(() => (window.__reteView.cards.viewerTimeout = 1500));
   await hung.until(() => document.querySelector(".media-fallback"), null, "the model given up on");
   assert.match(await hung.view.locator(".media-fallback").first().textContent(), /3D model did not finish loading here/);
+});
+
+// A result with geometries, numbers and a picture, and Retelens query hints in its comments: the view the hints
+// name, the columns they name, the Retelens cells and column statistics in the table, the map.
+const PLACES = `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+# Places
+# Three places and a road, with their area (a chart needs four values).
+# view: map
+# column ?name: Nombre — the place's name
+# column ?km2: Area (km²) — of the polygon
+# column ?kind: Kind
+SELECT ?place ?name ?kind ?km2 ?shape ?picture WHERE {
+  VALUES (?place ?name ?kind ?km2 ?shape ?picture) {
+    (<https://example.org/alpha> "Alpha" "place" 1.5 "POINT(-4.56 37.02)"^^geo:wktLiteral <https://media.example/alpha.png>)
+    (<https://example.org/beta> "Beta" "place" 12.25 "POLYGON((-4.6 37.0, -4.5 37.0, -4.5 37.1, -4.6 37.0))"^^geo:wktLiteral UNDEF)
+    (<https://example.org/road> "Road" "road" 40 "LINESTRING(-4.7 36.9, -4.4 37.2)"^^geo:wktLiteral UNDEF)
+    (<https://example.org/gamma> "Gamma" "place" 3 "POINT(-4.4 37.1)"^^geo:wktLiteral UNDEF)
+  }
+}`;
+
+test("Retelens in the view: hints pick the Map tab and name the columns; rich cells, column charts, cards", { skip }, async (t) => {
+  const { view, inView, until, links, shot } = await host(t, { dataset: "people", query: PLACES, title: "places" });
+  await until(() => window.__reteView?.table?.rows?.length === 4, null, "the rows");
+
+  // "# view: map" opened the Map tab, which the rows' geometries offer anyway
+  await until(() => window.__reteView.options.view === "map", null, "the Map tab chosen by the hint");
+  assert.equal(await view.locator('.tabs button[data-tab="map"]').isHidden(), false);
+  await until(() => /4 places/.test(document.querySelector("#map .rl-mapbar")?.textContent ?? ""), null, "four places on the map");
+  assert.ok(await inView(() => !!window.RetelensMapKit), "the map library started from the page");
+  assert.ok(await inView(() => !!document.querySelector("#map .leaflet-overlay-pane canvas")), "the shapes are drawn (on canvas)");
+  await shot("-map");
+
+  // the table: the hints' names, a chart under every column, the cells drawn by Retelens
+  await view.locator('.tabs button[data-tab="table"]').click();
+  const heads = await inView(() => [...document.querySelectorAll("#rows th .th-name")].map((e) => e.textContent.trim()));
+  assert.deepEqual(heads, ["place", "Nombre", "Kind", "Area (km²)", "shape", "picture"]);
+  assert.match(await view.locator('#rows th[data-col="km2"]').getAttribute("title"), /of the polygon/);
+  assert.equal(await view.locator("#rows th .rl-stat").count(), 6);
+  assert.equal(await view.locator("#rows td .rl-geo").count(), 4, "every geometry as a small map");
+  assert.equal(await view.locator("#rows td img.rl-thumb").count(), 1, "the picture as a thumbnail");
+  await shot("-table");
+
+  // a bar of a column's chart filters the rows; Clear filters brings them back
+  await view.locator('#rows th[data-col="kind"] .rl-stat-g.rl-pick').first().click(); // the commonest value: place
+  assert.match(await view.locator("#table-count").textContent(), /^3 of 4 rows · filtered by Kind$/);
+  await view.locator("#table-clear").click();
+  assert.match(await view.locator("#table-count").textContent(), /^4 of 4 rows$/);
+
+  // a web link in a cell opens through the host
+  await view.locator('#rows td a[href="https://example.org/alpha"]').first().click();
+  await until(() => true, null, "");
+  assert.ok(links.includes("https://example.org/alpha"), `the link went to the host (${JSON.stringify(links)})`);
+
+  // the cards: the hints' names, a geometry as a small map
+  await view.locator('.tabs button[data-tab="cards"]').click();
+  assert.equal(await view.locator("#cards-grid .rcard").count(), 4);
+  assert.ok((await view.locator("#cards-grid .rcard:first-child .cf-k").allTextContents()).includes("Nombre"));
+  assert.equal(await view.locator("#cards-grid .cf-rich .rl-geo").count(), 4);
+  await shot("-cards");
 });

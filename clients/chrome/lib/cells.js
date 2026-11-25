@@ -574,7 +574,8 @@
         const b = h("button", { type: "button", class: "rl-btnlink", title: url }, "Map layer ↗");
         b.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (EXT_PAGE) window.open(chrome.runtime.getURL("viewer.html") + "?" + new URLSearchParams({ src: url, name, host: "url" }), "_blank", "noopener");
+          if (window.RetelensHost && window.RetelensHost.openLayer) window.RetelensHost.openLayer(url, name);
+          else if (EXT_PAGE) window.open(chrome.runtime.getURL("viewer.html") + "?" + new URLSearchParams({ src: url, name, host: "url" }), "_blank", "noopener");
           else chrome.runtime.sendMessage({ retelens: "openViewer", src: url, name });
         });
         return h("div", { class: "rl-media" }, b, h("span", { class: "rl-host" }, name));

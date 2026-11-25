@@ -31,6 +31,7 @@ import {
   neighbourTriples,
   schemaInto,
   unlabelled,
+  withHintedView,
 } from "../graph/host-lib.js";
 import { parseTerm, searchGraph } from "./rete-fs.js";
 
@@ -146,7 +147,7 @@ export class GraphHost {
     if (seed.schema) {
       const schema = bareSchema(this.ctx.meta.schema);
       if (!schema.classes.length) throw new Error("this file carries no schema to draw — try a sample instead");
-      look(SCHEMA_LOOK, `schema of ${this.dataset}`);
+      look({ ...SCHEMA_LOOK, view: "graph" }, `schema of ${this.dataset}`);
       const r = schemaInto(view, schema);
       return `${r.shown} of ${r.classes} classes, ${r.relations} relations`;
     }
@@ -158,7 +159,7 @@ export class GraphHost {
           view.clear();
           view.patch({ op: "replace", nodes: [], edges: [], table: null });
         }
-        look(GRAPH_LOOK, localName(seed.iri));
+        look({ ...GRAPH_LOOK, view: "graph" }, localName(seed.iri));
       }
       const added = await this.#expand(view, seed.iri);
       return `${added.nodes.length} nodes and ${added.edges.length} links added`;
@@ -168,8 +169,10 @@ export class GraphHost {
       ?? (seed.predicate && `SELECT ?s ?p ?o WHERE { ?s ${iriToken(seed.predicate)} ?o BIND(${iriToken(seed.predicate)} AS ?p) } LIMIT 300`)
       ?? (seed.graph && `SELECT ?s ?p ?o WHERE { GRAPH ${iriToken(seed.graph)} { ?s ?p ?o } } LIMIT 400`)
       ?? SAMPLE;
-    look(seed.look ?? GRAPH_LOOK, seed.title ?? describeSeed(seed));
-    const r = loadInto(view, elementsOf, await run(query), "replace");
+    // the tab: the one asked for (the SPARQL panel's Table, Cards, Map buttons), else the query's hint (# view: map)
+    const tab = seed.view ?? withHintedView({}, seed.query)?.view ?? "graph";
+    look({ ...(seed.look ?? GRAPH_LOOK), view: tab }, seed.title ?? describeSeed(seed));
+    const r = loadInto(view, elementsOf, await run(query), "replace", query);
     return `${r.nodes.length} nodes, ${r.edges.length} links${r.truncated ? " (capped)" : ""}`;
   }
 

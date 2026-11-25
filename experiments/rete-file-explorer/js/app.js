@@ -754,12 +754,19 @@ function showQueryResult(result, ms, query) {
     pane.append(renderTable(result));
   }
 
-  // SELECT and CONSTRUCT results draw as a graph; a lone ASK boolean does not.
+  // SELECT and CONSTRUCT results open in the view (the page the Claude extension shows): as a graph, a table with
+  // rich cells and a chart of each column, cards, or a map when they hold geometries, positions or .pmtiles layers.
+  // A lone ASK boolean does not.
   if (!/^\s*(?:#[^\n]*\n\s*)*(?:(?:PREFIX|BASE)[^\n]*\n\s*)*ASK\b/i.test(query)) {
-    const g = el("button", "dl graphit", "◉ Graph");
-    g.title = "Draw these results in the graph view";
-    g.onclick = () => showGraph({ query, title: "query results" });
-    $("#downloads").append(g);
+    const hinted = (/^\s*#\s*view\s*:\s*(graph|table|cards|map)\s*$/im.exec(query) || [])[1];
+    const tabs = [["graph", "◉ Graph", "Draw these results as a graph"], ["table", "▦ Table", "These results as a table: pictures, maps and links in the cells, a chart of each column"], ["cards", "▤ Cards", "These results as cards, one per row"]];
+    if (hinted === "map" || hasGeo(result)) tabs.push(["map", "⌖ Map", "These results on a map (OpenStreetMap basemap)"]);
+    for (const [view, label, title] of tabs) {
+      const b = el("button", "dl graphit" + (view === hinted ? " hinted" : ""), label);
+      b.title = title + (view === hinted ? " — the view this query names (# view:)" : "");
+      b.onclick = () => showGraph({ query, title: "query results", view });
+      $("#downloads").append(b);
+    }
   }
   for (const fmt of result.kind === "text" ? ["ttl"] : ["csv", "json"]) {
     const f = resultToFile(result, fmt);
@@ -1300,6 +1307,13 @@ function termCell(term, cls) {
     else if (term.datatype) td.append(el("span", "tag", localName(term.datatype)));
   }
   return td;
+}
+
+/** Whether a result has something to map: a WKT geometry, latitude and longitude columns, or a .pmtiles layer. */
+function hasGeo(result) {
+  const WKT = /^\s*(<[^>\s]*>\s*)?(POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION)\s*[ZM]*\s*\(/i;
+  if (result.vars.some((v) => /(^|[^a-z])lat(itude)?$/i.test(v)) && result.vars.some((v) => /(^|[^a-z])(lon|lng|long|longitude)$/i.test(v))) return true;
+  return (result.rows || []).slice(0, 200).some((row) => row.some((cell) => WKT.test(String(cell)) || /\.pmtiles$/i.test(String(cell).split(/[?#]/)[0])));
 }
 
 function renderTable(tab) {
