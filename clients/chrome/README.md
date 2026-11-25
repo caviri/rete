@@ -81,6 +81,15 @@ carries, `RetelensHost.openLayer(url, name)` is what a *Map layer* button does, 
 light or dark. `hints.js` sets `globalThis.RetelensHints`, so the extension's server reads hints in Node. A change here
 runs the extension's tests too (`.github/workflows/mcpb-test.yml`).
 
+## Several files: the chooser
+
+`Explorer.start()` opens nothing when the session has more than one file and none is named (`file` in the URL): it
+draws `renderChooser()`, the files with an **About** (the worker's `peekCard` op: `rete.open` on the file's URL on
+a graph of its own, `card()` and the header's counts, then `free()`; the xhr shim passes reads of other URLs
+through, so the open file is untouched) and an **Open** (`start(i)`). The README's default file (`hf.js`
+`defaultFile`, `f.default`) comes first with its card shown. `viewer.html` takes several `src` (and `name`)
+parameters, a set of files to choose from.
+
 ## Query hints, layers, the example
 
 `lib/hints.js` reads a query's comments: the title (first line), a description (more plain lines), `# view:` (table,

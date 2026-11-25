@@ -4,7 +4,7 @@
 //
 // Protocol: main -> worker  {id, op, ...args}
 //           worker -> main  {id, ok:true, result} | {id, ok:false, error:{message, code, detail}}
-// ops: open, openLocal, openBytes, buildJsonld, card, meta, examples, schema, info, stats, run, page, search, free,
+// ops: open, openLocal, openBytes, buildJsonld, peekCard, card, meta, examples, schema, info, stats, run, page, search, free,
 //      readRange (bytes of the open file), tiles (a PMTiles archive embedded as a section)
 
 importScripts("rete-xhr-shim.js");   // BEFORE the bundle: the wasm looks XMLHttpRequest up at call time
@@ -319,6 +319,23 @@ const ops = {
     return tilesFound;
   },
   async card() { return graph.card(); },
+  // Another file's card, for the file chooser (lib/explorer.js): its header and card only (a few kB, two or three
+  // range reads), on a graph of its own that is freed at once, so the open file is not touched. The xhr shim passes
+  // reads of other URLs straight through.
+  async peekCard({ url }) {
+    await rete.init();
+    const p = await probe(url);
+    checkMagic(p.head);
+    const g = await rete.open(p.bytes || p.url);
+    try {
+      const c = g.card() || {};
+      const pick = {};
+      for (const k of ["title", "description", "license", "source", "source_date", "created", "keywords", "triple_count", "quad_count", "term_count", "graph_count", "format_version"]) if (c[k] != null) pick[k] = c[k];
+      if (c.example_queries || c.queries) pick.examples = (c.example_queries || []).length + (c.queries || []).length;
+      let info = null; try { info = g.info(); } catch (_) {} // the header's counts: every file has them, carded or not
+      return { card: pick, info: info ? { quads: info.quads, terms: info.terms, graphs: info.graphs } : null, size: p.total || null };
+    } finally { try { g.free(); } catch (_) {} }
+  },
   // Everything the sidebar needs in one round trip.
   async meta() {
     return guarded(() => ({

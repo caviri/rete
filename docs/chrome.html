@@ -657,6 +657,14 @@ choose <em>Preview with rete</em> to open it.</p>
 or <a href="https://zenodo.org/records/24131107">Zenodo record 24131107</a>.</p>
 <h2 id="the-viewer">The viewer</h2>
 <ul>
+<li><strong>Several graphs.</strong> When a dataset, repository, record or bucket has more
+than one <code>.rete</code> file, Retelens opens none of them: it lists them and asks
+which one to open. <strong>About</strong> shows a file's card (its title, description,
+statements, licence, keywords) by reading only that card, a few kB; <strong>Open</strong>
+opens it. The file the README names as its default (below) comes first,
+marked, its card already shown; a box filters a long list. A link that
+names a file (<code>?file=</code> in the Data Studio, a file row on Zenodo) opens that
+one directly, and the Graph picker switches between them afterwards.</li>
 <li><strong>Graph and Query pickers.</strong> The query list shows each example's title,
 description and SPARQL, with Copy and <em>Edit in console</em>.</li>
 <li><strong>Table, Cards, Graph, Map.</strong> Search, per-column filters and sorting work on
@@ -719,9 +727,9 @@ the Caminito del Rey, rivers), points (towns, peaks, viewpoints) and a raster
 every polygon and point computed from it). Its twelve example queries carry
 hints, so each opens in its view. Sources: REDIAM (Junta de Andalucía),
 OpenStreetMap, Wikidata and the Copernicus DEM, credited in the file's card.</p>
-<p>A dataset README chooses which file Retelens shows first the way it chooses
-Hugging Face's default subset: a <code>configs</code> entry with <code>default: true</code> whose
-<code>data_files</code> name the <code>.rete</code> file.</p>
+<p>A dataset README marks a default file the way it chooses Hugging Face's
+default subset: a <code>configs</code> entry with <code>default: true</code> whose <code>data_files</code>
+name the <code>.rete</code> file. It comes first in the list of graphs, with its card.</p>
 <h2 id="pmtiles">PMTiles</h2>
 <p>A <code>.pmtiles</code> link (or file dropped on the viewer) opens as a map: the archive's
 header and metadata next to it (tile type, zooms, bounds, attribution), each

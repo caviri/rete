@@ -30,6 +30,9 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   bar filters the column. Maps use an open PMTiles basemap: OpenStreetMap
   as the Protomaps basemap (zoom 0 to 12) on data.graphplaza.com and in the
   rete-public bucket, or any archive set in the popup.
+  When a page has several `.rete` files, Retelens opens none of them: it
+  lists them and asks which one to open, each with an About that shows its
+  card (title, description, statements, licence) read on its own, a few kB.
   Example queries can carry hints in their comments (`# view: map`,
   `# column ?var: Label — note`): the query lists show the suited view and
   the explained columns, and each query opens in its view. A column of

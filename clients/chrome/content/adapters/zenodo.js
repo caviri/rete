@@ -241,7 +241,7 @@
 
   // ---------------------------------------------------------------- a record with .rete files
   function setupRecord(ctx, recId, rec, reteFiles) {
-    const files = reteFiles.map((f) => ({ path: f.name, src: fileUrl(recId, f.name), label: f.name, download: fileUrl(recId, f.name) }));
+    const files = reteFiles.map((f) => ({ path: f.name, src: fileUrl(recId, f.name), label: f.name, download: fileUrl(recId, f.name), size: f.size || null }));
     const session = new Session(ctx.engine(), files);
     const eng = ctx.engine();
     const qs = () => new URLSearchParams(location.search);
