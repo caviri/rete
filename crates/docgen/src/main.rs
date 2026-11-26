@@ -49,6 +49,10 @@ const PAGES: &[(&str, &str)] = &[
     ("playground-guide.md", "Playground"),
     ("plaza-guide.md", "Plaza — dataset gallery"),
     ("file-explorer.md", "File explorer — browse like an archive"),
+    (
+        "query-like-a-child.md",
+        "Query like a child — SPARQL from blocks",
+    ),
     ("yasgui-guide.md", "SPARQL IDE — yasgui·wasm"),
     ("jupyterlite-guide.md", "JupyterLite — Python in the tab"),
     ("jslab-guide.md", "JS lab — rete × D3"),
@@ -184,6 +188,7 @@ const NAV_CHILDREN: &[(&str, &[(&str, &str)])] = &[
         &[
             ("plaza-guide.md", "Plaza"),
             ("file-explorer.md", "File Explorer"),
+            ("query-like-a-child.md", "Query like a child"),
             ("yasgui-guide.md", "SPARQL IDE"),
         ],
     ),
@@ -423,6 +428,7 @@ fn parent_for(md: &str) -> Option<&'static str> {
         | "comunica.md"
         | "plaza-guide.md"
         | "file-explorer.md"
+        | "query-like-a-child.md"
         | "yasgui-guide.md" => "integrations.md",
         "build-tutorial.md"
         | "dataset-cards.md"
