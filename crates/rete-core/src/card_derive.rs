@@ -2291,6 +2291,49 @@ impl TopN {
     }
 }
 
+/// Decoded text one slice of [`for_each_term_bounded`] aims to hold at once.
+const TERM_SLICE_BYTES: usize = 64 << 20;
+
+/// Resolve `ids` and hand each term to `each(slot, term)`, in order, without
+/// holding all of them decoded at once: the ids are resolved a slice at a
+/// time, each slice sized so that its decoded text stays near
+/// [`TERM_SLICE_BYTES`].
+///
+/// A window of ids is sized by count, which bounds memory only while terms
+/// are small. Literals that embed a file (an image as `xsd:base64Binary`) are
+/// neighbours in the dictionary, so a window of 65,536 of them at 140 KB each
+/// decoded to about 9 GB, outside the memory budget, which counts the reader
+/// caches only.
+///
+/// A slice's size is estimated before it is decoded, from `len_of` of its
+/// first and its last id, and the slice is halved until the larger of the two
+/// times its length fits. Ids arrive in dictionary order, where large terms
+/// of one kind sit together, so the two ends speak for what lies between
+/// them; a large term hidden between two small ends is not seen.
+fn for_each_term_bounded(
+    ids: &[u32],
+    len_of: impl Fn(u32) -> usize,
+    resolve: impl Fn(&[u32]) -> Vec<Option<String>>,
+    mut each: impl FnMut(usize, Option<&str>),
+) {
+    let mut at = 0;
+    while at < ids.len() {
+        let mut n = ids.len() - at;
+        let first = len_of(ids[at]);
+        while n > 1 {
+            let per_term = first.max(len_of(ids[at + n - 1])).max(1);
+            if per_term.saturating_mul(n) <= TERM_SLICE_BYTES {
+                break;
+            }
+            n = (n / 2).max(TERM_SLICE_BYTES / per_term).max(1);
+        }
+        for (i, term) in resolve(&ids[at..at + n]).iter().enumerate() {
+            each(at + i, term.as_deref());
+        }
+        at += n;
+    }
+}
+
 /// Merge per-section [`TopN`]s into the card's list: resolve the survivors'
 /// terms, order by count then term, cut at [`CARD_TOP_N`] — the in-memory
 /// `cap(sort_desc_owned(…))`, over the only candidates that could reach it.
@@ -2605,17 +2648,21 @@ pub fn derive_card_streaming(
     let mut lit_objects = 0u64;
     let flush_lits = |lit_window: &mut Vec<(u32, Vec<(u32, u64)>)>, prof: &mut Profile| {
         let ids: Vec<u32> = lit_window.iter().map(|(o, _)| *o).collect();
-        let terms = dict.object_terms(&ids);
-        for (term, (_, preds)) in terms.iter().zip(lit_window.iter()) {
-            let Some(lit) = term.as_deref().and_then(parse_literal) else {
-                continue;
-            };
-            for &(p, n) in preds {
-                if let Some(pt) = pred_terms.get(p as usize) {
-                    prof.literal(pt, &lit, n);
+        for_each_term_bounded(
+            &ids,
+            |id| dict.object_term(id).map_or(0, |t| t.len()),
+            |slice| dict.object_terms(slice),
+            |slot, term| {
+                let Some(lit) = term.and_then(parse_literal) else {
+                    return;
+                };
+                for &(p, n) in &lit_window[slot].1 {
+                    if let Some(pt) = pred_terms.get(p as usize) {
+                        prof.literal(pt, &lit, n);
+                    }
                 }
-            }
-        }
+            },
+        );
         lit_window.clear();
     };
     let mut cur_o = 0u32;
@@ -2812,6 +2859,46 @@ mod tests {
     use crate::card_input::{CARD_EXTRA_MAX_BYTES, CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES};
 
     const TYPE: &str = RDF_TYPE;
+
+    /// Every id is visited once, in order, and no slice decodes much more
+    /// than the byte target, also when short terms come before long ones.
+    #[test]
+    fn term_slices_are_bounded_by_bytes_and_cover_every_id() {
+        // (number of short terms, number of long terms after them)
+        for (short, long) in [(5000u32, 0u32), (0, 3000), (5000, 3000), (1, 1)] {
+            let ids: Vec<u32> = (1..=short + long).collect();
+            let len = |id: u32| if id <= short { 8usize } else { 150_000 };
+            let largest = std::cell::Cell::new(0usize);
+            let calls = std::cell::Cell::new(0usize);
+            let mut seen = Vec::new();
+            for_each_term_bounded(
+                &ids,
+                len,
+                |slice| {
+                    calls.set(calls.get() + 1);
+                    largest.set(largest.get().max(slice.iter().map(|&id| len(id)).sum()));
+                    slice
+                        .iter()
+                        // id 7 has no term: its slot must still be visited
+                        .map(|&id| (id != 7).then(|| "x".repeat(len(id).min(4))))
+                        .collect()
+                },
+                |slot, term| {
+                    assert_eq!(term.is_some(), ids[slot] != 7);
+                    seen.push(slot);
+                },
+            );
+            assert_eq!(seen, (0..ids.len()).collect::<Vec<_>>());
+            assert!(
+                largest.get() <= TERM_SLICE_BYTES,
+                "{short} short + {long} long: a slice decoded {} bytes",
+                largest.get()
+            );
+            if long == 0 {
+                assert_eq!(calls.get(), 1, "short terms are resolved in one go");
+            }
+        }
+    }
 
     fn q(s: &str, p: &str, o: &str) -> (String, String, String, Option<String>) {
         (s.into(), p.into(), o.into(), None)

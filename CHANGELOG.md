@@ -74,6 +74,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Deriving a card for a graph with large literals stays inside the memory
+  budget.** `rete build --memory-budget-mb` and `rete recard`
+  read every literal once to profile it, 65,536 at a time. Literals that
+  embed a file (an image as `xsd:base64Binary`) made one such batch several
+  gigabytes, whatever the budget: a 14 GB graph of paintings was stopped at a
+  4 GB limit. A batch is now also cut by the bytes it decodes, about 64 MiB
+  at a time. The card is the same.
 - **`LIMIT`, `OFFSET` and `ORDER BY` on CONSTRUCT and DESCRIBE.** They were
   ignored: every solution was written, also when the cut sat in a subquery
   (`CONSTRUCT { … } WHERE { { SELECT … LIMIT 5 } }`). They now sort and cut
