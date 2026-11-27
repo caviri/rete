@@ -101,6 +101,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **`--progress json` and `plain` always open with the start line.** A run
+  shorter than one tick of the progress sampler (a recard of a small file)
+  could end with `done` and no `start` before it. This also made the
+  `progress recard` smoke check fail now and then in CI.
 - **Deriving a card for a graph with large literals stays inside the memory
   budget.** `rete build --memory-budget-mb` and `rete recard`
   read every literal once to profile it, 65,536 at a time. Literals that
