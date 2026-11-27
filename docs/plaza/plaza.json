@@ -2600,7 +2600,7 @@
     {
       "key": "causenet",
       "title": "causenet",
-      "rete": "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed.rete",
+      "rete": "https://data.graphplaza.com/causenet-full-typed/causenet-full-typed-2020-08-19.rete",
       "kind": "remote-lazy",
       "icon": "⛓️",
       "tags": [
@@ -2645,8 +2645,8 @@
           "verified": true
         }
       ],
-      "formatVersion": 5,
-      "size": 6386313839
+      "formatVersion": 8,
+      "size": 6483543404
     },
     {
       "key": "jonas",
@@ -2752,7 +2752,7 @@
     {
       "key": "databnf",
       "title": "databnf",
-      "rete": "https://data.graphplaza.com/databnf-full/databnf-full.rete",
+      "rete": "https://data.graphplaza.com/databnf-full/databnf-full-2026-06-27.rete",
       "kind": "remote-lazy",
       "icon": "🇫🇷",
       "tags": [
@@ -2775,8 +2775,8 @@
           "url": "https://data.bnf.fr/"
         }
       ],
-      "formatVersion": 5,
-      "size": 7685945189
+      "formatVersion": 8,
+      "size": 8134075437
     },
     {
       "key": "bne",
@@ -3333,7 +3333,7 @@
     {
       "key": "wikiart",
       "title": "wikiart",
-      "rete": "https://data.graphplaza.com/wikiart.rete",
+      "rete": "https://data.graphplaza.com/wikiart-2026-07-26.rete",
       "kind": "remote-lazy",
       "icon": "🎨",
       "tags": [
@@ -3360,8 +3360,8 @@
           "url": "https://www.wikiart.org/"
         }
       ],
-      "formatVersion": 5,
-      "size": 25409575263
+      "formatVersion": 8,
+      "size": 23459227468
     },
     {
       "key": "switzerland-fedlex",
@@ -4014,7 +4014,7 @@
     {
       "key": "orcid",
       "title": "orcid — every public ORCID profile: 25M researchers, 150M works, ONE 1.3-billion-triple file",
-      "rete": "https://data.graphplaza.com/orcid/orcid.rete",
+      "rete": "https://data.graphplaza.com/orcid/orcid-2025-10-01.rete",
       "kind": "remote-lazy",
       "icon": "🧑‍🔬",
       "tags": [
@@ -4044,13 +4044,13 @@
           "url": "https://orcid.org"
         }
       ],
-      "formatVersion": 5,
-      "size": 17533421230
+      "formatVersion": 8,
+      "size": 17377298394
     },
     {
       "key": "gharchive",
       "title": "gharchive — a full month of GitHub: every public event of July 2025, 1.64 BILLION triples with RDF-star provenance",
-      "rete": "https://data.graphplaza.com/gharchive/gharchive-2025-07.rete",
+      "rete": "https://data.graphplaza.com/gharchive/gharchive-2025-07-31.rete",
       "kind": "remote-lazy",
       "icon": "🐙",
       "tags": [
@@ -4080,13 +4080,13 @@
           "url": "https://www.gharchive.org/"
         }
       ],
-      "formatVersion": 5,
-      "size": 17100087870
+      "formatVersion": 8,
+      "size": 16916558452
     },
     {
       "key": "gharchive-2026-06",
       "title": "gharchive-2026-06 — GitHub's public timeline AFTER the cut: June 2026, 730M triples",
-      "rete": "https://data.graphplaza.com/gharchive/gharchive-2026-06.rete",
+      "rete": "https://data.graphplaza.com/gharchive/gharchive-2026-06-30.rete",
       "kind": "remote-lazy",
       "icon": "📉",
       "tags": [
@@ -4115,8 +4115,8 @@
           "url": "https://www.gharchive.org/"
         }
       ],
-      "formatVersion": 5,
-      "size": 6486757065
+      "formatVersion": 8,
+      "size": 6429755308
     },
     {
       "key": "ror",
@@ -4301,7 +4301,7 @@
     {
       "key": "epfl-graph",
       "title": "epfl-graph — the EPFL GraphOntology: 6.2M Wikipedia concepts linked by embedding similarity",
-      "rete": "https://data.graphplaza.com/epfl-graph/epfl-graph.rete",
+      "rete": "https://data.graphplaza.com/epfl-graph/epfl-graph-v1.0.1.rete",
       "kind": "remote-lazy",
       "icon": "🧠",
       "tags": [
@@ -4328,8 +4328,8 @@
           "url": "https://www.epfl.ch/about/data/epfl-graph/"
         }
       ],
-      "formatVersion": 5,
-      "size": 6843941172
+      "formatVersion": 8,
+      "size": 6652150518
     },
     {
       "key": "crossref",
@@ -4369,7 +4369,7 @@
     {
       "key": "crossref-citations",
       "title": "crossref-citations — the Crossref citation graph: 1.97B cx:cites edges between DOIs",
-      "rete": "https://data.graphplaza.com/crossref/crossref-citations.rete",
+      "rete": "https://data.graphplaza.com/crossref/crossref-citations-2026-03.rete",
       "kind": "remote-lazy",
       "icon": "🔗",
       "tags": [
@@ -4395,8 +4395,8 @@
           "url": "https://www.crossref.org/learning/public-data-file/"
         }
       ],
-      "size": 34343675161,
-      "formatVersion": 5
+      "size": 33861170854,
+      "formatVersion": 8
     }
   ]
 }
