@@ -1,0 +1,48 @@
+name: semantic-site plugin tests
+
+# plugins/semantic-site: the static-site generator, its WebMCP runtime and the
+# site checker are plain Node with no dependencies. The tests parse every input
+# format, build the example site, check it (pages, JSON-LD, links, the static
+# API) and run every read-only WebMCP tool of every page kind against it.
+on:
+  push:
+    branches: [main, "release-*"]
+    paths:
+      - "plugins/semantic-site/**"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/semantic-site-test.yml"
+  pull_request:
+    paths:
+      - "plugins/semantic-site/**"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/semantic-site-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semantic-site-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Unit and build tests
+        run: node --test plugins/semantic-site/test/semantic-site.test.mjs
+      - name: Build and check the example from the command line
+        run: |
+          node plugins/semantic-site/skills/semantic-site/scripts/build.mjs \
+            plugins/semantic-site/example/site.json --out "$RUNNER_TEMP/site"
+          node plugins/semantic-site/skills/site-check/scripts/check.mjs "$RUNNER_TEMP/site"

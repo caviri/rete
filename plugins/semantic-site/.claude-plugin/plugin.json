@@ -1,0 +1,22 @@
+{
+  "name": "semantic-site",
+  "displayName": "semantic-site — static semantic websites with WebMCP on every page",
+  "description": "Generate static websites from data (CSV, JSON, JSON-LD, N-Triples) where every page is HTML content, JSON-LD, a static JSON API entry and WebMCP tools for in-browser agents. Plus a skill for adding WebMCP to any page and a checker. No framework, no build step, any static host.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Carlos Vivar Rios",
+    "url": "https://github.com/caviri"
+  },
+  "homepage": "https://github.com/caviri/rete/tree/main/plugins/semantic-site",
+  "repository": "https://github.com/caviri/rete",
+  "license": "Apache-2.0",
+  "keywords": [
+    "webmcp",
+    "static-site",
+    "linked-data",
+    "json-ld",
+    "schema-org",
+    "static-api",
+    "knowledge-graph"
+  ]
+}

@@ -1,0 +1,34 @@
+<https://www.w3.org/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Organization> .
+<https://www.w3.org/> <https://schema.org/name> "World Wide Web Consortium"@en .
+<https://www.w3.org/> <https://schema.org/name> "Consortium World Wide Web"@fr .
+<https://www.w3.org/> <https://schema.org/alternateName> "W3C" .
+<https://www.w3.org/> <https://schema.org/description> "The standards body for the web; it publishes RDF, OWL, SPARQL, SHACL and most of the core linked-data vocabularies."@en .
+<https://www.w3.org/> <https://schema.org/foundingDate> "1994"^^<http://www.w3.org/2001/XMLSchema#gYear> .
+<https://www.w3.org/> <https://schema.org/url> <https://www.w3.org/> .
+<https://www.dublincore.org/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Organization> .
+<https://www.dublincore.org/> <https://schema.org/name> "Dublin Core Metadata Initiative"@en .
+<https://www.dublincore.org/> <https://schema.org/alternateName> "DCMI" .
+<https://www.dublincore.org/> <https://schema.org/description> "Maintains the Dublin Core metadata terms, which grew out of a 1995 workshop in Dublin, Ohio."@en .
+<https://www.dublincore.org/> <https://schema.org/foundingDate> "1995"^^<http://www.w3.org/2001/XMLSchema#gYear> .
+<https://www.dublincore.org/> <https://schema.org/url> <https://www.dublincore.org/> .
+<https://schema.org/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Organization> .
+<https://schema.org/> <https://schema.org/name> "Schema.org" .
+<https://schema.org/> <https://schema.org/description> "A collaborative community, started by search engines in 2011, that maintains a shared vocabulary for structured data."@en .
+<https://schema.org/> <https://schema.org/foundingDate> "2011"^^<http://www.w3.org/2001/XMLSchema#gYear> .
+<https://schema.org/> <https://schema.org/url> <https://schema.org/> .
+<http://xmlns.com/foaf/spec/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Project> .
+<http://xmlns.com/foaf/spec/> <https://schema.org/name> "FOAF project" .
+<http://xmlns.com/foaf/spec/> <https://schema.org/description> "A community project, begun in 2000 by Libby Miller and Dan Brickley, that maintains the FOAF vocabulary."@en .
+<http://xmlns.com/foaf/spec/> <https://schema.org/foundingDate> "2000"^^<http://www.w3.org/2001/XMLSchema#gYear> .
+<http://xmlns.com/foaf/spec/> <https://schema.org/member> _:libby .
+<http://xmlns.com/foaf/spec/> <https://schema.org/member> _:danbri .
+_:libby <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Person> .
+_:libby <https://schema.org/name> "Libby Miller" .
+_:danbri <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Person> .
+_:danbri <https://schema.org/name> "Dan Brickley" .
+<https://www.ogc.org/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Organization> .
+<https://www.ogc.org/> <https://schema.org/name> "Open Geospatial Consortium"@en .
+<https://www.ogc.org/> <https://schema.org/alternateName> "OGC" .
+<https://www.ogc.org/> <https://schema.org/description> "A consortium for geospatial standards; it publishes GeoSPARQL, GML and the OGC API family."@en .
+<https://www.ogc.org/> <https://schema.org/foundingDate> "1994"^^<http://www.w3.org/2001/XMLSchema#gYear> .
+<https://www.ogc.org/> <https://schema.org/url> <https://www.ogc.org/> .

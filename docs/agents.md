@@ -12,6 +12,7 @@ documentation.
 | **Desktop extension** | `rete.mcpb` — the whole engine as a one-click local install | Claude Desktop, incl. private graphs and offline work |
 | **Claude Code plugin** | this repo, installable as a plugin + marketplace | Claude Code users: MCP + skills in two commands |
 | **Skills** | four repo-aware playbooks under `skills/` | Claude Code; also readable as human docs |
+| **semantic-site plugin** | `plugins/semantic-site`, in the same marketplace | Building static sites whose every page carries JSON-LD, a static API and WebMCP tools |
 
 ## The MCP server
 
@@ -256,6 +257,25 @@ Installing wires up, in one step:
 Versioning follows git — every push to `main` is a new plugin version, so
 updates arrive without manual bumps. To try it without installing:
 `claude --plugin-dir <checkout>`.
+
+### semantic-site
+
+The marketplace lists a second plugin, independent of rete:
+
+```
+/plugin install semantic-site@rete
+```
+
+It builds a static website from CSV, JSON, JSON-LD, NDJSON, N-Triples or
+N-Quads. Every page is HTML content, schema.org JSON-LD, an entry in a static
+JSON API (`api/index.json`, one file per list and per item, OpenAPI,
+`llms.txt`), and a set of [WebMCP](https://webmachinelearning.github.io/webmcp/)
+tools registered with `document.modelContext`, so an agent in the browser can
+search, read and filter what the user sees. Its three skills: `semantic-site`
+(inspect the data, write `site.json`, build, check, publish), `webmcp-tools`
+(add WebMCP tools to any page) and `site-check` (verify a site before
+publishing, including a run of every read-only tool). Details in
+[`plugins/semantic-site`](https://github.com/caviri/rete/tree/main/plugins/semantic-site).
 
 ## The skills
 
