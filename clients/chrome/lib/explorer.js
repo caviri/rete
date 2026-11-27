@@ -126,7 +126,7 @@
       this.q = 0; this.page = 1; this.tok = 0; this.result = null; this.gv = null; this.status = {};
       this.sideTab = "examples";
       this.qmenu = new window.RetelensQuery.QueryMenu(this);
-      this.sparqlOpen = this.mode !== "box"; // the SPARQL block starts open in the studio, collapsed in inline boxes
+      this.sparqlOpen = false; // the SPARQL block starts collapsed everywhere (studio, viewer, inline boxes); once opened it stays open for the next queries
       this.lastRun = null; this.lastExample = 0;
       this.skinName = opts.skin || (location.protocol === "chrome-extension:" ? "standalone" : "hf");
       this.gh = this.skinName === "github";

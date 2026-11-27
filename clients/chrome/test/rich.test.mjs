@@ -295,6 +295,33 @@ test("the query list filters by words and by view", async () => {
   await page.close();
 });
 
+test("the query list opens in an inline box too (a Hugging Face or Zenodo page has no side panel)", async () => {
+  const page = await openViewer({ src: `${base}/rich.rete`, name: "rich.rete", host: "url" });
+  const mine = [];
+  page.on("pageerror", (e) => mine.push(String(e)));
+  await page.waitForSelector("table td", { timeout: 90000 });
+  // the Dataset Viewer box of a Hugging Face page: an Explorer in box mode over the same open file
+  await page.evaluate(() => {
+    const { Explorer } = window.RetelensExplorer;
+    const box = new Explorer({ session: window.__retelens.session, mode: "box", urlKeys: [] });
+    const host = document.createElement("div");
+    host.id = "boxhost"; host.setAttribute("data-retelens", "");
+    host.append(box.el);
+    document.body.prepend(host);
+    box.start();
+  });
+  await until(page, () => !!document.querySelector("#boxhost table td"), 60000, "the box's table");
+  await page.locator('#boxhost button[aria-haspopup="listbox"]', { hasText: /Query|Starter queries/ }).first().click();
+  await until(page, () => document.querySelectorAll("#rl-qlist [role=option]").length > 0, 10000, "the query list");
+  const r = await page.evaluate(() => { const b = document.getElementById("rl-qlist").closest("[role=dialog]").getBoundingClientRect(); return { w: b.width, h: b.height, top: b.top }; });
+  assert.ok(r.w > 100 && r.h > 50, `the list is placed on screen (${JSON.stringify(r)})`);
+  // pick one: the box runs it
+  await page.locator("#rl-qlist [role=option]").last().click();
+  assert.equal(await page.locator("#rl-qlist").count(), 0, "the list closes");
+  assert.deepEqual(mine, [], "no error in the page");
+  await page.close();
+});
+
 test("the SPARQL console colours the query and numbers its lines", async () => {
   const page = await openViewer({ src: `${base}/rich.rete`, name: "rich.rete", host: "url" });
   await page.waitForSelector("table td", { timeout: 90000 });

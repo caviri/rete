@@ -42,7 +42,9 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   bar filters the column. Maps use an open PMTiles basemap: OpenStreetMap
   as the Protomaps basemap (zoom 0 to 12) on data.graphplaza.com and in the
   rete-public bucket, or any archive set in the popup.
-  The query list and the Examples panel filter queries by words and by view.
+  The query list and the Examples panel filter queries by words and by view
+  (also in a Hugging Face or Zenodo page's box, where the list did not open).
+  The query's SPARQL starts folded in the viewer and the Data Studio too.
   The graph view's labels stay light in dark mode on Hugging Face, whose
   colours are now oklch (Tailwind v4), which the graph drew as black.
   A `.pmtiles` file page on Hugging Face (dataset or bucket) or GitHub shows
