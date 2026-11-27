@@ -19343,6 +19343,11 @@ self.onmessage = function (e) {
   // content — upgrade to https for the actual fetch/navigation (display keeps the
   // original IRI). Most RDF hosts (schema.org, wikidata.org, …) serve https.
   function httpsUpgrade(v) { return String(v).replace(/^http:\/\//i, "https://"); }
+  // A picture carried in the value itself: a base64 data: URI of a raster image
+  // (WikiArt builds one with CONCAT from the bytes stored in the file).
+  function looksDataImage(v) {
+    return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(v);
+  }
   // An image cell: a Wikimedia Commons file (wdt:P18 → Special:FilePath/…) or any
   // URL ending in an image extension. Rendered as a clickable thumbnail.
   function looksImageUrl(v) {
@@ -20695,6 +20700,7 @@ self.onmessage = function (e) {
       if (looksWebUrl(t.value)) return linkCell(t);     // a dereferenceable web URL
       return `<td class="iri"${disp !== t.value ? ` title="${esc(t.value)}"` : ""}>${esc(disp)}</td>`;
     }
+    if (looksDataImage(t.value)) return imageCell(t);     // the picture is the value → paint it
     if (looksWktGeo(t.value)) return geoCell(t);          // a WKT geometry → mini-map locator
     const num = t.datatype && NUM_DT.test(t.datatype);
     const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
