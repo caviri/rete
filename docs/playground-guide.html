@@ -749,6 +749,42 @@ added for federation can travel as <code>fed</code> keys, but <strong>additional
 as URLs or endpoints are omitted</strong>. Share warns when it leaves one out, so
 check that warning before sending a link. A link cannot supply a recipient
 with browser-local built data or private access to a source.</p>
+<h2 id="agents">Let an agent use it</h2>
+<p>The playground registers its actions as <a href="https://github.com/webmachinelearning/webmcp">WebMCP</a>
+tools, so an agent in the browser can open a dataset, run queries, read the
+answers and build a file while you watch the same page. In a browser without
+WebMCP nothing is registered and the page works as before.</p>
+<p>Tools that only read, and leave the page as it is:</p>
+<table><thead><tr><th>Tool</th><th>What it gives</th></tr></thead><tbody>
+<tr><td><code>get_state</code></td><td>the open dataset, in memory or remote, the active tab, the query in the editor, a link to this view</td></tr>
+<tr><td><code>list_datasets</code></td><td>the catalog, with a text filter and pages</td></tr>
+<tr><td><code>get_dataset_card</code></td><td>the Dataset Card carried in the open file</td></tr>
+<tr><td><code>get_schema</code></td><td>classes with counts and the relations between them</td></tr>
+<tr><td><code>list_examples</code></td><td>the example queries of the dataset, with their SPARQL</td></tr>
+<tr><td><code>run_sparql</code></td><td>the rows of a SELECT, ASK, CONSTRUCT or DESCRIBE; 50 by default, 500 at most</td></tr>
+<tr><td><code>find_entities</code></td><td>labels that start with some letters, with their IRIs</td></tr>
+<tr><td><code>read_page</code></td><td>the text the active tab shows</td></tr>
+</tbody></table>
+<p>Tools that act on the page, as a click would:</p>
+<table><thead><tr><th>Tool</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>open_dataset</code></td><td>opens a catalog dataset by key, or any <code>.rete</code> by its https address</td></tr>
+<tr><td><code>show_query</code></td><td>puts a query in the editor and runs it with the output you name</td></tr>
+<tr><td><code>select_example</code></td><td>loads an example and runs it</td></tr>
+<tr><td><code>open_tab</code></td><td>switches to SPARQL, SHACL, Reach, Coherence, Provenance, Schema, Explore, Semantic or Build</td></tr>
+<tr><td><code>run_tab</code></td><td>presses Run in the active tab</td></tr>
+<tr><td><code>build_rete</code></td><td>builds a <code>.rete</code> from RDF text (N-Triples, N-Quads, Turtle, TriG, JSON-LD, RDF/XML), keeps it in this browser and opens it</td></tr>
+<tr><td><code>download_rete</code></td><td>saves the built file through the browser's download</td></tr>
+</tbody></table>
+<p>Values come back as RDF terms the way N-Triples writes them: <code>&lt;iri&gt;</code>,
+<code>"text"@en</code>, <code>"1"^^&lt;datatype&gt;</code>. A result stays under about 18 KB and says when
+it was cut. An engine error comes back as the tool's error, with its message.
+On a remote file a query costs the byte ranges it touches, the same as when
+you run it yourself.</p>
+<p>To try it, use a Chrome that has WebMCP (149 or later, with
+<code>chrome://flags/#enable-webmcp-testing</code> on) and the "Model Context Tool
+Inspector" extension. WebMCP is an early preview and may change. A page script
+can call the same tools without it: <code>window.retePlaygroundTools.list()</code> and
+<code>window.retePlaygroundTools.call("run_sparql", { query: "…" })</code>.</p>
 <p><a id="under-the-hood"></a>
 For embedding the engine in your own page, see the <a href="browser.html">Browser API</a>.
 For source builds and playground generation, see <a href="contributing.html">Contributing</a>.</p>

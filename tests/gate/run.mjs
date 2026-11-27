@@ -463,6 +463,7 @@ const G2 = [
   ["check_settings_mobile", "phone-viewport Settings (no overflow, storage, session)", 120000, false],
   ["check_copy", "clipboard: parse-error Copy-log + share button", 90000, false],
   ["check_url_param", "#url= opens an off-catalog .rete; javascript: refused", 120000, false],
+  ["check_webmcp", "WebMCP: 15 agent tools registered; datasets, queries, tabs and an in-page build work through them", 180000, false],
   ["check_load_modal", "Load pre-modal: drop/URL/examples routes; URL route end to end; phone width", 150000, false],
   ["check_default_graph_hint", "empty-default-graph explainer (resident + carded remote); absent on ordinary files", 180000, false],
   ["check_card_examples", "the file's OWN card queries populate the examples panel (off-catalog + local + catalog supplement; deduped; zero-row kept)", 240000, false],

@@ -7,6 +7,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The playground offers its actions to browser agents as WebMCP tools.**
+  An agent can list and open datasets, read the card and the schema, run
+  SPARQL and get the rows, load an example, switch tabs, and build a `.rete`
+  from RDF text and save it, on the page the person is looking at. Fifteen
+  tools; nothing is registered in a browser without WebMCP. See
+  [the playground guide](docs/playground-guide.md#agents).
 - **The graph view in Claude Desktop, the file explorer and the desktop app
   draws rows as Retelens does.** The table draws pictures, IIIF manifests,
   geometries as small maps and links in its cells, with a chart of each
