@@ -71,6 +71,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - **The ISWC demo's agent extension is the 0.7.8 `rete.mcpb`.** It names the
   new addresses of the batch 3 catalog files and has the graph view's card
   view and hive layout.
+- **The plaza is redesigned and lists the whole catalog.** graphplaza.com now
+  shows every dataset of the playground catalog (103, from a generated
+  `plaza.json`) with search and filters, a schema preview drawn from each
+  file's card, and a query page per dataset. It runs the 0.7.8 engine (0.7.5
+  before). In browsers with WebMCP, the pages offer their search
+  and query functions to agents as tools.
 
 ### Fixed
 
