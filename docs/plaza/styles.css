@@ -107,6 +107,7 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
   background: var(--panel-2); border: 1px solid var(--border-2);
   padding: 5px 10px; border-radius: 999px; white-space: nowrap;
 }
+@media (max-width: 600px) { .pz-chip { max-width: 100%; white-space: normal; line-height: 1.25; } }
 button.pz-chip { cursor: pointer; }
 button.pz-chip:hover { color: var(--fg); border-color: var(--accent); }
 .pz-chip.on { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); border-color: var(--accent); color: var(--fg); }
