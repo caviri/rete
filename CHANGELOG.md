@@ -7,6 +7,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **semantic-site, a second Claude Code plugin in the repo's marketplace**
+  (`plugins/semantic-site`, `/plugin install semantic-site@rete`). It builds a
+  static website from CSV, JSON, JSON-LD, NDJSON, N-Triples or N-Quads, and
+  every page it makes is HTML content, schema.org JSON-LD, an entry in a static
+  JSON API (`api/index.json`, a file per list and per item, OpenAPI,
+  `llms.txt`) and a set of WebMCP tools registered with
+  `document.modelContext` (search, list and filter items, read one, see and
+  change what the user is looking at, and SPARQL when an endpoint is set).
+  Three skills: `semantic-site`, `webmcp-tools` (WebMCP on any page, with a
+  dependency-free kit) and `site-check` (pages, links, JSON-LD, the API, and a
+  run of every read-only tool). Node 20 or newer, no packages; it does not need
+  rete.
 - **The graph view in Claude Desktop, the file explorer and the desktop app
   draws rows as Retelens does.** The table draws pictures, IIIF manifests,
   geometries as small maps and links in its cells, with a chart of each

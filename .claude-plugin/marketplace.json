@@ -13,6 +13,11 @@
         "repo": "caviri/rete"
       },
       "description": "Skills to build and publish .rete knowledge graphs, plus the rete MCP server: SPARQL + SHACL over 60+ public datasets (and any .rete URL), entity search, dataset cards, and media preview/embedding tools."
+    },
+    {
+      "name": "semantic-site",
+      "source": "./plugins/semantic-site",
+      "description": "Static websites from data (CSV, JSON, JSON-LD, N-Triples) where every page is HTML content, JSON-LD, a static JSON API entry and WebMCP tools for in-browser agents. Independent of rete; no framework, no build step, any static host."
     }
   ]
 }

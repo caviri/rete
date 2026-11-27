@@ -628,6 +628,7 @@ documentation.</p>
 <tr><td><strong>Desktop extension</strong></td><td><code>rete.mcpb</code> — the whole engine as a one-click local install</td><td>Claude Desktop, incl. private graphs and offline work</td></tr>
 <tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
 <tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
+<tr><td><strong>semantic-site plugin</strong></td><td><code>plugins/semantic-site</code>, in the same marketplace</td><td>Building static sites whose every page carries JSON-LD, a static API and WebMCP tools</td></tr>
 </tbody></table>
 <h2 id="the-mcp-server">The MCP server</h2>
 <p>One streamable-HTTP endpoint, stateless, <strong>no authentication, no API key</strong>
@@ -835,6 +836,20 @@ granted, compared on real paths so a symlink cannot escape. See
 <p>Versioning follows git — every push to <code>main</code> is a new plugin version, so
 updates arrive without manual bumps. To try it without installing:
 <code>claude --plugin-dir &lt;checkout&gt;</code>.</p>
+<h3 id="semantic-site">semantic-site</h3>
+<p>The marketplace lists a second plugin, independent of rete:</p>
+<pre><code>/plugin install semantic-site@rete
+</code></pre>
+<p>It builds a static website from CSV, JSON, JSON-LD, NDJSON, N-Triples or
+N-Quads. Every page is HTML content, schema.org JSON-LD, an entry in a static
+JSON API (<code>api/index.json</code>, one file per list and per item, OpenAPI,
+<code>llms.txt</code>), and a set of <a href="https://webmachinelearning.github.io/webmcp/">WebMCP</a>
+tools registered with <code>document.modelContext</code>, so an agent in the browser can
+search, read and filter what the user sees. Its three skills: <code>semantic-site</code>
+(inspect the data, write <code>site.json</code>, build, check, publish), <code>webmcp-tools</code>
+(add WebMCP tools to any page) and <code>site-check</code> (verify a site before
+publishing, including a run of every read-only tool). Details in
+<a href="https://github.com/caviri/rete/tree/main/plugins/semantic-site"><code>plugins/semantic-site</code></a>.</p>
 <h2 id="the-skills">The skills</h2>
 <p>Four repo-aware playbooks (in <a href="https://github.com/caviri/rete/tree/main/skills"><code>skills/</code></a>,
 loaded automatically by the plugin):</p>

@@ -1,0 +1,6 @@
+{
+  "name": "semantic-site-runtime",
+  "private": true,
+  "description": "Browser files copied into every generated site. Marked as ES modules so the build and the tests can import them in Node.",
+  "type": "module"
+}

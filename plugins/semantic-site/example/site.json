@@ -1,0 +1,46 @@
+{
+  "title": "Semantic Web vocabularies",
+  "description": "Twelve vocabularies that linked data is built on, who publishes them, and where their specifications live.",
+  "kicker": "semantic-site example",
+  "lang": "en",
+  "license": { "name": "CC0 1.0", "url": "https://creativecommons.org/publicdomain/zero/1.0/" },
+  "intro": "content/home.md",
+  "collections": [
+    {
+      "id": "vocabularies",
+      "title": "Vocabularies",
+      "description": "Each vocabulary with its prefix, namespace, status and specification.",
+      "source": "data/vocabularies.csv",
+      "key": "prefix",
+      "label": "name",
+      "type": "DefinedTermSet",
+      "facets": ["status", "publisher"],
+      "columns": ["prefix", "publisher", "year"],
+      "sort": "name",
+      "fields": {
+        "prefix": { "label": "Prefix" },
+        "namespace": { "label": "Namespace", "type": "url", "property": "identifier" },
+        "year": { "label": "First published" },
+        "publisher": { "link": "publishers" },
+        "specification": { "label": "Specification", "type": "url" }
+      }
+    },
+    {
+      "id": "publishers",
+      "title": "Publishers",
+      "description": "The bodies and communities that maintain the vocabularies.",
+      "source": "data/publishers.nt",
+      "rdfType": ["https://schema.org/Organization", "https://schema.org/Project"],
+      "key": "name",
+      "type": "Organization",
+      "facets": ["type"],
+      "columns": ["alternateName", "foundingDate"]
+    }
+  ],
+  "pages": [
+    { "path": "about", "title": "About this example", "source": "content/about.md" }
+  ],
+  "links": [
+    { "title": "semantic-site plugin", "url": "https://github.com/caviri/rete/tree/main/plugins/semantic-site" }
+  ]
+}
