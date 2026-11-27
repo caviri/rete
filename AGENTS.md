@@ -35,6 +35,11 @@ static documentation site.
   workflow — **rete-from-graph** (ingest + `rete build` + verify) and **rete-publish**
   (companions + bucket upload + catalog registration), each with reference docs and
   working utilities. Use/extend these instead of re-deriving the pipeline.
+- `plugins/semantic-site/`: a second Claude Code plugin in the repo's marketplace,
+  independent of rete — static sites from data where every page carries JSON-LD, a
+  static JSON API and WebMCP tools. Node only (no dependencies); tested with
+  `node --test plugins/semantic-site/test/semantic-site.test.mjs`. Every page it
+  generates must register WebMCP tools; `site-check` fails one that does not.
 
 ## Build And Test
 

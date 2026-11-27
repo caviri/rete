@@ -151,6 +151,11 @@ datasets:
 The same MCP server works in other MCP clients, ChatGPT included; see
 [agentic interfaces](https://caviri.github.io/rete/docs/agents.html).
 
+The marketplace has a second plugin, [semantic-site](plugins/semantic-site/),
+which does not need rete: it builds a static website from CSV, JSON, JSON-LD
+or N-Triples where every page is also JSON-LD, a static JSON API and a set of
+WebMCP tools for agents in the browser (`/plugin install semantic-site@rete`).
+
 ## How a file is laid out
 
 A 1 KiB header points to every section, so a reader fetches the header and

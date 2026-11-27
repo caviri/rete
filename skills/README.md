@@ -6,6 +6,10 @@ and — where useful — **working utility scripts**. They ship with the repo's
 [Claude Code plugin](../.claude-plugin/plugin.json) (`/plugin marketplace add
 caviri/rete`).
 
+The same marketplace carries a second plugin with its own skills,
+[semantic-site](../plugins/semantic-site/) (static sites with JSON-LD, a static
+API and WebMCP on every page); its skills live in that folder, not here.
+
 ## The skills
 
 | Skill | Use it when | Entry point |

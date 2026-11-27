@@ -13,6 +13,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   from RDF text and save it, on the page the person is looking at. Fifteen
   tools; nothing is registered in a browser without WebMCP. See
   [the playground guide](docs/playground-guide.md#agents).
+
+- **semantic-site, a second Claude Code plugin in the repo's marketplace**
+  (`plugins/semantic-site`, `/plugin install semantic-site@rete`). It builds a
+  static website from CSV, JSON, JSON-LD, NDJSON, N-Triples or N-Quads, and
+  every page it makes is HTML content, schema.org JSON-LD, an entry in a static
+  JSON API (`api/index.json`, a file per list and per item, OpenAPI,
+  `llms.txt`) and a set of WebMCP tools registered with
+  `document.modelContext` (search, list and filter items, read one, see and
+  change what the user is looking at, and SPARQL when an endpoint is set).
+  Three skills: `semantic-site`, `webmcp-tools` (WebMCP on any page, with a
+  dependency-free kit) and `site-check` (pages, links, JSON-LD, the API, and a
+  run of every read-only tool). Node 20 or newer, no packages; it does not need
+  rete.
 - **The graph view in Claude Desktop, the file explorer and the desktop app
   draws rows as Retelens does.** The table draws pictures, IIIF manifests,
   geometries as small maps and links in its cells, with a chart of each
@@ -36,7 +49,9 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   bar filters the column. Maps use an open PMTiles basemap: OpenStreetMap
   as the Protomaps basemap (zoom 0 to 12) on data.graphplaza.com and in the
   rete-public bucket, or any archive set in the popup.
-  The query list and the Examples panel filter queries by words and by view.
+  The query list and the Examples panel filter queries by words and by view
+  (also in a Hugging Face or Zenodo page's box, where the list did not open).
+  The query's SPARQL starts folded in the viewer and the Data Studio too.
   The graph view's labels stay light in dark mode on Hugging Face, whose
   colours are now oklch (Tailwind v4), which the graph drew as black.
   A `.pmtiles` file page on Hugging Face (dataset or bucket) or GitHub shows
