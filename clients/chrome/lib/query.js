@@ -119,12 +119,12 @@
           n++;
         });
         if (!n) list.append(h("div", { class: "px-3 py-4 text-center text-gray-500" }, "No query matches."));
-        if (ex.sideTab === "examples" && ex.renderSide) ex.renderSide(); // the Examples panel shows the same filter
+        // the Examples panel shows the same filter; an inline box (a Hugging Face or Zenodo page) has no side panel
+        if (ex.sideTab === "examples" && ex.sideBody && ex.renderSide) ex.renderSide();
         const sel = opts.findIndex((o) => o.idx === ex.q);
         setActive(f ? (opts.length ? 0 : -1) : sel >= 0 ? sel : (opts.length ? 0 : -1), true);
       };
       input.addEventListener("input", () => render(input.value));
-      render(input.value);
       panel.addEventListener("keydown", (e) => {
         if (e.key === "ArrowDown") { e.preventDefault(); if (opts.length) setActive(Math.min(opts.length - 1, active + 1), true); }
         else if (e.key === "ArrowUp") { e.preventDefault(); if (opts.length) setActive(Math.max(0, active - 1), true); }
@@ -150,7 +150,7 @@
       window.addEventListener("scroll", this._place, true);
       anchor.setAttribute("aria-expanded", "true");
       this._place();
-      render("");
+      render(input.value); // the shared filter as it was left (the Examples panel may have set it)
       input.focus();
     }
 
