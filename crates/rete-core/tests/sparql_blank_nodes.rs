@@ -187,12 +187,17 @@ fn group_concat_over_a_blank_node_is_unbound() {
         "SELECT (GROUP_CONCAT(DISTINCT ?o; separator=\"|\") AS ?g) WHERE { ?s <http://ex/p> ?o }",
     );
     assert_eq!(distinct[0].get("g"), None);
-    // STR(?o) inside the aggregate errors on the blank node's row, so the same.
+    // STR(?o) inside the aggregate errors on the blank node's row: that row
+    // has no value and is left out, and the others are concatenated.
     let via_str = select(
         &r,
         "SELECT (GROUP_CONCAT(STR(?o)) AS ?g) WHERE { ?s <http://ex/p> ?o }",
     );
-    assert_eq!(via_str[0].get("g"), None);
+    let g = via_str[0].get("g").expect("a value");
+    assert!(
+        g.contains('x') && g.contains('y') && !g.contains("_:"),
+        "{g}"
+    );
     // Without the blank node the group concatenates as before.
     let ok = select(
         &r,

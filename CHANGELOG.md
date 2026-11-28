@@ -8,10 +8,21 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 ## [0.7.10] - 2026-11-28
 
 0.7.10 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
-It changes how SPARQL joins are planned. No file changes, and answers do not change.
+It changes how SPARQL joins are planned, which changes no answer, and how
+aggregates treat a row without a value, which does.
 
 ### Changed
 
+- **Result-changing: `SUM`, `AVG`, `MIN` and `GROUP_CONCAT` leave out a row
+  without a value.** A variable left unbound by an `OPTIONAL` (or an argument
+  that errors) made the aggregate unbound for the whole group since 0.3.3,
+  following the letter of SPARQL 1.1 §18.5.1. `SELECT ?t (COUNT(?d) AS ?n)
+  (MIN(?kd) AS ?best)` with `?kd` optional reported 833 designs and no best
+  value, without a warning. The row is now left out, as `COUNT` and `MAX`
+  already did and as SQL does with NULL. A bound value of the wrong kind is
+  still an error (a non-number in `SUM` / `AVG`, a non-string in
+  `GROUP_CONCAT`), and W3C conformance is unchanged. See
+  [Expression errors](docs/sparql.md#errors).
 - **Star joins are one merge.** Patterns on one subject
   (`?s :a ?x ; :b ?y ; :c ?z`) are joined in a single pass over their
   subject-sorted streams when each is estimated above 65,536 triples; only

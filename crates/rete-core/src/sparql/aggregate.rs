@@ -24,29 +24,24 @@ use crate::index::GraphIndex;
 /// A single aggregate's running state — updated per row, finalized once per group.
 /// Slot is resolved once at construction; `None` = the variable isn't in scope.
 ///
-/// **Errors (SPARQL 1.1 §18.5.1).** The aggregated expression is evaluated per
-/// solution by `ListEval`, which *retains* errors — and an unbound variable
-/// evaluates to an error (`ListEval((unbound), μ) = (error)`). A row whose
-/// column is unbound (out of an OPTIONAL, or a `pre` expression that errored)
-/// is therefore an error element. Each set function is applied as written:
-///   * COUNT removes error elements before counting (§18.5.1.2).
-///   * SUM is `op:numeric-add` folded over every element (§18.5.1.3), so an
-///     error element — or a bound value that is not a number — makes it an
-///     error; an empty group sums to 0.
-///   * AVG is `0` when `Count(M) = 0` — no element that is not an error, which
-///     includes a group whose elements are ALL errors — and `Sum(M) / Count(M)`
-///     otherwise, an error as soon as `Sum(M)` is (§18.5.1.4).
-///   * MIN / MAX order the elements as ORDER BY ASC / DESC does (§18.5.1.5-6),
-///     and ORDER BY puts "no value" lowest (§15.1): MIN of a group holding an
-///     error element is that error, MAX is the largest real value.
-///   * GROUP_CONCAT is CONCAT over the elements (§18.5.1.7), so an error
-///     element makes it an error; an empty group is "".
-///   * SAMPLE returns some element (§18.5.1.8) — rete returns a value when the
-///     group has one.
+/// **Rows without a value.** A row whose column is unbound (out of an
+/// OPTIONAL, or a `pre` expression that errored) is left out by every
+/// aggregate: it is not counted, not summed, not concatenated, and is neither
+/// the minimum nor the maximum. `SUM` and `GROUP_CONCAT` of a group with no
+/// value at all are `0` and `""`, as for an empty group; `AVG` is `0`; `MIN`,
+/// `MAX` and `SAMPLE` are unbound.
 ///
-/// An error makes the aggregate unbound for that group. (Oxigraph 0.5 makes
-/// every aggregate but SAMPLE unbound on any error element, including COUNT,
-/// an all-error AVG, and MAX; rete follows the spec text there.)
+/// This departs from the letter of SPARQL 1.1 §18.5.1, where
+/// `ListEval((unbound), μ) = (error)` and one error element makes `SUM`,
+/// `AVG`, `GROUP_CONCAT` and `MIN` an error. rete followed that from 0.3.3 to
+/// 0.7.9: `SELECT ?t (COUNT(?d) AS ?n) (MIN(?kd) AS ?best)` with `?kd` out of
+/// an OPTIONAL then reported 833 designs and no best value, silently. SQL
+/// leaves such rows out, and it is what a query like that means.
+///
+/// **Values of the wrong kind** are still errors, and an error makes the
+/// aggregate unbound for that group: a bound value that is not a number in
+/// `SUM` / `AVG` (§18.5.1.3-4, W3C `agg-err-01`), one that is not a string
+/// literal in `GROUP_CONCAT` (§18.5.1.7).
 enum Accum {
     /// COUNT(*) — every row counts (distinct-* is treated as plain count, as before).
     CountStar(u64),
@@ -173,15 +168,16 @@ impl Accum {
                     }
                 }
             }
-            // An unbound element, or one op:numeric-add rejects, is an error.
+            // A row without a value is left out; a value op:numeric-add
+            // rejects is an error.
             Accum::Sum { slot, sum, err } => {
                 if *err {
                     return;
                 }
-                match slot
-                    .and_then(|s| row[s].as_ref())
-                    .and_then(|v| ctx.resolver.num(v))
-                {
+                let Some(v) = slot.and_then(|s| row[s].as_ref()) else {
+                    return;
+                };
+                match ctx.resolver.num(v) {
                     Some(x) => *sum += x,
                     None => *err = true,
                 }
@@ -192,8 +188,8 @@ impl Accum {
                 count,
                 err,
             } => match slot.and_then(|s| row[s].as_ref()) {
-                // An error element: not counted, but Sum(M) is now an error.
-                None => *err = true,
+                // A row without a value: left out.
+                None => {}
                 Some(v) => {
                     *count += 1;
                     if *err {
@@ -232,18 +228,19 @@ impl Accum {
                 // simple literal, as SPARQL 1.1 says (Oxigraph keeps a language tag
                 // the elements share; the W3C tests agg-groupconcat-4 and -6 want it
                 // plain).
-                let part = slot
-                    .and_then(|s| row[s].as_ref())
-                    .and_then(|v| ctx.resolver.str_of(v))
-                    .and_then(|t| {
-                        let tag = match crate::terms::literal_parts(&t)? {
-                            (_, "") => None,
-                            (_, sfx) if sfx.starts_with('@') => Some(sfx[1..].to_string()),
-                            (_, "^^<http://www.w3.org/2001/XMLSchema#string>") => None,
-                            _ => return None,
-                        };
-                        Some((lexical(&t), tag))
-                    });
+                // A row without a value is left out.
+                let Some(v) = slot.and_then(|s| row[s].as_ref()) else {
+                    return;
+                };
+                let part = ctx.resolver.str_of(v).and_then(|t| {
+                    let tag = match crate::terms::literal_parts(&t)? {
+                        (_, "") => None,
+                        (_, sfx) if sfx.starts_with('@') => Some(sfx[1..].to_string()),
+                        (_, "^^<http://www.w3.org/2001/XMLSchema#string>") => None,
+                        _ => return None,
+                    };
+                    Some((lexical(&t), tag))
+                });
                 match part {
                     Some((p, tag)) => {
                         // DISTINCT compares whole terms: "a" and "a"@en differ.
@@ -271,16 +268,11 @@ impl Accum {
                 if *err {
                     return;
                 }
+                // A row without a value is neither the minimum nor the maximum.
                 let Some(t) = slot
                     .and_then(|s| row[s].as_ref())
                     .and_then(|v| ctx.resolver.str_of(v))
                 else {
-                    // An error element sorts as "no value", lowest of all
-                    // (§15.1): it IS the minimum, and never the maximum.
-                    if *want_min {
-                        *err = true;
-                        *best = None;
-                    }
                     return;
                 };
                 // The ORDER BY order (§18.5.1.5-6): numbers by value, strings by
@@ -325,15 +317,15 @@ impl Accum {
                 };
                 Some(fmt_num_typed(c))
             }
-            // An error element makes the whole aggregate an error (unbound);
-            // an empty group sums to 0 (§18.5.1.3).
+            // A value that is not a number makes the aggregate an error
+            // (unbound); a group with no value sums to 0 (§18.5.1.3).
             Accum::Sum { sum, err, .. } => (!err).then(|| fmt_num_typed(sum)),
             Accum::Avg {
                 sum, count, err, ..
             } => {
                 if count == 0 {
-                    // Count(M) = 0: an empty group, or one whose every element
-                    // is an error — AVG is 0 either way (§18.5.1.4).
+                    // Count(M) = 0: an empty group, or one no row of which has
+                    // a value — AVG is 0 either way (§18.5.1.4).
                     return Some(fmt_num_typed(0.0));
                 }
                 if err {
@@ -883,8 +875,7 @@ mod tests {
         let rete = fixture();
         let ctx = context(&rete);
         // `bound`: every column bound. `rows`: the same plus one row whose
-        // columns are unbound — an ERROR element for every aggregate but
-        // COUNT (which removes errors) and SAMPLE (which picks a value).
+        // columns are unbound, which every aggregate leaves out.
         let bound = vec![
             row(&ctx, "\"a\"", Some("1"), Some("\"z\"")),
             row(&ctx, "\"a\"", Some("2"), Some("\"a\"")),
@@ -917,14 +908,21 @@ mod tests {
             compute_agg(&ctx, &Agg::Avg("v".into()), &bound),
             Some(fmt_num_typed(5.0 / 3.0))
         );
-        // An unbound element is an error, and so is the aggregate (§18.5.1:
-        // ListEval((unbound), μ) = (error); op:numeric-add of an error is one).
-        assert_eq!(compute_agg(&ctx, &Agg::Sum("v".into()), &rows), None);
-        assert_eq!(compute_agg(&ctx, &Agg::Avg("v".into()), &rows), None);
-        // An out-of-scope variable is unbound in every row: SUM is an error,
-        // but AVG is 0, because Count(M) = 0 once the errors are removed
-        // (§18.5.1.4 / §18.5.1.2).
-        assert_eq!(compute_agg(&ctx, &Agg::Sum("missing".into()), &rows), None);
+        // The row without a value is left out: the same sum, the same average.
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Sum("v".into()), &rows),
+            Some(fmt_num_typed(5.0))
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Avg("v".into()), &rows),
+            Some(fmt_num_typed(5.0 / 3.0))
+        );
+        // An out-of-scope variable has no value in any row: SUM and AVG are
+        // 0, as for an empty group.
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Sum("missing".into()), &rows),
+            Some(fmt_num_typed(0.0))
+        );
         assert_eq!(
             compute_agg(&ctx, &Agg::Avg("missing".into()), &rows),
             Some(fmt_num_typed(0.0))
@@ -969,22 +967,44 @@ mod tests {
             compute_agg(&ctx, &Agg::Max("text".into()), &bound),
             Some("\"z\"".into())
         );
-        // GROUP_CONCAT (via CONCAT) and MIN of a group holding an error
-        // element are errors as well: MIN orders like ORDER BY ASC, where "no
-        // value" comes first (§18.5.1.5, §15.1).
-        for agg in [
-            Agg::GroupConcat("text".into(), "|".into(), false),
-            Agg::GroupConcat("text".into(), "|".into(), true),
-            Agg::GroupConcat("missing".into(), "|".into(), true),
-            Agg::Min("v".into()),
-            Agg::Min("text".into()),
-            Agg::Min("missing".into()),
-            Agg::Max("missing".into()),
-        ] {
+        // GROUP_CONCAT and MIN leave the row without a value out too, and
+        // answer as they do on `bound`.
+        assert_eq!(
+            compute_agg(
+                &ctx,
+                &Agg::GroupConcat("text".into(), "|".into(), false),
+                &rows
+            ),
+            Some("\"z|a|a\"".into())
+        );
+        assert_eq!(
+            compute_agg(
+                &ctx,
+                &Agg::GroupConcat("text".into(), "|".into(), true),
+                &rows
+            ),
+            Some("\"z|a\"".into())
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Min("v".into()), &rows),
+            Some("1".into())
+        );
+        assert_eq!(
+            compute_agg(&ctx, &Agg::Min("text".into()), &rows),
+            Some("\"a\"".into())
+        );
+        // No value in any row: "" for GROUP_CONCAT, nothing for MIN and MAX.
+        assert_eq!(
+            compute_agg(
+                &ctx,
+                &Agg::GroupConcat("missing".into(), "|".into(), true),
+                &rows
+            ),
+            Some("\"\"".into())
+        );
+        for agg in [Agg::Min("missing".into()), Agg::Max("missing".into())] {
             assert_eq!(compute_agg(&ctx, &agg, &rows), None, "{agg:?}");
         }
-        // …while MAX orders like ORDER BY DESC, where "no value" comes last:
-        // the largest real value (§18.5.1.6).
         assert_eq!(
             compute_agg(&ctx, &Agg::Max("v".into()), &rows),
             Some("2".into())
@@ -1013,8 +1033,13 @@ mod tests {
             Some("\"\"".into())
         );
         assert_eq!(compute_agg(&ctx, &Agg::Max("v".into()), &[]), None);
-        // A bound value op:numeric-add rejects is an error (§18.5.1.3/4).
-        let invalid = vec![row(&ctx, "\"a\"", Some("\"oops\""), None)];
+        // A bound value op:numeric-add rejects is an error (§18.5.1.3/4),
+        // with or without rows that have no value beside it.
+        let mut invalid = vec![row(&ctx, "\"a\"", Some("\"oops\""), None)];
+        assert_eq!(compute_agg(&ctx, &Agg::Avg("v".into()), &invalid), None);
+        assert_eq!(compute_agg(&ctx, &Agg::Sum("v".into()), &invalid), None);
+        invalid.push(row(&ctx, "\"a\"", None, None));
+        invalid.push(row(&ctx, "\"a\"", Some("1"), None));
         assert_eq!(compute_agg(&ctx, &Agg::Avg("v".into()), &invalid), None);
         assert_eq!(compute_agg(&ctx, &Agg::Sum("v".into()), &invalid), None);
     }
