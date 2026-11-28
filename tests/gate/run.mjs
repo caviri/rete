@@ -465,7 +465,13 @@ const G2 = [
   ["check_url_param", "#url= opens an off-catalog .rete; javascript: refused", 120000, false],
   ["check_webmcp", "WebMCP: 22 agent tools registered; datasets, queries, tabs, settings, caches and an in-page build work through them; the page follows and logs the calls", 240000, false],
   ["check_bim_pair", "BIM pair: the corpus query panel answers, and its WebMCP tools switch project and view and query the corpus", 240000, true],
-  ["check_load_modal", "Load pre-modal: drop/URL/examples routes; URL route end to end; phone width", 150000, false],
+  ["check_building", "FZK-Haus: the house draws, doors and windows change state, the sun and walk mode work, the tools answer", 240000, true],
+  ["check_building_systems", "FZK-Haus services: layers, switches and lights, tripped breakers equal the scenario and the SPARQL answer, traces, the thermal day", 300000, true],
+  ["check_building_graph", "FZK-Haus graph view: the whole graph as clusters, drill-down, selection both ways", 300000, true],
+  ["check_building_viewport", "FZK-Haus viewport: four views, sections, fly and walk, trench, structure, state variables, reset", 300000, true],
+  // check_building_dashboard is not listed: it takes five minutes on a desktop and more than fifteen on a CI runner.
+  // Run it by hand after a change to docs/building/ (see docs/building/README.md).
+  ["check_load_modal","Load pre-modal: drop/URL/examples routes; URL route end to end; phone width", 150000, false],
   ["check_default_graph_hint", "empty-default-graph explainer (resident + carded remote); absent on ordinary files", 180000, false],
   ["check_card_examples", "the file's OWN card queries populate the examples panel (off-catalog + local + catalog supplement; deduped; zero-row kept)", 240000, false],
   ["check_union_graphs", "⛁ All graphs union toggle: off by default, 0→union when on (remote + resident), announced, explainer suppressed", 240000, false],

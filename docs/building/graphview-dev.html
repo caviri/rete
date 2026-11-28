@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- Development harness for docs/building/graphview.js. NOT linked from the site.
+     Loads the wasm engine and the FZK-Haus systems graph (falls back to the house-only graph),
+     mounts the clustered graph view full-window, and exposes:
+       window.graphView   the controller        window.gvQuery  the query function given to the view
+       window.gvReady     a promise              window.gvStates a Map iri -> {label,color} read by stateOf
+     Query string: ?strip=1 (start in the 300 px strip), ?src=<.rete url>, ?theme=light. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Graph view (dev)</title>
+<meta name="robots" content="noindex">
+<style>
+  :root{--bg:#0b0e14;--panel:#121826;--line:#1e2636;--ink:#e6ecf5;--dim:#8b97ad;--accent:#5db0ff}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:13px/1.4 ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif}
+  body{display:flex;flex-direction:column}
+  #bar{display:flex;gap:10px;align-items:center;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+  #bar button{background:#0e1420;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:3px 9px;cursor:pointer}
+  #status{color:var(--dim);font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  #wrap{flex:1;min-height:0;display:flex;flex-direction:column}
+  #gv{flex:1;min-height:0;width:100%}
+  body.strip #wrap{justify-content:flex-end}
+  body.strip #gv{flex:none;height:300px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div id="bar"><button id="mode" type="button">Strip 300 px</button><span id="status">loading…</span></div>
+<div id="wrap"><div id="gv"></div></div>
+<script type="module">
+const R2 = 'https://data.graphplaza.com/cad/fzk-haus-systems-2026-11-28.rete';
+const R2_HOUSE = 'https://data.graphplaza.com/cad/fzk-haus-2016-12-21.rete';
+const qs = new URLSearchParams(location.search);
+const status = document.getElementById('status');
+window.gvStates = new Map();
+let resolveReady, failReady;
+window.gvReady = new Promise((a, b) => { resolveReady = a; failReady = b; });
+window.gvReady.catch(() => {});
+if (qs.get('strip')) document.body.classList.add('strip');
+document.getElementById('mode').onclick = () => {
+  document.body.classList.toggle('strip');
+  if (window.graphView) window.graphView.resize();
+};
+addEventListener('resize', () => window.graphView && window.graphView.resize());
+try {
+  const m = await import('../engine/rete_wasm.js'); await m.default();
+  let bytes = null, src = null;
+  for (const url of (qs.get('src') ? [qs.get('src')] : [R2, R2_HOUSE])) {
+    try { const r = await fetch(url); if (!r.ok) continue; bytes = new Uint8Array(await r.arrayBuffer()); src = url; break; } catch { /* next */ }
+  }
+  if (!bytes) throw new Error('could not load a graph file');
+  const g = new m.Graph(bytes);
+  window.gvSource = src;
+  window.gvQuery = async (sparql) => { const j = JSON.parse(g.query(sparql, 'json')); return { vars: j.vars || [], rows: j.rows || [] }; };
+  const { mountGraphView } = await import('./graphview.js');
+  window.graphView = mountGraphView(document.getElementById('gv'), {
+    query: window.gvQuery,
+    theme: qs.get('theme') === 'light' ? 'light' : 'dark',
+    stateOf: (iri) => window.gvStates.get(iri),
+    onSelect: (iri) => { window.gvLastSelect = iri; },
+  });
+  await window.graphView.ready;
+  status.textContent = src.split('/').pop();
+  resolveReady(window.graphView);
+} catch (e) {
+  status.textContent = 'error: ' + (e && e.message || e);
+  failReady(e);
+  console.error(e);
+}
+</script>
+</body>
+</html>

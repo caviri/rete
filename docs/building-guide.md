@@ -1,71 +1,124 @@
-# FZK-Haus — a building as a 3D knowledge graph
+# FZK-Haus: a house as a 3D knowledge graph
 
-**[▸ Open the 3D building →](building.html)** — a three.js explorer over the
-`fzk-haus` knowledge graph: pick any wall, door, window, slab or room and see
-where it sits — its floor, the rooms it encloses, the rooms next to it, and
-everything within reach in 3D — with real SPARQL and **geo3** (GeoSPARQL → 3D)
-running in the browser against the `.rete`.
+**[▸ Open the house →](building.html)**
+
+A small detached house you can orbit, cut, walk through and query. The walls,
+doors and rooms come from a real IFC model. The wiring, pipes, heating and
+structure on top are a design we made for it, kept as a second graph. Every
+panel on the page reads those two graphs with SPARQL in the browser.
 
 <figure class="fig-center">
-  <img src="img/building-guide.png" alt="The FZK-Haus 3D explorer: a detached two-storey house rendered in 3D at the centre with walls, a pitched roof, windows and a spiral stair, a left sidebar of element-type checkboxes (Walls, Slabs, Windows, Doors, Stairs, Railings, Beams, Members, Rooms) with counts and a storey filter (Erdgeschoss, Dachgeschoss), and a legend for selected / adjacent room / enclosing element / query result.">
-  <figcaption>The explorer renders every IFC element of the house in 3D and colour-codes a picked element's relations — the rooms it encloses, the rooms adjacent to it, and the results of a spatial query.</figcaption>
+  <img src="img/building-guide.png" alt="The FZK-Haus page: a two-storey house with a pitched roof in a garden under a low sun, with a top bar of menus, a rail of side panels on the left and a status bar at the bottom.">
+  <figcaption>The house at the default hour. Menus at the top, panels on the left, the console and the other tabs at the bottom.</figcaption>
 </figure>
 
-## From CAD to graph
+## Two graphs
 
-The model is **AC20-FZK-Haus**, an openly-licensed IFC4 sample building (a small
-detached house) published by KIT for the IBPSA Project 1. IFC (ISO 16739) is the
-open BIM exchange format, and it is already semantic: it carries *typed
-elements* (walls, doors, windows, slabs, stairs…), *spatial structure*
-(site → building → storey → space), and *relationships* (which elements bound a
-room, which openings a wall hosts). We parse it with
-[IfcOpenShell](https://ifcopenshell.org) and lift it into three layers of RDF:
+**The house.** AC20-FZK-Haus is an openly licensed IFC4 sample building
+published by KIT. We parse it with [IfcOpenShell](https://ifcopenshell.org) and
+write three layers of RDF:
 
-- **[BOT](https://w3id.org/bot)** — the W3C Building Topology Ontology — for the
-  spatial breakdown: `bot:Site`, `bot:Building`, `bot:Storey`, `bot:Space`,
-  `bot:Element`, tied together by `bot:hasStorey`, `bot:hasSpace`,
-  `bot:containsElement`, `bot:adjacentElement`.
-- **`cad:`** for the IFC specifics: `cad:ifcClass`, `cad:material`,
-  `cad:boundsSpace` (space boundaries), `cad:adjacentSpace`, `cad:fillsWall`.
-- **geo3** for geometry: every element carries a 3D point and an
-  axis-aligned bounding box, in metres, in the building's own coordinate frame.
+- [BOT](https://w3id.org/bot) for the spatial breakdown: site, building,
+  storey, space, element.
+- `cad:` for the IFC specifics: class, material, which elements bound a room,
+  which rooms are adjacent, which wall a window fills.
+- geo3 for geometry: each element has a 3D point and a bounding box, in
+  metres, in the building's own frame.
 
-## What you see
+**The services.** The IFC file has no wiring or pipes, so this layer is
+invented, but it is designed for this house and placed on its real walls:
 
-The centre pane is a real 3D scene: left-drag to orbit, right-drag (or
-Shift-drag) to pan, scroll to zoom, click any element to select it. The left
-sidebar toggles element types — Walls, Slabs, Windows, Doors, Stairs, Railings,
-Beams, structural Members, and the room volumes — each with a live count, plus a
-**Storeys** filter to isolate a floor. **Find an element** searches every element
-and room by name. The right panel describes whatever is selected: its IFC type,
-floor, material, and its topological neighbours — for a room, the rooms adjacent
-to it and the elements that enclose it; for a wall, the rooms it encloses.
-Clicking a related item jumps to it.
+- electrical: grid connection, consumer unit, two RCDs, breakers, circuits,
+  sockets, switches, lights, smoke detectors;
+- cold and hot water, drainage, underfloor heating with a heat pump, one A/C
+  unit, ventilation with heat recovery, the network;
+- structure: strip foundations, bearing walls, lintels, floor joists, roof
+  timbers, and which element bears on which;
+- what a thermal model needs: surfaces with areas, orientations and U-values,
+  window g-values, room volumes, the site's latitude, longitude and true north;
+- states and state variables: a door is open or closed, a room has a
+  temperature with named ranges (cold, comfortable, warm), and rules say what
+  follows from what.
 
-## Every relation is a materialised edge
+It uses [Brick](https://brickschema.org) (`brick:feeds`), QUDT units, SOSA
+observations and a small `sys:` vocabulary. It has 19,399 triples. Labels are
+tagged in English, Spanish and German, so filter on the language:
+`FILTER(lang(?label) = "en")`. Room names from the IFC file are German
+(`"Küche"@de`).
 
-The colours in the legend aren't drawn by hand. Room adjacency comes from the
-IFC space boundaries (`cad:boundsSpace` → `cad:adjacentSpace`); "what's near the
-staircase" is computed by **geo3**, rete's extension of GeoSPARQL into three
-dimensions (`geof3:distance3D`, and the same `geo3:box` / `geo3:asWKT3D` geometry
-the anatomy explorer uses) — the *identical engine*, now finding relations
-between the physical parts of a building instead of an organism.
+Both files are on R2, not in the repository:
+`cad/fzk-haus-2016-12-21.rete` and `cad/fzk-haus-systems-2026-11-28.rete`. The
+geometry is one Draco-compressed GLB of 167 KB.
 
-## Select by query
+## The page
 
-The **Select by query** panel runs that idea live. Ready examples — the rooms on
-each floor, the building's element inventory, the rooms adjacent to the living
-room, the walls that enclose the kitchen, the ten elements nearest the staircase
-via `geof3:distance3D`, and how many walls enclose each room — are real SPARQL
-against `fzk-haus.rete`, executed in-browser (the query engine and graph load
-lazily, once) and highlighted straight onto the model. There's also a box to
-write your own SPARQL; matches populate the results table below the scene and
-clicking a row selects that element in 3D. Room labels are language-tagged, so
-match them as `"Wohnen"@en`.
+**Top bar.** Five menus: View, Layers, Simulate, Tools, About. `Ctrl+K` opens
+a search over commands, rooms, elements and devices. `?` lists the keys.
 
-## The same data, queryable
+**Viewport.** Drag to orbit, right-drag to pan, scroll to zoom, click to
+select. Press `4` for four views (plan, two elevations and 3D) and `1` to go
+back. A section cuts the house along X, Y or Z. Walk mode puts you on the
+floor with WASD and the mouse; fly mode (`Shift+F`) has no floor. The ground
+can be cut away to show the foundations.
 
-The explorer is one lens on a regular playground dataset. Open
-[`fzk-haus`](playground.html#dataset=fzk-haus&load=lazy) to run SPARQL directly —
-the same spatial structure, topology, and 3D geometry, with no rendering in the
-way.
+**Doors and windows.** Click one and open it. Hinged leaves swing, the terrace
+door slides, the two windows that are fixed glass stay shut. You can see
+through an open window from either side.
+
+**Sun.** The clock in the corner shows the hour and the sun's height. Change
+the date and time, or play a day; the shadows follow the site's real
+orientation.
+
+**Side panels.** Explore (classes, storeys, search), Services (one switch per
+system, x-ray, isolate), Sun and look, Thermal, States (doors, windows and
+state variables) and Queries.
+
+**Inspector.** What is selected: an element, a room, a device, a pipe run, a
+structural member, a surface, with its relations as links.
+
+**Bottom tabs.**
+
+- *Console*: SPARQL against either graph, with ready examples.
+- *Results*: the rows; clicking one selects it in 3D.
+- *Graph*: the whole graph as clusters. Group by class or by system, open a
+  cluster to see its members, select in either direction.
+- *Validate*: SHACL. Nineteen example shapes, such as "bathroom sockets are
+  behind an RCD" or "every label exists in three languages"; edit one and run
+  it.
+- *Scenarios*: trip a breaker, close the water main, switch the heat pump off,
+  take a bearing wall out. The page shows what stops working, and the list
+  equals what the SPARQL query over `brick:feeds` or `sys:bearsOn` returns.
+- *Thermal*: a simple hourly model of one day, room by room, from the data
+  above and the sun.
+- *Logs*: every command and every tool call.
+
+**Reset** (Tools menu) puts back the view, the states, or everything, and can
+be undone.
+
+## Limits
+
+- The services, the structure and the thermal inputs are a plausible design,
+  not a survey. The wall U-value assumes insulation the IFC file does not
+  record.
+- The thermal day is a rough model for showing how the data connects. Do not
+  size a heat pump with it.
+- The structural scenario follows `sys:bearsOn`. It is a load path, not a
+  structural analysis.
+- Section cuts are capped approximately.
+- The engine ignores `sh:sparql` constraints for now, so the example shapes
+  use core SHACL only.
+
+## Agents
+
+In a browser with WebMCP the page registers 56 tools, among them
+`select_element`, `set_element_state`, `set_sun`, `set_section`, `walk`,
+`run_sparql`, `run_shacl`, `apply_scenario`, `trace_supply`,
+`trace_load_path`, `run_thermal_day`, `set_value` and `reset`. The page
+follows what the agent does and the Logs tab records each call. Without WebMCP
+nothing is registered. The same calls are on `window.reteBuildingTools`.
+
+## The same data in the playground
+
+Open [`fzk-haus`](playground.html#dataset=fzk-haus&load=lazy) to query the
+house graph with no rendering in the way. The module layout of the page is in
+[`docs/building/README.md`](https://github.com/caviri/rete/blob/main/docs/building/README.md).
