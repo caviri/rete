@@ -8,7 +8,7 @@ documentation.
 
 | Surface | What it is | For |
 |---|---|---|
-| **MCP server** | `https://katospiegel-rete.hf.space/mcp/` — 18 tools over the published catalog and any `.rete` URL | ChatGPT, Claude, any MCP client |
+| **MCP server** | `https://katospiegel-rete.hf.space/mcp/` — 16 tools over the published catalog and any `.rete` URL, the graph view, skills and long queries as tasks | ChatGPT, Claude, any MCP client |
 | **Desktop extension** | `rete.mcpb` — the whole engine as a one-click local install | Claude Desktop, incl. private graphs and offline work |
 | **Claude Code plugin** | this repo, installable as a plugin + marketplace | Claude Code users: MCP + skills in two commands |
 | **Skills** | four repo-aware playbooks under `skills/` | Claude Code; also readable as human docs |
@@ -17,7 +17,11 @@ documentation.
 ## The MCP server
 
 One streamable-HTTP endpoint, stateless, **no authentication, no API key**
-(the model lives in the client — the server only serves graphs):
+(the model lives in the client — the server only serves graphs). It runs
+[rete-server](https://github.com/caviri/rete/tree/main/clients/server), read-only:
+the authoring tools are off on the public copy. Run your own
+(`docker run -p 7860:7860 ghcr.io/caviri/rete-server`) to have them, and a token
+if you want one.
 
 ```
 https://katospiegel-rete.hf.space/mcp/
@@ -28,21 +32,27 @@ The tools, grouped by what an agent does with them:
 | Group | Tools |
 |---|---|
 | Discover | `list_datasets` · `dataset_card` · `dataset_schema` · `example_queries` |
-| Query | `sparql_query` (SELECT/ASK/CONSTRUCT/DESCRIBE, `reason=true` for OWL 2 QL, any catalog key **or any `.rete` URL**) · `find_entities` · `describe_entity` |
+| Query | `sparql_query` (SELECT/ASK/CONSTRUCT/DESCRIBE, `reason=true` for OWL 2 QL, any catalog key **or any `.rete` URL**; a big answer comes back as its first rows and a handle) · `result_rows` (page through it) · `find_entities` · `describe_entity` |
 | Validate | `validate_query` (deterministic SPARQL lint: parse, prefixes, features, vocabulary probes vs a dataset, ontology/subclass checks) · `validate_shacl` (lazy over shape targets) · `shacl_shapes` (curated shapes) |
-| **Author** | `suggest_vocabulary` (search LOV before minting IRIs) · `check_ontology` (parse + lint battery + reasoner smoke) · `build_rete` (RDF text → a served, immediately-queryable `.rete`) · `causal_diagram` (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the [conversation experiments](fallacies.md) |
-| Media | `embed_media` (URLs → base64 data URIs, images recompressed to WebP) · `media_preview` (representative image of a PDF / video frame / IIIF / HTML page) |
+| Show | `graph_view` (query results, a neighbourhood or the schema as an interactive graph, table, cards or map in the conversation, for clients that render MCP Apps) · `graph_view_update` · `graph_view_state` |
+| **Author** (own server only) | `suggest_vocabulary` (search LOV before minting IRIs) · `check_ontology` (parse + lint battery + reasoner smoke) · `build_rete` (RDF text → a served, immediately-queryable `.rete`) · `causal_diagram` (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the [conversation experiments](fallacies.md) |
 | ChatGPT connector contract | `search` · `fetch` |
 
 Every answer carries `stats` — the bytes physically fetched — so laziness
 stays observable. The server instructions teach the intended workflow
 (card → schema → examples → query), and reads are disk-cached server-side.
 
+Clients on MCP 2026-07-28 get two more things. Four **skills** travel with the
+server (`query`, `build-rete`, `network-analysis`, `web-pages`): Claude Code
+lists them and loads one when it is needed. And `sparql_query` and
+`validate_shacl` can run as **tasks**, so a slow query does not hold up the
+conversation (Claude Code, new claude.ai chats).
+
 ### Connect from ChatGPT
 
 Two integration levels:
 
-1. **Developer mode (all 18 tools).** Settings → *Apps & Connectors* →
+1. **Developer mode (all tools).** Settings → *Apps & Connectors* →
    enable *Developer mode* (under advanced settings) → *Create* a
    connector: any name, MCP server URL
    `https://katospiegel-rete.hf.space/mcp/`, authentication **None**.
@@ -251,7 +261,7 @@ The repo doubles as a plugin **and** its own marketplace:
 
 Installing wires up, in one step:
 
-- the **MCP server** above (18 tools available in every session), and
+- the **MCP server** above (its tools available in every session), and
 - the four **skills**, namespaced as `/rete-graph:<skill>`.
 
 Versioning follows git — every push to `main` is a new plugin version, so
@@ -303,5 +313,5 @@ engineering:
 4. `sparql_query` with `reason=true` → counts norms including subclass
    entailment.
 5. `validate_shacl` → checks an integrity contract over the result set.
-6. `media_preview` on a IIIF manifest or PDF the query surfaced →
-   `embed_media` → a self-contained HTML report with the evidence inlined.
+6. `graph_view` → the citing and cited norms as an interactive graph in the
+   conversation, which the user explores and selects from.
