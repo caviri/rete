@@ -236,7 +236,7 @@
           const key = String(a.key || "");
           if (!S.datasets.some((d) => d.key === key)) throw new Error('No dataset with key "' + clip(key, 80) + '". Call list_datasets for the keys.');
           const e = await home.select(key);
-          $("datasets").scrollIntoView({ block: "start" });
+          $("query").scrollIntoView({ block: "start" });
           return { key, title: (e && e.label) || key, selected: S.selected === key };
         },
       },

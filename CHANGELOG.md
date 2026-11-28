@@ -107,6 +107,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **rete-server's home page is friendlier, and the public server is open.** The page speaks like the landing ("Your RDF graphs in one place. *Query them here, or from your agent.*"), walks through three steps (pick a graph, ask a question, connect your agent), runs a graph's starter questions in one click with the SPARQL behind a toggle, shows the fastest catalog graphs first and the server's own files in a collapsed group, and has connection tabs for Claude Code, claude.ai, ChatGPT and Python. An open server shows no token UI; a server with uploads off offers the playground and `docker run` instead of a drop zone. The Hugging Face Space runs it open and read-only (`RETE_AUTHOR=0`), and `docs/agents.md` describes that server (16 tools, the graph view, skills, tasks; no media tools).
 - **The ISWC demo's agent extension is the 0.7.8 `rete.mcpb`.** It names the
   new addresses of the batch 3 catalog files and has the graph view's card
   view and hive layout.
