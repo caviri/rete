@@ -552,7 +552,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.7.8</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.7.9</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li><details class="nav-section" open><summary class="nav-h">Start here</summary><ul>
         <li><a href="index.html">Overview</a></li>
@@ -630,7 +630,7 @@ live in
 <a href="https://github.com/caviri/rete/tree/main/clients/python/examples/agents"><code>clients/python/examples/agents/</code></a>.</p>
 <table><thead><tr><th>Route</th><th>The agent talks to</th><th>Choose it when</th></tr></thead><tbody>
 <tr><td><strong>In-process tools</strong></td><td>the <code>.rete</code> file, via <code>rete-graph</code></td><td>your own graphs, private or offline data, one graph per agent, no infrastructure</td></tr>
-<tr><td><strong>MCP</strong></td><td>the <a href="agents.html">hosted server</a> (18 tools)</td><td>you want the whole published catalog, plus authoring/media tools, with ~5 lines of code</td></tr>
+<tr><td><strong>MCP</strong></td><td>the <a href="agents.html">hosted server</a> (17 tools)</td><td>you want the whole published catalog, with ~5 lines of code</td></tr>
 <tr><td><strong>SPARQL endpoint</strong></td><td><code>rete serve</code> or the <a href="interop.html">Space</a></td><td>you already have RDF tooling that speaks the SPARQL 1.1 protocol</td></tr>
 </tbody></table>
 <p>They compose: an agent can hold in-process tools for the graph you own and an
@@ -770,8 +770,8 @@ WHERE { ?law a &lt;http://data.europa.eu/eli/ontology#LegalResource&gt; . }
 <p>The ELI IRI is not in the prompt: the agent took it from <code>dataset_schema</code>,
 where <code>eli:LegalResource</code> is the largest class with exactly 40,937 instances.</p>
 <p>Want structured output instead of prose? Add <code>output_type=</code> with a Pydantic
-model — the pattern the Space's own
-<a href="https://github.com/caviri/rete/blob/main/clients/relay/rete_ask.py"><code>rete_ask.py</code></a>
+model — the pattern rete-server's own
+<a href="https://github.com/caviri/rete/blob/main/clients/server/rete_server/ask.py"><code>ask.py</code></a>
 uses to return <code>{answer, sparql, table}</code>.</p>
 <h2 id="langchain">LangChain</h2>
 <p>Same tools, wrapped with <code>StructuredTool.from_function</code>, driven by
@@ -822,9 +822,10 @@ tools = ReteGraphTools("notes.rete")
 loaded into memory.</p>
 <h2 id="the-mcp-route-in-both-frameworks">The MCP route, in both frameworks</h2>
 <p>When you want the whole published catalog — plus <code>list_datasets</code>,
-<code>describe_entity</code>, SHACL validation, vocabulary suggestion, <code>build_rete</code> and
-the media tools — point the framework's MCP adapter at the hosted server. No
-tool definitions to write.</p>
+<code>describe_entity</code>, SHACL validation and the graph view — point the
+framework's MCP adapter at the hosted server. No tool definitions to write.
+(The authoring tools, <code>build_rete</code> and friends, are on in your own copy of
+<code>ghcr.io/caviri/rete-server</code>, not on the public one.)</p>
 <pre><code class="language-sh">pip install "pydantic-ai-slim[mcp]"      # or, for LangChain:
 pip install langchain-mcp-adapters
 </code></pre>
@@ -844,7 +845,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 client = MultiServerMCPClient({"rete": {
     "transport": "streamable_http",
     "url": "https://katospiegel-rete.hf.space/mcp/"}})
-tools = await client.get_tools()              # 18 tools, no auth
+tools = await client.get_tools()              # 17 tools, no auth
 agent = create_agent("anthropic:claude-sonnet-5", tools)
 result = await agent.ainvoke({"messages": [
     {"role": "user", "content": "Count the laws in the rete dataset 'boe'."}]})

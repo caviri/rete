@@ -18,6 +18,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   viewport has four views, sections, walk and fly modes, doors and windows
   that open, the sun at the site's real orientation, and a reset. 56 WebMCP
   tools. The data is on R2. See [its guide](docs/building-guide.md).
+
+## [0.7.9] - 2026-11-28
+
+0.7.9 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+rete-server replaces the relay and ships as `ghcr.io/caviri/rete-server` from this release on.
+
+### Added
+
+- **`media_preview` in rete-server.** A model can look at a picture a graph
+  points to: an IIIF manifest page, an IIIF image or a plain image URL comes
+  back as one small JPEG. Public hosts only, with size and time limits;
+  `--no-media-preview` turns it off.
 - **The playground shows what an agent does, and gives it more tools.** A
   label names each WebMCP call while it runs and Settings → Agents lists them
   all. With "Follow the agent" on (the default) the reading tools show what
@@ -107,9 +119,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   its card, ranks the properties that fit a kind, finds things by name, and
   shows the rows beside the sketch. Documented in
   `docs/query-like-a-child.md`, under Tools and integrations.
+- **`rete-server`: the REST API, SPARQL endpoints and MCP server as one app, with token auth.** `ghcr.io/caviri/rete-server` (amd64 and arm64; not published to PyPI), or `pip install ./clients/server` from a checkout, then `rete-server --token …`: `/api` (REST, documented at `/docs`), `/sparql/<dataset>` (SPARQL 1.1 Protocol), `/mcp` (streamable HTTP, 16 tools), `/health`. With one or more tokens set, every route but `/health` needs `Authorization: Bearer <token>` (a token file or Docker secret works; `?token=` only when `RETE_QUERY_TOKEN=1`, and it is stripped before the access log). It answers for the catalog published at `https://data.graphplaza.com/catalog.json` (re-read every 10 minutes by ETag; a bundled copy of 103 datasets stands in when it cannot be read), for a folder of `.rete` files (`--data`, each described by its own card), or for any catalog file or URL (`--catalog`). Every flag is also a `RETE_*` variable, so the image needs none. Compared with the relay it replaces: one process with shared graph handles instead of two workers with a copy each; a graph is opened once when many first queries arrive together; catalog lookups are a dict access instead of re-reading `catalog.json` and walking the data folder on every request; `POST /sparql` no longer runs its query on the event loop; a request waiting for a busy graph gets 503 after the query timeout instead of holding a thread; `url=` refuses loopback, private and link-local addresses (`RETE_ALLOW_PRIVATE_URLS=1` lifts it). The relay's own token only covered its byte plane; `/api`, `/sparql` and `/mcp` were open. See `clients/server/README.md`.
+- **`rete-server`: the REST API, SPARQL endpoints and MCP server as one app, with token auth.** `ghcr.io/caviri/rete-server` (amd64 and arm64; not published to PyPI), or `pip install ./clients/server` from a checkout, then `rete-server --token …`: `/api` (REST, documented at `/docs`), `/sparql/<dataset>` (SPARQL 1.1 Protocol), `/mcp` (streamable HTTP, 19 tools), `/health`. With one or more tokens set, every route but `/health` needs `Authorization: Bearer <token>` (a token file or Docker secret works; `?token=` only when `RETE_QUERY_TOKEN=1`, and it is stripped before the access log). It answers for the catalog published at `https://data.graphplaza.com/catalog.json` (re-read every 10 minutes by ETag; a bundled copy of 103 datasets stands in when it cannot be read), for a folder of `.rete` files (`--data`, each described by its own card), or for any catalog file or URL (`--catalog`). Every flag is also a `RETE_*` variable, so the image needs none. Compared with the relay it replaces: one process with shared graph handles instead of two workers with a copy each; a graph is opened once when many first queries arrive together; catalog lookups are a dict access instead of re-reading `catalog.json` and walking the data folder on every request; `POST /sparql` no longer runs its query on the event loop; a request waiting for a busy graph gets 503 after the query timeout instead of holding a thread; `url=` refuses loopback, private and link-local addresses (`RETE_ALLOW_PRIVATE_URLS=1` lifts it). The relay's own token only covered its byte plane; `/api`, `/sparql` and `/mcp` were open. See `clients/server/README.md`.
+- **The graph view in rete-server.** `graph_view` draws a query's results, an entity's neighbourhood or a dataset's schema as an interactive graph in the conversation, the same view the Claude Desktop extension shows: the server sends the page as an MCP App (`ui://rete/graph-view.html`) and the client renders it. `graph_view_update` and `graph_view_state` are Claude's side; six app-only tools serve the page, so the data never passes through the model. A file attached to the chat opens when the user chooses or drops it in the view and becomes a `generated/…` dataset (`RETE_UPLOAD_MAX_MB`, default 64; off with `--no-author`). The page is the extension's own build, copied by `clients/mcpb/build-explorer.mjs` and checked by CI; the tools are a Python port of its `views.mjs`, tested in Chromium behind the MCP Apps SDK's host bridge.
+- **Skills from rete-server.** Four skills travel with the MCP server (Skills over MCP, the `io.modelcontextprotocol/skills` extension): `build-rete` (a complete `.rete`: model, card, examples, shapes, build, verify), `query`, `network-analysis` and `web-pages`. A client that supports them, such as Claude Code (beta, v2.1.331+), lists only their names and descriptions and loads one when it is needed; every SPARQL block in them is run against a real graph by the tests. Clients without skills still get the short workflow in the server instructions.
+- **Long queries as MCP tasks in rete-server.** `sparql_query`, `validate_shacl` and `build_rete` run as background tasks for clients that ask for them (the `io.modelcontextprotocol/tasks` extension, protocol 2026-07-28: Claude Code v2.1.304+, new claude.ai chats), so the conversation goes on while a big query runs. A task has its own time limit (`RETE_TASK_TIMEOUT_S`, default 900), workers (`RETE_TASK_WORKERS`, 2) and engine handle, so quick calls are not kept waiting. Other clients get the usual answer. Cancelling drops the result; the engine still finishes the query it is in.
+- **Big answers stay out of the conversation.** A `sparql_query` answer over 200 rows (`RETE_INLINE_ROWS`) is stored for an hour and comes back as its first rows, a `result` handle and a `resource_link`; `result_rows` pages through it, and `GET /api/results/{id}` downloads it as JSON, SPARQL JSON, CSV, TSV or N-Triples.
+- **A home page for rete-server.** `/` is now a page in the landing's design: the datasets with their cards, a SPARQL box with starter queries, a drop zone, and how to connect an agent. Dropping an RDF file or a `.rete` sends it to the new `POST /api/uploads`, which builds it into a dataset (with authoring on); the same endpoint takes a file from `curl`, so Claude Code can send one without it entering the conversation. In browsers with WebMCP the page offers its actions as tools, named like the playground's. The page's HTML, CSS and JS load without a token; it asks for one and sends it with every call, and all data still needs it.
+- **`catalog.json` next to the data.** `scripts/export_catalog.py` (was `export_space_catalog.py`) projects `catalog.js` for rete-server; `catalog-publish.yml` uploads it to R2 on every catalog change on `main` (it needs the `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_S3_ENDPOINT` secrets) and fails a PR whose bundled copy is stale.
 
 ### Changed
 
+- **rete-server's home page is friendlier, and the public server is open.** The page speaks like the landing ("Your RDF graphs in one place. *Query them here, or from your agent.*"), walks through three steps (pick a graph, ask a question, connect your agent), runs a graph's starter questions in one click with the SPARQL behind a toggle, shows the fastest catalog graphs first and the server's own files in a collapsed group, and has connection tabs for Claude Code, claude.ai, ChatGPT and Python. An open server shows no token UI; a server with uploads off offers the playground and `docker run` instead of a drop zone. The Hugging Face Space runs it open and read-only (`RETE_AUTHOR=0`), and `docs/agents.md` describes that server (16 tools, the graph view, skills, tasks; no media tools).
 - **The ISWC demo's agent extension is the 0.7.8 `rete.mcpb`.** It names the
   new addresses of the batch 3 catalog files and has the graph view's card
   view and hive layout.
@@ -119,6 +140,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   file's card, and a query page per dataset. It runs the 0.7.8 engine (0.7.5
   before). In browsers with WebMCP, the pages offer their search
   and query functions to agents as tools.
+
+### Removed
+
+- **The relay (`clients/relay`, `ghcr.io/caviri/rete-relay`).** Its byte plane (HTTP Range over a FUSE-mounted bucket) has had no users since the files moved to R2, which serves ranges and CORS itself; its query planes live on in rete-server. The media tools (`embed_media`, `media_preview`, `/api/media/*`) and the `branding.json` landing page did not move over.
 
 ### Fixed
 

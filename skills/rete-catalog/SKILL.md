@@ -20,8 +20,8 @@ Three equivalent sources, freshest first:
 # Live catalog API (keys, descriptions, sizes, licenses, URLs, examples):
 curl -s https://katospiegel-rete.hf.space/api/datasets | jq '.[].key'
 
-# In this repo: the exported catalog (regenerate: scripts/export_space_catalog.py)
-jq '.datasets[] | {key, size, license}' clients/relay/catalog.json
+# In this repo: the exported catalog (regenerate: scripts/export_catalog.py)
+jq '.datasets[] | {key, size, license}' clients/server/rete_server/catalog.json
 
 # Source of truth for the playground: web/playground-src/catalog.js
 ```

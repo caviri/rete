@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rete-server"
+version = "0.7.9"
+description = "A web app over .rete graph files: REST API, SPARQL 1.1 Protocol endpoints and an MCP server, with token auth."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Carlos Vivar Rios" }]
+keywords = ["rdf", "sparql", "mcp", "knowledge-graph", "linked-data", "range-requests"]
+# Shipped as the ghcr.io/caviri/rete-server image only. PyPI refuses an
+# upload with a "Private ::" classifier, so this cannot be published by mistake.
+classifiers = [
+    "Private :: Do Not Upload",
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Database",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+]
+dependencies = [
+    # The engine. A release builds the image on the wheels of its own run, so
+    # this floor may name a version PyPI does not serve yet (docs/release.md).
+    "rete-graph>=0.7.9",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    # media_preview shrinks the picture it fetches.
+    "Pillow>=10",
+    "pydantic>=2",
+    "orjson>=3.9",
+    "fastmcp>=4.2.6,<5",
+    # Background tasks (the io.modelcontextprotocol/tasks extension), in-memory backend.
+    "fastmcp-tasks>=4.2.6,<5",
+]
+
+[project.optional-dependencies]
+# Natural-language /api/ask (needs RETE_ASK_MODEL and the provider's API key).
+ask = ["pydantic-ai-slim[openai,anthropic]>=1.0"]
+test = ["pytest>=8", "pyoxigraph>=0.5"]
+
+[project.scripts]
+rete-server = "rete_server.cli:main"
+
+[project.urls]
+Homepage = "https://caviri.github.io/rete/"
+Repository = "https://github.com/caviri/rete"
+Documentation = "https://github.com/caviri/rete/tree/main/clients/server"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rete_server"]
+
+[tool.hatch.build.targets.sdist]
+include = ["rete_server", "README.md", "tests"]

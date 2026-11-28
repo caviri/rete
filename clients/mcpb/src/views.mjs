@@ -14,6 +14,10 @@
 // A view also takes a file from the user — chosen or dropped in it, sent here
 // in parts (graph_view_upload). That is how a file attached to the chat reaches
 // the extension at all: Claude's copy is in its own sandbox, out of reach.
+//
+// rete-server serves the same page with a Python port of this file and of
+// view-model.mjs (clients/server/rete_server/views.py): same tools, arguments
+// and answers. Change them together.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 

@@ -552,7 +552,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.7.8</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.7.9</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li><details class="nav-section" open><summary class="nav-h">Start here</summary><ul>
         <li><a href="index.html">Overview</a></li>
@@ -624,7 +624,7 @@ file), so an agent can go from "what datasets exist?" to a correct SPARQL
 query — and to validated, media-rich answers — without any out-of-band
 documentation.</p>
 <table><thead><tr><th>Surface</th><th>What it is</th><th>For</th></tr></thead><tbody>
-<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 18 tools over the published catalog and any <code>.rete</code> URL</td><td>ChatGPT, Claude, any MCP client</td></tr>
+<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 17 tools over the published catalog and any <code>.rete</code> URL, the graph view, skills and long queries as tasks</td><td>ChatGPT, Claude, any MCP client</td></tr>
 <tr><td><strong>Desktop extension</strong></td><td><code>rete.mcpb</code> — the whole engine as a one-click local install</td><td>Claude Desktop, incl. private graphs and offline work</td></tr>
 <tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
 <tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
@@ -632,25 +632,35 @@ documentation.</p>
 </tbody></table>
 <h2 id="the-mcp-server">The MCP server</h2>
 <p>One streamable-HTTP endpoint, stateless, <strong>no authentication, no API key</strong>
-(the model lives in the client — the server only serves graphs):</p>
+(the model lives in the client — the server only serves graphs). It runs
+<a href="https://github.com/caviri/rete/tree/main/clients/server">rete-server</a>, read-only:
+the authoring tools are off on the public copy. Run your own
+(<code>docker run -p 7860:7860 ghcr.io/caviri/rete-server</code>) to have them, and a token
+if you want one.</p>
 <pre><code>https://katospiegel-rete.hf.space/mcp/
 </code></pre>
 <p>The tools, grouped by what an agent does with them:</p>
 <table><thead><tr><th>Group</th><th>Tools</th></tr></thead><tbody>
 <tr><td>Discover</td><td><code>list_datasets</code> · <code>dataset_card</code> · <code>dataset_schema</code> · <code>example_queries</code></td></tr>
-<tr><td>Query</td><td><code>sparql_query</code> (SELECT/ASK/CONSTRUCT/DESCRIBE, <code>reason=true</code> for OWL 2 QL, any catalog key <strong>or any <code>.rete</code> URL</strong>) · <code>find_entities</code> · <code>describe_entity</code></td></tr>
+<tr><td>Query</td><td><code>sparql_query</code> (SELECT/ASK/CONSTRUCT/DESCRIBE, <code>reason=true</code> for OWL 2 QL, any catalog key <strong>or any <code>.rete</code> URL</strong>; a big answer comes back as its first rows and a handle) · <code>result_rows</code> (page through it) · <code>find_entities</code> · <code>describe_entity</code></td></tr>
 <tr><td>Validate</td><td><code>validate_query</code> (deterministic SPARQL lint: parse, prefixes, features, vocabulary probes vs a dataset, ontology/subclass checks) · <code>validate_shacl</code> (lazy over shape targets) · <code>shacl_shapes</code> (curated shapes)</td></tr>
-<tr><td><strong>Author</strong></td><td><code>suggest_vocabulary</code> (search LOV before minting IRIs) · <code>check_ontology</code> (parse + lint battery + reasoner smoke) · <code>build_rete</code> (RDF text → a served, immediately-queryable <code>.rete</code>) · <code>causal_diagram</code> (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the <a href="fallacies.html">conversation experiments</a></td></tr>
-<tr><td>Media</td><td><code>embed_media</code> (URLs → base64 data URIs, images recompressed to WebP) · <code>media_preview</code> (representative image of a PDF / video frame / IIIF / HTML page)</td></tr>
+<tr><td>Look</td><td><code>media_preview</code> (one small JPEG of an IIIF manifest page, an IIIF image or a plain image URL a graph points to; public hosts only)</td></tr>
+<tr><td>Show</td><td><code>graph_view</code> (query results, a neighbourhood or the schema as an interactive graph, table, cards or map in the conversation, for clients that render MCP Apps) · <code>graph_view_update</code> · <code>graph_view_state</code></td></tr>
+<tr><td><strong>Author</strong> (own server only)</td><td><code>suggest_vocabulary</code> (search LOV before minting IRIs) · <code>check_ontology</code> (parse + lint battery + reasoner smoke) · <code>build_rete</code> (RDF text → a served, immediately-queryable <code>.rete</code>) · <code>causal_diagram</code> (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the <a href="fallacies.html">conversation experiments</a></td></tr>
 <tr><td>ChatGPT connector contract</td><td><code>search</code> · <code>fetch</code></td></tr>
 </tbody></table>
 <p>Every answer carries <code>stats</code> — the bytes physically fetched — so laziness
 stays observable. The server instructions teach the intended workflow
 (card → schema → examples → query), and reads are disk-cached server-side.</p>
+<p>Clients on MCP 2026-07-28 get two more things. Four <strong>skills</strong> travel with the
+server (<code>query</code>, <code>build-rete</code>, <code>network-analysis</code>, <code>web-pages</code>): Claude Code
+lists them and loads one when it is needed. And <code>sparql_query</code> and
+<code>validate_shacl</code> can run as <strong>tasks</strong>, so a slow query does not hold up the
+conversation (Claude Code, new claude.ai chats).</p>
 <h3 id="connect-from-chatgpt">Connect from ChatGPT</h3>
 <p>Two integration levels:</p>
 <ol>
-<li><strong>Developer mode (all 18 tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
+<li><strong>Developer mode (all tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
 enable <em>Developer mode</em> (under advanced settings) → <em>Create</em> a
 connector: any name, MCP server URL
 <code>https://katospiegel-rete.hf.space/mcp/</code>, authentication <strong>None</strong>.
@@ -830,7 +840,7 @@ granted, compared on real paths so a symlink cannot escape. See
 </code></pre>
 <p>Installing wires up, in one step:</p>
 <ul>
-<li>the <strong>MCP server</strong> above (18 tools available in every session), and</li>
+<li>the <strong>MCP server</strong> above (its tools available in every session), and</li>
 <li>the four <strong>skills</strong>, namespaced as <code>/rete-graph:&lt;skill&gt;</code>.</li>
 </ul>
 <p>Versioning follows git — every push to <code>main</code> is a new plugin version, so
@@ -871,8 +881,8 @@ engineering:</p>
 <li><code>sparql_query</code> with <code>reason=true</code> → counts norms including subclass
 entailment.</li>
 <li><code>validate_shacl</code> → checks an integrity contract over the result set.</li>
-<li><code>media_preview</code> on a IIIF manifest or PDF the query surfaced →
-<code>embed_media</code> → a self-contained HTML report with the evidence inlined.</li>
+<li><code>graph_view</code> → the citing and cited norms as an interactive graph in the
+conversation, which the user explores and selects from.</li>
 </ol>
 
       </article>

@@ -58,7 +58,7 @@ jobs:
 
   # The four native abi3 wheels (artifacts `wheel-<platform>`), from the
   # reusable workflow release.yml and docker-publish.yml build theirs with, so
-  # the wheels on PyPI, in the Blender add-on and in the relay image come from
+  # the wheels on PyPI, in the Blender add-on and in the server image come from
   # one definition and one commit. Only the `publish` job below needs to live
   # in this file for PyPI's trusted publisher; building elsewhere is fine.
   wheels:

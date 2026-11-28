@@ -1,0 +1,29 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex:   <https://example.org/> .
+
+# The graph every SPARQL snippet in rete_server/skills is run against:
+# people, the papers they wrote, the papers those cite, and the lab they work in.
+
+ex:Person a rdfs:Class ; rdfs:label "Person" .
+ex:Paper  a rdfs:Class ; rdfs:label "Paper" .
+ex:Org    a rdfs:Class ; rdfs:label "Organisation" .
+
+ex:ada   a ex:Person ; rdfs:label "Ada Lovelace"    ; ex:memberOf ex:lab ; ex:born "1815"^^xsd:integer .
+ex:charles a ex:Person ; rdfs:label "Charles Babbage" ; ex:memberOf ex:lab ; ex:born "1791"^^xsd:integer .
+ex:mary  a ex:Person ; rdfs:label "Mary Somerville" ; ex:memberOf ex:lab ; ex:born "1780"^^xsd:integer .
+ex:grace a ex:Person ; rdfs:label "Grace Hopper"    ; ex:memberOf ex:navy ; ex:born "1906"^^xsd:integer .
+ex:alan  a ex:Person ; rdfs:label "Alan Turing"     ; ex:memberOf ex:navy .
+ex:kathy a ex:Person ; rdfs:label "Katherine Johnson" ; ex:memberOf ex:navy .
+ex:ed    a ex:Person ; rdfs:label "Edsger Dijkstra" .
+ex:lab   a ex:Org ; rdfs:label "Analytical Lab" .
+ex:navy  a ex:Org ; rdfs:label "Navy Research" .
+
+ex:p1 a ex:Paper ; rdfs:label "Notes on the Engine"    ; ex:year 1843 ; ex:author ex:ada , ex:charles ; ex:cites ex:p2 ; ex:pages 40 .
+ex:p2 a ex:Paper ; rdfs:label "On the Connexion"       ; ex:year 1834 ; ex:author ex:mary ; ex:pages 12 .
+ex:p3 a ex:Paper ; rdfs:label "Computable Numbers"     ; ex:year 1936 ; ex:author ex:alan ; ex:cites ex:p1 ; ex:pages 36 .
+ex:p4 a ex:Paper ; rdfs:label "The Education of a Computer" ; ex:year 1952 ; ex:author ex:grace , ex:alan ; ex:cites ex:p3 , ex:p1 .
+ex:p5 a ex:Paper ; rdfs:label "Orbit Determination"   ; ex:year 1960 ; ex:author ex:kathy , ex:grace ; ex:cites ex:p4 ; ex:pages 22 .
+ex:p6 a ex:Paper ; rdfs:label "Go To Considered"      ; ex:year 1968 ; ex:author ex:ed ; ex:cites ex:p3 , ex:p4 .
+ex:p7 a ex:Paper ; rdfs:label "Shortest Paths"         ; ex:year 1959 ; ex:author ex:ed , ex:alan ; ex:cites ex:p3 ; ex:pages 3 .

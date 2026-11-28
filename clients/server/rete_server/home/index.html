@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex">
+<title>rete-server</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect width='120' height='120' rx='28' fill='%232a6df4'/%3E%3Cg fill='%23fff'%3E%3Ccircle cx='60' cy='34' r='11'/%3E%3Ccircle cx='30' cy='77' r='9'/%3E%3Ccircle cx='90' cy='77' r='9'/%3E%3Ccircle cx='60' cy='102' r='8'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="/home/home.css">
+</head>
+<body>
+<a class="skip" href="#datasets">Skip to the datasets</a>
+
+<header class="top" id="top">
+  <a class="brand" href="/" aria-label="rete-server home">
+    <svg class="mark" viewBox="0 0 120 120" aria-hidden="true">
+      <rect width="120" height="120" rx="28" fill="#2a6df4"/>
+      <g stroke="#dce8ff" stroke-width="4" fill="none"><path d="M60 36 32 76M60 36l28 40M32 76h56M32 76l28 26M88 76l-28 26"/></g>
+      <g fill="#fff"><circle cx="60" cy="34" r="11"/><circle cx="30" cy="77" r="9"/><circle cx="90" cy="77" r="9"/><circle cx="60" cy="102" r="8"/></g>
+    </svg>
+    <span>rete-server</span>
+  </a>
+  <nav class="nav" aria-label="Sections">
+    <a href="#datasets">Graphs</a>
+    <a href="#query">Ask</a>
+    <a href="#connect">Connect an agent</a>
+    <a href="#add">Your own graph</a>
+  </nav>
+  <div class="top-actions">
+    <a class="btn btn-ghost btn-sm" href="/docs" id="docsLink">API docs</a>
+    <button class="btn btn-ghost btn-sm" id="signOut" type="button" hidden>Forget token</button>
+  </div>
+</header>
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap">
+    <p class="eyebrow">Open source · RDF · SPARQL · MCP</p>
+    <h1 id="hero-title">Your RDF graphs in one place. <em>Query them here, or from your agent.</em></h1>
+    <p class="rotator">Query them from
+      <span class="rot" id="rot" aria-hidden="true"><span class="rot-word">a browser</span></span>
+      <span class="sr-only">a browser, Python, JavaScript, R, Java, the command line or Claude</span>
+    </p>
+    <p class="lede">Each graph is a single <code>.rete</code> file with its indexes inside. A SPARQL query reads
+      only the bytes it needs, so there is no database to run. Pick a graph, ask it a question,
+      or give your agent the address.</p>
+    <div class="ctas">
+      <a class="btn btn-primary" href="#datasets">Run a query <span aria-hidden="true">↓</span></a>
+      <a class="btn btn-glass" href="#connect">Connect your agent</a>
+    </div>
+    <p class="stats" id="stats" aria-live="polite"></p>
+  </div>
+</section>
+
+<div class="wrap">
+  <ol class="steps" aria-label="Three steps">
+    <li><a href="#datasets"><span class="n">1</span><span class="s"><b>Pick a graph</b><small>Browse what is here</small></span></a></li>
+    <li><a href="#query"><span class="n">2</span><span class="s"><b>Ask a question</b><small>Start from an example</small></span></a></li>
+    <li><a href="#connect"><span class="n">3</span><span class="s"><b>Connect your agent</b><small>Claude, ChatGPT, Python</small></span></a></li>
+  </ol>
+</div>
+
+<main class="wrap">
+  <!-- Token gate: shown only when the server wants a token and the page has none. -->
+  <section class="gate" id="gate" hidden>
+    <div class="panel">
+      <p class="kicker">Token needed</p>
+      <h2>This server is private</h2>
+      <p class="muted" id="gateMsg">Enter the access token. It stays in this tab only and is sent as a bearer token with every request.</p>
+      <form class="field-row" id="gateForm" autocomplete="off">
+        <label class="sr-only" for="tokenInput">Access token</label>
+        <input id="tokenInput" type="password" placeholder="Access token" spellcheck="false" autocapitalize="off" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Unlock</button>
+      </form>
+    </div>
+  </section>
+
+  <div id="app">
+    <section class="block" id="datasets">
+      <div class="section-head">
+        <p class="kicker">Step 1</p>
+        <h2>Pick a graph</h2>
+        <p id="datasetsLead">Search by name or topic, or filter by tag.</p>
+      </div>
+
+      <div id="featuredBox" hidden>
+        <h3 class="sub">Small and quick to open</h3>
+        <ul class="featured" id="featured"></ul>
+      </div>
+
+      <div class="toolbar">
+        <label class="sr-only" for="search">Search graphs</label>
+        <input id="search" type="search" placeholder="Search graphs" spellcheck="false" autocomplete="off">
+        <div class="chips tags" id="tagChips" role="group" aria-label="Filter by tag"></div>
+      </div>
+
+      <ul class="dlist" id="dlist" aria-label="Graphs in the catalog"><li class="empty">Loading graphs…</li></ul>
+      <p class="hint" id="dcount" aria-live="polite"></p>
+      <button class="btn btn-ghost btn-sm" id="moreBtn" type="button" hidden>Show all</button>
+
+      <details class="local" id="localBox" hidden>
+        <summary id="localSum">Files on this server</summary>
+        <ul class="dlist" id="llist" aria-label="Files on this server"></ul>
+      </details>
+    </section>
+
+    <section class="block" id="query">
+      <div class="section-head">
+        <p class="kicker">Step 2</p>
+        <h2>Ask a question</h2>
+      </div>
+      <div class="console">
+        <div id="qEmpty">
+          <p class="muted">Choose a graph first and its starter questions show up here.</p>
+          <a class="btn btn-ghost btn-sm" href="#datasets">Pick a graph</a>
+        </div>
+        <div id="qBody" hidden>
+          <div class="console-row">
+            <span class="row-label">Graph</span>
+            <code class="current" id="current">none selected</code>
+            <a class="btn btn-ghost btn-sm swap" href="#datasets">Change</a>
+          </div>
+          <div class="card-panel" id="cardPanel" aria-live="polite"></div>
+          <h3 class="sub">Questions to start with</h3>
+          <div class="chips starters" id="starters" role="group" aria-label="Starter questions"></div>
+          <details class="sparql" id="sparqlBox">
+            <summary>Show the SPARQL</summary>
+            <label class="sr-only" for="q">SPARQL query</label>
+            <textarea id="q" rows="8" spellcheck="false" placeholder="SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 20"></textarea>
+            <div class="field-row">
+              <button class="btn btn-primary" id="run" type="button">Run query</button>
+              <span class="hint">Ctrl+Enter also runs it.</span>
+            </div>
+          </details>
+          <p class="hint run-meta" id="runMeta" aria-live="polite"></p>
+          <div id="result" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="connect">
+      <div class="section-head">
+        <p class="kicker">Step 3</p>
+        <h2>Connect your agent</h2>
+        <p>This server speaks MCP over HTTP. Your agent gets tools to list graphs, read their cards and
+          run SPARQL, a graph view inside Claude, skills for writing good queries, and long queries that
+          run as tasks.</p>
+      </div>
+      <div class="codebox">
+        <div class="seg" role="tablist" aria-label="Your agent" id="agentTabs">
+          <button role="tab" aria-selected="true" aria-controls="pane-claude-code" id="tab-claude-code" data-pane="claude-code" type="button">Claude Code</button>
+          <button role="tab" aria-selected="false" aria-controls="pane-claude-ai" id="tab-claude-ai" data-pane="claude-ai" type="button" tabindex="-1">claude.ai</button>
+          <button role="tab" aria-selected="false" aria-controls="pane-chatgpt" id="tab-chatgpt" data-pane="chatgpt" type="button" tabindex="-1">ChatGPT</button>
+          <button role="tab" aria-selected="false" aria-controls="pane-python" id="tab-python" data-pane="python" type="button" tabindex="-1">Python</button>
+        </div>
+
+        <div class="pane" id="pane-claude-code" role="tabpanel" aria-labelledby="tab-claude-code">
+          <p class="code-cap">Run this once in a terminal</p>
+          <pre class="code" id="mcpCmd"></pre>
+          <div class="code-foot"><button class="btn btn-ghost btn-sm" data-copy="mcpCmd" type="button">Copy command</button></div>
+        </div>
+        <div class="pane" id="pane-claude-ai" role="tabpanel" aria-labelledby="tab-claude-ai" hidden>
+          <p class="code-cap">Settings, Connectors, Add custom connector. Paste this URL</p>
+          <pre class="code" id="cUrl"></pre>
+          <div class="code-foot"><button class="btn btn-ghost btn-sm" data-copy="cUrl" type="button">Copy URL</button></div>
+          <p class="hint dim" id="claudeAiNote"></p>
+        </div>
+        <div class="pane" id="pane-chatgpt" role="tabpanel" aria-labelledby="tab-chatgpt" hidden>
+          <p class="code-cap">Settings, Connectors, turn on developer mode, create a connector. Use this MCP server URL</p>
+          <pre class="code" id="gUrl"></pre>
+          <div class="code-foot"><button class="btn btn-ghost btn-sm" data-copy="gUrl" type="button">Copy URL</button></div>
+          <p class="hint dim" id="chatgptNote"></p>
+        </div>
+        <div class="pane" id="pane-python" role="tabpanel" aria-labelledby="tab-python" hidden>
+          <p class="code-cap">pip install fastmcp</p>
+          <pre class="code" id="pyCode"></pre>
+          <div class="code-foot"><button class="btn btn-ghost btn-sm" data-copy="pyCode" type="button">Copy code</button></div>
+        </div>
+
+        <div class="tokenopts" id="tokenOpts" hidden>
+          <div class="seg" role="group" aria-label="How to send the token" id="connectTabs">
+            <button aria-pressed="true" data-mode="header" type="button">Token in a header</button>
+            <button aria-pressed="false" data-mode="query" type="button" id="queryTab">Token in the URL</button>
+          </div>
+          <label class="reveal"><input type="checkbox" id="reveal"> show my token</label>
+          <p class="hint dim" id="connectNote"></p>
+        </div>
+        <p class="code-cap">MCP URL</p>
+        <pre class="code" id="mcpUrl"></pre>
+        <div class="code-foot"><button class="btn btn-ghost btn-sm" data-copy="mcpUrl" type="button">Copy URL</button></div>
+      </div>
+      <p class="hint" id="webmcpNote"></p>
+    </section>
+
+    <section class="block" id="add">
+      <div class="section-head">
+        <p class="kicker">Your own graph</p>
+        <h2 id="addTitle">Bring your own graph</h2>
+        <p id="addLead"></p>
+      </div>
+
+      <!-- Uploads off: where to go instead. -->
+      <div class="panel byo" id="byoOff" hidden>
+        <div class="byo-cols">
+          <div>
+            <h3>Open a .rete file in your browser</h3>
+            <p class="muted">The playground and the file explorer read a <code>.rete</code> file on your own device,
+              or one from any web address. Nothing is uploaded.</p>
+            <p class="links"><a class="btn btn-primary btn-sm" href="https://caviri.github.io/rete/playground.html" target="_blank" rel="noopener">Open the playground</a>
+              <a class="btn btn-ghost btn-sm" href="https://caviri.github.io/rete/docs/getting-started.html" target="_blank" rel="noopener">Build your first graph</a></p>
+          </div>
+          <div>
+            <h3>Run your own server</h3>
+            <p class="muted">Uploads are off here. On your own machine you can turn them on and drop files on this page.</p>
+            <pre class="code" id="dockerCode">docker run -p 7860:7860 ghcr.io/caviri/rete-server</pre>
+            <div class="code-foot plain"><button class="btn btn-ghost btn-sm" data-copy="dockerCode" type="button">Copy</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Uploads on. -->
+      <div id="byoOn" hidden>
+        <label class="drop" id="drop" tabindex="0">
+          <input id="file" type="file" accept=".ttl,.nt,.nq,.trig,.jsonld,.rdf,.owl,.xml,.turtle,.ntriples,.nquads,.yamlld,.jelly,.rete">
+          <span class="drop-title" id="dropTitle">Drop a file, or click to choose one</span>
+          <span class="hint" id="dropHint"></span>
+        </label>
+        <div class="codebox slim">
+          <p class="code-cap">From a terminal, a local file never has to enter a conversation:</p>
+          <pre class="code" id="curlCode"></pre>
+          <div class="code-foot"><button class="btn btn-ghost btn-sm" data-copy="curlCode" type="button">Copy</button></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="foot wrap">
+  <p>rete-server <span id="ver"></span> &middot; <a href="/docs">REST docs</a> &middot; <a href="https://caviri.github.io/rete/">rete</a></p>
+</footer>
+
+<div class="overlay" id="overlay" hidden><div><strong>Drop to add it as a graph</strong><span id="overlaySub"></span></div></div>
+<button class="pill" id="pill" type="button" hidden></button>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="/home/home.js" defer></script>
+<script src="/home/tools.js" defer></script>
+</body>
+</html>
