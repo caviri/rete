@@ -4,11 +4,11 @@
 
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
-    eval_query_with_warnings, eval_select_communities, eval_sparql, project_graph, schema_classes,
-    schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
-    ByteRange, CountingReader, DataGraph, Header, OffsetReader, QueryOpts, QueryOutput,
-    RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView,
-    TermTriple, TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
+    eval_query_with_warnings, eval_select_communities, eval_sparql, project_graph, schema_profile,
+    summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader, ByteRange,
+    CountingReader, DataGraph, Header, OffsetReader, QueryOpts, QueryOutput, RangeReader, Rete,
+    ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple,
+    TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
 };
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -448,8 +448,7 @@ pub fn query_sparql(bytes: &[u8], query: &str) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn schema(bytes: &[u8]) -> Result<String, JsValue> {
     let rete = open(bytes)?;
-    let classes = schema_classes(&rete);
-    let relations = schema_summary(&rete);
+    let (classes, relations) = schema_profile(&rete);
     serde_json::to_string(&serde_json::json!({
         "schemaVersion": JSON_SCHEMA_VERSION,
         "classes": classes,
@@ -839,10 +838,11 @@ impl Graph {
     /// See [`schema`] — the live (scanning) profile; prefer `schema_packed` when
     /// the file carries a pyramid.
     pub fn schema(&self) -> Result<String, JsValue> {
+        let (classes, relations) = schema_profile(&self.rete);
         serde_json::to_string(&serde_json::json!({
             "schemaVersion": JSON_SCHEMA_VERSION,
-            "classes": schema_classes(&self.rete),
-            "relations": schema_summary(&self.rete),
+            "classes": classes,
+            "relations": relations,
         }))
         .map_err(err)
     }

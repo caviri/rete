@@ -127,13 +127,21 @@ own instances, so on a 9.53 B-triple file `?s a :Service ; :publicationYear
   fewer, and the pattern above 65,536 triples), each row **looks the pattern
   up** in the index instead of scanning it — a bound subject becomes an SPO
   range read, so `<doi> :p ?r . ?r ?q ?o` reads the handful of `?r` rows and
-  never the whole graph;
+  never the whole graph. Not when the pattern is small (at most about a
+  million triples), the rows are many (more than 512, and more than a 512th
+  of the pattern) and they do not bind its subject: it is then scanned once
+  and hash-joined;
+- patterns on one subject variable, a **star** (`?s :a ?x ; :b ?y ; :c ?z`),
+  are one merge join over their subject-sorted streams when each is estimated
+  above 65,536 triples and none is far larger than the first. A pattern that
+  is one star streams, holding only the current subject's rows; a star inside
+  a larger pattern is built once and joined as one relation. See
+  [Star joins](star-joins.md);
 - when even the most selective pattern is large (above about two million
-  matches), the join **streams**: that pattern is read from its index cursor
-  and every later pattern is joined per row, through a hash table when it is
-  small and by lookup otherwise; two large patterns that share their subject
-  variable stream through a merge join. Nothing proportional to the large
-  pattern is held;
+  matches), the join **streams**: that pattern, or the star it leads, is read
+  from its index cursor and every later pattern is joined per row, through a
+  hash table when it is small and by lookup otherwise. Nothing proportional
+  to the large pattern is held;
 - otherwise the small side is materialized and hash-joined, as before.
 
 The same rule applies between a basic graph pattern and what joins it from the
@@ -714,22 +722,28 @@ value of its own and resolves it only where SPARQL 1.1 says to (§17.2, §17.3,
 | `FILTER`, `HAVING`, an `OPTIONAL`'s filter | the row is dropped |
 | `BIND`, a projected `(expr AS ?v)`, a `GROUP BY` key | `?v` is left unbound; the row stays |
 | `ORDER BY` | sorts as "no value", before everything else |
-| `COUNT(expr)` | the error is not counted |
-| `SUM`, `GROUP_CONCAT`, `MIN` | the aggregate is unbound for that group. An unbound variable is an error here too, so `SUM(?x)` over a group where some row lacks `?x` is unbound |
-| `AVG` | unbound if some rows error and others do not; `0` if every row errors, because errors are not counted and the average of zero values is `0` (§18.5.1.4) |
-| `MAX` | the largest value that is not an error: MAX orders like `ORDER BY DESC`, where "no value" comes last (§18.5.1.6, §15.1). MIN orders like `ORDER BY ASC`, where it comes first, hence the row above |
-| `SAMPLE` | returns one of the values that is not an error |
+| an aggregate (`COUNT(expr)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `SAMPLE`) | the row is left out of the aggregate. `SUM(?x)` over a group where some rows lack `?x` is the sum of the others. With no value in any row: `COUNT`, `SUM` and `AVG` are `0`, `GROUP_CONCAT` is `""`, and `MIN`, `MAX` and `SAMPLE` are unbound |
+| `SUM`, `AVG` over a bound value that is not a number; `GROUP_CONCAT` over one that is not a string literal | the aggregate is unbound for that group (§18.5.1.3-4, §18.5.1.7) |
 
 Through v0.3.2 rete turned an error into `false` at the function that raised
 it, so `FILTER(!CONTAINS(?iri, "x"))` kept every row, `BIND(!CONTAINS(?iri,
 "x") AS ?b)` bound `true`, and `SUM` / `AVG` / `MIN` / `MAX` / `GROUP_CONCAT`
-skipped the rows they could not use (`MAX` still does, as the spec says). Those results were wrong, and the
+skipped the rows they could not use. Those results were wrong, and the
 [CHANGELOG](https://github.com/caviri/rete/blob/main/CHANGELOG.md) lists this as a result-changing fix.
+
+**One deliberate departure from the spec text.** By §18.5.1 an unbound variable
+is an error element of its group, and one such element makes `SUM`, `AVG`,
+`MIN` and `GROUP_CONCAT` an error. rete did that from 0.3.3 to 0.7.9: a query
+that counts the designs of a target and takes `MIN(?kd)` from an `OPTIONAL`
+answered 833 designs and no minimum, with no warning. Since 0.7.10 a row
+without a value is left out, as SQL does with NULL. Oxigraph follows the spec
+text here and returns no value; to get that answer, test for it: `IF(COUNT(?x) = COUNT(*), SUM(?x), 1/0)`.
+A bound value of the wrong kind is still an error.
 
 Where rete deliberately differs from Oxigraph 0.5, each time because the spec
 text says otherwise: `COUNT(expr)` removes errors and counts the rest
-(§18.5.1.2; Oxigraph makes the count unbound); `MAX` ignores error elements
-and an all-error `AVG` is `0` (§18.5.1.4-6; Oxigraph makes both unbound); `x IN ()` is `false` and
+(§18.5.1.2; Oxigraph makes the count unbound); an `AVG` with no value to
+average is `0` (§18.5.1.4; Oxigraph makes it unbound); `x IN ()` is `false` and
 `x NOT IN ()` is `true` (the examples in §17.4.1.9-10; Oxigraph raises an
 error); and the effective boolean value of an ill-typed numeric literal is
 `false` (§17.2.2; Oxigraph raises an error).

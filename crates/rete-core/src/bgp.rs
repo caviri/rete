@@ -146,12 +146,35 @@ fn plan_order(
     index: &GraphIndex,
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
 ) -> (Vec<usize>, Vec<f64>) {
-    if lowered.len() == 1 {
-        return (vec![0], vec![0.0]);
-    }
-    let order = selectivity_order(ctx, index, lowered);
-    let scan_est = tile_estimates(ctx, index, lowered, &std::collections::HashSet::new());
+    let (order, scan_est, _) = plan_order_rows(ctx, index, lowered);
     (order, scan_est)
+}
+
+/// [`plan_order`] and the estimated rows of the join of all but the last
+/// pattern (`NaN` when unknown): a plan that builds that prefix in memory is
+/// only as good as it is small ([`prefix_too_big`]).
+fn plan_order_rows(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+) -> (Vec<usize>, Vec<f64>, f64) {
+    if lowered.len() == 1 {
+        return (vec![0], vec![0.0], 0.0);
+    }
+    let (order, prefix_rows) =
+        selectivity_plan_seeded(ctx, index, lowered, &std::collections::HashSet::new());
+    let scan_est = tile_estimates(ctx, index, lowered, &std::collections::HashSet::new());
+    (order, scan_est, prefix_rows)
+}
+
+/// Would the prefix of a BGP (every pattern but the last, joined) hold more
+/// rows than a plan may build in memory? Then the join streams from its first
+/// pattern and looks the others up per row, as it does for a large first
+/// pattern. Three stars of 8 M rows each, joined on a 335 k-row pattern, hold
+/// only the probes' answers at any moment instead of a prefix of 9 M rows and
+/// every column of them (several GB; the same plan ran out of 4 GB).
+fn prefix_too_big(prefix_rows: f64) -> bool {
+    prefix_rows > limits().stream_seed
 }
 
 /// Evaluate a BGP to slot rows against a specific graph `index` (joins run on
@@ -173,6 +196,8 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     let mut rows: Vec<Row> = vec![ctx.slots.empty_row()];
     let mut bound: Vec<usize> = Vec::new();
     let mut merged: [bool; 2] = [false, false];
+    // Patterns already joined as part of a star led by an earlier one.
+    let mut done = vec![false; lowered.len()];
 
     // Merge-join seed: if the two cheapest patterns share a same-role variable the
     // 6-permutation index can co-sort them on, join them with a linear two-pointer
@@ -189,8 +214,8 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     }
 
     for (k, &idx) in order.iter().enumerate() {
-        if k < 2 && merged[k] {
-            continue; // already consumed by the merge seed
+        if (k < 2 && merged[k]) || done[idx] {
+            continue; // already consumed by the merge seed or by a star
         }
         let t = lowered[idx];
         // Hybrid join: once the running result is small and the next pattern shares
@@ -222,7 +247,9 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
                         && (rows.len() <= REMOTE_PROBE_MIN || !pattern_is_selective(&t))
                 } else {
                     rows.len() <= BGP_PROBE_THRESHOLD
-                });
+                })
+            && !(scan_is_cheaper(rows.len(), scan_est[idx])
+                && matches!(t.0, SlotTerm::Var(i) if !bound.contains(&i)));
         if do_probe {
             let taken = std::mem::take(&mut rows);
             // Over a lazy reader each probe is a byte-range round trip, and they run
@@ -237,6 +264,31 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
             }
             rows = next;
         } else {
+            // This pattern and the later ones on its subject that are as large:
+            // one merge over their subject-sorted streams gives the star's rows,
+            // joined to the rows so far once. Pattern by pattern, each of them
+            // was scanned whole into a relation and hash-joined on its own.
+            let rest: Vec<usize> = order[k..].iter().copied().filter(|&i| !done[i]).collect();
+            let star = star_of(ctx, index, &lowered, &rest, &scan_est, true);
+            let joined = (star.len() >= 2 && star_sides(ctx, index, &lowered, &star))
+                .then(|| star_stream(ctx, index, &lowered, &star, None))
+                .flatten();
+            if let Some((stream, star_slots)) = joined {
+                let rel: Vec<Row> = stream.collect();
+                rows = hash_join(rows, &bound, rel, &star_slots);
+                for &m in &star {
+                    done[m] = true;
+                    for s in pattern_slots(&lowered[m]) {
+                        if !bound.contains(&s) {
+                            bound.push(s);
+                        }
+                    }
+                }
+                if rows.is_empty() {
+                    break;
+                }
+                continue;
+            }
             let Some((rel, rel_slots)) = pattern_rows(ctx, index, &t) else {
                 return Vec::new();
             };
@@ -398,6 +450,25 @@ const PROBE_RATIO: f64 = 16.0;
 fn probe_beats_scan(rows: usize, scan_est: f64) -> bool {
     scan_est >= limits().probe_floor && (rows as f64) * PROBE_RATIO <= scan_est
 }
+
+/// Many rows asking about a small pattern whose subject they do not bind: scan
+/// it once instead of probing it per row, whatever the rules above said. A
+/// pattern of at most [`HASH_BUILD_ROWS`] triples is cheap to scan and safe to
+/// hold, on any reader (a few megabytes over a network), and a probe by object
+/// is not the few microseconds [`PROBE_RATIO`] assumes when it lands in a fat
+/// predicate: joining 20 000 `part` rows to the 600 572 `l_partkey` triples of
+/// TPC-H SF 0.1 by probe took 6.6 s (330 µs a probe), the scan and hash join
+/// 0.3 s. A handful of rows ([`BGP_PROBE_THRESHOLD`]) still probes, and so
+/// does any number of rows that bind the subject: that probe is one short SPO
+/// range (the caller checks it).
+fn scan_is_cheaper(rows: usize, scan_est: f64) -> bool {
+    scan_est <= limits().hash_build.min(HASH_BUILD_ROWS)
+        && rows > BGP_PROBE_THRESHOLD
+        && (rows as f64) * SMALL_SCAN_RATIO > scan_est
+}
+
+/// See [`scan_is_cheaper`]: the triples one probe is worth, at worst.
+const SMALL_SCAN_RATIO: f64 = 512.0;
 
 /// The most rows that may probe a BGP whose cheapest pattern is estimated at
 /// `est` triples while probing still beats evaluating it whole
@@ -1119,8 +1190,8 @@ type SharedTable = Option<HashMap<Vec<Val>, Vec<Row>>>;
 ///   for all shards, and the slice is of the last pattern's tiles, or of the
 ///   prefix rows when they look the last pattern up instead of scanning it.
 ///
-/// `None` when the BGP cannot be sliced (two large patterns merge-joined on
-/// their subject, an unsatisfiable constant, an empty prefix): the caller
+/// `None` when the BGP cannot be sliced (a star whose index has no subject
+/// ranges, an unsatisfiable constant, an empty prefix): the caller
 /// evaluates it whole, the shard is not counted as applied, and the query
 /// runs on one thread.
 pub(crate) fn shard_bgp_rows<'q>(
@@ -1152,17 +1223,23 @@ pub(crate) fn shard_bgp_rows<'q>(
     if lowered.len() == 1 {
         return cut_scan(lowered[0]);
     }
-    let (order, est) = plan_order(ctx, index, &lowered);
+    let (order, est, prefix_rows) = plan_order_rows(ctx, index, &lowered);
 
     // The streaming join: the seed pattern's scan is sliced.
-    if est[order[0]] > limits().stream_seed {
+    if est[order[0]] > limits().stream_seed
+        || prefix_too_big(prefix_rows)
+        || merges_a_star(ctx, index, &lowered, &order, &est)
+    {
         let seed = lowered[order[0]];
         // Two large patterns that share their subject are merge-joined, both
         // streams in subject order: the slice is a range of subjects, the
         // same on both sides, cut where the seed's tiles are.
-        let merged = est[order[1]] > limits().stream_seed
-            && merge_stream(ctx, index, seed, lowered[order[1]], None).is_some();
-        let (mut stream, mut bound, skip) = if merged {
+        let mut star = star_members(ctx, index, &lowered, &order, &est);
+        let merged = star_stream(ctx, index, &lowered, &star, None).is_some();
+        if !merged {
+            star = vec![order[0]];
+        }
+        let (mut stream, mut bound) = if merged {
             let n = part.2.max(1);
             let pat = (
                 const_subject(&seed.0, dict)?,
@@ -1190,13 +1267,11 @@ pub(crate) fn shard_bgp_rows<'q>(
             // A slice past the cuts but not the last one holds nothing: the
             // last slice took everything from the final cut on.
             let (lo, hi) = if i > cuts.len() { (0, 0) } else { (lo, hi) };
-            let (stream, slots) =
-                merge_stream(ctx, index, seed, lowered[order[1]], Some((lo, hi)))?;
-            (stream, slots, 2)
+            star_stream(ctx, index, &lowered, &star, Some((lo, hi)))?
         } else {
-            (cut_scan(seed)?, pattern_slots(&seed), 1)
+            (cut_scan(seed)?, pattern_slots(&seed))
         };
-        for &i in &order[skip..] {
+        for &i in order.iter().filter(|i| !star.contains(i)) {
             let t = lowered[i];
             let slots = pattern_slots(&t);
             let shared: Vec<usize> = slots
@@ -1629,22 +1704,58 @@ fn merge_seed_lopsided(
     hi >= FAT_SCAN_ROWS && hi / 4.0 >= lo
 }
 
+/// What each pattern adds to a row of the prefix that has bound `bound` (beyond
+/// the `seed` slots `base` already counted): its extent in `base`, divided for
+/// every subject or object variable now bound by that predicate's measured
+/// number of distinct subjects or objects. A predicate without statistics keeps
+/// its extent.
+///
+/// `exact` also caps the extent at the predicate's exact triple count (a tile
+/// estimate of a small table is a whole tile), for sizing a join rather than
+/// ordering it.
+fn joined_extents(
+    exact: bool,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    base: &[f64],
+    bound: &std::collections::HashSet<usize>,
+    seed: &std::collections::HashSet<usize>,
+    stats: &HashMap<u32, &crate::meta::PredStat>,
+) -> Vec<f64> {
+    let newly =
+        |x: &SlotTerm| matches!(x, SlotTerm::Var(v) if bound.contains(v) && !seed.contains(v));
+    lowered
+        .iter()
+        .zip(base)
+        .map(|(t, &e)| {
+            let mut e = e;
+            if let SlotTerm::Pred(p) = t.1 {
+                if let Some(st) = stats.get(&p) {
+                    if exact {
+                        e = e.min(st.count as f64);
+                    }
+                    if newly(&t.0) && st.distinct_subjects > 0 {
+                        e /= st.distinct_subjects as f64;
+                    }
+                    if newly(&t.2) && st.distinct_objects > 0 {
+                        e /= st.distinct_objects as f64;
+                    }
+                }
+            }
+            e.max(1.0)
+        })
+        .collect()
+}
+
 /// Order pattern indices for a left-deep join: cheapest (smallest estimated
-/// cardinality) first, always preferring a pattern that shares a variable with
-/// the already-joined set so the join stays connected and intermediate relations
+/// cardinality, or what a pattern adds per row once its variables are bound)
+/// first, always preferring a pattern that shares a variable with the
+/// already-joined set so the join stays connected and intermediate relations
 /// stay small. Cardinality comes from [`pattern_estimates`]; with no summary it
 /// falls back to a most-constants-first heuristic. Pure reordering — `hash_join`
 /// is order-independent, so the result multiset is unchanged.
-fn selectivity_order(
-    ctx: &Ctx,
-    index: &GraphIndex,
-    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
-) -> Vec<usize> {
-    selectivity_order_seeded(ctx, index, lowered, &std::collections::HashSet::new())
-}
-
-/// [`selectivity_order`] with a set of slots already bound by an outer seed
-/// row: those variables count as already connected (and, in the no-summary
+///
+/// Takes a set of slots already bound by an outer seed row: those variables
+/// count as already connected (and, in the no-summary fallback, as constants
 /// fallback, as constants for selectivity).
 fn selectivity_order_seeded(
     ctx: &Ctx,
@@ -1652,6 +1763,20 @@ fn selectivity_order_seeded(
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
     seed: &std::collections::HashSet<usize>,
 ) -> Vec<usize> {
+    selectivity_plan_seeded(ctx, index, lowered, seed).0
+}
+
+/// [`selectivity_order_seeded`] and the number of rows its join of every
+/// pattern but the last is estimated to hold (the prefix a materializing
+/// plan builds): the first pattern's extent times what each later one adds
+/// per row ([`joined_extents`]). `NaN` when a later pattern has no measured
+/// statistics, which leaves the figure unknown.
+fn selectivity_plan_seeded(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    seed: &std::collections::HashSet<usize>,
+) -> (Vec<usize>, f64) {
     // Exact per-predicate statistics when the pyramid is resident; otherwise
     // (the lazy path, and files built without a pyramid) the tile-directory
     // estimate, which needs no fetch. That one also counts a class's own
@@ -1684,12 +1809,6 @@ fn selectivity_order_seeded(
     // Higher score = picked sooner. With summary stats that's the negated
     // estimate (smaller cardinality wins); without, the constant count (old
     // behaviour, byte-identical ordering for pyramid-less files).
-    let score = |i: usize| -> f64 {
-        match &estimates {
-            Some(e) => -e[i],
-            None => consts(&lowered[i]) as f64,
-        }
-    };
     // A `?s rdf:type <Class>` with an as-yet-unbound subject is a **class
     // enumeration**: it matches every instance of the class, so it is almost never
     // the most selective place to *start* a join (a popular class has thousands of
@@ -1708,8 +1827,41 @@ fn selectivity_order_seeded(
     let n = lowered.len();
     let mut remaining: Vec<usize> = (0..n).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
+    let mut prefix_rows = 0.0_f64;
     let mut bound: std::collections::HashSet<usize> = seed.clone();
+    // A pattern joined later is worth not its whole extent but what it adds to
+    // each row already there: the extent divided, for every subject or object
+    // variable the prefix has bound by then, by that predicate's measured number
+    // of distinct subjects or objects. Raw extents pick `?d evaluatedAgainst ?t`
+    // (5,361) over `?e ofDesign ?d` (205,620) after `?e target ?t`, joining on
+    // `?t` alone: one target holds most designs, so every row meets thousands,
+    // and the second shared variable only filters the product afterwards (7 M
+    // rows for an answer of 1,332). The other way round `?d` is bound by then and
+    // that pattern is one lookup per row. Without measured statistics for a
+    // predicate its extent stays as it was.
+    let mut fanout: Option<Vec<f64>> = None;
+    let mut factors: Option<Vec<f64>> = None;
+    let mut stats: Option<std::collections::HashMap<u32, &crate::meta::PredStat>> = None;
     while !remaining.is_empty() {
+        if let Some(base) = estimates.as_ref() {
+            let stats = stats.get_or_insert_with(|| {
+                ctx.rete
+                    .planner_stats(true)
+                    .iter()
+                    .map(|s| (s.predicate, s))
+                    .collect()
+            });
+            if !order.is_empty() {
+                fanout = Some(joined_extents(false, lowered, base, &bound, seed, stats));
+            }
+            factors = Some(joined_extents(true, lowered, base, &bound, seed, stats));
+        }
+        let score = |i: usize| -> f64 {
+            match fanout.as_ref().or(estimates.as_ref()) {
+                Some(e) => -e[i],
+                None => consts(&lowered[i]) as f64,
+            }
+        };
         // Pick the remaining pattern with the best (connected, not-a-class-enum,
         // score) key; ties go to the lowest original index for a stable order.
         let best = *remaining
@@ -1730,10 +1882,37 @@ fn selectivity_order_seeded(
         for v in vars(&lowered[best]) {
             bound.insert(v);
         }
+        // The rows of the join so far (all but the last pattern are the prefix).
+        if remaining.len() > 1 {
+            let score = factors.as_ref().map(|e| e[best]);
+            // Known only for a pattern whose factor is a measured multiplicity:
+            // a predicate with statistics and no constant to route by. A tile
+            // estimate for a constant is rough, and the error multiplies down a
+            // join of a dozen patterns (TPC-H Q5: 5e20 rows for a few thousand).
+            // The first pattern too: `?lib schema:name "one library"` was
+            // estimated at 7,042 rows for the one it has, the prefix at 10 M,
+            // and a join that took 1 s streamed and looked 1.6 M-triple
+            // patterns up per row for 28 s.
+            let routed = matches!(lowered[best].0, SlotTerm::Node(_))
+                || matches!(lowered[best].2, SlotTerm::Node(_));
+            let measured = !routed
+                && (order.is_empty()
+                    || matches!(lowered[best].1, SlotTerm::Pred(p) if stats.as_ref().is_some_and(|m| m.contains_key(&p))));
+            prefix_rows = match score {
+                Some(e) if measured => {
+                    if order.is_empty() {
+                        e
+                    } else {
+                        prefix_rows * e
+                    }
+                }
+                _ => f64::NAN,
+            };
+        }
         order.push(best);
         remaining.retain(|&i| i != best);
     }
-    order
+    (order, prefix_rows)
 }
 
 /// Does the BGP have at least one solution against `index`? A single pattern
@@ -1832,21 +2011,21 @@ impl<'q> BgpSolutions<'q> {
         order: &[usize],
         est: &[f64],
     ) -> Self {
-        let (mut stream, mut bound, skip): (Box<dyn Iterator<Item = Row> + 'q>, Vec<usize>, usize) =
-            match (est[order[1]] > limits().stream_seed)
-                .then(|| merge_stream(ctx, index, lowered[order[0]], lowered[order[1]], None))
-                .flatten()
-            {
-                Some((m, slots)) => (m, slots, 2),
+        // The seed and every other large pattern on its subject: one merge.
+        let mut star = star_members(ctx, index, lowered, order, est);
+        let (mut stream, mut bound): (Box<dyn Iterator<Item = Row> + 'q>, Vec<usize>) =
+            match star_stream(ctx, index, lowered, &star, None) {
+                Some((m, slots)) => (m, slots),
                 None => {
                     let t = lowered[order[0]];
                     let Some(scan) = scan_rows(ctx, index, t) else {
                         return Self::empty();
                     };
-                    (Box::new(scan), pattern_slots(&t), 1)
+                    star = vec![order[0]];
+                    (Box::new(scan), pattern_slots(&t))
                 }
             };
-        for &i in &order[skip..] {
+        for &i in order.iter().filter(|i| !star.contains(i)) {
             let t = lowered[i];
             let slots = pattern_slots(&t);
             let shared: Vec<usize> = slots
@@ -1938,10 +2117,14 @@ impl<'q> BgpSolutions<'q> {
         };
         // Join all but the *last* (least selective) pattern eagerly into the
         // prefix; a single pattern leaves the seed row as the prefix.
-        let (order, scan_est) = plan_order(ctx, index, &lowered);
+        let (order, scan_est, prefix_rows) = plan_order_rows(ctx, index, &lowered);
         // Even the most selective pattern is big: materializing it as the
         // prefix would hold every one of its rows. Stream the whole join.
-        if order.len() >= 2 && scan_est[order[0]] > limits().stream_seed {
+        if order.len() >= 2
+            && (scan_est[order[0]] > limits().stream_seed
+                || prefix_too_big(prefix_rows)
+                || merges_a_star(ctx, index, &lowered, &order, &scan_est))
+        {
             return Self::streaming(ctx, index, &lowered, &order, &scan_est);
         }
         let (&last_i, prefix_is) = order.split_last().unwrap();
@@ -2162,6 +2345,299 @@ impl Iterator for MergeStream<'_> {
                     self.i = 0;
                     self.j = 0;
                 }
+            }
+        }
+    }
+}
+
+// --- star merge join ----------------------------------------------------------
+//
+// A star is several patterns on one subject variable: `?s :a ?x ; :b ?y ; :c ?z`.
+// Each of them streams from a permutation sorted on the subject, so the whole
+// star is one k-way merge: no hash table, no lookup per row, memory bounded by
+// one subject's rows. Before this, only the first two patterns were merged and
+// every further one was looked up once per row: a six-pattern star over 600 k
+// subjects made 2.4 M index probes.
+
+/// The patterns of a streaming BGP that join as one star with the seed
+/// (`order[0]`): the seed and every other large pattern (above
+/// [`PlanLimits::stream_seed`]) whose subject is the seed's subject variable
+/// and that shares nothing else with the patterns already taken. Indices into
+/// `lowered`, seed first; fewer than two means there is no star.
+///
+/// Two regimes. Above `stream_seed` the BGP streams anyway and any two members
+/// merge, as they always did. Below it the BGP used to be materialized pattern
+/// by pattern (scan each one whole, hash-join it to the rows so far), and the
+/// merge replaces that when at least two patterns of comparable size, each
+/// above [`STAR_MERGE_FLOOR`], form the star: a 600 k-subject star of six
+/// predicates is one linear pass instead of four scans into hash tables.
+fn star_members(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    order: &[usize],
+    est: &[f64],
+) -> Vec<usize> {
+    let streams = est[order[0]] > limits().stream_seed;
+    star_of(ctx, index, lowered, order, est, !streams)
+}
+
+/// The star led by `cands[0]`: that pattern and every later candidate above
+/// the floor whose subject is the same variable and that shares nothing else
+/// with the members already taken. `comparable` also leaves out a pattern far
+/// larger or smaller than the first ([`merge_seed_lopsided`]): a merge reads
+/// every member end to end. Fewer than two members: no star (empty).
+fn star_of(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    cands: &[usize],
+    est: &[f64],
+    comparable: bool,
+) -> Vec<usize> {
+    let Some(&first) = cands.first() else {
+        return Vec::new();
+    };
+    let seed = lowered[first];
+    let SlotTerm::Var(v) = seed.0 else {
+        return Vec::new();
+    };
+    // Above the streaming threshold a member must be above it too (the rule
+    // the two-way merge always had: a smaller pattern is hashed or probed).
+    let floor = if comparable {
+        limits().stream_seed.min(STAR_MERGE_FLOOR)
+    } else {
+        limits().stream_seed
+    };
+    if est[first] <= floor {
+        return Vec::new();
+    }
+    let mut members = vec![first];
+    let mut taken = pattern_slots(&seed);
+    for &i in &cands[1..] {
+        let t = lowered[i];
+        if est[i] <= floor || !matches!(t.0, SlotTerm::Var(x) if x == v) {
+            continue;
+        }
+        if comparable && merge_seed_lopsided(ctx, index, &seed, &t) {
+            continue;
+        }
+        let slots = pattern_slots(&t);
+        if slots.iter().filter(|s| taken.contains(s)).count() != 1 {
+            continue;
+        }
+        for s in slots {
+            if !taken.contains(&s) {
+                taken.push(s);
+            }
+        }
+        members.push(i);
+    }
+    if members.len() < 2 {
+        return Vec::new();
+    }
+    members
+}
+
+/// A star below the streaming threshold is merged when each of its patterns is
+/// estimated above this many triples: under it, scanning a pattern into a hash
+/// table is cheap whatever the join, and every small graph keeps its plan.
+const STAR_MERGE_FLOOR: f64 = 65_536.0;
+
+/// Does this BGP stream as a star merge although its seed is below the
+/// streaming threshold ([`star_members`], second regime)?
+fn merges_a_star(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    order: &[usize],
+    est: &[f64],
+) -> bool {
+    if order.len() < 2 || est[order[0]] > limits().stream_seed {
+        return false;
+    }
+    let members = star_members(ctx, index, lowered, order, est);
+    // Only when the star is the whole BGP. With other patterns to join, the
+    // materializing join is kept: it merges the star too ([`eval_bgp_rows`]),
+    // and its last pattern is scanned once against the rows found so far,
+    // which measured faster than joining each star row on its own (a two-hop
+    // join producing 71.7 M rows: 1.9 s against 3.5 s; a 1.1 M-triple pattern
+    // looked up by object for each of 2.3 M star rows: 17 s against 2.6 s).
+    members.len() >= 2 && members.len() == order.len() && star_sides(ctx, index, lowered, &members)
+}
+
+/// Can every member be streamed in subject order from this index?
+fn star_sides(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    members: &[usize],
+) -> bool {
+    let dict = ctx.rete.dictionary();
+    members.iter().all(|&m| {
+        let t = lowered[m];
+        match (
+            const_subject(&t.0, dict),
+            const_predicate(&t.1),
+            const_object(&t.2, dict),
+        ) {
+            // Both forms: the whole stream, and a subject range of it, which is
+            // what a shard of a grouped query reads. A union view has the first
+            // only, and keeps the plan it had.
+            (Some(s), Some(p), Some(o)) => {
+                index.scan_iter_sorted_on((s, p, o), 0).is_some()
+                    && index.scan_iter_sorted_between((s, p, o), 0, 0, 0).is_some()
+            }
+            _ => false,
+        }
+    })
+}
+
+/// The star of `members` ([`star_members`]) as one stream of joined rows, in
+/// subject order, with the slots it binds. Two members are the two-way
+/// [`merge_stream`]; more are a [`StarMerge`]. `None` when a member cannot be
+/// streamed in subject order (a file without that permutation, an
+/// unsatisfiable constant): the caller joins pattern by pattern instead.
+#[allow(clippy::type_complexity)]
+fn star_stream<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    members: &[usize],
+    between: Option<(u32, u64)>,
+) -> Option<(Box<dyn Iterator<Item = Row> + 'q>, Vec<usize>)> {
+    if members.len() < 2 {
+        return None;
+    }
+    if members.len() == 2 {
+        return merge_stream(
+            ctx,
+            index,
+            lowered[members[0]],
+            lowered[members[1]],
+            between,
+        );
+    }
+    let dict = ctx.rete.dictionary();
+    let mut sides: Vec<KeyedRows<'q>> = Vec::with_capacity(members.len());
+    let mut slots: Vec<usize> = Vec::new();
+    for &m in members {
+        let t = lowered[m];
+        let pat = (
+            const_subject(&t.0, dict)?,
+            const_predicate(&t.1)?,
+            const_object(&t.2, dict)?,
+        );
+        let it: Box<dyn Iterator<Item = Triple> + 'q> = match between {
+            Some((lo, hi)) => Box::new(index.scan_iter_sorted_between(pat, 0, lo, hi)?),
+            None => Box::new(index.scan_iter_sorted_on(pat, 0)?),
+        };
+        let keyed: Box<dyn Iterator<Item = (u32, Row)> + 'q> =
+            Box::new(it.filter_map(move |tri| triple_row(ctx, &t, tri).map(|r| (tri.0, r))));
+        sides.push(keyed.peekable());
+        for s in pattern_slots(&t) {
+            if !slots.contains(&s) {
+                slots.push(s);
+            }
+        }
+    }
+    let n = sides.len();
+    Some((
+        Box::new(StarMerge {
+            sides,
+            runs: vec![Vec::new(); n],
+            at: vec![0; n],
+            live: false,
+        }),
+        slots,
+    ))
+}
+
+/// The k-way merge behind [`star_stream`]: `runs` hold every side's rows for
+/// the current subject and `at` walks their cross product (one row each, for
+/// single-valued predicates).
+struct StarMerge<'q> {
+    sides: Vec<KeyedRows<'q>>,
+    runs: Vec<Vec<Row>>,
+    at: Vec<usize>,
+    /// `runs` hold a subject every side has, and `at` is not past its end.
+    live: bool,
+}
+
+impl StarMerge<'_> {
+    /// Advance every side to the next subject they all have and load its rows.
+    fn align(&mut self) -> Option<()> {
+        let mut key = self.sides[0].peek()?.0;
+        loop {
+            let mut same = true;
+            for side in &mut self.sides {
+                while side.peek()?.0 < key {
+                    side.next();
+                }
+                let k = side.peek()?.0;
+                if k > key {
+                    key = k;
+                    same = false;
+                }
+            }
+            if same {
+                break;
+            }
+        }
+        for (side, run) in self.sides.iter_mut().zip(&mut self.runs) {
+            run.clear();
+            while let Some((_, r)) = side.next_if(|(k, _)| *k == key) {
+                run.push(r);
+            }
+        }
+        self.at.iter_mut().for_each(|i| *i = 0);
+        self.live = true;
+        Some(())
+    }
+}
+
+impl Iterator for StarMerge<'_> {
+    type Item = Row;
+
+    fn next(&mut self) -> Option<Row> {
+        loop {
+            if !self.live {
+                self.align()?;
+            }
+            // The row at `at`: the sides agree on the subject, and a variable
+            // repeated inside one pattern was checked by `triple_row`.
+            let mut row = self.runs[0][self.at[0]].clone();
+            let mut ok = true;
+            'sides: for (run, &i) in self.runs.iter().zip(&self.at).skip(1) {
+                for (slot, val) in run[i].iter().enumerate() {
+                    if let Some(val) = val {
+                        match &row[slot] {
+                            Some(existing) if existing != val => {
+                                ok = false;
+                                break 'sides;
+                            }
+                            Some(_) => {}
+                            None => row[slot] = Some(val.clone()),
+                        }
+                    }
+                }
+            }
+            // Next combination, last side fastest.
+            let mut k = self.at.len();
+            loop {
+                if k == 0 {
+                    self.live = false;
+                    break;
+                }
+                k -= 1;
+                self.at[k] += 1;
+                if self.at[k] < self.runs[k].len() {
+                    break;
+                }
+                self.at[k] = 0;
+            }
+            if ok {
+                return Some(row);
             }
         }
     }
@@ -2952,6 +3428,296 @@ mod tests {
         ] {
             assert_eq!(run(Some(l)), reference, "{name}");
         }
+    }
+
+    /// A star (several patterns on one subject) is one k-way merge on the
+    /// streaming path. Its rows are those of the materializing hash join,
+    /// whatever the star looks like: subjects that lack a predicate, several
+    /// values per predicate (a cross product per subject), a constant object,
+    /// a variable two patterns share, a pattern that is not part of the star.
+    /// And its shards add up to it.
+    #[test]
+    fn a_star_merge_returns_the_rows_of_the_hash_join() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        let mut x: u64 = 7;
+        let mut next = |m: u64| {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (x >> 33) % m
+        };
+        for i in 0..300 {
+            let s = format!("s{i:03}");
+            owned.push((s.clone(), "a".into(), format!("C{}", next(3))));
+            for p in 0..5 {
+                // 0, 1 or 2 values: gaps and small cross products
+                for _ in 0..next(3) {
+                    owned.push((s.clone(), format!("p{p}"), format!("v{:02}", next(40))));
+                }
+            }
+            owned.push((s.clone(), "k".into(), format!("s{:03}", next(300))));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(96);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        let queries: Vec<Vec<TriplePattern>> = vec![
+            vec![
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+                pat("?s", "p2", "?c"),
+            ],
+            vec![
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+                pat("?s", "p2", "?c"),
+                pat("?s", "p3", "?d"),
+                pat("?s", "p4", "?e"),
+                pat("?s", "k", "?f"),
+            ],
+            // a constant object in the star
+            vec![
+                pat("?s", "a", "C1"),
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+            ],
+            // two patterns share their object: the second is not a member
+            vec![
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+                pat("?s", "p2", "?a"),
+            ],
+            // a star and a pattern on another subject
+            vec![
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+                pat("?s", "k", "?t"),
+                pat("?t", "p3", "?d"),
+            ],
+            // the same variable twice in one pattern
+            vec![
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+                pat("?s", "k", "?s"),
+            ],
+        ];
+        let rows_of = |limits: Option<PlanLimits>, q: &[TriplePattern]| -> Vec<Row> {
+            TEST_LIMITS.with(|c| c.set(limits));
+            let mut slots = crate::row::Slots::new();
+            collect_pattern_slots(q, &mut slots);
+            let ctx = Ctx::new(&rete, slots);
+            let mut rows: Vec<Row> = BgpSolutions::new(&ctx, rete.default_index(), q).collect();
+            rows.sort();
+            rows
+        };
+        let stream = |hash_build: f64| {
+            Some(PlanLimits {
+                probe_floor: f64::MAX,
+                stream_seed: 0.0,
+                hash_build,
+            })
+        };
+        let mut stars = 0usize;
+        for q in &queries {
+            let want = rows_of(
+                Some(PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: f64::MAX,
+                    hash_build: f64::MAX,
+                }),
+                q,
+            );
+            for (name, limits) in [
+                ("stream + hash", stream(f64::MAX)),
+                ("stream + probe", stream(0.0)),
+            ] {
+                assert_eq!(rows_of(limits, q), want, "{name}: {q:?}");
+                // The star this plan merges, and its slices.
+                TEST_LIMITS.with(|c| c.set(limits));
+                let mut slots = crate::row::Slots::new();
+                collect_pattern_slots(q, &mut slots);
+                let ctx = Ctx::new(&rete, slots);
+                let index = rete.default_index();
+                let lowered = lower(q, &ctx).unwrap();
+                let (order, est) = plan_order(&ctx, index, &lowered);
+                if star_members(&ctx, index, &lowered, &order, &est).len() >= 3
+                    || limits.is_some_and(|l| l.stream_seed == 0.0)
+                {
+                    stars += 1;
+                }
+                const NODE: usize = 1;
+                for n in [2usize, 7] {
+                    ctx.shard
+                        .set_plan(vec![NODE], Vec::new(), Vec::new(), Default::default());
+                    let mut parts: Vec<Row> = Vec::new();
+                    let mut sliced = true;
+                    for i in 0..n {
+                        ctx.shard.begin(Some((i, n)));
+                        match shard_bgp_rows(&ctx, index, q, (NODE, i, n)) {
+                            Some(rows) => parts.extend(rows),
+                            None => sliced = false,
+                        }
+                    }
+                    ctx.shard.begin(None);
+                    if sliced {
+                        parts.sort();
+                        assert_eq!(parts, want, "{name}, {n} shards: {q:?}");
+                    }
+                }
+            }
+        }
+        TEST_LIMITS.with(|c| c.set(None));
+        // The test is about the k-way merge: most of its queries must take it.
+        assert!(
+            stars >= 8,
+            "only {stars} plans merged a star of three or more"
+        );
+    }
+    /// Two patterns that share TWO variables, one of them a star: the answer is
+    /// the same on every join path and is the one a brute-force join gives. And
+    /// the planner joins the pattern whose second variable is already bound
+    /// before the one that would multiply the rows on the first alone.
+    #[test]
+    fn two_shared_variables_join_alike_on_every_path() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        let (designs, targets) = (120usize, 3usize);
+        // `ev(d, t)`: every design against 1 or 2 targets, almost all on t0.
+        let mut ev: Vec<(usize, usize)> = Vec::new();
+        for d in 0..designs {
+            ev.push((d, 0));
+            if d % 5 == 0 {
+                ev.push((d, 1 + d % (targets - 1)));
+            }
+        }
+        for &(d, t) in &ev {
+            owned.push((format!("d{d:03}"), "ev".into(), format!("t{t}")));
+        }
+        // Measurements: `m(e) = (design, target, metric)`; a design may be
+        // measured against a target it was not evaluated against.
+        let mut m: Vec<(usize, usize, bool)> = Vec::new();
+        for e in 0..400usize {
+            let (d, t, kd) = ((e * 7) % designs, (e / 3) % targets, e % 4 != 0);
+            m.push((d, t, kd));
+            owned.push((format!("e{e:03}"), "ofDesign".into(), format!("d{d:03}")));
+            owned.push((format!("e{e:03}"), "target".into(), format!("t{t}")));
+            owned.push((
+                format!("e{e:03}"),
+                "metric".into(),
+                if kd { "kd" } else { "ic" }.into(),
+            ));
+            owned.push((format!("e{e:03}"), "value".into(), format!("v{}", e % 17)));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(96);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let rete = Rete::open(&write_file(&dict, &ib.build(), false, &[], 0)).unwrap();
+        let q = vec![
+            pat("?d", "ev", "?t"),
+            pat("?e", "ofDesign", "?d"),
+            pat("?e", "metric", "kd"),
+            pat("?e", "target", "?t"),
+            pat("?e", "value", "?v"),
+        ];
+        let want = m
+            .iter()
+            .filter(|&&(d, t, kd)| kd && ev.contains(&(d, t)))
+            .count();
+        assert!(want > 0 && want < m.len());
+        let rows_of = |limits: Option<PlanLimits>| -> Vec<Row> {
+            TEST_LIMITS.with(|c| c.set(limits));
+            let mut slots = crate::row::Slots::new();
+            collect_pattern_slots(&q, &mut slots);
+            let ctx = Ctx::new(&rete, slots);
+            let mut rows: Vec<Row> = BgpSolutions::new(&ctx, rete.default_index(), &q).collect();
+            rows.sort();
+            rows
+        };
+        let hash = rows_of(Some(PlanLimits {
+            probe_floor: f64::MAX,
+            stream_seed: f64::MAX,
+            hash_build: f64::MAX,
+        }));
+        assert_eq!(hash.len(), want);
+        for (name, limits) in [
+            ("default", None),
+            (
+                "stream + hash",
+                Some(PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: f64::MAX,
+                }),
+            ),
+            (
+                "stream + probe",
+                Some(PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: 0.0,
+                }),
+            ),
+        ] {
+            assert_eq!(rows_of(limits), hash, "{name}");
+        }
+        TEST_LIMITS.with(|c| c.set(None));
+    }
+
+    /// After `?e target ?t`, `?d ev ?t` joins on `?t` alone and meets every
+    /// design of the target; `?e ofDesign ?d` binds `?d`, and then `ev` is a
+    /// lookup. The figures are those of the proteinbase file that ran a
+    /// 1,332-row answer out of 4 GB.
+    #[test]
+    fn a_pattern_on_a_bound_variable_is_cheaper_than_one_that_binds_a_new_one() {
+        let stat = |predicate, count, distinct_subjects, distinct_objects| crate::meta::PredStat {
+            predicate,
+            count,
+            distinct_subjects,
+            distinct_objects,
+            max_objects_per_subject: 1,
+            max_subjects_per_object: 1,
+        };
+        // 0: ?d ev ?t   1: ?e ofDesign ?d   2: ?e target ?t
+        let stats = [
+            stat(10, 5_361, 5_248, 6),
+            stat(11, 205_620, 205_620, 5_248),
+            stat(12, 86_680, 86_680, 6),
+        ];
+        let by_pred: HashMap<u32, &crate::meta::PredStat> =
+            stats.iter().map(|s| (s.predicate, s)).collect();
+        let lowered = [
+            (SlotTerm::Var(0), SlotTerm::Pred(10), SlotTerm::Var(1)),
+            (SlotTerm::Var(2), SlotTerm::Pred(11), SlotTerm::Var(0)),
+            (SlotTerm::Var(2), SlotTerm::Pred(12), SlotTerm::Var(1)),
+        ];
+        let base = [5_361.0, 205_620.0, 86_680.0];
+        let none = std::collections::HashSet::new();
+        // `?e` and `?t` bound (after `?e target ?t`).
+        let bound: std::collections::HashSet<usize> = [1, 2].into_iter().collect();
+        let got = joined_extents(false, &lowered, &base, &bound, &none, &by_pred);
+        assert!(got[0] > 800.0, "ev on ?t alone: {}", got[0]);
+        assert!(got[1] < 100.0, "ofDesign: {}", got[1]);
+        assert!(got[1] < got[0]);
+        // Nothing bound: the extents, unchanged. No statistics: unchanged too.
+        let got = joined_extents(false, &lowered, &base, &none, &none, &by_pred);
+        assert_eq!(got, base);
+        let got = joined_extents(false, &lowered, &base, &bound, &none, &HashMap::new());
+        assert_eq!(got, base);
+        // Sizing a join caps a tile-sized estimate at the exact triple count.
+        let got = joined_extents(true, &lowered, &[1e6, 1e6, 1e6], &none, &none, &by_pred);
+        assert_eq!(got, vec![5_361.0, 205_620.0, 86_680.0]);
     }
 
     /// The shards of a BGP ([`shard_bgp_rows`]) add up to the BGP: for every

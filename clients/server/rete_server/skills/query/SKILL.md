@@ -165,7 +165,7 @@ Each has a workaround. Details and runnable repros are in
 [references/engine-issues.md](references/engine-issues.md).
 
 - **CONSTRUCT and LIMIT.** Engines after 0.7.8 honour LIMIT, OFFSET and ORDER BY on CONSTRUCT and DESCRIBE; 0.7.8 and older ignore them, even inside a subquery. If `triples` comes back longer than your LIMIT, the server runs an older engine: use a SELECT with `?s ?p ?o` columns and a LIMIT, or pass `limit` to `sparql_query`, which trims the answer after the engine ran.
-- **MIN, SUM and AVG come back unbound** when a group has an unbound value from `OPTIONAL`. MAX and COUNT are fine. Take the `OPTIONAL` out so only bound values reach the aggregate, or wrap with `COALESCE`.
+- **MIN, SUM and AVG after OPTIONAL.** Engines after 0.7.9 leave a row without a value out of the aggregate. 0.7.9 and older return nothing for the whole group (MAX and COUNT are fine): if `SUM` comes back empty where `MAX` has a value, the server runs an older engine; take the `OPTIONAL` out so only bound values reach the aggregate, or wrap with `COALESCE`.
 - **Two star patterns that share two variables** can exhaust memory for a small answer. Split them into two queries and join client-side.
 - **`CONTAINS`/`REGEX` on an IRI or a number** are type errors. Use `STR()`.
 

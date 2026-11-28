@@ -372,8 +372,14 @@ def test_the_engine_issues_are_still_issues():
     else:
         assert n in (2, 11)
     assert len(trimmed["triples"]) == 2
+    # The skills say: engines after 0.7.9 leave a row without a value out of
+    # SUM, 0.7.9 and older return nothing for the group. Same rule as above.
     alan = next(r for r in agg["table"] if r["a"].endswith("/alan"))
-    assert alan.get("s") in (None, "") and str(alan["m"]) == "36", "SUM after OPTIONAL is bound now: update the skills"
+    assert str(alan["m"]) == "36"
+    if os.environ.get("RETE_ENGINE_FROM_SOURCE"):
+        assert str(alan.get("s")) == "39", "SUM after OPTIONAL is unbound again: update the query skill"
+    else:
+        assert alan.get("s") in (None, "") or str(alan["s"]) == "39"
 
 
 def test_every_turtle_block_parses():

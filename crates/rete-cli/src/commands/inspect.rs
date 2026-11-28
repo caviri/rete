@@ -660,7 +660,7 @@ fn render_schema_level(view: &SummaryView, k: usize) -> anyhow::Result<()> {
 pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
     let rete = open_local_query(file)?;
 
-    let classes = rete_core::schema_classes(&rete);
+    let (classes, summary) = rete_core::schema_profile(&rete);
     if classes.is_empty() {
         println!("(no rdf:type assertions — the data is untyped)");
     } else {
@@ -670,7 +670,6 @@ pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
         }
     }
 
-    let summary = rete_core::schema_summary(&rete);
     println!("relations:");
     for (s_class, pred, o_class, count) in &summary {
         println!("  {s_class} --{pred}--> {o_class}  ×{count}");

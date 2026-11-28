@@ -561,6 +561,13 @@ fn group_concat_agrees_with_oxigraph() {
             "GROUP_CONCAT(?o)",
             "GROUP_CONCAT(STR(?o); SEPARATOR=\"|\")",
         ] {
+            // The one deliberate difference: `STR` of the blank node is an
+            // error, and a row whose argument has no value is left out of the
+            // aggregate since 0.7.10 (docs/sparql.md#errors), so rete answers
+            // "a" where Oxigraph, by the letter of §18.5.1, answers nothing.
+            if s == "bn" && agg.contains("STR(") {
+                continue;
+            }
             queries.push(format!(
                 "SELECT ({agg} AS ?g) WHERE {{ <http://gc/{s}> <http://gc/p> ?o }}"
             ));

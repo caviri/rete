@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rete-server"
-version = "0.7.9"
+version = "0.7.10"
 description = "A web app over .rete graph files: REST API, SPARQL 1.1 Protocol endpoints and an MCP server, with token auth."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,7 +29,7 @@ classifiers = [
 dependencies = [
     # The engine. A release builds the image on the wheels of its own run, so
     # this floor may name a version PyPI does not serve yet (docs/release.md).
-    "rete-graph>=0.7.9",
+    "rete-graph>=0.7.10",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",

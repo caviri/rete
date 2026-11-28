@@ -29,12 +29,15 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o . VALUES ?p { ex:author } } LIMIT 2
 A full CONSTRUCT on a large graph builds every triple in memory. Never run an
 unselective one.
 
-## MIN, SUM and AVG unbound after OPTIONAL
+## MIN, SUM and AVG unbound after OPTIONAL (0.7.9 and older)
 
-If any row of a group has no value from an `OPTIONAL`, `MIN`, `SUM` and `AVG`
-return nothing for that group. `MAX` and `COUNT` are not affected. Here Alan
-Turing wrote one paper without `ex:pages`, so his `?total` and `?fewest` are
-unbound while `?most` and `?n` are fine:
+Engines after 0.7.9 leave a row that has no value out of every aggregate, so
+the query below gives Alan Turing a `?total` and a `?fewest` over the papers
+that have `ex:pages`. On 0.7.9 and older, if any row of a group has no value
+from an `OPTIONAL`, `MIN`, `SUM` and `AVG` return nothing for that group, while
+`MAX` and `COUNT` are not affected: Alan Turing wrote one paper without
+`ex:pages`, so his `?total` and `?fewest` are unbound and `?most` and `?n` are
+fine. If you see that, use a workaround.
 
 ```sparql
 SELECT ?person (SUM(?pages) AS ?total) (MIN(?pages) AS ?fewest) (MAX(?pages) AS ?most) (COUNT(?pages) AS ?n) WHERE {
@@ -45,7 +48,7 @@ GROUP BY ?person
 ORDER BY ?person
 ```
 
-Workarounds:
+Workarounds (older engines only):
 
 - Drop the `OPTIONAL` so only papers that have pages reach the aggregate. People with no pages then disappear from the result; list them separately if you need them.
 
