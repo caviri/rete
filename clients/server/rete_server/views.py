@@ -28,17 +28,19 @@ import base64
 import binascii
 import functools
 import json
+import os
 import re
 import secrets
 import threading
 import time
+import typing
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import rete_graph as rete
 from fastmcp import FastMCP
-from fastmcp.apps import AppConfig
+from fastmcp.apps import AppConfig, ResourceCSP
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 from mcp.types import TextContent
@@ -49,6 +51,66 @@ from .engine import SANDBOX, Busy, QueryTimeout, RequestError
 
 VIEW_URI = "ui://rete/graph-view.html"
 PAGE = Path(__file__).resolve().parent / "view" / "graph-view.html"
+
+# What the page may load for the card view (MCP Apps: _meta.ui.csp): pictures, audio and video
+# (resourceDomains) and the file of a 3D model (connectDomains). A host honours exactly the origins
+# declared, so these are the sites the published graphs point at. RETE_VIEW_MEDIA_DOMAINS replaces
+# the list (comma separated; origins as in a CSP, https://*.example.org for subdomains, https: for
+# any https site; "none" for no network at all). Same list and rules as views.mjs.
+MEDIA_DOMAINS = [
+    "https://*.wikimedia.org",
+    "https://*.graphplaza.com",
+    "https://huggingface.co",
+    "https://*.huggingface.co",
+    "https://*.hf.co",
+    "https://archive.org",
+    "https://*.archive.org",
+    "https://*.githubusercontent.com",
+]
+_MEDIA_ORIGIN = re.compile(r"(https?://[\w.*-]+(:\d+)?|https?:)", re.ASCII)
+
+
+def media_domains(env: Optional[Dict[str, str]] = None) -> List[str]:
+    given = (os.environ if env is None else env).get("RETE_VIEW_MEDIA_DOMAINS")
+    if given is None or given.strip() == "":
+        return list(MEDIA_DOMAINS)
+    if given.strip().lower() == "none":
+        return []
+    return [d for d in (x.strip() for x in given.split(",")) if _MEDIA_ORIGIN.fullmatch(d)]
+
+
+# The card view's column types and the hive layout's choices: copies of FIELD_TYPE_NAMES
+# (clients/mcpb/src/view/cards.js) and HIVE_AXES / HIVE_ORDERS (view/hive.js). Change together.
+FieldType = Literal["auto", "text", "link", "button", "image", "iiif", "geo", "audio", "video", "model3d",
+                    "pdf", "markdown", "layer", "number"]
+HiveAxes = Literal["auto", "type", "role", "kind", "degree"]
+HiveOrder = Literal["degree", "in", "out", "name"]
+FIELD_TYPE_NAMES = typing.get_args(FieldType)
+
+# The tabs a query's hint may name (clients/chrome/lib/hints.js VIEWS).
+_HINT_VIEWS = {"table", "cards", "graph", "map"}
+_HINT_VIEW = re.compile(r"view\s*:\s*([a-z]+)\s*", re.I | re.ASCII)
+
+
+def hinted_view(sparql: Optional[str]) -> Optional[str]:
+    """The tab a query's comment lines name (``# view: map``): RetelensHints.parse(text).view.
+    Only comments that start a line count (a # inside an IRI or a string is no comment); the
+    last valid one wins."""
+    view = None
+    for line in re.split(r"\r?\n", str(sparql or "")):
+        m = re.match(r"\s*#\s?(.*)$", line)
+        if m and (h := _HINT_VIEW.fullmatch(m.group(1).strip())) and h.group(1).lower() in _HINT_VIEWS:
+            view = h.group(1).lower()
+    return view
+
+
+def with_hinted_view(options: Dict[str, Any], text: Optional[str]) -> Dict[str, Any]:
+    """A query's ``# view:`` hint picks the tab when the options name none."""
+    if options.get("view") or not text:
+        return options
+    view = hinted_view(text)
+    return {**options, "view": view} if view else options
+
 
 MAX_VIEWS = 200
 MAX_NODES = 1500  # per view; more is unreadable on a canvas anyway
@@ -120,7 +182,7 @@ class View:
         self.options = dict(options)
         self.nodes: Dict[str, Dict[str, Any]] = {}  # token -> node
         self.edges: Dict[str, Dict[str, Any]] = {}  # id -> edge
-        self.table: Optional[Dict[str, Any]] = None  # {vars, rows} of the last SELECT
+        self.table: Optional[Dict[str, Any]] = None  # {vars, rows, terms, query} of the last SELECT
         self.aggregates: Dict[str, Dict[str, Any]] = {}  # id -> {id, label, members}
         self.aggregated = 0  # aggregates made, for their ids
         self.version = 0
@@ -396,16 +458,34 @@ def _triples_of(env: Dict[str, Any]) -> Optional[List[List[str]]]:
     return None
 
 
+def _term_of(token: str) -> Dict[str, Any]:
+    """A cell as the Retelens cells take it: kind, value, datatype, lang (a quoted triple is shown as text)."""
+    if token.startswith("<") and not token.startswith("<<") and "\\" not in token:
+        return {"kind": "iri", "value": token[1:-1]}
+    t = rete.Term.parse(token)
+    o: Dict[str, Any] = {"kind": "literal" if t.kind == "triple" else t.kind, "value": t.value}
+    if t.datatype:
+        o["datatype"] = t.datatype
+    if t.lang:
+        o["lang"] = t.lang
+    return o
+
+
 def table_of(env: Dict[str, Any]) -> Dict[str, Any]:
-    """Table rows as plain display strings."""
+    """Table rows: ``rows`` as plain display strings (filter, sort, CSV), ``terms`` the same
+    cells typed (the table's rich cells and column statistics, the cards, the map)."""
     triples = _triples_of(env)
     if triples is not None:
         cols = ("subject", "predicate", "object")
-        return {"vars": list(cols), "rows": [{k: _display(t[i]) for i, k in enumerate(cols)}
-                                            for t in triples[:MAX_ROWS]]}
+        kept = triples[:MAX_ROWS]
+        return {"vars": list(cols),
+                "rows": [{k: _display(t[i]) for i, k in enumerate(cols)} for t in kept],
+                "terms": [{k: _term_of(t[i]) for i, k in enumerate(cols)} for t in kept]}
     variables = list(env.get("vars") or [])
-    return {"vars": variables, "rows": [{v: _display(r[v]) if r.get(v) is not None else "" for v in variables}
-                                        for r in (env.get("rows") or [])[:MAX_ROWS]]}
+    kept = (env.get("rows") or [])[:MAX_ROWS]
+    return {"vars": variables,
+            "rows": [{v: _display(r[v]) if r.get(v) is not None else "" for v in variables} for r in kept],
+            "terms": [{v: _term_of(r[v]) for v in variables if r.get(v) is not None} for r in kept]}
 
 
 def elements_of(env: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Any]]:
@@ -418,9 +498,13 @@ def elements_of(env: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, Any]]], D
     raise ToolError("an ASK answer is one boolean: there is no graph to show; use SELECT or CONSTRUCT")
 
 
-def load_into(view: View, env: Dict[str, Any], mode: str) -> Dict[str, Any]:
-    """Put a finished query's results into a view: added, or replacing what it holds."""
+def load_into(view: View, env: Dict[str, Any], mode: str, query: Optional[str] = None) -> Dict[str, Any]:
+    """Put a finished query's results into a view: added, or replacing what it holds.
+    ``query``, the SPARQL text, rides with the table: its comments can name the columns
+    (Retelens query hints, clients/chrome/lib/hints.js)."""
     graph, table = elements_of(env)
+    if table and query:
+        table["query"] = str(query)[:20000]
     if mode == "replace":
         view.clear()
         added = view.add(graph)
@@ -430,7 +514,10 @@ def load_into(view: View, env: Dict[str, Any], mode: str) -> Dict[str, Any]:
                 "truncated": len(graph["nodes"]) > MAX_NODES or len(graph["edges"]) > MAX_EDGES}
     added = view.add(graph)
     if view.table and view.table["vars"] == table["vars"]:
-        view.table = {"vars": table["vars"], "rows": (view.table["rows"] + table["rows"])[:MAX_ROWS]}
+        view.table = {"vars": table["vars"],
+                      "rows": (view.table["rows"] + table["rows"])[:MAX_ROWS],
+                      "terms": ((view.table.get("terms") or []) + (table.get("terms") or []))[:MAX_ROWS],
+                      **({"query": view.table["query"]} if view.table.get("query") else {})}
     else:
         view.table = table
     view.patch({"op": "add", "nodes": added["nodes"], "edges": added["edges"], "table": view.table})
@@ -543,10 +630,29 @@ class ViewOptions(BaseModel):
                                                       '"namespace", "none", or a predicate IRI')
     group_boxes: Optional[bool] = Field(None, description="draw each group as a box around its nodes "
                                                           "(default false)")
-    layout: Optional[Literal["cose", "layered", "concentric", "breadthfirst", "circle", "grid"]] = Field(
+    layout: Optional[Literal["cose", "layered", "concentric", "breadthfirst", "circle", "grid", "hive"]] = Field(
         None, description="cose: force-directed (default for graph); layered: top-down layers "
-                          "(default for boxes and classes)")
-    view: Optional[Literal["graph", "table"]] = Field(None, description="which tab is shown")
+                          "(default for boxes and classes); hive: nodes on a few radial axes, ordered along "
+                          "each by hive_order, edges curved between the axes")
+    hive_axes: Optional[HiveAxes] = Field(
+        None, description="hive layout: what puts a node on an axis — type (its class), role (sources / both / "
+                          "sinks), kind (resource / literal / …), degree (thirds by links); auto (default) takes "
+                          "the first that tells two groups apart")
+    hive_order: Optional[HiveOrder] = Field(
+        None, description="hive layout: what orders nodes along an axis, from the centre out — degree (links, "
+                          "default), in, out, name")
+    view: Optional[Literal["graph", "table", "cards", "map"]] = Field(
+        None, description="which tab is shown: the graph, the rows as a table (pictures, IIIF manifests, "
+                          "geometries and links drawn in the cells, a chart of each column's values under its "
+                          "name), the rows as cards (pictures, IIIF, maps, video, audio and 3D models drawn where "
+                          "the values are addresses or geometries), or a map (WKT geometries, or latitude and "
+                          "longitude columns, on an OpenStreetMap basemap; a column of .pmtiles URLs is drawn as "
+                          "layers under them). A query's hints choose it when this is not given: a comment line "
+                          "'# view: map'")
+    card_fields: Optional[Dict[str, FieldType]] = Field(
+        None, description="cards: how to draw each column, by column name (a SELECT variable): "
+                          + " / ".join(FIELD_TYPE_NAMES) + ". Columns not named are detected from their values "
+                          "(auto)")
     theme: Optional[Literal["auto", "light", "dark"]] = Field(
         None, description="the view's colours; auto (default) follows the client's theme")
     literals_as_nodes: Optional[bool] = Field(None, description="draw literal values as nodes instead of "
@@ -636,7 +742,7 @@ class Views:
         under the view's lock."""
         env = state.service.query_env(self.dataset_of(view), text)
         with view.lock:
-            return load_into(view, env, mode)
+            return load_into(view, env, mode, text)
 
     def expand(self, view: View, iri: str) -> Dict[str, List[Dict[str, Any]]]:
         """A node's statements, both directions, into the view."""
@@ -789,10 +895,17 @@ def register_views(mcp: FastMCP, uploads: bool) -> Views:
     views = Views(uploads)
     page: Dict[str, str] = {}
 
+    # The page carries its script, so it needs the network for nothing but what the card view
+    # shows: pictures, audio and video (resourceDomains) and the file of a 3D model
+    # (connectDomains), from whatever site a value names. A host only honours the origins
+    # declared here, so the list is what can load in the client (media_domains).
+    media = media_domains()
+    csp = ResourceCSP(resource_domains=media, connect_domains=media) if media else None
+
     @mcp.resource(VIEW_URI, name="Graph view",
-                  description="Interactive graph and table view of query results, with labels, layers, "
+                  description="Interactive graph, table and card view of query results, with labels, layers, "
                               "layouts, zoom and search.",
-                  app=AppConfig(prefers_border=True))
+                  app=AppConfig(prefers_border=True, csp=csp))
     def graph_view_page() -> str:
         if "html" not in page:
             page["html"] = PAGE.read_text(encoding="utf-8")
@@ -855,6 +968,8 @@ def register_views(mcp: FastMCP, uploads: bool) -> Views:
         does); elsewhere the answer is text."""
         # A schema reads best as boxes of classes, coloured by vocabulary, its relations named.
         opts = _options(options)
+        if query:
+            opts = with_hinted_view(opts, query)
         look = look_of({"diagram": "boxes", "group_by": "namespace", "edge_labels": True, **opts}
                        if schema else opts)
         if SANDBOX.match(dataset or ""):
@@ -914,8 +1029,9 @@ def register_views(mcp: FastMCP, uploads: bool) -> Views:
         a type) and ungroup them, or change its look: diagram (graph / boxes /
         classes), labels, edge_labels, properties, node_shape, edge_style
         (curved / straight / square), group_by (type / namespace / none / a
-        predicate IRI), group_boxes, layout, view (graph / table),
-        literals_as_nodes, theme (auto / light / dark). The open view picks
+        predicate IRI), group_boxes, layout (incl. hive, with
+        hive_axes and hive_order), view (graph / table / cards, with
+        card_fields), literals_as_nodes, theme (auto / light / dark). The open view picks
         the change up within a second or two. Answers with the new counts and
         what the user has selected."""
         view = views.get(view_id)

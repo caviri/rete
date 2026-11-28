@@ -172,7 +172,8 @@ class Host:
             except Exception:
                 pass
             await asyncio.sleep(0.1)
-        pytest.fail(f"timed out waiting for {what}")
+        note = await self.frame.evaluate("() => document.getElementById('status-note')?.textContent")
+        pytest.fail(f"timed out waiting for {what} (status note: {note!r})")
 
     async def shot(self, suffix: str = ""):
         prefix = os.environ.get("RETE_UI_SHOT")
@@ -231,6 +232,9 @@ def test_the_graph_view_runs_against_rete_server(server):
 
         # Enter in the search box finds by name in the dataset (graph_view_search).
         await h.view.locator("#search").fill("Lab")
+        # The box filters the view first (debounced); Enter after that, or the late note hides the answer.
+        await h.until("() => /match[(]es[)] in the view/.test(document.getElementById('status-note').textContent)",
+                      what="the in-view match")
         await h.view.locator("#search").press("Enter")
         await h.until("() => /found in the graph/.test(document.getElementById('status-note').textContent)",
                       what="the search")
@@ -286,5 +290,32 @@ def test_a_file_attached_to_the_chat_opens_when_the_user_chooses_it(server):
         assert "(17 statements)" in text
         count = await h.data("sparql_query", {"dataset": dataset, "query": "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"})
         assert count["table"] == [{"n": 17}]
+
+    asyncio.run(_with_host(server["base"], body))
+
+
+ROWS = ("PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> "
+        "SELECT ?s ?name WHERE { ?s rdfs:label ?name } ORDER BY ?name LIMIT 3")
+
+
+def test_a_query_hint_opens_the_table_tab(server):
+    async def body(h: Host):
+        # "# view: table" in the query opens the table.
+        await h.open({"dataset": "local/people.rete", "query": "# view: table\n" + ROWS})
+        await h.until("() => document.querySelector('.tabs button.on')?.dataset.tab === 'table'", what="the table tab")
+        await h.until("() => document.querySelectorAll('#rows tbody tr').length === 3", what="3 table rows")
+        assert await h.view.locator("#table").is_visible()
+        assert await h.frame.evaluate("() => window.__reteView.options.view") == "table"
+
+    asyncio.run(_with_host(server["base"], body))
+
+
+def test_the_view_option_opens_the_cards_and_wins_over_the_hint(server):
+    async def body(h: Host):
+        await h.open({"dataset": "local/people.rete", "query": "# view: table\n" + ROWS,
+                      "options": {"view": "cards", "layout": "hive", "hive_order": "name"}})
+        await h.until("() => document.querySelector('.tabs button.on')?.dataset.tab === 'cards'", what="the cards tab")
+        await h.until("() => document.querySelectorAll('#cards-grid .rcard').length === 3", what="3 cards")
+        assert await h.frame.evaluate("() => window.__reteView.options.layout") == "hive"
 
     asyncio.run(_with_host(server["base"], body))

@@ -77,8 +77,13 @@ curl -s https://<host>/sparql/boe -H "Authorization: Bearer $RETE_TOKEN" \
 
 `graph_view` opens an interactive graph of a query's results, an entity's
 neighbourhood or a dataset's schema, right in the conversation. The user can
-label, group, lay out, search, expand and edit it, and switch to a table;
-Claude changes it with `graph_view_update` and reads the selection with
+label, group, lay out, search, expand and edit it. Besides the graph there
+are tabs for the rows as a table (pictures and links drawn in the cells, a
+chart of each column), as cards, and on a map when the rows hold geometries
+or coordinates. `options.view` picks the tab; so does a comment line in the
+query (`# view: map`). `options.card_fields` says how a column is drawn on
+the cards. The layout `hive` puts nodes on a few radial axes (`hive_axes`,
+`hive_order`). Claude changes it with `graph_view_update` and reads the selection with
 `graph_view_state`.
 
 The server renders nothing. It sends the page (`ui://rete/graph-view.html`)
@@ -88,6 +93,12 @@ page, copied from `clients/mcpb` by `clients/mcpb/build-explorer.mjs`. The
 page asks for its data with six app-only tools (`graph_view_sync`, `…_labels`,
 `…_expand`, `…_search`, `…_edit`, `…_upload`), so the data never passes
 through the model. A client without MCP Apps gets the text answers only.
+
+The cards load pictures, audio, video and 3D models from the sites a
+value names, but a client only allows the origins the page declares. The
+server declares Wikimedia, graphplaza.com, Hugging Face, the Internet Archive
+and GitHub's content hosts; `RETE_VIEW_MEDIA_DOMAINS` replaces that list
+(comma separated, like `https://*.example.org`, or `none` for no network).
 
 A file attached to the chat sits in Claude's sandbox, out of the server's
 reach. Given its path (`/mnt/user-data/uploads/…`), `graph_view` asks the user

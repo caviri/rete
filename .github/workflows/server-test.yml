@@ -7,7 +7,8 @@ name: Server tests
 # version PyPI does not have until the tag publishes it, pass here; and it
 # tests the server against the engine it will ship with. Allow-listed to the
 # server, the Python binding it imports, the graph view's host bundle the
-# browser test loads, and the workflows that build them.
+# browser test loads, the view files views.py copies lists from
+# (tests/test_view_parity.py), and the workflows that build them.
 on:
   push:
     branches: [main]
@@ -15,6 +16,9 @@ on:
       - "clients/server/**"
       - "clients/python/**"
       - "experiments/rete-file-explorer/graph/host-lib.js"
+      - "clients/mcpb/src/view/cards.js"
+      - "clients/mcpb/src/view/hive.js"
+      - "clients/chrome/lib/hints.js"
       - ".github/workflows/server-test.yml"
       - ".github/workflows/python-wheels.yml"
   pull_request:
@@ -22,6 +26,9 @@ on:
       - "clients/server/**"
       - "clients/python/**"
       - "experiments/rete-file-explorer/graph/host-lib.js"
+      - "clients/mcpb/src/view/cards.js"
+      - "clients/mcpb/src/view/hive.js"
+      - "clients/chrome/lib/hints.js"
       - ".github/workflows/server-test.yml"
       - ".github/workflows/python-wheels.yml"
   workflow_dispatch:
@@ -67,7 +74,8 @@ jobs:
         # graphviz and the app's dependencies.
         run: |
           docker run --rm --user 0 --entrypoint sh \
-            -v "$PWD/clients/server:/src" -w /src -e PYTHONPATH=/src rete-server-test -c '
+            -v "$PWD/clients/server:/src" -w /src -e PYTHONPATH=/src \
+            -v "$PWD:/repo:ro" -e RETE_REPO=/repo rete-server-test -c '
             set -e
             pip install --quiet --no-cache-dir --root-user-action=ignore pytest pyoxigraph
             python -c "import rete_graph; print(\"rete-graph\", rete_graph.__version__, \"engine\", rete_graph.__engine_version__)"

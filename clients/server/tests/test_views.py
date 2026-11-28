@@ -79,7 +79,9 @@ def test_the_host_sees_a_ui_tool_its_resource_and_app_only_tools():
 
         contents = await s.c.read_resource("ui://rete/graph-view.html")
         assert contents[0].mime_type == "text/html;profile=mcp-app"
-        assert contents[0].meta["ui"] == {"prefersBorder": True}
+        ui = contents[0].meta["ui"]
+        assert ui["prefersBorder"] is True
+        assert ui["csp"]["resourceDomains"] and ui["csp"]["connectDomains"] == ui["csp"]["resourceDomains"]
         page = contents[0].text
         assert page.startswith("<!doctype html>")
         assert "cytoscape" in page and "<script>" in page
@@ -352,3 +354,115 @@ def test_a_view_far_behind_gets_a_snapshot(since):
         view.patch({"op": "status", "status": ""})
     assert "snapshot" in view.since(since)
     assert "patches" in view.since(view.version - 3)
+
+
+# --- the card view, hive layout, hints and the CSP (MCP Apps: _meta.ui.csp) ---
+
+ROWS = ("PREFIX ex: <https://example.org/> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> "
+        "SELECT ?s ?name ?n WHERE { ?s rdfs:label ?name . BIND(5 AS ?n) } ORDER BY ?name LIMIT 2")
+
+
+def test_the_resource_declares_the_media_sites_it_may_load_from(monkeypatch):
+    from rete_server.views import MEDIA_DOMAINS, media_domains
+
+    async def csp(s):
+        contents = await s.c.read_resource("ui://rete/graph-view.html")
+        return contents[0].meta["ui"]
+
+    monkeypatch.delenv("RETE_VIEW_MEDIA_DOMAINS", raising=False)
+    ui = run(csp)
+    assert ui["prefersBorder"] is True
+    assert ui["csp"]["resourceDomains"] == MEDIA_DOMAINS
+    assert ui["csp"]["connectDomains"] == MEDIA_DOMAINS
+    assert "https://*.wikimedia.org" in MEDIA_DOMAINS and all(d.startswith("https://") for d in MEDIA_DOMAINS)
+
+    monkeypatch.setenv("RETE_VIEW_MEDIA_DOMAINS", "https://a.example, https://*.b.example:8443 ,javascript:alert(1), http://c.example")
+    ui = run(csp)
+    assert ui["csp"]["resourceDomains"] == ["https://a.example", "https://*.b.example:8443", "http://c.example"]
+    assert ui["csp"]["connectDomains"] == ui["csp"]["resourceDomains"]
+
+    monkeypatch.setenv("RETE_VIEW_MEDIA_DOMAINS", "none")
+    assert run(csp) == {"prefersBorder": True}, "no network declared at all"
+    assert media_domains({"RETE_VIEW_MEDIA_DOMAINS": "https:"}) == ["https:"]
+    assert media_domains({"RETE_VIEW_MEDIA_DOMAINS": "  "}) == MEDIA_DOMAINS
+    assert media_domains({"RETE_VIEW_MEDIA_DOMAINS": "None"}) == []
+
+
+def test_the_options_take_hive_cards_and_a_map_and_a_query_hint_picks_the_tab():
+    async def t(s):
+        tool = next(x for x in await s.c.list_tools() if x.name == "graph_view")
+        node = tool.input_schema["properties"]["options"]  # inlined or a $ref, in an anyOf with null
+        node = next((x for x in node.get("anyOf", [node]) if x.get("type") != "null"))
+        if "$ref" in node:
+            node = tool.input_schema["$defs"][node["$ref"].rsplit("/", 1)[1]]
+        props = node["properties"]
+
+        def field(name):  # an Optional field is an anyOf with null
+            f = props[name]
+            return next((x for x in f.get("anyOf", [f]) if x.get("type") != "null"))
+
+        opts = {k: field(k) for k in ("layout", "hive_axes", "hive_order", "view", "card_fields")}
+        assert "hive" in opts["layout"]["enum"]
+        assert opts["hive_axes"]["enum"] == ["auto", "type", "role", "kind", "degree"]
+        assert opts["hive_order"]["enum"] == ["degree", "in", "out", "name"]
+        assert opts["view"]["enum"] == ["graph", "table", "cards", "map"]
+        assert "model3d" in opts["card_fields"]["additionalProperties"]["enum"]
+
+        async def opened(**args):
+            r = await s.call("graph_view", {"dataset": PEOPLE, **args})
+            first = await s.data("graph_view_sync", {"view_id": r.structured_content["view_id"], "since": 0})
+            return first["snapshot"]
+
+        snap = await opened(query=EDGES, options={"layout": "hive", "hive_axes": "role", "hive_order": "name",
+                                                  "view": "cards", "card_fields": {"name": "image", "n": "geo"}})
+        o = snap["options"]
+        assert (o["layout"], o["hive_axes"], o["hive_order"], o["view"]) == ("hive", "role", "name", "cards")
+        assert o["card_fields"] == {"name": "image", "n": "geo"}
+        assert (await opened(query=EDGES, options={"view": "map"}))["options"]["view"] == "map"
+
+        # A comment line in the query names the tab when the options do not.
+        assert (await opened(query="# view: map\n" + ROWS))["options"]["view"] == "map"
+        assert (await opened(query="# Who\n  #  VIEW : Cards \n" + ROWS))["options"]["view"] == "cards"
+        assert (await opened(query="# view: table\n" + ROWS, options={"view": "graph"}))["options"]["view"] == "graph"
+        assert "view" not in (await opened(query="# view: pie\n" + ROWS))["options"]
+        assert "view" not in (await opened(query=ROWS + " # view: map"))["options"], "only a line that starts with #"
+        assert "view" not in (await opened(query=ROWS))["options"]
+
+        bad = await s.refusal("graph_view", {"dataset": PEOPLE, "options": {"card_fields": {"x": "hologram"}}})
+        assert "card_fields" in bad or "hologram" in bad
+
+    run(t)
+
+
+def test_a_table_carries_typed_cells_and_the_query_and_appending_keeps_both():
+    async def t(s):
+        text = "# view: table\n" + ROWS
+        r = await s.call("graph_view", {"dataset": PEOPLE, "query": text})
+        vid = r.structured_content["view_id"]
+        table = (await s.data("graph_view_sync", {"view_id": vid, "since": 0}))["snapshot"]["table"]
+        assert table["vars"] == ["s", "name", "n"] and len(table["rows"]) == len(table["terms"]) == 2
+        assert table["query"] == text
+        row, terms = table["rows"][0], table["terms"][0]
+        assert row["name"] == "Ada Lovelace" and row["n"] == "5"
+        assert terms["s"] == {"kind": "iri", "value": "https://example.org/ada"}
+        assert terms["name"] == {"kind": "literal", "value": "Ada Lovelace"}
+        assert terms["n"] == {"kind": "literal", "value": "5", "datatype": "http://www.w3.org/2001/XMLSchema#integer"}
+
+        before = (await s.data("graph_view_sync", {"view_id": vid, "since": 0}))["version"]
+        await s.data("graph_view_update", {"view_id": vid, "query": ROWS.replace("LIMIT 2", "LIMIT 1")})
+        after = await s.data("graph_view_sync", {"view_id": vid, "since": before})
+        t2 = next(p for p in after["patches"] if p["op"] == "add")["table"]
+        assert len(t2["rows"]) == len(t2["terms"]) == 3, "rows and their terms grow together"
+        assert t2["query"] == text, "the first query's text stays with the table"
+
+        # A CONSTRUCT's table is subject / predicate / object, typed the same way.
+        c = await s.call("graph_view", {"dataset": PEOPLE, "query": EDGES})
+        ct = (await s.data("graph_view_sync", {"view_id": c.structured_content["view_id"], "since": 0}))["snapshot"]["table"]
+        assert ct["terms"][0]["predicate"] == {"kind": "iri", "value": "https://example.org/knows"}
+        assert ct["query"] == EDGES
+
+        long = await s.call("graph_view", {"dataset": PEOPLE, "query": ROWS + " " + "#" * 25000})
+        lt = (await s.data("graph_view_sync", {"view_id": long.structured_content["view_id"], "since": 0}))["snapshot"]["table"]
+        assert len(lt["query"]) == 20000
+
+    run(t)
