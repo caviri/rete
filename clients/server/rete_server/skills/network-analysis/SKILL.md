@@ -249,7 +249,7 @@ the file and the CLI, not through this server.
 `graph_view(dataset, query=...)` draws a SELECT with `?s ?p ?o` columns (or any
 CONSTRUCT) as nodes and edges, in clients that render MCP Apps; elsewhere the
 answer is text. Keep it to a few hundred nodes. A LIMIT on a SELECT is honoured;
-a CONSTRUCT ignores it (see the `query` skill).
+a CONSTRUCT only on engines after 0.7.8 (see the `query` skill).
 
 The arguments of a `graph_view` call for the ego network of `ex:p3`, grouped by
 type and laid out in rings:

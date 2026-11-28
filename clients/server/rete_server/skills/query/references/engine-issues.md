@@ -4,10 +4,12 @@ Each snippet below was run on a small test graph (7 papers, 7 people; `ex:` is
 `https://example.org/`). Re-test on a newer engine before relying on a
 workaround: a fix removes the need for it.
 
-## CONSTRUCT ignores LIMIT
+## CONSTRUCT and LIMIT (0.7.8 and older)
 
-A `LIMIT` on a CONSTRUCT is accepted and not applied. The subquery form does
-not help either: all 11 `ex:author` triples come back.
+Engines after 0.7.8 apply LIMIT, OFFSET and ORDER BY to CONSTRUCT and DESCRIBE,
+so the query below gives two triples. On 0.7.8 and older a `LIMIT` on a
+CONSTRUCT is accepted and not applied, even in a subquery: all 11 `ex:author`
+triples come back. If you see more triples than the LIMIT, use a workaround.
 
 ```sparql
 CONSTRUCT { ?paper ex:author ?person } WHERE { ?paper ex:author ?person } LIMIT 2

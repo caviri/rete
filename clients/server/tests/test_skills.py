@@ -12,6 +12,7 @@ import ast
 import asyncio
 import hashlib
 import json
+import os
 import pathlib
 import re
 
@@ -349,7 +350,7 @@ def test_the_documented_zero_row_trap_is_a_warning_and_the_fix_returns_rows():
 
 
 def test_the_engine_issues_are_still_issues():
-    """The skills say these are broken in 0.7.8. When one starts passing, the
+    """The skills describe these engine issues. When one changes, the
     workaround in the skill is out of date: this test says so."""
     async def t(c):
         q = with_prefixes("CONSTRUCT { ?s ex:author ?o } WHERE { ?s ex:author ?o } LIMIT 2")
@@ -361,8 +362,16 @@ def test_the_engine_issues_are_still_issues():
         return construct, trimmed, agg
 
     construct, trimmed, agg = run(t)
-    assert len(construct["triples"]) == 11, "CONSTRUCT honours LIMIT now: update the query skill"
-    assert len(trimmed["triples"]) == 2 and trimmed["truncated"] is True
+    # The skills say: engines after 0.7.8 honour LIMIT on CONSTRUCT (#518),
+    # 0.7.8 and older return every triple. CI builds the engine from the same
+    # commit and sets RETE_ENGINE_FROM_SOURCE, so there it must be the fixed one;
+    # an image on the PyPI 0.7.8 wheel may still show the old behaviour.
+    n = len(construct["triples"])
+    if os.environ.get("RETE_ENGINE_FROM_SOURCE"):
+        assert n == 2, "this commit's engine ignores LIMIT on CONSTRUCT again: update the query skill"
+    else:
+        assert n in (2, 11)
+    assert len(trimmed["triples"]) == 2
     alan = next(r for r in agg["table"] if r["a"].endswith("/alan"))
     assert alan.get("s") in (None, "") and str(alan["m"]) == "36", "SUM after OPTIONAL is bound now: update the skills"
 
