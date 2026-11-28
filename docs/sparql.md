@@ -127,13 +127,21 @@ own instances, so on a 9.53 B-triple file `?s a :Service ; :publicationYear
   fewer, and the pattern above 65,536 triples), each row **looks the pattern
   up** in the index instead of scanning it — a bound subject becomes an SPO
   range read, so `<doi> :p ?r . ?r ?q ?o` reads the handful of `?r` rows and
-  never the whole graph;
+  never the whole graph. Not when the pattern is small (at most about a
+  million triples), the rows are many (more than 512, and more than a 512th
+  of the pattern) and they do not bind its subject: it is then scanned once
+  and hash-joined;
+- patterns on one subject variable, a **star** (`?s :a ?x ; :b ?y ; :c ?z`),
+  are one merge join over their subject-sorted streams when each is estimated
+  above 65,536 triples and none is far larger than the first. A pattern that
+  is one star streams, holding only the current subject's rows; a star inside
+  a larger pattern is built once and joined as one relation. See
+  [Star joins](star-joins.md);
 - when even the most selective pattern is large (above about two million
-  matches), the join **streams**: that pattern is read from its index cursor
-  and every later pattern is joined per row, through a hash table when it is
-  small and by lookup otherwise; two large patterns that share their subject
-  variable stream through a merge join. Nothing proportional to the large
-  pattern is held;
+  matches), the join **streams**: that pattern, or the star it leads, is read
+  from its index cursor and every later pattern is joined per row, through a
+  hash table when it is small and by lookup otherwise. Nothing proportional
+  to the large pattern is held;
 - otherwise the small side is materialized and hash-joined, as before.
 
 The same rule applies between a basic graph pattern and what joins it from the

@@ -106,6 +106,7 @@ const PAGES: &[(&str, &str)] = &[
     ("conformance.md", "SPARQL 1.1 conformance"),
     ("neuro-showcase-guide.md", "Neuromorphology"),
     ("graph-algorithms.md", "Graph algorithms"),
+    ("star-joins.md", "Star joins"),
     ("build-and-publish.md", "Build and publish"),
     ("query-and-analyze.md", "Query and analyze"),
     ("clients.md", "Language clients"),
@@ -171,6 +172,7 @@ const NAV_CHILDREN: &[(&str, &[(&str, &str)])] = &[
         "query-and-analyze.md",
         &[
             ("graph-algorithms.md", "Graph algorithms"),
+            ("star-joins.md", "Star joins"),
             ("federation.md", "Federation"),
             ("reasoning.md", "Reasoning"),
         ],
@@ -445,7 +447,8 @@ fn parent_for(md: &str) -> Option<&'static str> {
         | "semantic-zoom.md"
         | "topic-modeling.md"
         | "multi-criteria.md"
-        | "graph-algorithms.md" => "query-and-analyze.md",
+        | "graph-algorithms.md"
+        | "star-joins.md" => "query-and-analyze.md",
         "SPEC.md"
         | "rust-api.md"
         | "browser.md"
@@ -2226,7 +2229,7 @@ mod tests {
     #[test]
     fn registry_and_sidebar_are_complete_unique_and_classified() {
         use std::collections::HashSet;
-        assert_eq!(super::PAGES.len(), 71);
+        assert_eq!(super::PAGES.len(), 72);
         let published: HashSet<_> = super::PAGES.iter().map(|p| p.0).collect();
         assert_eq!(published.len(), super::PAGES.len());
         assert_eq!(super::SECTIONS.len(), 4);

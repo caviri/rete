@@ -22,7 +22,7 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rete_core::{
-    eval_query_with_warnings, results_envelope_json, schema_classes, schema_summary,
+    eval_query_with_warnings, results_envelope_json, schema_profile,
     validate_shacl, warnings_json, BlockCacheReader, CountingReader, DataGraph, QueryOpts,
     RangeReader, Rete, ReteGraph, ShaclShapes, DEFAULT_BLOCK,
 };
@@ -325,7 +325,7 @@ impl Graph {
     /// `{"classes": [[iri, count], ...], "relations": [[sClass, pred, oClass, count], ...]}`.
     fn schema(&self, py: Python<'_>) -> PyResult<String> {
         let (classes, relations) =
-            py.detach(|| (schema_classes(&self.rete), schema_summary(&self.rete)));
+            py.detach(|| schema_profile(&self.rete));
         serde_json::to_string(&serde_json::json!({
             "schemaVersion": JSON_SCHEMA_VERSION,
             "classes": classes,

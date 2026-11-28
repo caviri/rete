@@ -2554,13 +2554,43 @@ pub const RDF_TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 /// `rdf:type` triples themselves define the classes and are not counted as
 /// relations. This is the dataset's effective schema with instance volumes.
 pub fn schema_summary(rete: &Rete) -> Vec<(String, String, String, u32)> {
+    schema_profile(rete).1
+}
+
+/// Class populations: the number of resources of each `rdf:type` class in the
+/// default graph, descending by count. The instance-count companion to
+/// [`schema_summary`].
+pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
+    schema_profile(rete).0
+}
+
+/// `(schema_classes, schema_summary)`.
+pub type SchemaProfile = (Vec<(String, u32)>, Vec<(String, String, String, u32)>);
+
+/// Both halves of the ontology profile in one pass: `(schema_classes,
+/// schema_summary)`. Streams the sorted `rdf:type` range and SPO section in
+/// memory that grows with the subject count (about a byte per subject) and the
+/// number of distinct class/predicate/class rows, not with the statement
+/// count. A file that cannot be streamed (no SPO or POS section, a union
+/// default graph) falls back to [`schema_profile_dump`], which materializes
+/// every triple.
+pub fn schema_profile(rete: &Rete) -> SchemaProfile {
+    crate::card_derive::schema_profile_streaming(rete).unwrap_or_else(|| schema_profile_dump(rete))
+}
+
+/// The reference derivation behind [`schema_profile`]: dump every default-graph
+/// triple and tally in memory. Kept for files the streaming path cannot read,
+/// and as the oracle its tests compare against.
+pub fn schema_profile_dump(rete: &Rete) -> SchemaProfile {
     use std::collections::{BTreeMap, HashMap};
     let triples = rete.dump(None);
 
     let mut class_of: HashMap<&str, &str> = HashMap::new();
+    let mut class_counts: BTreeMap<&str, u32> = BTreeMap::new();
     for (s, p, o) in &triples {
         if p == RDF_TYPE {
             class_of.insert(s.as_str(), o.as_str());
+            *class_counts.entry(o.as_str()).or_default() += 1;
         }
     }
     let classify = |t: &str| -> String {
@@ -2582,26 +2612,16 @@ pub fn schema_summary(rete: &Rete) -> Vec<(String, String, String, u32)> {
             .entry((classify(s), p.clone(), classify(o)))
             .or_default() += 1;
     }
-    counts
+    let relations = counts
         .into_iter()
         .map(|((a, p, b), c)| (a, p, b, c))
-        .collect()
-}
-
-/// Class populations: the number of resources of each `rdf:type` class in the
-/// default graph, descending by count. The instance-count companion to
-/// [`schema_summary`].
-pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
-    use std::collections::BTreeMap;
-    let mut counts: BTreeMap<String, u32> = BTreeMap::new();
-    for (_s, p, o) in rete.dump(None) {
-        if p == RDF_TYPE {
-            *counts.entry(o).or_default() += 1;
-        }
-    }
-    let mut out: Vec<(String, u32)> = counts.into_iter().collect();
-    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    out
+        .collect();
+    let mut classes: Vec<(String, u32)> = class_counts
+        .into_iter()
+        .map(|(c, n)| (c.to_string(), n))
+        .collect();
+    classes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    (classes, relations)
 }
 
 /// Fetch **only** the metadata section (the opaque Dataset Card blob) via a
@@ -9588,19 +9608,19 @@ mod tests {
     fn schema_summary_groups_by_type() {
         let rt = RDF_TYPE;
         let bytes = build_from(&[
-            ("Alice", rt, "Person"),
-            ("Bob", rt, "Person"),
-            ("NYC", rt, "City"),
-            ("Alice", "knows", "Bob"),
-            ("Alice", "livesIn", "NYC"),
-            ("Alice", "name", "\"Alice\""),
+            ("<Alice>", rt, "<Person>"),
+            ("<Bob>", rt, "<Person>"),
+            ("<NYC>", rt, "<City>"),
+            ("<Alice>", "<knows>", "<Bob>"),
+            ("<Alice>", "<livesIn>", "<NYC>"),
+            ("<Alice>", "<name>", "\"Alice\""),
         ]);
         let rete = Rete::open(&bytes).unwrap();
         let summary = schema_summary(&rete);
         // Expect class-level relations, rdf:type excluded.
-        assert!(summary.contains(&("Person".into(), "knows".into(), "Person".into(), 1)));
-        assert!(summary.contains(&("Person".into(), "livesIn".into(), "City".into(), 1)));
-        assert!(summary.contains(&("Person".into(), "name".into(), "(literal)".into(), 1)));
+        assert!(summary.contains(&("<Person>".into(), "<knows>".into(), "<Person>".into(), 1)));
+        assert!(summary.contains(&("<Person>".into(), "<livesIn>".into(), "<City>".into(), 1)));
+        assert!(summary.contains(&("<Person>".into(), "<name>".into(), "(literal)".into(), 1)));
         // No rdf:type relations in the summary.
         assert!(!summary.iter().any(|(_, p, _, _)| p == RDF_TYPE));
 
@@ -9608,8 +9628,34 @@ mod tests {
         let classes = schema_classes(&rete);
         assert_eq!(
             classes,
-            vec![("Person".into(), 2u32), ("City".into(), 1u32)]
+            vec![("<Person>".into(), 2u32), ("<City>".into(), 1u32)]
         );
+    }
+
+    #[test]
+    fn schema_profile_streams_a_legacy_0x05_file_to_the_same_answer() {
+        let rt = RDF_TYPE;
+        let triples = [
+            ("<http://ex/a>", rt, "<http://ex/P>"),
+            ("<http://ex/b>", rt, "<http://ex/P>"),
+            ("<http://ex/b>", rt, "<http://ex/Q>"),
+            ("<http://ex/a>", "<http://ex/knows>", "<http://ex/b>"),
+            ("<http://ex/a>", "<http://ex/name>", "\"A\""),
+            ("<http://ex/a>", "<http://ex/seeAlso>", "<http://ex/z>"),
+        ];
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new();
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_dataset_v05(&dict, &ib.build(), &[], false, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        assert_eq!(schema_profile(&rete), schema_profile_dump(&rete));
+        assert_eq!(schema_profile(&rete).0.len(), 2);
     }
 
     fn build_from(triples: &[(&str, &str, &str)]) -> Vec<u8> {

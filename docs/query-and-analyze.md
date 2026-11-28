@@ -15,6 +15,8 @@ covers query commands and output formats.
 For a specific kind of question:
 
 - [GeoSPARQL](geosparql.md) filters geometry and time.
+- [Star joins](star-joins.md) explains how reports and aggregates over many
+  properties of one entity are joined, with measurements.
 - [Federation](federation.md) combines graphs; it explains the differences
   between a union, a cross-file join and a remote `SERVICE` call.
 - [Reasoning](reasoning.md) uses ontology relationships to derive answers

@@ -3680,4 +3680,55 @@ mod tests {
             }
         }
     }
+
+    /// An object-bound probe into a fat predicate (one huge a-group in POS)
+    /// answers exactly what a filtered full scan does, for hits and misses.
+    #[test]
+    fn object_bound_probe_into_fat_predicate_matches_scan() {
+        let n = 60_000u32;
+        let mut triples: Vec<Triple> = (0..n).map(|s| (s + 1, 5, 1000 + (s * 7) % 3001)).collect();
+        triples.extend((0..500u32).map(|s| (s + 1, 6, 1000 + s % 40)));
+        let idx = GraphIndexBuilder::from_triples(triples.clone()).build();
+        for o in [0u32, 999, 1000, 1001, 1500, 3999, 4000, 4001, 9999]
+            .into_iter()
+            .chain((1000..4010).step_by(37))
+        {
+            for p in [5u32, 6, 7] {
+                let mut got: Vec<Triple> = idx.scan_iter((None, Some(p), Some(o))).collect();
+                let mut want: Vec<Triple> = triples
+                    .iter()
+                    .copied()
+                    .filter(|t| t.1 == p && t.2 == o)
+                    .collect();
+                got.sort_unstable();
+                want.sort_unstable();
+                assert_eq!(got, want, "p={p} o={o}");
+            }
+        }
+    }
+
+    /// Timing only (run with --release --nocapture --ignored).
+    #[test]
+    #[ignore]
+    fn bench_object_bound_probe() {
+        let n = 600_000u32;
+        let triples: Vec<Triple> = (0..n)
+            .map(|s| (s + 1, 5, 1000 + (s * 7919) % 20_000))
+            .collect();
+        let idx = GraphIndexBuilder::from_triples(triples).build();
+        let t = std::time::Instant::now();
+        let mut hits = 0usize;
+        let probes = 20_000u32;
+        for o in 0..probes {
+            hits += idx.scan_iter((None, Some(5), Some(1000 + o))).count();
+        }
+        let el = t.elapsed();
+        println!("PROBE hits={hits} total={el:?} per_probe={:?}", el / probes);
+        let t = std::time::Instant::now();
+        let mut hits = 0usize;
+        for s in 0..2000u32 {
+            hits += idx.scan_iter((Some(s + 1), Some(5), None)).count();
+        }
+        println!("SUBJ hits={hits} per_probe={:?}", t.elapsed() / 2000);
+    }
 }

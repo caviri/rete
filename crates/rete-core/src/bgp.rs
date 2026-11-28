@@ -146,12 +146,35 @@ fn plan_order(
     index: &GraphIndex,
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
 ) -> (Vec<usize>, Vec<f64>) {
-    if lowered.len() == 1 {
-        return (vec![0], vec![0.0]);
-    }
-    let order = selectivity_order(ctx, index, lowered);
-    let scan_est = tile_estimates(ctx, index, lowered, &std::collections::HashSet::new());
+    let (order, scan_est, _) = plan_order_rows(ctx, index, lowered);
     (order, scan_est)
+}
+
+/// [`plan_order`] and the estimated rows of the join of all but the last
+/// pattern (`NaN` when unknown): a plan that builds that prefix in memory is
+/// only as good as it is small ([`prefix_too_big`]).
+fn plan_order_rows(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+) -> (Vec<usize>, Vec<f64>, f64) {
+    if lowered.len() == 1 {
+        return (vec![0], vec![0.0], 0.0);
+    }
+    let (order, prefix_rows) =
+        selectivity_plan_seeded(ctx, index, lowered, &std::collections::HashSet::new());
+    let scan_est = tile_estimates(ctx, index, lowered, &std::collections::HashSet::new());
+    (order, scan_est, prefix_rows)
+}
+
+/// Would the prefix of a BGP (every pattern but the last, joined) hold more
+/// rows than a plan may build in memory? Then the join streams from its first
+/// pattern and looks the others up per row, as it does for a large first
+/// pattern. Three stars of 8 M rows each, joined on a 335 k-row pattern, hold
+/// only the probes' answers at any moment instead of a prefix of 9 M rows and
+/// every column of them (several GB; the same plan ran out of 4 GB).
+fn prefix_too_big(prefix_rows: f64) -> bool {
+    prefix_rows > limits().stream_seed
 }
 
 /// Evaluate a BGP to slot rows against a specific graph `index` (joins run on
@@ -1200,10 +1223,13 @@ pub(crate) fn shard_bgp_rows<'q>(
     if lowered.len() == 1 {
         return cut_scan(lowered[0]);
     }
-    let (order, est) = plan_order(ctx, index, &lowered);
+    let (order, est, prefix_rows) = plan_order_rows(ctx, index, &lowered);
 
     // The streaming join: the seed pattern's scan is sliced.
-    if est[order[0]] > limits().stream_seed || merges_a_star(ctx, index, &lowered, &order, &est) {
+    if est[order[0]] > limits().stream_seed
+        || prefix_too_big(prefix_rows)
+        || merges_a_star(ctx, index, &lowered, &order, &est)
+    {
         let seed = lowered[order[0]];
         // Two large patterns that share their subject are merge-joined, both
         // streams in subject order: the slice is a range of subjects, the
@@ -1678,22 +1704,58 @@ fn merge_seed_lopsided(
     hi >= FAT_SCAN_ROWS && hi / 4.0 >= lo
 }
 
+/// What each pattern adds to a row of the prefix that has bound `bound` (beyond
+/// the `seed` slots `base` already counted): its extent in `base`, divided for
+/// every subject or object variable now bound by that predicate's measured
+/// number of distinct subjects or objects. A predicate without statistics keeps
+/// its extent.
+///
+/// `exact` also caps the extent at the predicate's exact triple count (a tile
+/// estimate of a small table is a whole tile), for sizing a join rather than
+/// ordering it.
+fn joined_extents(
+    exact: bool,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    base: &[f64],
+    bound: &std::collections::HashSet<usize>,
+    seed: &std::collections::HashSet<usize>,
+    stats: &HashMap<u32, &crate::meta::PredStat>,
+) -> Vec<f64> {
+    let newly =
+        |x: &SlotTerm| matches!(x, SlotTerm::Var(v) if bound.contains(v) && !seed.contains(v));
+    lowered
+        .iter()
+        .zip(base)
+        .map(|(t, &e)| {
+            let mut e = e;
+            if let SlotTerm::Pred(p) = t.1 {
+                if let Some(st) = stats.get(&p) {
+                    if exact {
+                        e = e.min(st.count as f64);
+                    }
+                    if newly(&t.0) && st.distinct_subjects > 0 {
+                        e /= st.distinct_subjects as f64;
+                    }
+                    if newly(&t.2) && st.distinct_objects > 0 {
+                        e /= st.distinct_objects as f64;
+                    }
+                }
+            }
+            e.max(1.0)
+        })
+        .collect()
+}
+
 /// Order pattern indices for a left-deep join: cheapest (smallest estimated
-/// cardinality) first, always preferring a pattern that shares a variable with
-/// the already-joined set so the join stays connected and intermediate relations
+/// cardinality, or what a pattern adds per row once its variables are bound)
+/// first, always preferring a pattern that shares a variable with the
+/// already-joined set so the join stays connected and intermediate relations
 /// stay small. Cardinality comes from [`pattern_estimates`]; with no summary it
 /// falls back to a most-constants-first heuristic. Pure reordering — `hash_join`
 /// is order-independent, so the result multiset is unchanged.
-fn selectivity_order(
-    ctx: &Ctx,
-    index: &GraphIndex,
-    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
-) -> Vec<usize> {
-    selectivity_order_seeded(ctx, index, lowered, &std::collections::HashSet::new())
-}
-
-/// [`selectivity_order`] with a set of slots already bound by an outer seed
-/// row: those variables count as already connected (and, in the no-summary
+///
+/// Takes a set of slots already bound by an outer seed row: those variables
+/// count as already connected (and, in the no-summary fallback, as constants
 /// fallback, as constants for selectivity).
 fn selectivity_order_seeded(
     ctx: &Ctx,
@@ -1701,6 +1763,20 @@ fn selectivity_order_seeded(
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
     seed: &std::collections::HashSet<usize>,
 ) -> Vec<usize> {
+    selectivity_plan_seeded(ctx, index, lowered, seed).0
+}
+
+/// [`selectivity_order_seeded`] and the number of rows its join of every
+/// pattern but the last is estimated to hold (the prefix a materializing
+/// plan builds): the first pattern's extent times what each later one adds
+/// per row ([`joined_extents`]). `NaN` when a later pattern has no measured
+/// statistics, which leaves the figure unknown.
+fn selectivity_plan_seeded(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    seed: &std::collections::HashSet<usize>,
+) -> (Vec<usize>, f64) {
     // Exact per-predicate statistics when the pyramid is resident; otherwise
     // (the lazy path, and files built without a pyramid) the tile-directory
     // estimate, which needs no fetch. That one also counts a class's own
@@ -1733,12 +1809,6 @@ fn selectivity_order_seeded(
     // Higher score = picked sooner. With summary stats that's the negated
     // estimate (smaller cardinality wins); without, the constant count (old
     // behaviour, byte-identical ordering for pyramid-less files).
-    let score = |i: usize| -> f64 {
-        match &estimates {
-            Some(e) => -e[i],
-            None => consts(&lowered[i]) as f64,
-        }
-    };
     // A `?s rdf:type <Class>` with an as-yet-unbound subject is a **class
     // enumeration**: it matches every instance of the class, so it is almost never
     // the most selective place to *start* a join (a popular class has thousands of
@@ -1757,8 +1827,41 @@ fn selectivity_order_seeded(
     let n = lowered.len();
     let mut remaining: Vec<usize> = (0..n).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
+    let mut prefix_rows = 0.0_f64;
     let mut bound: std::collections::HashSet<usize> = seed.clone();
+    // A pattern joined later is worth not its whole extent but what it adds to
+    // each row already there: the extent divided, for every subject or object
+    // variable the prefix has bound by then, by that predicate's measured number
+    // of distinct subjects or objects. Raw extents pick `?d evaluatedAgainst ?t`
+    // (5,361) over `?e ofDesign ?d` (205,620) after `?e target ?t`, joining on
+    // `?t` alone: one target holds most designs, so every row meets thousands,
+    // and the second shared variable only filters the product afterwards (7 M
+    // rows for an answer of 1,332). The other way round `?d` is bound by then and
+    // that pattern is one lookup per row. Without measured statistics for a
+    // predicate its extent stays as it was.
+    let mut fanout: Option<Vec<f64>> = None;
+    let mut factors: Option<Vec<f64>> = None;
+    let mut stats: Option<std::collections::HashMap<u32, &crate::meta::PredStat>> = None;
     while !remaining.is_empty() {
+        if let Some(base) = estimates.as_ref() {
+            let stats = stats.get_or_insert_with(|| {
+                ctx.rete
+                    .planner_stats(true)
+                    .iter()
+                    .map(|s| (s.predicate, s))
+                    .collect()
+            });
+            if !order.is_empty() {
+                fanout = Some(joined_extents(false, lowered, base, &bound, seed, stats));
+            }
+            factors = Some(joined_extents(true, lowered, base, &bound, seed, stats));
+        }
+        let score = |i: usize| -> f64 {
+            match fanout.as_ref().or(estimates.as_ref()) {
+                Some(e) => -e[i],
+                None => consts(&lowered[i]) as f64,
+            }
+        };
         // Pick the remaining pattern with the best (connected, not-a-class-enum,
         // score) key; ties go to the lowest original index for a stable order.
         let best = *remaining
@@ -1779,10 +1882,37 @@ fn selectivity_order_seeded(
         for v in vars(&lowered[best]) {
             bound.insert(v);
         }
+        // The rows of the join so far (all but the last pattern are the prefix).
+        if remaining.len() > 1 {
+            let score = factors.as_ref().map(|e| e[best]);
+            // Known only for a pattern whose factor is a measured multiplicity:
+            // a predicate with statistics and no constant to route by. A tile
+            // estimate for a constant is rough, and the error multiplies down a
+            // join of a dozen patterns (TPC-H Q5: 5e20 rows for a few thousand).
+            // The first pattern too: `?lib schema:name "one library"` was
+            // estimated at 7,042 rows for the one it has, the prefix at 10 M,
+            // and a join that took 1 s streamed and looked 1.6 M-triple
+            // patterns up per row for 28 s.
+            let routed = matches!(lowered[best].0, SlotTerm::Node(_))
+                || matches!(lowered[best].2, SlotTerm::Node(_));
+            let measured = !routed
+                && (order.is_empty()
+                    || matches!(lowered[best].1, SlotTerm::Pred(p) if stats.as_ref().is_some_and(|m| m.contains_key(&p))));
+            prefix_rows = match score {
+                Some(e) if measured => {
+                    if order.is_empty() {
+                        e
+                    } else {
+                        prefix_rows * e
+                    }
+                }
+                _ => f64::NAN,
+            };
+        }
         order.push(best);
         remaining.retain(|&i| i != best);
     }
-    order
+    (order, prefix_rows)
 }
 
 /// Does the BGP have at least one solution against `index`? A single pattern
@@ -1987,11 +2117,12 @@ impl<'q> BgpSolutions<'q> {
         };
         // Join all but the *last* (least selective) pattern eagerly into the
         // prefix; a single pattern leaves the seed row as the prefix.
-        let (order, scan_est) = plan_order(ctx, index, &lowered);
+        let (order, scan_est, prefix_rows) = plan_order_rows(ctx, index, &lowered);
         // Even the most selective pattern is big: materializing it as the
         // prefix would hold every one of its rows. Stream the whole join.
         if order.len() >= 2
             && (scan_est[order[0]] > limits().stream_seed
+                || prefix_too_big(prefix_rows)
                 || merges_a_star(ctx, index, &lowered, &order, &scan_est))
         {
             return Self::streaming(ctx, index, &lowered, &order, &scan_est);
@@ -3448,6 +3579,145 @@ mod tests {
             stars >= 8,
             "only {stars} plans merged a star of three or more"
         );
+    }
+    /// Two patterns that share TWO variables, one of them a star: the answer is
+    /// the same on every join path and is the one a brute-force join gives. And
+    /// the planner joins the pattern whose second variable is already bound
+    /// before the one that would multiply the rows on the first alone.
+    #[test]
+    fn two_shared_variables_join_alike_on_every_path() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        let (designs, targets) = (120usize, 3usize);
+        // `ev(d, t)`: every design against 1 or 2 targets, almost all on t0.
+        let mut ev: Vec<(usize, usize)> = Vec::new();
+        for d in 0..designs {
+            ev.push((d, 0));
+            if d % 5 == 0 {
+                ev.push((d, 1 + d % (targets - 1)));
+            }
+        }
+        for &(d, t) in &ev {
+            owned.push((format!("d{d:03}"), "ev".into(), format!("t{t}")));
+        }
+        // Measurements: `m(e) = (design, target, metric)`; a design may be
+        // measured against a target it was not evaluated against.
+        let mut m: Vec<(usize, usize, bool)> = Vec::new();
+        for e in 0..400usize {
+            let (d, t, kd) = ((e * 7) % designs, (e / 3) % targets, e % 4 != 0);
+            m.push((d, t, kd));
+            owned.push((format!("e{e:03}"), "ofDesign".into(), format!("d{d:03}")));
+            owned.push((format!("e{e:03}"), "target".into(), format!("t{t}")));
+            owned.push((
+                format!("e{e:03}"),
+                "metric".into(),
+                if kd { "kd" } else { "ic" }.into(),
+            ));
+            owned.push((format!("e{e:03}"), "value".into(), format!("v{}", e % 17)));
+        }
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &owned {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(96);
+        for (s, p, o) in &owned {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let rete = Rete::open(&write_file(&dict, &ib.build(), false, &[], 0)).unwrap();
+        let q = vec![
+            pat("?d", "ev", "?t"),
+            pat("?e", "ofDesign", "?d"),
+            pat("?e", "metric", "kd"),
+            pat("?e", "target", "?t"),
+            pat("?e", "value", "?v"),
+        ];
+        let want = m
+            .iter()
+            .filter(|&&(d, t, kd)| kd && ev.contains(&(d, t)))
+            .count();
+        assert!(want > 0 && want < m.len());
+        let rows_of = |limits: Option<PlanLimits>| -> Vec<Row> {
+            TEST_LIMITS.with(|c| c.set(limits));
+            let mut slots = crate::row::Slots::new();
+            collect_pattern_slots(&q, &mut slots);
+            let ctx = Ctx::new(&rete, slots);
+            let mut rows: Vec<Row> = BgpSolutions::new(&ctx, rete.default_index(), &q).collect();
+            rows.sort();
+            rows
+        };
+        let hash = rows_of(Some(PlanLimits {
+            probe_floor: f64::MAX,
+            stream_seed: f64::MAX,
+            hash_build: f64::MAX,
+        }));
+        assert_eq!(hash.len(), want);
+        for (name, limits) in [
+            ("default", None),
+            (
+                "stream + hash",
+                Some(PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: f64::MAX,
+                }),
+            ),
+            (
+                "stream + probe",
+                Some(PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: 0.0,
+                }),
+            ),
+        ] {
+            assert_eq!(rows_of(limits), hash, "{name}");
+        }
+        TEST_LIMITS.with(|c| c.set(None));
+    }
+
+    /// After `?e target ?t`, `?d ev ?t` joins on `?t` alone and meets every
+    /// design of the target; `?e ofDesign ?d` binds `?d`, and then `ev` is a
+    /// lookup. The figures are those of the proteinbase file that ran a
+    /// 1,332-row answer out of 4 GB.
+    #[test]
+    fn a_pattern_on_a_bound_variable_is_cheaper_than_one_that_binds_a_new_one() {
+        let stat = |predicate, count, distinct_subjects, distinct_objects| crate::meta::PredStat {
+            predicate,
+            count,
+            distinct_subjects,
+            distinct_objects,
+            max_objects_per_subject: 1,
+            max_subjects_per_object: 1,
+        };
+        // 0: ?d ev ?t   1: ?e ofDesign ?d   2: ?e target ?t
+        let stats = [
+            stat(10, 5_361, 5_248, 6),
+            stat(11, 205_620, 205_620, 5_248),
+            stat(12, 86_680, 86_680, 6),
+        ];
+        let by_pred: HashMap<u32, &crate::meta::PredStat> =
+            stats.iter().map(|s| (s.predicate, s)).collect();
+        let lowered = [
+            (SlotTerm::Var(0), SlotTerm::Pred(10), SlotTerm::Var(1)),
+            (SlotTerm::Var(2), SlotTerm::Pred(11), SlotTerm::Var(0)),
+            (SlotTerm::Var(2), SlotTerm::Pred(12), SlotTerm::Var(1)),
+        ];
+        let base = [5_361.0, 205_620.0, 86_680.0];
+        let none = std::collections::HashSet::new();
+        // `?e` and `?t` bound (after `?e target ?t`).
+        let bound: std::collections::HashSet<usize> = [1, 2].into_iter().collect();
+        let got = joined_extents(false, &lowered, &base, &bound, &none, &by_pred);
+        assert!(got[0] > 800.0, "ev on ?t alone: {}", got[0]);
+        assert!(got[1] < 100.0, "ofDesign: {}", got[1]);
+        assert!(got[1] < got[0]);
+        // Nothing bound: the extents, unchanged. No statistics: unchanged too.
+        let got = joined_extents(false, &lowered, &base, &none, &none, &by_pred);
+        assert_eq!(got, base);
+        let got = joined_extents(false, &lowered, &base, &bound, &none, &HashMap::new());
+        assert_eq!(got, base);
+        // Sizing a join caps a tile-sized estimate at the exact triple count.
+        let got = joined_extents(true, &lowered, &[1e6, 1e6, 1e6], &none, &none, &by_pred);
+        assert_eq!(got, vec![5_361.0, 205_620.0, 86_680.0]);
     }
 
     /// The shards of a BGP ([`shard_bgp_rows`]) add up to the BGP: for every

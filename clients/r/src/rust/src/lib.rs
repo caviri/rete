@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use extendr_api::prelude::*;
 use rete_core::{
-    eval_query_with, results_envelope_json, schema_classes, schema_summary, BlockCacheReader,
+    eval_query_with, results_envelope_json, schema_profile, BlockCacheReader,
     CountingReader, QueryOpts, RangeReader, Rete, DEFAULT_BLOCK,
 };
 
@@ -164,10 +164,11 @@ impl RGraph {
 
     /// Class/predicate profile as JSON.
     fn schema(&self) -> String {
+        let (classes, relations) = schema_profile(&self.rete);
         serde_json::to_string(&serde_json::json!({
             "schemaVersion": JSON_SCHEMA_VERSION,
-            "classes": schema_classes(&self.rete),
-            "relations": schema_summary(&self.rete),
+            "classes": classes,
+            "relations": relations,
         }))
         .unwrap_or_else(|e| fail(e))
     }

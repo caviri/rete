@@ -2414,6 +2414,128 @@ fn id_range(
     )
 }
 
+/// The two id runs that hold literals: the shared section's and the
+/// object-only section's. A byte-ordered dictionary has literals first in each
+/// section; a SPARQL-ordered one (`0x08`) records where the run is.
+fn literal_id_ranges(rete: &crate::Rete) -> Result<[(u32, u32); 2], String> {
+    let dict = rete.dictionary();
+    let shared = dict.shared_count();
+    let objects_end = shared as u64 + dict.object_only_count() as u64;
+    let o_end = objects_end.min(u32::MAX as u64) as u32;
+    let object_term = |id: u32| dict.object_term(id);
+    let sparql_order = dict.order() == crate::term_order::TermOrder::Sparql;
+    let groups = |si: usize| {
+        dict.section_groups(si)
+            .ok_or_else(|| "the dictionary's term groups are unreadable".to_string())
+    };
+    Ok(if sparql_order {
+        let (sh, ob) = (groups(0)?, groups(2)?);
+        [
+            (sh.lit_start() + 1, sh.lit_end() + 1),
+            (shared + ob.lit_start() + 1, shared + ob.lit_end() + 1),
+        ]
+    } else {
+        [
+            id_range(1, shared, "\"", "#", &object_term),
+            id_range(shared + 1, o_end, "\"", "#", &object_term),
+        ]
+    })
+}
+
+/// The class and relation profile of the default graph, **streamed**: the
+/// result [`crate::schema_classes`] and [`crate::schema_summary`] derive from a
+/// full dump, in memory proportional to the subject count (one byte each on a
+/// graph with fewer than 255 classes) plus the distinct (class, predicate,
+/// class) rows, never to the statement count. Returns `None` when the file
+/// cannot be streamed (no SPO or POS permutation, a union default graph, or a
+/// read that failed part-way); the caller then falls back to the dump.
+///
+/// Classification matches the dump's: a subject typed more than once takes the
+/// class with the highest id (the last one in index order), an object that is
+/// a literal is `(literal)`, anything else without a class is `(untyped)`, and
+/// `rdf:type` statements define classes without counting as relations.
+pub(crate) fn schema_profile_streaming(rete: &crate::Rete) -> Option<crate::file::SchemaProfile> {
+    use crate::index::IndexPermutation;
+    const LITERAL_CODE: u32 = u32::MAX;
+    let dict = rete.dictionary();
+    let index = rete.default_index();
+    let shared = dict.shared_count();
+    let subjects_end = shared as u64 + dict.subject_only_count() as u64;
+    let literal_ranges = literal_id_ranges(rete).ok()?;
+    let is_literal = |o: u32| in_any(o, &literal_ranges);
+
+    let mut class_map = ClassMap::new(subjects_end);
+    let mut class_code: std::collections::HashMap<u32, u32, IdBuild> = Default::default();
+    let mut class_ids: Vec<u32> = vec![0];
+    let mut class_counts: Vec<u32> = vec![0];
+    let type_id = dict.predicate_id(RDF_TYPE);
+    if let Some(t) = type_id {
+        for (s, _, o) in index.scan_iter((None, Some(t), None)) {
+            let next = class_ids.len() as u32;
+            let code = *class_code.entry(o).or_insert_with(|| {
+                class_ids.push(o);
+                class_counts.push(0);
+                next
+            });
+            class_counts[code as usize] += 1;
+            class_map.set(s, code);
+        }
+    }
+
+    let mut links: std::collections::HashMap<(u32, u32, u32), u32, IdBuild> = Default::default();
+    let stored = index.for_each_in_order(IndexPermutation::Spo, &mut |s, p, o| {
+        if Some(p) == type_id {
+            return;
+        }
+        let sc = class_map.get(s);
+        let oc = if is_literal(o) {
+            LITERAL_CODE
+        } else if o <= shared {
+            class_map.get(o)
+        } else {
+            0
+        };
+        *links.entry((sc, p, oc)).or_default() += 1;
+    });
+    if !stored || rete.index_incomplete() {
+        return None;
+    }
+    drop(class_map);
+
+    let class_terms: Vec<String> = class_ids
+        .iter()
+        .map(|&o| dict.object_term(o).unwrap_or_default())
+        .collect();
+    let class_name = |code: u32| -> String {
+        if code == LITERAL_CODE {
+            "(literal)".to_string()
+        } else if code == 0 {
+            O_UNTYPED.to_string()
+        } else {
+            class_terms[code as usize].clone()
+        }
+    };
+    let mut merged: BTreeMap<(String, String, String), u32> = BTreeMap::new();
+    for ((sc, p, oc), n) in links {
+        let pt = dict.predicate_term(p)?;
+        *merged
+            .entry((class_name(sc), pt, class_name(oc)))
+            .or_default() += n;
+    }
+    let relations = merged
+        .into_iter()
+        .map(|((a, p, b), c)| (a, p, b, c))
+        .collect();
+
+    let mut by_name: BTreeMap<String, u32> = BTreeMap::new();
+    for (code, &n) in class_counts.iter().enumerate().skip(1) {
+        *by_name.entry(class_terms[code].clone()).or_default() += n;
+    }
+    let mut classes: Vec<(String, u32)> = by_name.into_iter().collect();
+    classes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Some((classes, relations))
+}
+
 fn in_any(id: u32, ranges: &[(u32, u32)]) -> bool {
     ranges.iter().any(|&(a, b)| a <= id && id < b)
 }
@@ -2475,18 +2597,7 @@ pub fn derive_card_streaming(
         dict.section_groups(si)
             .ok_or_else(|| "the dictionary's term groups are unreadable".to_string())
     };
-    let literal_ranges = if sparql_order {
-        let (sh, ob) = (groups(0)?, groups(2)?);
-        [
-            (sh.lit_start() + 1, sh.lit_end() + 1),
-            (shared + ob.lit_start() + 1, shared + ob.lit_end() + 1),
-        ]
-    } else {
-        [
-            id_range(1, shared, "\"", "#", &object_term),
-            id_range(shared + 1, o_end, "\"", "#", &object_term),
-        ]
-    };
+    let literal_ranges = literal_id_ranges(rete)?;
     let is_literal = |o: u32| in_any(o, &literal_ranges);
     let quoted = header.has_quoted_triples();
     let (quoted_subjects, quoted_objects) = if quoted && sparql_order {
@@ -4298,6 +4409,50 @@ mod tests {
             String::from_utf8(streamed.to_json_bytes()).unwrap(),
             String::from_utf8(in_memory.to_json_bytes()).unwrap()
         );
+    }
+
+    /// `schema_profile` streams the sorted sections; it must return exactly what
+    /// the dump-based reference returns, row for row and in the same order.
+    fn assert_profile_matches_dump(quads: &[(String, String, String, Option<String>)]) {
+        let (bytes, _) =
+            crate::ingest::assemble_dataset_with_opts(quads.to_vec(), true, false, None, |_, _| {
+                Vec::new()
+            });
+        let rete = crate::Rete::open(&bytes).unwrap();
+        let streamed = schema_profile_streaming(&rete).expect("the file streams");
+        assert_eq!(streamed, crate::schema_profile_dump(&rete));
+        assert_eq!(crate::schema_profile(&rete), streamed);
+        assert_eq!(crate::schema_summary(&rete), streamed.1);
+        assert_eq!(crate::schema_classes(&rete), streamed.0);
+    }
+
+    #[test]
+    fn schema_profile_streaming_matches_the_dump() {
+        // Every term kind, RDF-star, a named graph.
+        assert_profile_matches_dump(&streaming_fixture());
+        // More classes than one byte holds.
+        let mut quads = Vec::new();
+        for i in 0..300 {
+            let s = format!("<http://ex/thing/{i:03}>");
+            quads.push(q(&s, TYPE, &format!("<http://ex/Class{i:03}>")));
+            quads.push(q(
+                &s,
+                "<http://ex/next>",
+                &format!("<http://ex/thing/{:03}>", (i + 1) % 300),
+            ));
+        }
+        assert_profile_matches_dump(&quads);
+        // Multi-typed subjects (the highest id wins), a literal as a class,
+        // duplicates and an untyped object.
+        let mut quads = enriched_fixture();
+        quads.push(q("<http://ex/a>", TYPE, "<http://ex/Zebra>"));
+        quads.push(q("<http://ex/a>", TYPE, "<http://ex/Agent>"));
+        quads.push(q("<http://ex/c>", TYPE, "\"odd\""));
+        quads.push(q("<http://ex/a>", "<http://ex/knows>", "<http://ex/c>"));
+        quads.push(q("<http://ex/a>", "<http://ex/knows>", "<http://ex/c>"));
+        assert_profile_matches_dump(&quads);
+        // Untyped data.
+        assert_profile_matches_dump(&[q("<http://ex/a>", "<http://ex/p>", "\"x\"")]);
     }
 
     /// Duplicates are where the two paths are allowed to differ: the streamed

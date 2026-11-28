@@ -214,6 +214,7 @@ impl<'a> TripleBlock<'a> {
     pub fn group_directory(&self) -> GroupDirectory {
         let bytes = self.bytes;
         let mut entries = Vec::new();
+        let mut checks: Vec<BCheck> = Vec::new();
         let mut p = self.body_start;
         let mut walk = || -> Option<()> {
             let num_a = rd(bytes, &mut p)?;
@@ -224,14 +225,34 @@ impl<'a> TripleBlock<'a> {
             for i in 0..num_a {
                 a = a.checked_add(rd(bytes, &mut p)?)?;
                 let num_b = rd(bytes, &mut p)?;
+                // A fat group (a predicate in POS) also gets checkpoints every
+                // `B_STRIDE` b-groups, so a bound second component can seek
+                // instead of walking the whole group.
+                let fat = num_b > B_FAT;
                 entries.push(DirEntry {
                     a,
                     pos: p,
                     num_b,
                     a_rem_after: num_a - 1 - i,
+                    chk_start: checks.len(),
+                    chk_len: 0,
                 });
-                for _ in 0..num_b {
-                    rd(bytes, &mut p)?; // delta_b
+                let mut b = 0u32;
+                for j in 0..num_b {
+                    let at = p;
+                    let prev_b = b;
+                    b = b.checked_add(rd(bytes, &mut p)?)?; // delta_b
+                    if fat && j % B_STRIDE == 0 {
+                        checks.push(BCheck {
+                            b_first: b,
+                            b_prev: prev_b,
+                            pos: at,
+                            b_rem: num_b - j,
+                        });
+                        if let Some(e) = entries.last_mut() {
+                            e.chk_len += 1;
+                        }
+                    }
                     let nc = rd(bytes, &mut p)?;
                     for _ in 0..nc {
                         rd(bytes, &mut p)?;
@@ -241,7 +262,7 @@ impl<'a> TripleBlock<'a> {
             Some(())
         };
         let _ = walk();
-        GroupDirectory { entries }
+        GroupDirectory { entries, checks }
     }
 
     /// Probe the block for a **bound leading component** `pa`, jumping straight
@@ -277,6 +298,23 @@ impl<'a> TripleBlock<'a> {
             cursor.a = e.a;
             cursor.a_rem = e.a_rem_after;
             cursor.b_rem = e.num_b;
+            if let (Some(y), true) = (pb, e.chk_len > 0) {
+                // b-groups ascend, so the last checkpoint whose first b is
+                // `<= y` is where `y` can start; none = `y` is below the group.
+                let cs = dir
+                    .checks
+                    .get(e.chk_start..e.chk_start.saturating_add(e.chk_len))
+                    .unwrap_or(&[]);
+                let k = cs.partition_point(|c| c.b_first <= y);
+                match k.checked_sub(1).and_then(|k| cs.get(k)) {
+                    Some(c) => {
+                        cursor.pos = c.pos;
+                        cursor.b = c.b_prev;
+                        cursor.b_rem = c.b_rem;
+                    }
+                    None => cursor.b_rem = 0, // below the first b: no match
+                }
+            }
         }
         cursor
     }
@@ -383,6 +421,25 @@ fn rd(bytes: &[u8], pos: &mut usize) -> Option<u32> {
 /// binary-searches it to jump a probe straight to its group.
 pub struct GroupDirectory {
     entries: Vec<DirEntry>,
+    checks: Vec<BCheck>,
+}
+
+/// An a-group with more b-groups than this is given b-checkpoints.
+const B_FAT: u32 = 64;
+/// One checkpoint per this many b-groups of a fat a-group.
+const B_STRIDE: u32 = 32;
+
+/// A seek point inside a fat a-group: the header of one b-group, with the
+/// delta-decode state the cursor needs to resume there.
+struct BCheck {
+    /// The b id of this group.
+    b_first: u32,
+    /// The b accumulator before this group's delta.
+    b_prev: u32,
+    /// Byte offset of this group's `delta_b`.
+    pos: usize,
+    /// b-groups left in the a-group, this one included.
+    b_rem: u32,
 }
 
 impl GroupDirectory {
@@ -397,7 +454,8 @@ impl GroupDirectory {
 
     /// Heap bytes held by the directory.
     pub fn heap_bytes(&self) -> u64 {
-        (self.entries.capacity() * std::mem::size_of::<DirEntry>()) as u64
+        (self.entries.capacity() * std::mem::size_of::<DirEntry>()
+            + self.checks.capacity() * std::mem::size_of::<BCheck>()) as u64
     }
 
     /// The smallest leading id `>= a` this block holds, if any.
@@ -411,6 +469,7 @@ impl GroupDirectory {
     pub(crate) fn empty_for_tests() -> Self {
         GroupDirectory {
             entries: Vec::new(),
+            checks: Vec::new(),
         }
     }
 }
@@ -422,6 +481,10 @@ struct DirEntry {
     pos: usize,
     num_b: u32,
     a_rem_after: u32,
+    /// This group's checkpoints are `checks[chk_start..chk_start + chk_len]`
+    /// (none unless the group is fat).
+    chk_start: usize,
+    chk_len: usize,
 }
 
 /// A lazy cursor over a [`TripleBlock`] body produced by [`TripleBlock::scan`].
@@ -467,6 +530,11 @@ impl Iterator for BlockCursor<'_> {
             while self.b_rem > 0 {
                 self.b_rem -= 1;
                 self.b = self.b.checked_add(rd(bytes, &mut self.pos)?)?;
+                // With the leading id bound this is the only a-group that can
+                // match and its b ids ascend: past `pb`, nothing more does.
+                if self.pa.is_some() && self.pb.is_some_and(|y| self.b > y) {
+                    return None;
+                }
                 let num_c = rd(bytes, &mut self.pos)?;
                 if self.pb.is_some_and(|y| y != self.b) {
                     for _ in 0..num_c {
