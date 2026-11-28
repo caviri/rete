@@ -28,7 +28,7 @@ class ReteTest {
     @Test
     void reportsEngineVersion() {
         try (Rete rete = Rete.load()) {
-            assertEquals("0.7.9", rete.version());
+            assertEquals("0.7.10", rete.version());
         }
     }
 

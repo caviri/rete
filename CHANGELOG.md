@@ -5,6 +5,51 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-11-28
+
+0.7.10 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+It changes how SPARQL joins are planned. No file changes, and answers do not change.
+
+### Changed
+
+- **Star joins are one merge.** Patterns on one subject
+  (`?s :a ?x ; :b ?y ; :c ?z`) are joined in a single pass over their
+  subject-sorted streams when each is estimated above 65,536 triples; only
+  the first two were merged before, and each further pattern was scanned into
+  a relation and hash-joined. A query that is one star streams; a star inside
+  a larger pattern is built once and joined as one relation. A file built
+  with `--permutations 3` keeps the previous plan. On TPC-H at scale factor
+  0.1 as RDF (12.5 M triples, a file built by 0.7.8), as SPARQL: Q1 5.45 s to
+  0.31 s, Q6 1.47 s to 0.04 s, and Q1's peak memory 1.6 GB to 0.3 GB. See
+  [Star joins](docs/star-joins.md).
+- **A small pattern is scanned once instead of being looked up per row.** When
+  more than 512 rows ask about a pattern of at most about a million triples,
+  they are more than a 512th of it and they do not bind its subject, it is
+  scanned and hash-joined. A lookup by object into a large predicate cost
+  330 µs: joining 20,000 parts to their 600,572 line items took 6.6 s by
+  lookup and 0.3 s by scan. TPC-H Q3 7.46 s to 0.33 s, Q5 4.91 s to 0.33 s,
+  Q14 9.67 s to 0.68 s, Q19 8.00 s to 0.26 s.
+- **Patterns are ordered by what they add per row.** After the first pattern,
+  the next is the one that adds the fewest rows to each row already joined
+  (its size divided by the measured number of distinct subjects or objects of
+  its predicate), not the smallest on its own. Two stars that share two
+  variables were joined on one of them and filtered on the other afterwards:
+  7 M intermediate rows and more than 4 GB for an answer of 1,332 rows, now
+  0.1 s. A join whose intermediate result is measured above two million rows
+  streams instead of being built in memory.
+
+### Fixed
+
+- **A lookup inside a wide group seeks.** One subject with tens of thousands
+  of values for a predicate (or one object with as many subjects) was read
+  from the start of its group on every lookup. The block now keeps
+  checkpoints inside such a group: 72 µs to 5 µs per lookup on the measured
+  case.
+- **`schema()` runs in bounded memory.** The schema profile of a file without
+  a stored one is derived by streaming the sorted sections, as the card is.
+  On the 12.5 M-triple TPC-H file it ran out of 4 GB; it takes 0.5 s and
+  112 MB. Python, R, JavaScript and `rete inspect` use it.
+
 ## [0.7.9] - 2026-11-28
 
 0.7.9 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
