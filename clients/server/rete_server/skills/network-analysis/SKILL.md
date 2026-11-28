@@ -264,11 +264,27 @@ type and laid out in rings:
 ```
 
 The look is in `options`: `layout` is one of `cose` (force-directed, default
-for graphs), `layered`, `concentric`, `breadthfirst`, `circle` or `grid`;
-`group_by` colours nodes by `type`, `namespace`, `none` or a predicate IRI, and
-`group_boxes` draws each group in a box; `diagram` is `graph`, `boxes` or
-`classes`. `graph_view(dataset, schema=true)` draws the dataset's own schema, a
-good first picture of an unfamiliar graph.
+for graphs), `layered`, `concentric`, `breadthfirst`, `circle`, `grid` or
+`hive`; `group_by` colours nodes by `type`, `namespace`, `none` or a predicate
+IRI, and `group_boxes` draws each group in a box; `diagram` is `graph`, `boxes`
+or `classes`. `graph_view(dataset, schema=true)` draws the dataset's own schema,
+a good first picture of an unfamiliar graph.
+
+The hive layout is the one for structure rather than neighbourhoods: nodes sit
+on a few radial axes and edges curve between them, so a few thousand links stay
+readable where `cose` makes a hairball. `hive_axes` says what puts a node on an
+axis: `type` (its class), `role` (sources, both, sinks), `kind` (resource,
+literal), `degree` (thirds by links) or `auto` (the first that tells two groups
+apart). `hive_order` orders nodes along an axis from the centre out: `degree`
+(default), `in`, `out` or `name`. Who cites whom, by class and in-degree:
+
+```json
+{ "layout": "hive", "hive_axes": "type", "hive_order": "in" }
+```
+
+`view` picks the tab: `graph`, `table` (with a chart of each column), `cards`
+or `map` (WKT or latitude/longitude columns). A degree table reads better as
+`table`; a comment line `# view: table` in the query does the same.
 
 After you compute something locally, put it back on the picture with
 `graph_view_update(view_id, highlight=[iri, ...])` for the top brokers, `focus`
