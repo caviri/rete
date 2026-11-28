@@ -62,6 +62,20 @@ class Settings:
     max_handles: int = 12
     row_cap: int = 10_000
     query_timeout_s: float = 60.0
+    # Long work (MCP tasks): its own time limit and row ceiling, and how many
+    # run at once. A task also gets its own graph handle per dataset, so a long
+    # query never makes a quick call on the same dataset come back Busy.
+    task_timeout_s: float = 900.0
+    task_row_cap: int = 100_000
+    task_workers: int = 2
+    # Big answers stay out of the model's context: past this many rows (or
+    # bytes of JSON) sparql_query stores the answer and returns a summary plus
+    # a handle. The store lives on disk, is capped in size and expires.
+    inline_rows: int = 200
+    inline_bytes: int = 60_000
+    results_dir: Path = field(default_factory=lambda: Path("/tmp/rete-results"))
+    results_max_mb: int = 512
+    results_ttl_s: float = 3600.0
     catalog_refresh_s: float = 600.0
     # Catalog keys to open at startup, so the first query skips the open.
     warm: List[str] = field(default_factory=list)
@@ -106,6 +120,15 @@ class Settings:
         s.max_handles = int(e.get("RETE_MAX_HANDLES") or s.max_handles)
         s.row_cap = int(e.get("RETE_ROW_CAP") or s.row_cap)
         s.query_timeout_s = float(e.get("RETE_QUERY_TIMEOUT_S") or s.query_timeout_s)
+        s.task_timeout_s = float(e.get("RETE_TASK_TIMEOUT_S") or s.task_timeout_s)
+        s.task_row_cap = int(e.get("RETE_TASK_ROW_CAP") or s.task_row_cap)
+        s.task_workers = int(e.get("RETE_TASK_WORKERS") or s.task_workers)
+        s.inline_rows = int(e.get("RETE_INLINE_ROWS") or s.inline_rows)
+        s.inline_bytes = int(e.get("RETE_INLINE_BYTES") or s.inline_bytes)
+        if e.get("RETE_RESULTS_DIR"):
+            s.results_dir = Path(e["RETE_RESULTS_DIR"])
+        s.results_max_mb = int(e.get("RETE_RESULTS_MAX_MB") or s.results_max_mb)
+        s.results_ttl_s = float(e.get("RETE_RESULTS_TTL_S") or s.results_ttl_s)
         s.catalog_refresh_s = float(e.get("RETE_CATALOG_REFRESH_S") or s.catalog_refresh_s)
         s.warm = _split(e.get("RETE_WARM"))
         s.allow_urls = _flag(e.get("RETE_ALLOW_URLS"), s.allow_urls)

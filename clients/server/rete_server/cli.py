@@ -41,6 +41,17 @@ def _parser() -> argparse.ArgumentParser:
     a("--max-handles", type=int, help="graphs kept open (default 12) [RETE_MAX_HANDLES]")
     a("--row-cap", type=int, help="most rows in one answer (default 10000) [RETE_ROW_CAP]")
     a("--query-timeout", type=float, metavar="SECONDS", help="query time limit (default 60) [RETE_QUERY_TIMEOUT_S]")
+    a("--task-timeout", type=float, metavar="SECONDS",
+      help="time limit for a long query run as an MCP task (default 900) [RETE_TASK_TIMEOUT_S]")
+    a("--task-row-cap", type=int, help="most rows a task may produce (default 100000) [RETE_TASK_ROW_CAP]")
+    a("--task-workers", type=int, help="long queries run at once (default 2) [RETE_TASK_WORKERS]")
+    a("--inline-rows", type=int, help="rows above which sparql_query stores the answer and returns "
+                                      "a summary and a handle (default 200) [RETE_INLINE_ROWS]")
+    a("--inline-bytes", type=int, help="the same, in bytes of JSON (default 60000) [RETE_INLINE_BYTES]")
+    a("--results-dir", type=Path, help="where stored answers live (default /tmp/rete-results) [RETE_RESULTS_DIR]")
+    a("--results-max-mb", type=int, help="stored answers cap, oldest evicted (default 512) [RETE_RESULTS_MAX_MB]")
+    a("--results-ttl", type=float, metavar="SECONDS",
+      help="how long a stored answer lives (default 3600) [RETE_RESULTS_TTL_S]")
     a("--catalog-refresh", type=float, metavar="SECONDS",
       help="re-read the catalog this often (default 600) [RETE_CATALOG_REFRESH_S]")
     a("--warm", action="append", metavar="KEY", help="open this dataset at startup; repeat [RETE_WARM]")
@@ -79,7 +90,11 @@ def settings_from(argv: Optional[List[str]] = None, env: Optional[dict] = None) 
     for name, attr in (("cache_max_mb", "cache_max_mb"), ("max_handles", "max_handles"),
                        ("row_cap", "row_cap"), ("query_timeout", "query_timeout_s"),
                        ("catalog_refresh", "catalog_refresh_s"), ("threads", "threads"),
-                       ("upload_max_mb", "upload_max_mb")):
+                       ("upload_max_mb", "upload_max_mb"), ("task_timeout", "task_timeout_s"),
+                       ("task_row_cap", "task_row_cap"), ("task_workers", "task_workers"),
+                       ("inline_rows", "inline_rows"), ("inline_bytes", "inline_bytes"),
+                       ("results_dir", "results_dir"), ("results_max_mb", "results_max_mb"),
+                       ("results_ttl", "results_ttl_s")):
         value = getattr(args, name)
         if value is not None:
             setattr(s, attr, value)

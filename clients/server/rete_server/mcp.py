@@ -10,14 +10,20 @@ no documentation outside the server.
 """
 from __future__ import annotations
 
-import functools
 import json
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import Progress
+from fastmcp_tasks import TasksExtension
 
 from . import state
+from .longrun import (TASK_CONFIG, lane, register_results, run_blocking, shape_sparql,
+                      tool_errors)
+from .settings import Settings
+from .skillset import register_skills
 from .views import register_views
 
 READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
@@ -64,31 +70,32 @@ _AUTHORING = """\
 """
 
 _FOOTER = """
+Skills (clients that support Skills over MCP list them): `query`, `build-rete`,
+`network-analysis` and `web-pages` hold the longer guides. The workflow above
+is enough without them.
+
 Every result carries `stats` (bytes and requests actually fetched). Each
 dataset is also a SPARQL 1.1 Protocol endpoint at `/sparql/<key>` for non-MCP
 clients and federated SERVICE clauses.
 """
 
 
-def _tool_errors(fn):
-    """Service errors become tool errors with a clean message."""
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except ToolError:
-            raise
-        except Exception as e:
-            raise ToolError(state.describe_error(e)) from None
-    return wrapper
+_tool_errors = tool_errors  # service errors become tool errors (sync or async tools)
 
 
-def build_mcp(author: bool) -> FastMCP:
+def build_mcp(author: bool, settings=None) -> FastMCP:
     mcp = FastMCP(name="rete", instructions=_INSTRUCTIONS + (_AUTHORING if author else "") + _FOOTER)
+    settings = settings or state.settings or Settings()
+    # Background tasks (io.modelcontextprotocol/tasks): in-process, so one worker
+    # pool per server. Only clients that declare the extension ever get a task.
+    mcp.add_extension(TasksExtension(
+        url="memory://", concurrency=settings.task_workers,
+        execution_ttl=timedelta(seconds=max(3600.0, settings.task_timeout_s * 2))))
 
-    def tool(fn=None, *, read_only: bool = True):
+    def tool(fn=None, *, read_only: bool = True, task=None):
         def register(f):
-            return mcp.tool(_tool_errors(f), annotations=READ_ONLY if read_only else None)
+            extra = {} if task is None else {"task": task}
+            return mcp.tool(_tool_errors(f), annotations=READ_ONLY if read_only else None, **extra)
         return register(fn) if fn else register
 
     @tool
@@ -121,10 +128,11 @@ def build_mcp(author: bool) -> FastMCP:
         catalog). Each `sparql` runs as-is via sparql_query."""
         return state.service.dataset_examples(dataset)
 
-    @tool
-    def sparql_query(dataset: Optional[str] = None, query: str = "", reason: bool = False,
-                     url: Optional[str] = None, limit: Optional[int] = None,
-                     quoted_triple_syntax: str = "rdf12") -> Dict[str, Any]:
+    @tool(task=TASK_CONFIG)
+    async def sparql_query(dataset: Optional[str] = None, query: str = "", reason: bool = False,
+                           url: Optional[str] = None, limit: Optional[int] = None,
+                           quoted_triple_syntax: str = "rdf12",
+                           progress: Progress = Progress()) -> Dict[str, Any]:
         """Run SPARQL 1.1 (SELECT / ASK / CONSTRUCT / DESCRIBE) against a dataset
         key from list_datasets, or a public .rete URL via `url`. Use LIMIT while
         exploring; `reason=true` adds OWL 2 QL entailment. SELECT returns `table`
@@ -132,8 +140,16 @@ def build_mcp(author: bool) -> FastMCP:
         `triples`, quoted triples as RDF 1.2 `<<( s p o )>>`
         (`quoted_triple_syntax="rdf-star"` for `<<s p o>>`). `warnings` lists
         FILTER type errors (e.g. CONTAINS on an IRI — wrap it in STR()) that made
-        rows silently drop; it is empty when there are none."""
-        return state.service.run_query(dataset, url, query, reason, limit, quoted_triple_syntax)
+        rows silently drop; it is empty when there are none. A big answer (over
+        200 rows) comes back as a summary: `columns`, `total_rows`, the first
+        rows, `truncated: true` and a `result` handle (and a resource_link);
+        read the rest with `result_rows`, or aggregate / LIMIT to keep it
+        small. In clients that support MCP tasks a slow query runs as a
+        background task with a longer time limit."""
+        doc = await run_blocking(
+            state.service.run_query, dataset, url, query, reason, limit, quoted_triple_syntax,
+            lane=lane(), progress=progress, label=f"querying {dataset or url}")
+        return shape_sparql(doc)
 
     @tool
     def validate_query(query: str, dataset: Optional[str] = None,
@@ -162,14 +178,17 @@ def build_mcp(author: bool) -> FastMCP:
         N-Triples tokens."""
         return state.service.describe_entity(dataset, iri)
 
-    @tool
-    def validate_shacl(dataset: Optional[str] = None, shapes: str = "",
-                       url: Optional[str] = None, graph: Optional[str] = None) -> Dict[str, Any]:
+    @tool(task=TASK_CONFIG)
+    async def validate_shacl(dataset: Optional[str] = None, shapes: str = "",
+                             url: Optional[str] = None, graph: Optional[str] = None,
+                             progress: Progress = Progress()) -> Dict[str, Any]:
         """Validate a dataset against SHACL Core shapes (Turtle): cardinalities,
         datatypes, required properties. Only the shapes' targets are fetched.
         Returns {conforms, results} plus fetch stats. shacl_shapes lists curated
         shapes that are known to run."""
-        return state.service.shacl_validate(dataset, url, shapes, graph, "json")
+        return await run_blocking(
+            state.service.shacl_validate, dataset, url, shapes, graph, "json",
+            lane=lane(), progress=progress, label=f"validating {dataset or url}")
 
     @tool
     def shacl_shapes(dataset: str) -> List[Dict[str, Any]]:
@@ -239,10 +258,11 @@ def build_mcp(author: bool) -> FastMCP:
 
             return authoring.check_ontology(ontology, format)
 
-        @tool(read_only=False)
-        def build_rete(rdf: str, format: str = "ttl", card: Optional[Dict[str, Any]] = None,
-                       examples: Optional[List[Dict[str, str]]] = None, text_index: bool = False,
-                       include_base64: bool = False) -> Dict[str, Any]:
+        @tool(read_only=False, task=TASK_CONFIG)
+        async def build_rete(rdf: str, format: str = "ttl", card: Optional[Dict[str, Any]] = None,
+                             examples: Optional[List[Dict[str, str]]] = None, text_index: bool = False,
+                             include_base64: bool = False,
+                             progress: Progress = Progress()) -> Dict[str, Any]:
             """Build a .rete from RDF text (ontology + instances) on this server.
             Give it a `card` (title, description, license; when known: version,
             creators [{name, orcid}], publisher {name, ror}, doi, cite_as,
@@ -252,7 +272,8 @@ def build_mcp(author: bool) -> FastMCP:
             to hand the user the file itself."""
             from . import author as authoring
 
-            return authoring.build_rete(rdf, format, card, examples, text_index, include_base64)
+            return await run_blocking(authoring.build_rete, rdf, format, card, examples, text_index,
+                                      include_base64, progress=progress, label="building the .rete")
 
         @tool(read_only=False)
         def causal_diagram(claims: List[Dict[str, Any]], title: str = "Causal diagram",
@@ -270,4 +291,7 @@ def build_mcp(author: bool) -> FastMCP:
     # The graph view: its page and tools. A file the user opens in a view
     # becomes a dataset here, as a build_rete file does, so it goes with authoring.
     register_views(mcp, uploads=author)
+    register_skills(mcp)
+    # Stored answers: result_rows and rete://results/{id}.
+    register_results(mcp, READ_ONLY)
     return mcp

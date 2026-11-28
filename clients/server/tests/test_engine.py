@@ -98,6 +98,9 @@ def test_status_lists_open_handles(client):
     assert any(h["source"].endswith("people.rete") for h in doc["open_handles"])
 
 
-def test_landing_page_lists_datasets_and_how_to_connect(client):
-    page = client.get("/").text
-    assert "/mcp" in page and "people" in page and "claude mcp add" in page
+def test_home_page_is_a_shell_that_fetches_its_data(client):
+    page = client.get("/")
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "Connect an agent" in page.text and 'id="drop"' in page.text
+    assert "claude mcp add" in client.get("/home/home.js").text
+    assert "local/people.rete" not in page.text  # no data in the shell: the page asks /api for it
