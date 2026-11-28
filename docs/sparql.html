@@ -552,7 +552,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar" aria-label="Documentation">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.7.9</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.7.10</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li><details class="nav-section" open><summary class="nav-h">Start here</summary><ul>
         <li><a href="index.html">Overview</a></li>
@@ -570,6 +570,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         </ul></details></li>
         <li class="nav-group"><details data-nav-page="query-and-analyze.md"><summary>Query and analyze</summary><ul class="nav-sub"><li><a href="query-and-analyze.html">Overview</a></li>
         <li><a href="graph-algorithms.html">Graph algorithms</a></li>
+        <li><a href="star-joins.html">Star joins</a></li>
         <li><a href="federation.html">Federation</a></li>
         <li><a href="reasoning.html">Reasoning</a></li>
         </ul></details></li>
@@ -718,13 +719,21 @@ own instances, so on a 9.53 B-triple file <code>?s a :Service ; :publicationYear
 fewer, and the pattern above 65,536 triples), each row <strong>looks the pattern
 up</strong> in the index instead of scanning it — a bound subject becomes an SPO
 range read, so <code>&lt;doi&gt; :p ?r . ?r ?q ?o</code> reads the handful of <code>?r</code> rows and
-never the whole graph;</li>
+never the whole graph. Not when the pattern is small (at most about a
+million triples), the rows are many (more than 512, and more than a 512th
+of the pattern) and they do not bind its subject: it is then scanned once
+and hash-joined;</li>
+<li>patterns on one subject variable, a <strong>star</strong> (<code>?s :a ?x ; :b ?y ; :c ?z</code>),
+are one merge join over their subject-sorted streams when each is estimated
+above 65,536 triples and none is far larger than the first. A pattern that
+is one star streams, holding only the current subject's rows; a star inside
+a larger pattern is built once and joined as one relation. See
+<a href="star-joins.html">Star joins</a>;</li>
 <li>when even the most selective pattern is large (above about two million
-matches), the join <strong>streams</strong>: that pattern is read from its index cursor
-and every later pattern is joined per row, through a hash table when it is
-small and by lookup otherwise; two large patterns that share their subject
-variable stream through a merge join. Nothing proportional to the large
-pattern is held;</li>
+matches), the join <strong>streams</strong>: that pattern, or the star it leads, is read
+from its index cursor and every later pattern is joined per row, through a
+hash table when it is small and by lookup otherwise. Nothing proportional
+to the large pattern is held;</li>
 <li>otherwise the small side is materialized and hash-joined, as before.</li>
 </ul>
 <p>The same rule applies between a basic graph pattern and what joins it from the
