@@ -61,6 +61,8 @@ def _parser() -> argparse.ArgumentParser:
       help="turn off the authoring tools, /generated and files opened in a graph view [RETE_AUTHOR=0]")
     a("--upload-max-mb", type=int, help="largest file a user may open in a graph view "
                                         "(default 64) [RETE_UPLOAD_MAX_MB]")
+    a("--no-media-preview", action="store_true", default=None,
+      help="turn off the media_preview tool [RETE_MEDIA_PREVIEW=0]")
     a("--ask-model", help="pydantic-ai model id enabling /api/ask [RETE_ASK_MODEL]")
     a("--public-url", help="this server's public base URL [RETE_PUBLIC_URL]")
     a("--threads", type=int, help="threads for engine calls (default 32) [RETE_THREADS]")
@@ -104,6 +106,8 @@ def settings_from(argv: Optional[List[str]] = None, env: Optional[dict] = None) 
         s.allow_urls = False
     if args.no_author:
         s.author = False
+    if args.no_media_preview:
+        s.media_preview = False
     if args.ask_model:
         s.ask_model = args.ask_model
     if args.public_url:

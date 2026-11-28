@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+import anyio
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import Progress
+from fastmcp.tools import ToolResult
+from mcp_types import ImageContent, TextContent
 from fastmcp_tasks import TasksExtension
 
-from . import state
+from . import media, state
 from .longrun import (TASK_CONFIG, lane, register_results, run_blocking, shape_sparql,
                       tool_errors)
 from .settings import Settings
@@ -27,6 +31,7 @@ from .skillset import register_skills
 from .views import register_views
 
 READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
+READ_ONLY_OPEN = {"readOnlyHint": True, "openWorldHint": True}
 
 _INSTRUCTIONS = """\
 This server queries `.rete` files: single-file RDF knowledge graphs read
@@ -61,8 +66,14 @@ Recommended workflow:
    says what the user selected.
 """
 
+_MEDIA = """\
+9. `media_preview(url)` — look at a picture the graph points to: an IIIF
+   manifest (`canvas` picks a page), an IIIF image or a plain image URL, back
+   as one small JPEG. `graph_view` with view "cards" shows many to the user.
+"""
+
 _AUTHORING = """\
-9. Authoring — create graphs, not only read them: `suggest_vocabulary` (find
+Authoring — create graphs, not only read them: `suggest_vocabulary` (find
    existing terms on LOV before minting IRIs) → draft an ontology in Turtle →
    `check_ontology` until clean → `build_rete` (ontology + instances + card +
    examples) → the returned dataset key works at once in sparql_query.
@@ -85,18 +96,19 @@ _tool_errors = tool_errors  # service errors become tool errors (sync or async t
 
 
 def build_mcp(author: bool, settings=None) -> FastMCP:
-    mcp = FastMCP(name="rete", instructions=_INSTRUCTIONS + (_AUTHORING if author else "") + _FOOTER)
     settings = settings or state.settings or Settings()
+    mcp = FastMCP(name="rete", instructions=(
+        _INSTRUCTIONS + (_MEDIA if settings.media_preview else "") + (_AUTHORING if author else "") + _FOOTER))
     # Background tasks (io.modelcontextprotocol/tasks): in-process, so one worker
     # pool per server. Only clients that declare the extension ever get a task.
     mcp.add_extension(TasksExtension(
         url="memory://", concurrency=settings.task_workers,
         execution_ttl=timedelta(seconds=max(3600.0, settings.task_timeout_s * 2))))
 
-    def tool(fn=None, *, read_only: bool = True, task=None):
+    def tool(fn=None, *, read_only: bool = True, task=None, annotations=None):
         def register(f):
             extra = {} if task is None else {"task": task}
-            return mcp.tool(_tool_errors(f), annotations=READ_ONLY if read_only else None, **extra)
+            return mcp.tool(_tool_errors(f), annotations=annotations or (READ_ONLY if read_only else None), **extra)
         return register(fn) if fn else register
 
     @tool
@@ -238,6 +250,29 @@ def build_mcp(author: bool, settings=None) -> FastMCP:
             return {"id": id, "title": iri, "text": json.dumps(doc.get("triples") or [], indent=2),
                     "url": "", "metadata": {"kind": "entity", "dataset": key}}
         raise ToolError(f"unknown id shape {id!r} (expected dataset::… or entity::…)")
+
+    if settings.media_preview:
+        @tool(annotations=READ_ONLY_OPEN)
+        async def media_preview(url: str, canvas: Union[int, str] = 0, max_px: int = 512) -> ToolResult:
+            """Look at a picture the graph points to. `url` is an IIIF manifest
+            (v2 or v3), an IIIF image service or info.json, or an image URL
+            (jpeg, png, webp, gif, tiff). For a manifest, `canvas` is the page:
+            a 0-based index or a canvas id. Returns one JPEG (longest side
+            `max_px`, 128 to 1024) and a JSON note with the label, canvas,
+            number of canvases, size and the image URL used. Only public hosts
+            are fetched; the image is shrunk server-side."""
+            try:
+                with anyio.fail_after(media.TOTAL_TIMEOUT_S + 3):
+                    jpeg, facts = await run_blocking(
+                        media.preview, url, canvas, max_px, settings.media_allow_private)
+            except TimeoutError:
+                raise ToolError("timed out fetching the picture") from None
+            except media.MediaError as e:
+                raise ToolError(str(e)) from None
+            return ToolResult(
+                content=[ImageContent(type="image", data=media.b64(jpeg), mimeType="image/jpeg"),
+                         TextContent(type="text", text=json.dumps(facts))],
+                structured_content=facts)
 
     if author:
         @tool

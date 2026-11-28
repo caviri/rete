@@ -8,7 +8,7 @@ documentation.
 
 | Surface | What it is | For |
 |---|---|---|
-| **MCP server** | `https://katospiegel-rete.hf.space/mcp/` — 16 tools over the published catalog and any `.rete` URL, the graph view, skills and long queries as tasks | ChatGPT, Claude, any MCP client |
+| **MCP server** | `https://katospiegel-rete.hf.space/mcp/` — 17 tools over the published catalog and any `.rete` URL, the graph view, skills and long queries as tasks | ChatGPT, Claude, any MCP client |
 | **Desktop extension** | `rete.mcpb` — the whole engine as a one-click local install | Claude Desktop, incl. private graphs and offline work |
 | **Claude Code plugin** | this repo, installable as a plugin + marketplace | Claude Code users: MCP + skills in two commands |
 | **Skills** | four repo-aware playbooks under `skills/` | Claude Code; also readable as human docs |
@@ -34,6 +34,7 @@ The tools, grouped by what an agent does with them:
 | Discover | `list_datasets` · `dataset_card` · `dataset_schema` · `example_queries` |
 | Query | `sparql_query` (SELECT/ASK/CONSTRUCT/DESCRIBE, `reason=true` for OWL 2 QL, any catalog key **or any `.rete` URL**; a big answer comes back as its first rows and a handle) · `result_rows` (page through it) · `find_entities` · `describe_entity` |
 | Validate | `validate_query` (deterministic SPARQL lint: parse, prefixes, features, vocabulary probes vs a dataset, ontology/subclass checks) · `validate_shacl` (lazy over shape targets) · `shacl_shapes` (curated shapes) |
+| Look | `media_preview` (one small JPEG of an IIIF manifest page, an IIIF image or a plain image URL a graph points to; public hosts only) |
 | Show | `graph_view` (query results, a neighbourhood or the schema as an interactive graph, table, cards or map in the conversation, for clients that render MCP Apps) · `graph_view_update` · `graph_view_state` |
 | **Author** (own server only) | `suggest_vocabulary` (search LOV before minting IRIs) · `check_ontology` (parse + lint battery + reasoner smoke) · `build_rete` (RDF text → a served, immediately-queryable `.rete`) · `causal_diagram` (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the [conversation experiments](fallacies.md) |
 | ChatGPT connector contract | `search` · `fetch` |
