@@ -179,5 +179,10 @@ interactive graph in clients that render MCP Apps. A SELECT with `?s ?p ?o`
 columns, or a CONSTRUCT, is drawn as nodes and edges. Keep it to a few hundred
 nodes. See the `network-analysis` skill for what to ask the graph.
 
+When a result carries IIIF manifests or image URLs, `media_preview(url)` lets
+you look at one: a manifest (pick a page with `canvas`), an image service or a
+plain image comes back as a small JPEG. `graph_view` with view "cards" shows
+many of them to the user.
+
 For one question, answer in words with the numbers; offer the query and the
 dataset key so the user can rerun it.

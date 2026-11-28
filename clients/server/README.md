@@ -213,10 +213,32 @@ Every option is a flag and an environment variable; the flag wins.
 | `RETE_ALLOW_URLS` | `--no-urls` | on | queries against any public `.rete` URL |
 | `RETE_ALLOW_PRIVATE_URLS` | | off | let `url=` reach private addresses |
 | `RETE_AUTHOR` | `--no-author` | on | `build_rete`, `causal_diagram`, vocabulary and ontology checks, files opened in a graph view |
+| `RETE_MEDIA_PREVIEW` | `--no-media-preview` | on | the `media_preview` tool |
+| `RETE_MEDIA_ALLOW_PRIVATE` | | off | let `media_preview` reach private addresses (tests, private deployments) |
 | `RETE_UPLOAD_MAX_MB` | `--upload-max-mb` | `64` | largest file opened in a graph view |
 | `RETE_ASK_MODEL` | `--ask-model` | (none) | a pydantic-ai model id, e.g. `anthropic:claude-sonnet-5-5` |
 | `RETE_PUBLIC_URL` | `--public-url` | (none) | this server's own URL, for absolute links |
 | `RETE_THREADS` | `--threads` | `32` | threads for engine calls |
+
+## media_preview
+
+`media_preview(url, canvas=0, max_px=512)` lets a model look at a picture a
+graph points to. `url` is an IIIF manifest (v2 or v3), an IIIF image service or
+`info.json`, or a jpeg, png, webp, gif or tiff URL. For a manifest, `canvas` is
+a 0-based index or a canvas id, and the image service is asked for the wanted
+size, so a full-resolution master is never downloaded. It returns one JPEG
+(longest side up to `max_px`, 128 to 1024, about 120 KB at most as base64) and a
+JSON note: label, canvas, number of canvases, size, the image URL used.
+
+The server fetches URLs for whoever calls it, so it is strict. Only http and
+https, no credentials in the URL, and every address the host resolves to must be
+public (no loopback, private, link-local, multicast or reserved ranges). The
+connection goes to the address it checked, and each of up to 3 redirects is
+checked again. A manifest is read up to 2 MB, an image up to 15 MB, with at most
+4 requests and about 20 s. A name that resolves to a public address is trusted
+for that one call; `RETE_MEDIA_ALLOW_PRIVATE=1` removes the address checks
+altogether, so leave it off on a public server. `RETE_MEDIA_PREVIEW=0` removes
+the tool.
 
 ## Long queries and large results
 

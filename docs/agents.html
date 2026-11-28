@@ -624,7 +624,7 @@ file), so an agent can go from "what datasets exist?" to a correct SPARQL
 query — and to validated, media-rich answers — without any out-of-band
 documentation.</p>
 <table><thead><tr><th>Surface</th><th>What it is</th><th>For</th></tr></thead><tbody>
-<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 16 tools over the published catalog and any <code>.rete</code> URL, the graph view, skills and long queries as tasks</td><td>ChatGPT, Claude, any MCP client</td></tr>
+<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 17 tools over the published catalog and any <code>.rete</code> URL, the graph view, skills and long queries as tasks</td><td>ChatGPT, Claude, any MCP client</td></tr>
 <tr><td><strong>Desktop extension</strong></td><td><code>rete.mcpb</code> — the whole engine as a one-click local install</td><td>Claude Desktop, incl. private graphs and offline work</td></tr>
 <tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
 <tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
@@ -644,6 +644,7 @@ if you want one.</p>
 <tr><td>Discover</td><td><code>list_datasets</code> · <code>dataset_card</code> · <code>dataset_schema</code> · <code>example_queries</code></td></tr>
 <tr><td>Query</td><td><code>sparql_query</code> (SELECT/ASK/CONSTRUCT/DESCRIBE, <code>reason=true</code> for OWL 2 QL, any catalog key <strong>or any <code>.rete</code> URL</strong>; a big answer comes back as its first rows and a handle) · <code>result_rows</code> (page through it) · <code>find_entities</code> · <code>describe_entity</code></td></tr>
 <tr><td>Validate</td><td><code>validate_query</code> (deterministic SPARQL lint: parse, prefixes, features, vocabulary probes vs a dataset, ontology/subclass checks) · <code>validate_shacl</code> (lazy over shape targets) · <code>shacl_shapes</code> (curated shapes)</td></tr>
+<tr><td>Look</td><td><code>media_preview</code> (one small JPEG of an IIIF manifest page, an IIIF image or a plain image URL a graph points to; public hosts only)</td></tr>
 <tr><td>Show</td><td><code>graph_view</code> (query results, a neighbourhood or the schema as an interactive graph, table, cards or map in the conversation, for clients that render MCP Apps) · <code>graph_view_update</code> · <code>graph_view_state</code></td></tr>
 <tr><td><strong>Author</strong> (own server only)</td><td><code>suggest_vocabulary</code> (search LOV before minting IRIs) · <code>check_ontology</code> (parse + lint battery + reasoner smoke) · <code>build_rete</code> (RDF text → a served, immediately-queryable <code>.rete</code>) · <code>causal_diagram</code> (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the <a href="fallacies.html">conversation experiments</a></td></tr>
 <tr><td>ChatGPT connector contract</td><td><code>search</code> · <code>fetch</code></td></tr>

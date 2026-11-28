@@ -7,6 +7,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **`media_preview` in rete-server.** A model can look at a picture a graph
+  points to: an IIIF manifest page, an IIIF image or a plain image URL comes
+  back as one small JPEG. Public hosts only, with size and time limits;
+  `--no-media-preview` turns it off.
 - **The playground shows what an agent does, and gives it more tools.** A
   label names each WebMCP call while it runs and Settings → Agents lists them
   all. With "Follow the agent" on (the default) the reading tools show what

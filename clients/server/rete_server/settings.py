@@ -89,6 +89,10 @@ class Settings:
     # The largest file a user may open in a graph view (it is held in memory
     # while it arrives); RDF text is also capped at 32 MB, since it is built here.
     upload_max_mb: int = 64
+    # media_preview: fetch one IIIF manifest / image URL and return a small JPEG.
+    media_preview: bool = True
+    # Let it reach private / loopback addresses (tests, private deployments only).
+    media_allow_private: bool = False
     # pydantic-ai model id enabling /api/ask, e.g. "anthropic:claude-sonnet-5-5".
     ask_model: Optional[str] = None
     # Threads for blocking engine calls (queries release the GIL).
@@ -137,6 +141,8 @@ class Settings:
         if e.get("RETE_GENERATED_DIR"):
             s.generated_dir = Path(e["RETE_GENERATED_DIR"])
         s.upload_max_mb = int(e.get("RETE_UPLOAD_MAX_MB") or s.upload_max_mb)
+        s.media_preview = _flag(e.get("RETE_MEDIA_PREVIEW"), s.media_preview)
+        s.media_allow_private = _flag(e.get("RETE_MEDIA_ALLOW_PRIVATE"), s.media_allow_private)
         s.ask_model = e.get("RETE_ASK_MODEL") or None
         s.threads = int(e.get("RETE_THREADS") or s.threads)
         if e.get("RETE_CORS_ORIGINS"):
