@@ -26808,6 +26808,284 @@ function cardCostHtml(cost) {
     const done = await mcpWait(() => !busy(), waitMs);
     return { finished: done, summary: ($("qmeta") || {}).textContent || "", shown: mcpPanelText() };
   }
+  // ---- What agents do here, for the person watching ------------------------
+  // Every tool call is logged (Settings shows the list) and named in a small
+  // pill while it runs. With "Follow the agent" on, the tools that only read
+  // also show what they read: a query lands in the editor with its result, the
+  // card opens, the Schema tab comes forward.
+  const MCP_FOLLOW_KEY = "rete.pg.agentFollow";
+  const mcpLog = [];
+  let mcpSeq = 0, mcpPillTimer = null, mcpCardOpened = false, mcpAnnounced = null;
+  function mcpFollowOn() {
+    try { return localStorage.getItem(MCP_FOLLOW_KEY) !== "0"; } catch (_e) { return true; }
+  }
+  function mcpSetFollow(on) {
+    try { localStorage.setItem(MCP_FOLLOW_KEY, on ? "1" : "0"); } catch (_e) { /* private mode */ }
+    mcpRenderAgent();
+  }
+  function mcpNote(out) {
+    if (!out || typeof out !== "object") return "";
+    if (Array.isArray(out.rows)) return out.rows.length + " of " + (out.total != null ? out.total : out.rows.length) + " rows";
+    if (out.kind === "ask") return "ASK " + out.boolean;
+    if (Array.isArray(out.triples)) return out.triples.length + " triples";
+    if (Array.isArray(out.datasets)) return out.datasets.length + " datasets";
+    if (Array.isArray(out.matches)) return out.matches.length + " matches";
+    if (Array.isArray(out.examples)) return out.examples.length + " examples";
+    if (Array.isArray(out.classes)) return out.classes.length + " classes";
+    if (out.summary) return mcpClip(out.summary, 80);
+    if (out.key && out.triples != null) return out.key + ", " + out.triples + " triples";
+    if (out.dataset) return String(out.dataset);
+    return formatBytes(mcpSize(out));
+  }
+  function mcpPill(text, kind) {
+    let el = $("mcpPill");
+    if (!el) {
+      el = document.createElement("button");
+      el.id = "mcpPill"; el.type = "button";
+      el.title = "An agent is using this page through WebMCP. Click for the list of what it did.";
+      el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:12px;z-index:9999;max-width:min(70vw,460px);padding:6px 11px;" +
+        "border-radius:999px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);" +
+        "font:600 12px/1.3 inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" +
+        "box-shadow:0 2px 10px rgba(0,0,0,.18);transition:opacity .3s";
+      el.onclick = () => { openSettings(); const s = $("agentSection"); if (s && s.scrollIntoView) s.scrollIntoView({ block: "center" }); };
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    el.style.borderColor = kind === "bad" ? "var(--bad)" : kind === "run" ? "var(--accent)" : "var(--line-strong)";
+    el.style.opacity = "1"; el.hidden = false;
+    if (mcpPillTimer) clearTimeout(mcpPillTimer);
+    if (kind !== "run") mcpPillTimer = setTimeout(() => { el.style.opacity = "0"; setTimeout(() => { if (el.style.opacity === "0") el.hidden = true; }, 350); }, 6000);
+  }
+  // Wrap a tool so each call is logged and shown.
+  function mcpWatched(t) {
+    const execute = async (a) => {
+      const entry = { id: ++mcpSeq, ts: Date.now(), tool: t.name, args: mcpClip(JSON.stringify(a || {}), 240), state: "running", ms: null, note: "" };
+      mcpLog.unshift(entry);
+      if (mcpLog.length > 200) mcpLog.length = 200;
+      // A card this log opened for the last call would hide what comes next.
+      if (mcpCardOpened && t.name !== "get_dataset_card") { mcpCardOpened = false; const m = $("cardModal"); if (m) m.classList.add("hidden"); }
+      mcpPill("Agent · " + t.name + " …", "run");
+      mcpRenderAgent();
+      const t0 = performance.now();
+      try {
+        const out = await t.execute(a || {});
+        entry.state = "ok"; entry.note = mcpNote(out);
+        return out;
+      } catch (e) {
+        entry.state = "error"; entry.note = mcpClip(firstLine(e), 160);
+        throw e;
+      } finally {
+        entry.ms = Math.round(performance.now() - t0);
+        mcpPill("Agent · " + t.name + (entry.state === "ok" ? " ✓ " : " ✗ ") + entry.note, entry.state === "ok" ? "ok" : "bad");
+        mcpRenderAgent();
+      }
+    };
+    return Object.assign({}, t, { execute });
+  }
+  // The "Agents" part of Settings: made here, so the page markup stays as it is.
+  function mcpRenderAgent() {
+    const card = document.querySelector("#settingsModal .modal-card");
+    if (!card) return;
+    let sec = $("agentSection");
+    if (!sec) {
+      sec = document.createElement("section");
+      sec.className = "rc-section"; sec.id = "agentSection";
+      sec.innerHTML =
+        `<div class="set-h">Agents <span class="rc-exp">WebMCP</span></div>` +
+        `<p class="microcopy" id="agentInfo"></p>` +
+        `<label class="rc-toggle"><input type="checkbox" id="agentFollow" /> <span>Follow the agent</span></label>` +
+        `<p class="microcopy">On: when an agent reads something, the page shows it too. Its queries land in the editor with their results, the card opens, the Schema tab comes forward. Off: reading tools leave the page as it is.</p>` +
+        `<div id="agentLog" class="stg-log"></div>` +
+        `<div class="rc-line"><button id="agentLogClear" class="ghost sm" type="button">Clear list</button></div>`;
+      const adv = card.querySelector("details.rc-adv");
+      card.insertBefore(sec, adv || null);
+      $("agentFollow").onchange = (e) => mcpSetFollow(e.target.checked);
+      $("agentLogClear").onclick = () => { mcpLog.length = 0; mcpRenderAgent(); };
+    }
+    $("agentFollow").checked = mcpFollowOn();
+    const sup = mcpAnnounced && mcpAnnounced.supported;
+    $("agentInfo").textContent = (sup
+      ? "This browser has WebMCP: " + mcpAnnounced.tools.length + " tools are offered to its agent."
+      : "This browser has no WebMCP, so no tools are offered. Scripts can still call them through window.retePlaygroundTools.") +
+      (mcpLog.length ? " " + mcpLog.length + " call(s) so far, newest first." : " No calls yet.");
+    const log = $("agentLog");
+    if (!mcpLog.length) { log.innerHTML = `<p class="cache-empty">Nothing yet. What an agent does on this page is listed here.</p>`; return; }
+    log.innerHTML = mcpLog.slice(0, 40).map((e) =>
+      `<div class="stg-logrow" style="cursor:default">` +
+      `<span class="stg-lq mono">${e.state === "ok" ? "✓" : e.state === "error" ? "✗" : "…"} ${esc(e.tool)} ${esc(e.args === "{}" ? "" : e.args)}</span>` +
+      `<span class="stg-lm">${esc(new Date(e.ts).toLocaleTimeString())}${e.ms != null ? " · " + e.ms + " ms" : ""}${e.note ? " · " + esc(e.note) : ""}</span>` +
+      `</div>`).join("");
+  }
+  // Show in the page the query a reading tool just ran.
+  async function mcpMirrorQuery(q, a) {
+    if (state.liveEndpoint) return;
+    closeSource();
+    setMode("sparql");
+    setEd("q", q);
+    state.selectedExample = -1; state.colLabels = null; state.colTypes = null;
+    renderExamples();
+    setStrategy("whole");
+    if ($("owlReason")) $("owlReason").checked = !!(a && a.reason);
+    if ($("unionGraphs")) $("unionGraphs").checked = !!(a && a.all_graphs);
+    updateHash();
+    runQuery();
+    await mcpAfterRun(60000);
+  }
+  function mcpSettings() {
+    return {
+      output: $("fmt").value,
+      strategy: $("strategy").value,
+      reason: !!($("owlReason") && $("owlReason").checked),
+      allGraphs: unionGraphsOn(),
+      concurrentReads: !!state.asyncReadsOn,      // remote reads run concurrently (the asyncify engine)
+      persistRanges: !!state.rangeCacheOn,        // byte ranges fetched from remote files are kept in IndexedDB across reloads
+      parallelReads: !!window.crossOriginIsolated, // needs a reload with ?parallel=1; not settable from a tool
+      fetchWorkers: parallelWorkerCount(),
+      theme: ($("themeSelect") || {}).value || "system",
+      followAgent: mcpFollowOn()
+    };
+  }
+  function mcpMoreTools() {
+    const ro = { readOnlyHint: true };
+    const obj = (properties, required) => ({ type: "object", properties: properties || {}, required: required || [], additionalProperties: false });
+    return [
+      {
+        name: "describe_dataset", annotations: ro,
+        description: "One answer about a dataset before you query it: what it is (title, description, size, triples, licence, source, tags), its example queries by title, and for the open dataset its largest classes. Without a key it describes the open dataset. For the full card use get_dataset_card, for the SPARQL of the examples list_examples.",
+        inputSchema: obj({ key: { type: "string", description: "A catalog key from list_datasets. Default: the open dataset." } }),
+        execute: async (a) => {
+          const key = String((a && a.key) || state.dataset || "");
+          const d = datasetInfo(key);
+          if (a && a.key && !d) throw new Error("No dataset with key " + key + ". Use list_datasets.");
+          const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
+          const x = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
+          const open = key === state.dataset;
+          const out = {
+            key, open, inCatalog: !!d,
+            title: d ? d.label : currentDatasetLabel(),
+            description: d ? mcpClip(d.description, 1500) : null,
+            triples: m.triples != null ? m.triples : null, size: m.size || null, licence: m.license || null,
+            source: m.source || null, provenance: mcpClip(m.provenance, 900) || null,
+            tags: x.tags || [], url: d && d.url ? d.url : (open && state.remote ? state.remote.url : null),
+            bundled: isEmbedded(key)
+          };
+          if (open) {
+            out.loaded = mcpSource();
+            out.examples = examplesForDataset().map((ex, i) => ({ index: i, family: ex.family, label: ex.label })).slice(0, 80);
+            try {
+              const s = await mcpSchema();
+              const cls = (s.classes || []).slice();
+              out.totalClasses = cls.length;
+              out.topClasses = cls.slice(0, 15);
+            } catch (_e) { /* no schema block */ }
+          } else {
+            const ex = CATALOG.examples[key];
+            if (Array.isArray(ex)) out.examples = ex.map((e, i) => ({ index: i, label: e.label })).slice(0, 80);
+            out.note = "Not open. Call open_dataset to query it and to see its classes.";
+          }
+          return mcpSize(out) <= MCP_MAX ? out : mcpShrink(out, 20, 400);
+        }
+      },
+      {
+        name: "get_settings", annotations: ro,
+        description: "The settings that change how a query runs and what stays on the device: output view, evaluation strategy, reasoning, all-graphs, concurrent remote reads, whether fetched byte ranges are kept across reloads, parallel range reads, theme, and whether the page follows the agent.",
+        inputSchema: obj(),
+        execute: async () => mcpSettings()
+      },
+      {
+        name: "set_settings",
+        description: "Change settings; only the ones you pass. strategy: whole (default), progressive (counts and ASK from the summary pyramid) or community (in-memory graphs). concurrent_reads: remote reads run concurrently, faster on most browsers. persist_ranges: keep the byte ranges fetched from remote files in the browser, so a later visit reads less from the network. Changing either read setting cancels a running remote query. Parallel range reads need a page reload and are not set here.",
+        inputSchema: obj({
+          output: { type: "string", enum: ["table", "cards", "graph", "map", "tiles", "time", "ttl", "jsonld"] },
+          strategy: { type: "string", enum: ["whole", "progressive", "community"] },
+          reason: { type: "boolean", description: "OWL 2 QL reasoning for queries run in the page." },
+          all_graphs: { type: "boolean", description: "The default graph is the union of all named graphs." },
+          concurrent_reads: { type: "boolean" },
+          persist_ranges: { type: "boolean" },
+          theme: { type: "string", enum: ["system", "light", "dark"] },
+          follow_agent: { type: "boolean", description: "Whether reading tools also show in the page what they read." }
+        }),
+        execute: async (a) => {
+          a = a || {};
+          if (a.output) setView(a.output);
+          if (a.strategy) setStrategy(a.strategy);
+          if (typeof a.reason === "boolean" && $("owlReason")) $("owlReason").checked = a.reason;
+          if (typeof a.all_graphs === "boolean" && $("unionGraphs")) $("unionGraphs").checked = a.all_graphs;
+          if (typeof a.concurrent_reads === "boolean" && a.concurrent_reads !== !!state.asyncReadsOn) { setAsyncReads(a.concurrent_reads); renderAsyncReads(); }
+          if (typeof a.persist_ranges === "boolean" && a.persist_ranges !== !!state.rangeCacheOn) { setRangeCache(a.persist_ranges); renderRangeCache(); }
+          if (a.theme && $("themeSelect")) { $("themeSelect").value = a.theme; $("themeSelect").dispatchEvent(new Event("change")); }
+          if (typeof a.follow_agent === "boolean") mcpSetFollow(a.follow_agent);
+          updateHash();
+          return mcpSettings();
+        }
+      },
+      {
+        name: "get_cache", annotations: ro,
+        description: "What this site keeps in the browser: per remote file, how many bytes of it are cached as ranges and its full size; the whole files cached for Explore; and the browser's total for the site. Use it to see how much of a large file a session has read.",
+        inputSchema: obj(),
+        execute: async () => {
+          const ranges = (await rangeCacheBreakdown()).map((r) => ({ file: r.key, cachedBytes: r.bytes, fileBytes: r.total || null, blocks: r.blocks }));
+          const files = (await idbListMeta()).map((m) => ({ key: m.key, label: humanCacheLabel(m), bytes: m.size || 0 }));
+          let usage = null, quota = null;
+          try { const e = await navigator.storage.estimate(); usage = e.usage || 0; quota = e.quota || null; } catch (_e) { /* not available */ }
+          const out = { persistRanges: !!state.rangeCacheOn, ranges, rangeBytes: ranges.reduce((s, r) => s + r.cachedBytes, 0), wholeFiles: files, siteBytes: usage, quotaBytes: quota };
+          return mcpSize(out) <= MCP_MAX ? out : mcpShrink(out, 40, 200);
+        }
+      },
+      {
+        name: "clear_cache",
+        description: "Free cached data in the browser. what = ranges drops the byte ranges kept from remote files (all of them, or one file when file is given, as named by get_cache); what = file drops one whole-file copy by its key. Nothing is lost for good: the data is read again from the network when needed.",
+        inputSchema: obj({
+          what: { type: "string", enum: ["ranges", "file"] },
+          file: { type: "string", description: "For ranges: the file name from get_cache, to clear only that one. For file: its key." }
+        }, ["what"]),
+        execute: async (a) => {
+          a = a || {};
+          if (a.what === "ranges") {
+            if (a.file) await clearRangeCacheKey(String(a.file)); else await clearRangeCache();
+            renderRangeCache();
+          } else if (a.what === "file") {
+            if (!a.file) throw new Error("file is needed: a key from get_cache.");
+            const have = (await idbListMeta()).some((m) => m.key === a.file);
+            if (!have) throw new Error("No cached file with key " + a.file + ".");
+            await idbDelKey(String(a.file));
+            freeExploreEngines();
+            renderCacheList(); renderCacheCtl();
+          } else {
+            throw new Error("what must be ranges or file.");
+          }
+          const ranges = await rangeCacheBreakdown();
+          return { cleared: a.what, file: a.file || null, rangeBytes: ranges.reduce((s, r) => s + (r.bytes || 0), 0), wholeFiles: (await idbListMeta()).length };
+        }
+      },
+      {
+        name: "get_history", annotations: ro,
+        description: "The queries run in the page recently, newest first, with the dataset, the result line and the output view of each. The person's own runs and the ones an agent showed are both here.",
+        inputSchema: obj({ limit: { type: "integer", minimum: 1, maximum: 50, description: "Default 10." } }),
+        execute: async (a) => {
+          const all = loadHistory();
+          const list = all.slice(0, mcpInt(a && a.limit, 10, 50)).map((h) => ({
+            dataset: h.dataset || null, query: mcpClip(h.query, 1200), result: h.resultSummary || null,
+            output: h.format || null, strategy: h.strategy || null, at: h.ts ? new Date(h.ts).toISOString() : null
+          }));
+          const fit = mcpFit(list, (x) => ({ runs: x }));
+          return { runs: fit.items, total: all.length, truncated: fit.cut };
+        }
+      },
+      {
+        name: "get_activity", annotations: ro,
+        description: "The tool calls made on this page since it loaded, newest first: tool, arguments, whether it worked, how long it took, and a short note on the result. The same list the person sees in Settings under Agents.",
+        inputSchema: obj({ limit: { type: "integer", minimum: 1, maximum: 100, description: "Default 20." } }),
+        execute: async (a) => {
+          const list = mcpLog.slice(1, 1 + mcpInt(a && a.limit, 20, 100)).map((e) => ({
+            tool: e.tool, args: e.args, state: e.state, ms: e.ms, note: e.note, at: new Date(e.ts).toISOString()
+          }));
+          const fit = mcpFit(list, (x) => ({ calls: x }));
+          return { calls: fit.items, total: Math.max(0, mcpLog.length - 1), followAgent: mcpFollowOn() };
+        }
+      }
+    ];
+  }
   function mcpTools() {
     const ro = { readOnlyHint: true };
     const obj = (properties, required) => ({ type: "object", properties: properties || {}, required: required || [], additionalProperties: false });
@@ -26874,6 +27152,7 @@ function cardCostHtml(cost) {
         description: "The Dataset Card carried inside the open file: title, description, licence, source, creators, counts, and for files built with the CLI the top classes, predicates and starter queries. Costs a few KB even on a very large remote file.",
         inputSchema: obj(),
         execute: async () => {
+          if (mcpFollowOn()) { mcpCardOpened = true; openCardModal(); }
           const c = await fetchCard();
           if (c.err) throw new Error(c.err);
           if (!c.text) return { card: null, note: "This file carries no Dataset Card." };
@@ -26895,6 +27174,7 @@ function cardCostHtml(cost) {
         description: "The classes of the open graph with their instance counts, and the relations between classes. Read from the schema block of the file, not by scanning triples. Use it before writing a query.",
         inputSchema: obj({ limit: { type: "integer", minimum: 1, maximum: 500, description: "Classes and relations to return, in the file's order. Default 60." } }),
         execute: async (a) => {
+          if (mcpFollowOn() && state.mode !== "schema" && (state.graph || state.remote)) setMode("schema");
           const s = await mcpSchema();
           const lim = mcpInt(a && a.limit, 60, 500);
           const allC = s.classes || [], allR = s.relations || [];
@@ -26922,7 +27202,7 @@ function cardCostHtml(cost) {
       },
       {
         name: "run_sparql", annotations: ro,
-        description: "Run a SPARQL query (SELECT, ASK, CONSTRUCT, DESCRIBE) on the open graph and get the rows back. The page is not changed. Values are RDF terms as written in N-Triples: <iri>, \"text\"@en, \"1\"^^<datatype>. On a remote file the cost is the byte ranges the query touches, so put a LIMIT on exploratory queries and avoid full scans of very large files.",
+        description: "Run a SPARQL query (SELECT, ASK, CONSTRUCT, DESCRIBE) on the open graph and get the rows back. While \"Follow the agent\" is on in Settings (the default) the page shows the query and its result too; with it off the page is not changed. Values are RDF terms as written in N-Triples: <iri>, \"text\"@en, \"1\"^^<datatype>. On a remote file the cost is the byte ranges the query touches, so put a LIMIT on exploratory queries and avoid full scans of very large files.",
         inputSchema: obj({
           query: { type: "string", description: "The SPARQL text, with its PREFIX lines.", maxLength: 20000 },
           limit: { type: "integer", minimum: 1, maximum: 500, description: "Rows to return. Default 50." },
@@ -26938,6 +27218,7 @@ function cardCostHtml(cost) {
           const out = mcpRows(res, lim);
           out.ms = Math.round(performance.now() - t0);
           if (Array.isArray(res.warnings) && res.warnings.length) out.warnings = res.warnings.slice(0, 5);
+          if (mcpFollowOn()) { await mcpMirrorQuery(q, a); out.shownInPage = true; }
           return out;
         }
       },
@@ -27104,7 +27385,7 @@ function cardCostHtml(cost) {
     let ctx = null;
     try { ctx = document.modelContext || null; } catch (_e) { /* none */ }
     if (!ctx) { try { ctx = navigator.modelContext || null; } catch (_e) { /* none */ } }
-    const tools = mcpTools();
+    const tools = mcpTools().concat(mcpMoreTools()).map(mcpWatched);
     // The same tools by name for page scripts and tests, whether or not the
     // browser has WebMCP.
     const byName = {};
@@ -27114,6 +27395,8 @@ function cardCostHtml(cost) {
       call: (name, args) => (byName[name] ? byName[name].execute(args || {}) : Promise.reject(new Error("no tool named " + name)))
     };
     const announce = (detail) => {
+      mcpAnnounced = detail;
+      try { mcpRenderAgent(); } catch (_e) { /* settings not in this page */ }
       window.reteWebMCP = detail;
       try { document.dispatchEvent(new CustomEvent("rete:webmcp", { detail })); } catch (_e) { /* ignore */ }
     };

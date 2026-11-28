@@ -7,6 +7,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The playground shows what an agent does, and gives it more tools.** A
+  label names each WebMCP call while it runs and Settings → Agents lists them
+  all. With "Follow the agent" on (the default) the reading tools show what
+  they read: a query lands in the editor with its result, the card opens, the
+  Schema tab comes forward. Seven new tools, 22 in all: `describe_dataset`,
+  `get_settings`, `set_settings`, `get_cache`, `clear_cache`, `get_history`
+  and `get_activity`.
+- **The BIM pair viewer offers its actions as WebMCP tools.** An agent can
+  switch project and view and query the 224-model corpus; eight tools. See
+  [its guide](docs/bim-pair-guide.md#agents).
 - **The playground offers its actions to browser agents as WebMCP tools.**
   An agent can list and open datasets, read the card and the schema, run
   SPARQL and get the rows, load an example, switch tabs, and build a `.rete`
@@ -101,6 +111,11 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **The BIM pair viewer's query panel works again.** It still asked for
+  `gni-bim.rete`, a name that went away when the catalog files got their
+  dates, and every query failed with "bad magic". It reads
+  `gni-bim-2026-07-22.rete` now, a missing file is reported as such, and a
+  gate check runs the panel against the live file.
 - **`--progress json` and `plain` always open with the start line.** A run
   shorter than one tick of the progress sampler (a recard of a small file)
   could end with `done` and no `start` before it. This also made the

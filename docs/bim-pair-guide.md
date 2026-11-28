@@ -44,5 +44,27 @@ architecture vs structure across every project, or rank the 42 IFC element class
 across the corpus. It is the **wide** companion to the single, deep
 [FZK-Haus](building-guide.html) building.
 
+## Let an agent use it {#agents}
+
+The viewer registers its actions as [WebMCP](https://github.com/webmachinelearning/webmcp)
+tools. An agent in a browser that has WebMCP can use the page with you: what it
+does shows in the 3D view and in the query panel, and a small label at the
+bottom names each call. In a browser without WebMCP nothing is registered.
+
+| Tool | What it does |
+| --- | --- |
+| `get_state` | the project, the view, the element counts, the IFC links |
+| `list_projects` | the projects with a 3D preview |
+| `show_project` | loads a project into the 3D view |
+| `set_view` | architecture, structure, or both |
+| `reset_camera` | frames the whole building again |
+| `list_examples` | the ready SPARQL queries over the corpus |
+| `run_sparql` | the rows of a SELECT or ASK over the 224 models; the table shows in the page too |
+| `set_query_panel` | opens or closes the query panel |
+
+A page script can call the same tools: `window.reteBimTools.list()` and
+`window.reteBimTools.call("set_view", { view: "both" })`. For how to try
+WebMCP in Chrome, see [the playground guide](playground-guide.md#agents).
+
 Models: TUM GNI BIM Dataset (Wang, Fuchs, Wu, Esser, Wrabel & Borrmann), CC BY
 4.0. Viewer and graph by [rete](https://github.com/caviri/rete).

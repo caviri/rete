@@ -28,10 +28,16 @@ const main = async () => {
     [name, args || {}]);
 
   const reg = await page.evaluate(() => ({ reg: window.__reg, ann: window.reteWebMCP, listed: window.retePlaygroundTools.list().length }));
-  check(reg.ann.supported === true && reg.reg.length === 15 && reg.listed === 15, `15 tools registered (got ${reg.reg.length})`);
+  check(reg.ann.supported === true && reg.reg.length === 22 && reg.listed === 22, `22 tools registered (got ${reg.reg.length})`);
   check(reg.reg.every((t) => t.exec && t.signal && t.type === "object"), "every tool has execute, an object schema and an abort signal");
 
-  let r = await call("get_state");
+  // Reading tools leave the page alone only with "Follow the agent" off; it is
+  // on by default. The first part of this check runs with it off.
+  let r = await call("get_settings");
+  check(r.v && r.v.followAgent === true && !!r.v.strategy && typeof r.v.concurrentReads === "boolean", "get_settings: " + JSON.stringify(r).slice(0, 200));
+  r = await call("set_settings", { follow_agent: false });
+  check(r.v && r.v.followAgent === false, "set_settings turns following off");
+  r = await call("get_state");
   check(r.v && r.v.dataset === "scholar" && r.v.source === "memory" && r.v.mode === "sparql", "get_state");
   r = await call("list_datasets", { query: "jazz" });
   check(r.v && r.v.datasets.some((d) => d.key === "linked-jazz"), "list_datasets finds linked-jazz");
@@ -91,6 +97,49 @@ const main = async () => {
   check(!!r.err, "run_tab refuses a tab without Run");
   r = await call("open_tab", { tab: "nope" });
   check(!!r.err, "open_tab refuses an unknown tab");
+
+  // With "Follow the agent" on, the page shows what the reading tools read.
+  await call("open_dataset", { key: "scholar" });
+  r = await call("set_settings", { follow_agent: true, strategy: "progressive" });
+  check(r.v && r.v.followAgent === true && r.v.strategy === "progressive", "set_settings: follow on, strategy");
+  await call("open_tab", { tab: "schema" });
+  const fq = "SELECT ?s WHERE { ?s ?p ?o } LIMIT 7";
+  r = await call("run_sparql", { query: fq });
+  check(r.v && r.v.rows.length === 7 && r.v.shownInPage === true, "run_sparql while following");
+  check(await page.evaluate((q) => document.getElementById("q").value === q && document.querySelectorAll("#out table tr").length === 8, fq), "the page shows the agent's query and its 7 rows");
+  r = await call("get_state");
+  check(r.v && r.v.mode === "sparql" && r.v.strategy === "whole", "following brings the SPARQL tab forward, on the whole index");
+  r = await call("get_schema");
+  check(r.v && r.v.classes.length > 0 && await page.evaluate(() => (document.querySelector(".panel.active") || { dataset: {} }).dataset.panel === "schema"), "get_schema brings the Schema tab forward");
+  r = await call("get_dataset_card");
+  check(r.v && r.v.card && await page.evaluate(() => !document.getElementById("cardModal").classList.contains("hidden")), "get_dataset_card opens the card");
+  r = await call("describe_dataset");
+  check(r.v && r.v.key === "scholar" && r.v.open && r.v.description && r.v.examples.length > 3 && r.v.topClasses.length > 0, "describe_dataset: " + JSON.stringify(r).slice(0, 160));
+  check(await page.evaluate(() => document.getElementById("cardModal").classList.contains("hidden")), "the next call closes the card it opened");
+  r = await call("describe_dataset", { key: "linked-jazz" });
+  check(r.v && r.v.open === false && r.v.title && r.v.note, "describe_dataset of a dataset that is not open");
+  r = await call("describe_dataset", { key: "nope" });
+  check(!!r.err, "describe_dataset refuses an unknown key");
+  r = await call("get_history");
+  check(r.v && r.v.runs.length > 0 && r.v.runs[0].query === fq, "get_history has the run the page showed");
+  r = await call("get_cache");
+  check(r.v && Array.isArray(r.v.ranges) && Array.isArray(r.v.wholeFiles) && typeof r.v.rangeBytes === "number", "get_cache");
+  r = await call("clear_cache", { what: "ranges" });
+  check(r.v && r.v.cleared === "ranges" && r.v.rangeBytes === 0, "clear_cache ranges");
+  r = await call("clear_cache", { what: "file", file: "nope" });
+  check(!!r.err, "clear_cache refuses an unknown file");
+  r = await call("get_activity", { limit: 100 });
+  check(r.v && r.v.calls.length > 20 && r.v.calls[0].tool === "clear_cache" && r.v.calls[0].state === "error" && r.v.calls.some((c) => c.tool === "run_sparql" && c.state === "ok" && /rows/.test(c.note)), "get_activity lists the calls, newest first");
+  const ui = await page.evaluate(() => {
+    document.getElementById("settingsBtn").click();
+    const sec = document.getElementById("agentSection");
+    const out = { rows: sec ? sec.querySelectorAll("#agentLog .stg-logrow").length : -1, follow: sec && document.getElementById("agentFollow").checked,
+      info: sec ? document.getElementById("agentInfo").textContent : "", pill: (document.getElementById("mcpPill") || {}).textContent || "" };
+    document.getElementById("settingsModalClose").click();
+    return out;
+  });
+  check(ui.rows > 20 && ui.follow === true && /22 tools/.test(ui.info) && /get_activity/.test(ui.pill), "Settings lists the agent's calls: " + JSON.stringify(ui).slice(0, 200));
+  await call("set_settings", { follow_agent: false, strategy: "whole" });
 
   // Build a graph, query it, read its card, save it.
   const B = String.fromCharCode(92);

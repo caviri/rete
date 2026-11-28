@@ -108,7 +108,7 @@
 </div>
 
 <div id="sql" hidden>
-  <div id="sql-bar"><b>SPARQL over the GNI BIM corpus</b><span style="color:var(--dim);font-size:12px">— 224 models, remote-lazy from gni-bim.rete</span>
+  <div id="sql-bar"><b>SPARQL over the GNI BIM corpus</b><span style="color:var(--dim);font-size:12px">— 224 models, read from gni-bim.rete</span>
     <span style="flex:1"></span><span id="sql-count" style="color:var(--dim);font-size:12px"></span>
     <button class="fbtn" id="sql-x" title="close">✕</button></div>
   <div id="sql-body">
@@ -136,7 +136,7 @@ import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {DRACOLoader} from 'three/addons/loaders/DRACOLoader.js';
 
 const BASE = 'https://data.graphplaza.com/gni-bim/';
-const RETE = BASE + 'gni-bim.rete';
+const RETE = BASE + 'gni-bim-2026-07-22.rete';
 const IFC = BASE + 'ifc/p/';
 const ARC_COL = 0xcbb89d, STR_COL = 0xff8c42;
 // projects rendered to (Draco) GLBs — the rest of the 224 are queryable/downloadable but not previewed
@@ -269,7 +269,9 @@ function getEngine(){
   engineLoading=(async()=>{
     const msg=document.getElementById('sqlMsg2'); if(msg) msg.textContent='loading the query engine + graph (~9 MB, once)…';
     const m=await import('./engine/rete_wasm.js'); await m.default();
-    const bytes=new Uint8Array(await (await fetch(RETE)).arrayBuffer());
+    const res=await fetch(RETE);
+    if(!res.ok){ engineLoading=null; throw new Error('could not fetch the corpus graph (HTTP '+res.status+')'); }
+    const bytes=new Uint8Array(await res.arrayBuffer());
     engine=new m.Graph(bytes); if(msg) msg.textContent=''; return engine;
   })();
   return engineLoading;
@@ -296,6 +298,107 @@ function renderTable(vars, rows, label){
   const tbody=`<tbody>${cap.map((r,i)=>`<tr><td class="rn">${i+1}</td>${vars.map(v=>`<td>${cell(r[v])}</td>`).join('')}</tr>`).join('')}</tbody>`;
   document.getElementById('results').innerHTML=thead+tbody;
 }
+
+// ---------- WebMCP: the page's actions as tools for a browser agent ----------
+// With WebMCP in the browser an agent can switch project and view, and query
+// the corpus; what it does shows in the page. Without it nothing is registered.
+// The same tools are on window.reteBimTools for scripts and tests.
+const MCP_MAX = 18000;
+const VIEWS = {architecture:'arc', structure:'str', both:'both'};
+const viewName = m => Object.keys(VIEWS).find(k => VIEWS[k] === m);
+const ifcLinks = k => ({architectural: `${IFC}model_${k}_arc.ifc`, structural: `${IFC}model_${k}_structure.ifc`});
+function agentPill(text, bad){
+  let el=document.getElementById('agentPill');
+  if(!el){ el=document.createElement('div'); el.id='agentPill';
+    el.style.cssText='position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:50;max-width:70vw;padding:6px 12px;border-radius:999px;'+
+      'background:#111a2b;border:1px solid #2b3a55;color:#e6edf7;font:600 12px/1.3 system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .3s;pointer-events:none';
+    document.body.appendChild(el); }
+  el.textContent=text; el.style.borderColor = bad ? '#ff6b6b' : '#2b3a55'; el.style.opacity='1';
+  clearTimeout(agentPill.t); agentPill.t=setTimeout(()=>{ el.style.opacity='0'; }, 6000);
+}
+function pageState(){
+  const p=PROJECTS[current];
+  return { project: current, label: p.label, view: viewName(mode), views: Object.keys(VIEWS),
+    architecturalElements: p.arcN, structuralElements: p.strN, ifc: ifcLinks(current),
+    loading: document.getElementById('loading').style.display!=='none',
+    queryPanelOpen: !document.getElementById('sql').hidden,
+    lastQuery: document.getElementById('sql-count').textContent || null,
+    corpus: RETE, playground: 'playground.html#dataset=gni-bim' };
+}
+function bimTools(){
+  const ro={readOnlyHint:true};
+  const obj=(properties, required)=>({type:'object', properties:properties||{}, required:required||[], additionalProperties:false});
+  return [
+    { name:'get_state', annotations:ro,
+      description:'What the viewer shows: the project, the view (architecture, structure or both), the element counts of its two models, the links to their IFC files, and whether the query panel is open. Call this first.',
+      inputSchema:obj(), execute: async()=>pageState() },
+    { name:'list_projects', annotations:ro,
+      description:'The projects that have a 3D preview here, each with its architectural and structural element counts and IFC download links. The corpus holds 224 models; the others are reachable with run_sparql.',
+      inputSchema:obj(),
+      execute: async()=>({ projects: Object.entries(PROJECTS).map(([k,p])=>({project:k, label:p.label, architecturalElements:p.arcN, structuralElements:p.strN, ifc:ifcLinks(k), shown:k===current})) }) },
+    { name:'show_project',
+      description:'Load a project into the 3D view, as picking it in the Project menu does. Waits until both models are loaded.',
+      inputSchema:obj({project:{type:'string', description:'A project id from list_projects, such as 0, 3 or 7.'}}, ['project']),
+      execute: async(a)=>{ const k=String(a.project).replace(/^project\s*/i,'');
+        if(!PROJECTS[k]) throw new Error('No preview for project '+a.project+'. Previews exist for: '+Object.keys(PROJECTS).join(', ')+'.');
+        document.getElementById('sql').hidden=true;
+        document.getElementById('proj').value=k; await loadProject(k); return pageState(); } },
+    { name:'set_view',
+      description:'Choose what is drawn: architecture (the envelope), structure (the load-bearing skeleton), or both, with the architecture shown faint over the structure.',
+      inputSchema:obj({view:{type:'string', enum:Object.keys(VIEWS)}}, ['view']),
+      execute: async(a)=>{ if(!VIEWS[a.view]) throw new Error('view must be architecture, structure or both.');
+        document.getElementById('sql').hidden=true; setMode(VIEWS[a.view]); return pageState(); } },
+    { name:'reset_camera',
+      description:'Frame the whole building again.',
+      inputSchema:obj(), execute: async()=>{ frameAll(false); return {ok:true}; } },
+    { name:'list_examples', annotations:ro,
+      description:'The ready SPARQL queries over the corpus graph, with their text. The graph describes 224 IFC models: g:Model, g:Project, g:subset, g:discipline, g:elementCount, g:ifcFile, and per-class counts (g:ifcClass, g:count).',
+      inputSchema:obj(), execute: async()=>({ prefixes: G, examples: EXAMPLES.map((e,i)=>({index:i, label:e.label, query:e.q})) }) },
+    { name:'run_sparql', annotations:ro,
+      description:'Run a SPARQL SELECT or ASK over the corpus graph (224 models) and get the rows back. The query and its table also show in the page\'s query panel unless show is false. Values are RDF terms as written in N-Triples: <iri>, "text", "1"^^<datatype>.',
+      inputSchema:obj({ query:{type:'string', maxLength:20000, description:'The SPARQL text with its PREFIX lines. PREFIX g: <https://w3id.org/rete/gnibim#>'},
+        limit:{type:'integer', minimum:1, maximum:500, description:'Rows to return. Default 50.'},
+        show:{type:'boolean', description:'Show it in the page. Default true.'} }, ['query']),
+      execute: async(a)=>{ const q=String(a.query||'').trim(); if(!q) throw new Error('query is empty.');
+        const g=await getEngine(); const j=JSON.parse(g.query(q,'json'));
+        if(j.kind==='ask') return {kind:'ask', boolean:j.boolean};
+        if(j.kind!=='select') throw new Error('Only SELECT and ASK are answered here (got '+j.kind+').');
+        if(a.show!==false){ document.getElementById('sql').hidden=false; ensureExamples();
+          document.getElementById('customQ').value=q; renderTable(j.vars, j.rows, 'Agent query'); }
+        const lim=Math.min(500, Math.max(1, Math.floor(+a.limit)||50));
+        let rows=j.rows.slice(0,lim).map(r=>{ const o={}; j.vars.forEach(v=>{ if(r[v]!=null && r[v]!=='') o[v]=String(r[v]).slice(0,600); }); return o; });
+        while(rows.length && JSON.stringify(rows).length>MCP_MAX) rows=rows.slice(0, Math.floor(rows.length*0.8));
+        const out={kind:'select', vars:j.vars, rows, returned:rows.length, total:j.rows.length};
+        if(rows.length<j.rows.length) out.truncated=true; return out; } },
+    { name:'set_query_panel',
+      description:'Open or close the SPARQL panel that covers the 3D view.',
+      inputSchema:obj({open:{type:'boolean'}}, ['open']),
+      execute: async(a)=>{ document.getElementById('sql').hidden=!a.open; if(a.open) ensureExamples(); return pageState(); } },
+  ];
+}
+function wireWebMcp(){
+  const tools=bimTools().map(t=>Object.assign({}, t, { execute: async(a)=>{
+    agentPill('Agent · '+t.name+' …');
+    try{ const out=await t.execute(a||{}); agentPill('Agent · '+t.name+' ✓'); return out; }
+    catch(e){ agentPill('Agent · '+t.name+' ✗ '+String(e.message||e).slice(0,90), true); throw e; } } }));
+  const byName={}; tools.forEach(t=>{ byName[t.name]=t; });
+  window.reteBimTools={ list:()=>tools.map(t=>({name:t.name, description:t.description, inputSchema:t.inputSchema, readOnly:!!(t.annotations&&t.annotations.readOnlyHint)})),
+    call:(name,args)=> byName[name] ? byName[name].execute(args||{}) : Promise.reject(new Error('no tool named '+name)) };
+  let ctx=null;
+  try{ ctx=document.modelContext||null; }catch(_e){ /* none */ }
+  if(!ctx){ try{ ctx=navigator.modelContext||null; }catch(_e){ /* none */ } }
+  const names=[];
+  if(ctx && typeof ctx.registerTool==='function'){
+    const ac=new AbortController();
+    tools.forEach(t=>{ try{ ctx.registerTool(t,{signal:ac.signal}); names.push(t.name); }catch(e){ console.debug('[rete webmcp] registerTool failed for', t.name, e&&e.message); } });
+    addEventListener('pagehide', ()=>{ try{ ac.abort(); }catch(_e){ /* ignore */ } }, {once:true});
+  } else if(ctx && typeof ctx.provideContext==='function'){
+    try{ ctx.provideContext({tools}); tools.forEach(t=>names.push(t.name)); }catch(e){ console.debug('[rete webmcp] provideContext failed', e&&e.message); }
+  }
+  window.reteWebMCP={supported:names.length>0, tools:names};
+  try{ document.dispatchEvent(new CustomEvent('rete:webmcp',{detail:window.reteWebMCP})); }catch(_e){ /* ignore */ }
+}
+try{ wireWebMcp(); }catch(e){ console.debug('[rete webmcp] off', e&&e.message); }
 </script>
 </body>
 </html>

@@ -654,6 +654,24 @@ modelled the <em>same</em> building (element counts range from 130 to 5,689), co
 architecture vs structure across every project, or rank the 42 IFC element classes
 across the corpus. It is the <strong>wide</strong> companion to the single, deep
 <a href="building-guide.html">FZK-Haus</a> building.</p>
+<h2 id="agents">Let an agent use it</h2>
+<p>The viewer registers its actions as <a href="https://github.com/webmachinelearning/webmcp">WebMCP</a>
+tools. An agent in a browser that has WebMCP can use the page with you: what it
+does shows in the 3D view and in the query panel, and a small label at the
+bottom names each call. In a browser without WebMCP nothing is registered.</p>
+<table><thead><tr><th>Tool</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>get_state</code></td><td>the project, the view, the element counts, the IFC links</td></tr>
+<tr><td><code>list_projects</code></td><td>the projects with a 3D preview</td></tr>
+<tr><td><code>show_project</code></td><td>loads a project into the 3D view</td></tr>
+<tr><td><code>set_view</code></td><td>architecture, structure, or both</td></tr>
+<tr><td><code>reset_camera</code></td><td>frames the whole building again</td></tr>
+<tr><td><code>list_examples</code></td><td>the ready SPARQL queries over the corpus</td></tr>
+<tr><td><code>run_sparql</code></td><td>the rows of a SELECT or ASK over the 224 models; the table shows in the page too</td></tr>
+<tr><td><code>set_query_panel</code></td><td>opens or closes the query panel</td></tr>
+</tbody></table>
+<p>A page script can call the same tools: <code>window.reteBimTools.list()</code> and
+<code>window.reteBimTools.call("set_view", { view: "both" })</code>. For how to try
+WebMCP in Chrome, see <a href="playground-guide.html#agents">the playground guide</a>.</p>
 <p>Models: TUM GNI BIM Dataset (Wang, Fuchs, Wu, Esser, Wrabel &amp; Borrmann), CC BY
 4.0. Viewer and graph by <a href="https://github.com/caviri/rete">rete</a>.</p>
 

@@ -754,7 +754,7 @@ with browser-local built data or private access to a source.</p>
 tools, so an agent in the browser can open a dataset, run queries, read the
 answers and build a file while you watch the same page. In a browser without
 WebMCP nothing is registered and the page works as before.</p>
-<p>Tools that only read, and leave the page as it is:</p>
+<p>Tools that only read:</p>
 <table><thead><tr><th>Tool</th><th>What it gives</th></tr></thead><tbody>
 <tr><td><code>get_state</code></td><td>the open dataset, in memory or remote, the active tab, the query in the editor, a link to this view</td></tr>
 <tr><td><code>list_datasets</code></td><td>the catalog, with a text filter and pages</td></tr>
@@ -764,6 +764,11 @@ WebMCP nothing is registered and the page works as before.</p>
 <tr><td><code>run_sparql</code></td><td>the rows of a SELECT, ASK, CONSTRUCT or DESCRIBE; 50 by default, 500 at most</td></tr>
 <tr><td><code>find_entities</code></td><td>labels that start with some letters, with their IRIs</td></tr>
 <tr><td><code>read_page</code></td><td>the text the active tab shows</td></tr>
+<tr><td><code>describe_dataset</code></td><td>one answer about a dataset: what it is, its size and licence, its example queries by title, its largest classes</td></tr>
+<tr><td><code>get_settings</code></td><td>output view, strategy, reasoning, concurrent reads, kept byte ranges, theme</td></tr>
+<tr><td><code>get_cache</code></td><td>how much of each remote file the browser holds, and the whole files cached</td></tr>
+<tr><td><code>get_history</code></td><td>the queries run in the page recently</td></tr>
+<tr><td><code>get_activity</code></td><td>the tool calls made since the page loaded</td></tr>
 </tbody></table>
 <p>Tools that act on the page, as a click would:</p>
 <table><thead><tr><th>Tool</th><th>What it does</th></tr></thead><tbody>
@@ -774,12 +779,21 @@ WebMCP nothing is registered and the page works as before.</p>
 <tr><td><code>run_tab</code></td><td>presses Run in the active tab</td></tr>
 <tr><td><code>build_rete</code></td><td>builds a <code>.rete</code> from RDF text (N-Triples, N-Quads, Turtle, TriG, JSON-LD, RDF/XML), keeps it in this browser and opens it</td></tr>
 <tr><td><code>download_rete</code></td><td>saves the built file through the browser's download</td></tr>
+<tr><td><code>set_settings</code></td><td>changes the settings above; parallel range reads need a reload and are not set here</td></tr>
+<tr><td><code>clear_cache</code></td><td>drops the kept byte ranges, of every file or of one, or one cached whole file</td></tr>
 </tbody></table>
 <p>Values come back as RDF terms the way N-Triples writes them: <code>&lt;iri&gt;</code>,
 <code>"text"@en</code>, <code>"1"^^&lt;datatype&gt;</code>. A result stays under about 18 KB and says when
 it was cut. An engine error comes back as the tool's error, with its message.
 On a remote file a query costs the byte ranges it touches, the same as when
 you run it yourself.</p>
+<p>You see what the agent does. A small label at the bottom of the page names
+each call while it runs, and <strong>Settings → Agents</strong> lists them all: the tool,
+its arguments, whether it worked, how long it took. With <strong>Follow the agent</strong>
+on, which is the default, the reading tools show what they read: a query from
+<code>run_sparql</code> lands in the editor with its result, <code>get_dataset_card</code> opens the
+card, <code>get_schema</code> brings the Schema tab forward. Turn it off and the reading
+tools leave the page as it is.</p>
 <p>To try it, use a Chrome that has WebMCP (149 or later, with
 <code>chrome://flags/#enable-webmcp-testing</code> on) and the "Model Context Tool
 Inspector" extension. WebMCP is an early preview and may change. A page script

@@ -167,7 +167,7 @@ tools, so an agent in the browser can open a dataset, run queries, read the
 answers and build a file while you watch the same page. In a browser without
 WebMCP nothing is registered and the page works as before.
 
-Tools that only read, and leave the page as it is:
+Tools that only read:
 
 | Tool | What it gives |
 | --- | --- |
@@ -179,6 +179,11 @@ Tools that only read, and leave the page as it is:
 | `run_sparql` | the rows of a SELECT, ASK, CONSTRUCT or DESCRIBE; 50 by default, 500 at most |
 | `find_entities` | labels that start with some letters, with their IRIs |
 | `read_page` | the text the active tab shows |
+| `describe_dataset` | one answer about a dataset: what it is, its size and licence, its example queries by title, its largest classes |
+| `get_settings` | output view, strategy, reasoning, concurrent reads, kept byte ranges, theme |
+| `get_cache` | how much of each remote file the browser holds, and the whole files cached |
+| `get_history` | the queries run in the page recently |
+| `get_activity` | the tool calls made since the page loaded |
 
 Tools that act on the page, as a click would:
 
@@ -191,12 +196,22 @@ Tools that act on the page, as a click would:
 | `run_tab` | presses Run in the active tab |
 | `build_rete` | builds a `.rete` from RDF text (N-Triples, N-Quads, Turtle, TriG, JSON-LD, RDF/XML), keeps it in this browser and opens it |
 | `download_rete` | saves the built file through the browser's download |
+| `set_settings` | changes the settings above; parallel range reads need a reload and are not set here |
+| `clear_cache` | drops the kept byte ranges, of every file or of one, or one cached whole file |
 
 Values come back as RDF terms the way N-Triples writes them: `<iri>`,
 `"text"@en`, `"1"^^<datatype>`. A result stays under about 18 KB and says when
 it was cut. An engine error comes back as the tool's error, with its message.
 On a remote file a query costs the byte ranges it touches, the same as when
 you run it yourself.
+
+You see what the agent does. A small label at the bottom of the page names
+each call while it runs, and **Settings → Agents** lists them all: the tool,
+its arguments, whether it worked, how long it took. With **Follow the agent**
+on, which is the default, the reading tools show what they read: a query from
+`run_sparql` lands in the editor with its result, `get_dataset_card` opens the
+card, `get_schema` brings the Schema tab forward. Turn it off and the reading
+tools leave the page as it is.
 
 To try it, use a Chrome that has WebMCP (149 or later, with
 `chrome://flags/#enable-webmcp-testing` on) and the "Model Context Tool
