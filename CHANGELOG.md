@@ -5,6 +5,11 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-11-28
+
+0.7.9 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
+rete-server replaces the relay and ships as `ghcr.io/caviri/rete-server` from this release on.
+
 ### Added
 
 - **`media_preview` in rete-server.** A model can look at a picture a graph
