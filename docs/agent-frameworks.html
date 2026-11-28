@@ -630,7 +630,7 @@ live in
 <a href="https://github.com/caviri/rete/tree/main/clients/python/examples/agents"><code>clients/python/examples/agents/</code></a>.</p>
 <table><thead><tr><th>Route</th><th>The agent talks to</th><th>Choose it when</th></tr></thead><tbody>
 <tr><td><strong>In-process tools</strong></td><td>the <code>.rete</code> file, via <code>rete-graph</code></td><td>your own graphs, private or offline data, one graph per agent, no infrastructure</td></tr>
-<tr><td><strong>MCP</strong></td><td>the <a href="agents.html">hosted server</a> (18 tools)</td><td>you want the whole published catalog, plus authoring/media tools, with ~5 lines of code</td></tr>
+<tr><td><strong>MCP</strong></td><td>the <a href="agents.html">hosted server</a> (16 tools)</td><td>you want the whole published catalog, with ~5 lines of code</td></tr>
 <tr><td><strong>SPARQL endpoint</strong></td><td><code>rete serve</code> or the <a href="interop.html">Space</a></td><td>you already have RDF tooling that speaks the SPARQL 1.1 protocol</td></tr>
 </tbody></table>
 <p>They compose: an agent can hold in-process tools for the graph you own and an
@@ -822,9 +822,10 @@ tools = ReteGraphTools("notes.rete")
 loaded into memory.</p>
 <h2 id="the-mcp-route-in-both-frameworks">The MCP route, in both frameworks</h2>
 <p>When you want the whole published catalog — plus <code>list_datasets</code>,
-<code>describe_entity</code>, SHACL validation, vocabulary suggestion, <code>build_rete</code> and
-the media tools — point the framework's MCP adapter at the hosted server. No
-tool definitions to write.</p>
+<code>describe_entity</code>, SHACL validation and the graph view — point the
+framework's MCP adapter at the hosted server. No tool definitions to write.
+(The authoring tools, <code>build_rete</code> and friends, are on in your own copy of
+<code>ghcr.io/caviri/rete-server</code>, not on the public one.)</p>
 <pre><code class="language-sh">pip install "pydantic-ai-slim[mcp]"      # or, for LangChain:
 pip install langchain-mcp-adapters
 </code></pre>
@@ -844,7 +845,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 client = MultiServerMCPClient({"rete": {
     "transport": "streamable_http",
     "url": "https://katospiegel-rete.hf.space/mcp/"}})
-tools = await client.get_tools()              # 18 tools, no auth
+tools = await client.get_tools()              # 16 tools, no auth
 agent = create_agent("anthropic:claude-sonnet-5", tools)
 result = await agent.ainvoke({"messages": [
     {"role": "user", "content": "Count the laws in the rete dataset 'boe'."}]})
