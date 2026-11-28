@@ -12,7 +12,7 @@ BEARER = {"Authorization": f"Bearer {TOKEN}"}
 ASK = quote("ASK { ?s ?p ?o }")
 
 
-@pytest.mark.parametrize("path", ["/", "/api/datasets", f"/sparql/{PEOPLE}?query={ASK}",
+@pytest.mark.parametrize("path", ["/api/datasets", "/api/uploads", "/home/", "/home/other.js", f"/sparql/{PEOPLE}?query={ASK}",
                                   "/docs", "/openapi.json", "/api/status", "/generated/x.rete"])
 def test_everything_but_health_needs_the_token(locked, path):
     r = locked.get(path)
