@@ -43,7 +43,8 @@ Recommended workflow:
    fastest route to correct query shapes.
 5. `sparql_query(dataset, query)` — SELECT / ASK / CONSTRUCT / DESCRIBE.
    Always add a LIMIT while exploring. reason=true adds OWL 2 QL entailment.
-   CONTAINS / STRSTARTS / STRENDS / REGEX need strings: wrap an IRI or a
+   A big answer comes back as its first rows and a `result` handle: page the
+   rest with `result_rows`. CONTAINS / STRSTARTS / STRENDS / REGEX need strings: wrap an IRI or a
    number in STR(). A FILTER that hits such a type error is false, so rows
    vanish without an error; the result's `warnings` then say which function,
    which argument and what to change. Read them before concluding the data
