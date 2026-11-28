@@ -160,6 +160,50 @@ as URLs or endpoints are omitted**. Share warns when it leaves one out, so
 check that warning before sending a link. A link cannot supply a recipient
 with browser-local built data or private access to a source.
 
+## Let an agent use it {#agents}
+
+The playground registers its actions as [WebMCP](https://github.com/webmachinelearning/webmcp)
+tools, so an agent in the browser can open a dataset, run queries, read the
+answers and build a file while you watch the same page. In a browser without
+WebMCP nothing is registered and the page works as before.
+
+Tools that only read, and leave the page as it is:
+
+| Tool | What it gives |
+| --- | --- |
+| `get_state` | the open dataset, in memory or remote, the active tab, the query in the editor, a link to this view |
+| `list_datasets` | the catalog, with a text filter and pages |
+| `get_dataset_card` | the Dataset Card carried in the open file |
+| `get_schema` | classes with counts and the relations between them |
+| `list_examples` | the example queries of the dataset, with their SPARQL |
+| `run_sparql` | the rows of a SELECT, ASK, CONSTRUCT or DESCRIBE; 50 by default, 500 at most |
+| `find_entities` | labels that start with some letters, with their IRIs |
+| `read_page` | the text the active tab shows |
+
+Tools that act on the page, as a click would:
+
+| Tool | What it does |
+| --- | --- |
+| `open_dataset` | opens a catalog dataset by key, or any `.rete` by its https address |
+| `show_query` | puts a query in the editor and runs it with the output you name |
+| `select_example` | loads an example and runs it |
+| `open_tab` | switches to SPARQL, SHACL, Reach, Coherence, Provenance, Schema, Explore, Semantic or Build |
+| `run_tab` | presses Run in the active tab |
+| `build_rete` | builds a `.rete` from RDF text (N-Triples, N-Quads, Turtle, TriG, JSON-LD, RDF/XML), keeps it in this browser and opens it |
+| `download_rete` | saves the built file through the browser's download |
+
+Values come back as RDF terms the way N-Triples writes them: `<iri>`,
+`"text"@en`, `"1"^^<datatype>`. A result stays under about 18 KB and says when
+it was cut. An engine error comes back as the tool's error, with its message.
+On a remote file a query costs the byte ranges it touches, the same as when
+you run it yourself.
+
+To try it, use a Chrome that has WebMCP (149 or later, with
+`chrome://flags/#enable-webmcp-testing` on) and the "Model Context Tool
+Inspector" extension. WebMCP is an early preview and may change. A page script
+can call the same tools without it: `window.retePlaygroundTools.list()` and
+`window.retePlaygroundTools.call("run_sparql", { query: "…" })`.
+
 <a id="under-the-hood"></a>
 For embedding the engine in your own page, see the [Browser API](browser.md).
 For source builds and playground generation, see [Contributing](contributing.md).

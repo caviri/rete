@@ -1118,6 +1118,15 @@ impl Renderer {
                 }
             }
         }
+        // A run shorter than one tick ends before any sample saw its plan:
+        // the start line still comes first.
+        if matches!(self.mode, Mode::Plain | Mode::Json)
+            && !self.start_shown
+            && (self.plan.is_some() || snap.phase.is_some())
+        {
+            self.emit_start();
+            self.start_shown = true;
+        }
         let view = self.view(&snap, now);
         let failed_at = self.steps.cur.map(|c| self.steps.steps[c].phase);
         self.steps.close(now);

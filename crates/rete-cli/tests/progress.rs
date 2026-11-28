@@ -438,3 +438,35 @@ fn the_file_is_the_same_bytes_with_and_without_progress() {
     );
     assert!(std::fs::read(&a).unwrap() == std::fs::read(&b).unwrap());
 }
+
+/// A run that ends before the renderer's first tick still opens with `start`.
+/// A five-statement recard takes a few milliseconds; the line used to be
+/// missing whenever the first sample came before the command gave its plan.
+#[test]
+fn a_run_shorter_than_one_tick_still_starts_with_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let nt = dir.path().join("tiny.nt");
+    let mut text = String::new();
+    for i in 0..5 {
+        text.push_str(&format!(
+            "<http://example.test/s{i}> <http://example.test/p> \"v{i}\" .\n"
+        ));
+    }
+    std::fs::write(&nt, text).unwrap();
+    let g = dir.path().join("tiny.rete");
+    run(&["build", s(&nt), "-o", s(&g)], &[]);
+    for round in 0..20 {
+        let out = dir.path().join(format!("r{round}.rete"));
+        let (_, err) = run(&["recard", s(&g), "-o", s(&out), "--progress", "json"], &[]);
+        let evs = events(&err);
+        assert!(!evs.is_empty(), "round {round}: no events:\n{err}");
+        assert_eq!(evs[0]["event"], "start", "round {round}: {evs:#?}");
+        assert_eq!(
+            evs.last().unwrap()["event"],
+            "done",
+            "round {round}: {evs:#?}"
+        );
+        let starts = evs.iter().filter(|e| e["event"] == "start").count();
+        assert_eq!(starts, 1, "round {round}: {evs:#?}");
+    }
+}

@@ -7,6 +7,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The playground offers its actions to browser agents as WebMCP tools.**
+  An agent can list and open datasets, read the card and the schema, run
+  SPARQL and get the rows, load an example, switch tabs, and build a `.rete`
+  from RDF text and save it, on the page the person is looking at. Fifteen
+  tools; nothing is registered in a browser without WebMCP. See
+  [the playground guide](docs/playground-guide.md#agents).
+
 - **semantic-site, a second Claude Code plugin in the repo's marketplace**
   (`plugins/semantic-site`, `/plugin install semantic-site@rete`). It builds a
   static website from CSV, JSON, JSON-LD, NDJSON, N-Triples or N-Quads, and
@@ -94,6 +101,10 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **`--progress json` and `plain` always open with the start line.** A run
+  shorter than one tick of the progress sampler (a recard of a small file)
+  could end with `done` and no `start` before it. This also made the
+  `progress recard` smoke check fail now and then in CI.
 - **Deriving a card for a graph with large literals stays inside the memory
   budget.** `rete build --memory-budget-mb` and `rete recard`
   read every literal once to profile it, 65,536 at a time. Literals that

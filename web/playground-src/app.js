@@ -12730,7 +12730,470 @@ function cardCostHtml(cost) {
     if (bootShowCatalog && !liveEp) openSource();
   }
 
-  boot().catch((e) => {
+  // ── WebMCP: the playground as tools for a browser agent ────────────────────
+  // Registered through document.modelContext (navigator.modelContext and
+  // provideContext are tried for older previews); nothing is registered in a
+  // browser without WebMCP. Two kinds of tool:
+  //   * read tools answer from the engine and leave the page as it is;
+  //   * page tools do what a click would do — open a dataset, switch a tab,
+  //     put a query in the editor and run it, build a .rete — so the person
+  //     watching sees the same thing the agent does.
+  // Results are plain JSON, kept under ~18 KB, and say when they were cut.
+  // docs/playground-guide.md lists the tools.
+  const MCP_MAX = 18000;
+  const MCP_MODES = ["sparql", "shacl", "reach", "coherence", "provenance", "schema", "explore", "semantic", "build"];
+  const MCP_RUN_MODES = ["sparql", "shacl", "reach", "coherence", "provenance"];
+  const MCP_BUILD_FORMATS = ["nt", "nq", "ttl", "trig", "jsonld", "rdfxml"];
+  const mcpSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const mcpClip = (s, n) => { s = s == null ? "" : String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+  const mcpSize = (v) => JSON.stringify(v).length;
+  const mcpInt = (v, dflt, max) => Math.min(max, Math.max(1, Number.isFinite(+v) && +v > 0 ? Math.floor(+v) : dflt));
+  // Drop trailing items until the JSON fits.
+  function mcpFit(items, wrap) {
+    let n = items.length;
+    while (n > 0 && mcpSize(wrap(items.slice(0, n))) > MCP_MAX) n = Math.max(0, Math.floor(n * 0.8) - (n < 5 ? 1 : 0));
+    return { items: items.slice(0, n), cut: n < items.length };
+  }
+  // A copy of a JSON value with long lists and long texts cut.
+  function mcpShrink(v, items, chars) {
+    if (typeof v === "string") return mcpClip(v, chars);
+    if (Array.isArray(v)) return v.slice(0, items).map((x) => mcpShrink(x, items, chars));
+    if (v && typeof v === "object") { const o = {}; Object.keys(v).forEach((k) => { o[k] = mcpShrink(v[k], items, chars); }); return o; }
+    return v;
+  }
+  async function mcpWait(test, ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (test()) return true; await mcpSleep(100); }
+    return !!test();
+  }
+  function mcpSource() {
+    if (state.liveEndpoint) return "endpoint";
+    if (state.remote) return "remote";
+    return state.graph ? "memory" : "none";
+  }
+  function mcpState() {
+    return {
+      dataset: state.dataset,
+      label: currentDatasetLabel(),
+      inCatalog: !!datasetInfo(state.dataset),
+      source: mcpSource(),                 // memory = whole file loaded; remote = read by HTTP range
+      url: state.remote ? state.remote.url : null,
+      status: ($("meta") || {}).textContent || "",
+      mode: state.mode,
+      modes: MCP_MODES,
+      query: mcpClip($("q").value, 4000),
+      output: $("fmt").value,
+      strategy: $("strategy").value,
+      reason: !!($("owlReason") && $("owlReason").checked),
+      allGraphs: unionGraphsOn(),
+      selectedExample: state.selectedExample,
+      examples: examplesForDataset().length,
+      link: location.href
+    };
+  }
+  // Run a query on the open graph and hand back the engine's own JSON. The page
+  // is not touched: no editor change, no history entry, no result table.
+  async function mcpQuery(q, limit, reason, union) {
+    if (state.liveEndpoint) throw new Error("A live SPARQL endpoint is connected. Use show_query to run on it, or open a dataset first.");
+    if (isUpdateText(q)) throw new Error("SPARQL Update is not supported: the in-browser engine is read-only.");
+    if (state.remote) {
+      const out = await remoteSparql(state.remote.url, q, "table", reason, union, limit);
+      return JSON.parse(out.json);
+    }
+    if (!state.graph) throw new Error("No graph is loaded yet. Call open_dataset first.");
+    const raw = union ? state.graph.query_opts(q, "table", !!reason, true)
+      : (reason ? state.graph.query_reasoned(q, "table") : state.graph.query(q, "table"));
+    return JSON.parse(raw);
+  }
+  function mcpRows(res, limit) {
+    if (res.kind === "ask") return { kind: "ask", boolean: res.boolean };
+    if (res.kind === "select") {
+      const vars = res.vars || [];
+      const all = res.rows || [];
+      // A cell is an RDF term as the engine writes it (<iri>, "text"@en,
+      // "1"^^<datatype>); a very long one (a picture in base64) is cut.
+      const rows = all.slice(0, limit).map((r) => {
+        const o = {};
+        vars.forEach((v) => { if (r[v] != null && r[v] !== "") o[v] = mcpClip(r[v], 600); });
+        return o;
+      });
+      const total = Math.max(all.length, res.total || 0);
+      const fit = mcpFit(rows, (x) => ({ kind: "select", vars, rows: x }));
+      const out = { kind: "select", vars, rows: fit.items, returned: fit.items.length, total };
+      if (fit.items.length < total) out.truncated = true;
+      return out;
+    }
+    const all = res.triples || [];
+    const cut = all.slice(0, limit).map((t) => (Array.isArray(t) ? t.map((x) => mcpClip(x, 600)) : t));
+    const fit = mcpFit(cut, (x) => ({ triples: x }));
+    const out = { kind: res.kind || "construct", triples: fit.items, returned: fit.items.length, total: all.length };
+    if (fit.items.length < all.length) out.truncated = true;
+    return out;
+  }
+  async function mcpSchema() {
+    if (state.schema) return state.schema;
+    if (state.remote) {
+      const out = await remoteCall("schema_url", state.remote.url);
+      const s = JSON.parse(out.json);
+      if (!state.schema) state.schema = s;
+      return s;
+    }
+    throw new Error("No graph is loaded yet. Call open_dataset first.");
+  }
+  // What the active tab shows right now, as text.
+  function mcpPanelText() {
+    const scope = state.mode === "sparql" ? $("out") : document.querySelector(".panel.active");
+    if (!scope) return "";
+    // Menus (a column's render type, …) would add all their options to the text.
+    const menus = [...scope.querySelectorAll("select")].filter((s) => !s.hidden);
+    menus.forEach((s) => { s.hidden = true; });
+    let text = "";
+    try { text = scope.innerText; } finally { menus.forEach((s) => { s.hidden = false; }); }
+    return mcpClip(text.replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim(), 12000);
+  }
+  // A run is over when the spinner is gone and the Run button is Run again.
+  async function mcpAfterRun(waitMs) {
+    await mcpSleep(150);
+    const busy = () => !!document.querySelector(".panel.active .netspin") || $("run").textContent.trim() === "Cancel";
+    const done = await mcpWait(() => !busy(), waitMs);
+    return { finished: done, summary: ($("qmeta") || {}).textContent || "", shown: mcpPanelText() };
+  }
+  function mcpTools() {
+    const ro = { readOnlyHint: true };
+    const obj = (properties, required) => ({ type: "object", properties: properties || {}, required: required || [], additionalProperties: false });
+    return [
+      {
+        name: "get_state", annotations: ro,
+        description: "What the playground has open: the dataset, whether it is in memory or read remotely, the active tab, the query in the editor, the output and strategy settings, and a link that reopens this view. Call this first.",
+        inputSchema: obj(),
+        execute: async () => mcpState()
+      },
+      {
+        name: "list_datasets", annotations: ro,
+        description: "The datasets in the catalog (key, title, size, triples, licence, tags). Bundled ones load in memory at once; the others are read over HTTP range, whatever their size. Graphs built in this browser are listed too.",
+        inputSchema: obj({
+          query: { type: "string", description: "Words to look for in key, title, description and tags. Empty lists everything.", maxLength: 200 },
+          limit: { type: "integer", minimum: 1, maximum: 200, description: "Default 60. A result holds about 30; see next." },
+          offset: { type: "integer", minimum: 0, description: "Skip this many matches; pass the next value of the previous result." }
+        }),
+        execute: async (a) => {
+          const words = String((a && a.query) || "").toLowerCase().split(/\s+/).filter(Boolean);
+          const all = (CATALOG.datasets || []).map((d) => {
+            const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[d.key]) || {};
+            const x = (CATALOG.datasetExtra && CATALOG.datasetExtra[d.key]) || {};
+            return {
+              key: d.key, title: d.label, description: mcpClip(d.description, 110), size: m.size, triples: m.triples, licence: m.license,
+              tags: (x.tags || []).slice(0, 5), bundled: isEmbedded(d.key), custom: !!d.custom, examples: (CATALOG.examples[d.key] || []).length
+            };
+          }).filter((d) => words.every((w) => (d.key + " " + d.title + " " + d.description + " " + d.tags.join(" ")).toLowerCase().includes(w)));
+          const off = Math.max(0, Math.floor(+(a && a.offset)) || 0);
+          const fit = mcpFit(all.slice(off, off + mcpInt(a && a.limit, 60, 200)), (x) => ({ datasets: x }));
+          const end = off + fit.items.length;
+          return { datasets: fit.items, returned: fit.items.length, matched: all.length, next: end < all.length ? end : null };
+        }
+      },
+      {
+        name: "open_dataset",
+        description: "Open a dataset in the playground: a catalog key from list_datasets, or the https address of any .rete file. The page changes to it. A remote file is not downloaded; queries read only the byte ranges they need.",
+        inputSchema: obj({
+          key: { type: "string", description: "Catalog key, e.g. scholar or wikiart.", maxLength: 100 },
+          url: { type: "string", description: "Address of a .rete file, used when it is not in the catalog.", maxLength: 2000 }
+        }),
+        execute: async (a) => {
+          a = a || {};
+          if (state.liveEndpoint) throw new Error("A live SPARQL endpoint is connected; disconnect it in the page first.");
+          if (a.url) {
+            const clean = normalizeReteUrl(a.url);
+            if (!clean) throw new Error("That is not an http(s) address of a .rete file: " + mcpClip(a.url, 200));
+            closeSource();
+            enterRemote(clean, null);
+            setMode("sparql");
+            return mcpState();
+          }
+          const key = String(a.key || "");
+          if (!datasetInfo(key)) throw new Error("No dataset with key \"" + mcpClip(key, 80) + "\". Call list_datasets for the keys.");
+          closeSource();
+          selectDataset(key);
+          await mcpWait(() => state.dataset === key && (!!state.remote || !!state.graph), 30000);
+          if (!state.remote) await mcpWait(() => !!state.schema, 30000);
+          return mcpState();
+        }
+      },
+      {
+        name: "get_dataset_card", annotations: ro,
+        description: "The Dataset Card carried inside the open file: title, description, licence, source, creators, counts, and for files built with the CLI the top classes, predicates and starter queries. Costs a few KB even on a very large remote file.",
+        inputSchema: obj(),
+        execute: async () => {
+          const c = await fetchCard();
+          if (c.err) throw new Error(c.err);
+          if (!c.text) return { card: null, note: "This file carries no Dataset Card." };
+          let card = c.text;
+          try { card = JSON.parse(c.text); } catch (_e) { /* hand back the text */ }
+          const out = { card, textIndex: c.textIndex || null };
+          if (mcpSize(out) <= MCP_MAX) return out;
+          // Too large for one result: keep the shape, shorten the long lists and texts.
+          for (const [items, chars] of [[12, 600], [6, 300], [3, 160]]) {
+            const small = { card: mcpShrink(card, items, chars), textIndex: c.textIndex || null, truncated: true,
+              note: "The card is larger than one result: lists are cut to " + items + " items and texts to " + chars + " characters." };
+            if (mcpSize(small) <= MCP_MAX) return small;
+          }
+          return { card: mcpClip(c.text, MCP_MAX - 400), truncated: true, note: "The card is larger than one result; this is its JSON text, cut." };
+        }
+      },
+      {
+        name: "get_schema", annotations: ro,
+        description: "The classes of the open graph with their instance counts, and the relations between classes. Read from the schema block of the file, not by scanning triples. Use it before writing a query.",
+        inputSchema: obj({ limit: { type: "integer", minimum: 1, maximum: 500, description: "Classes and relations to return, in the file's order. Default 60." } }),
+        execute: async (a) => {
+          const s = await mcpSchema();
+          const lim = mcpInt(a && a.limit, 60, 500);
+          const allC = s.classes || [], allR = s.relations || [];
+          const fc = mcpFit(allC.slice(0, lim), (x) => ({ classes: x }));
+          const rel = allR.slice(0, lim);
+          let n = rel.length;
+          while (n > 0 && mcpSize({ classes: fc.items, relations: rel.slice(0, n) }) > MCP_MAX) n = Math.floor(n * 0.8);
+          return {
+            classes: fc.items, relations: rel.slice(0, n), totalClasses: allC.length, totalRelations: allR.length,
+            truncated: fc.items.length < allC.length || n < allR.length
+          };
+        }
+      },
+      {
+        name: "list_examples", annotations: ro,
+        description: "The example queries of the open dataset, with their SPARQL: the curated ones and the starter queries from the file's own card. Pass an index to select_example to load one.",
+        inputSchema: obj(),
+        execute: async () => {
+          const list = examplesForDataset().map((ex, i) => ({
+            index: i, family: ex.family, label: ex.label, view: ex.view || "table", tip: mcpClip(ex.tip, 240), query: mcpClip(ex.q, 1500)
+          }));
+          const fit = mcpFit(list, (x) => ({ examples: x }));
+          return { dataset: state.dataset, examples: fit.items, total: list.length, truncated: fit.cut };
+        }
+      },
+      {
+        name: "run_sparql", annotations: ro,
+        description: "Run a SPARQL query (SELECT, ASK, CONSTRUCT, DESCRIBE) on the open graph and get the rows back. The page is not changed. Values are RDF terms as written in N-Triples: <iri>, \"text\"@en, \"1\"^^<datatype>. On a remote file the cost is the byte ranges the query touches, so put a LIMIT on exploratory queries and avoid full scans of very large files.",
+        inputSchema: obj({
+          query: { type: "string", description: "The SPARQL text, with its PREFIX lines.", maxLength: 20000 },
+          limit: { type: "integer", minimum: 1, maximum: 500, description: "Rows to return. Default 50." },
+          reason: { type: "boolean", description: "Apply OWL 2 QL reasoning (subClassOf, subPropertyOf, domain, range). Default false." },
+          all_graphs: { type: "boolean", description: "Treat the default graph as the union of all named graphs. Default false." }
+        }, ["query"]),
+        execute: async (a) => {
+          const q = String((a && a.query) || "").trim();
+          if (!q) throw new Error("query is empty.");
+          const lim = mcpInt(a && a.limit, 50, 500);
+          const t0 = performance.now();
+          const res = await mcpQuery(q, lim, !!(a && a.reason), !!(a && a.all_graphs));
+          const out = mcpRows(res, lim);
+          out.ms = Math.round(performance.now() - t0);
+          if (Array.isArray(res.warnings) && res.warnings.length) out.warnings = res.warnings.slice(0, 5);
+          return out;
+        }
+      },
+      {
+        name: "find_entities", annotations: ro,
+        description: "Find things by the start of their label, using the label index of the file. Returns labels with their IRIs, to use in a query.",
+        inputSchema: obj({
+          prefix: { type: "string", description: "The first letters of a label, at least 2.", minLength: 2, maxLength: 100 },
+          limit: { type: "integer", minimum: 1, maximum: 50, description: "Default 12." }
+        }, ["prefix"]),
+        execute: async (a) => {
+          const p = String((a && a.prefix) || "").trim();
+          if (p.length < 2) throw new Error("prefix needs at least 2 characters.");
+          const lim = mcpInt(a && a.limit, 12, 50);
+          let hits;
+          if (state.remote) hits = JSON.parse((await remotePrefixSearch(state.remote.url, p, lim)).json);
+          else if (state.graph) hits = JSON.parse(state.graph.prefix_search(p, lim));
+          else throw new Error("No graph is loaded yet. Call open_dataset first.");
+          return { prefix: p, matches: hits };
+        }
+      },
+      {
+        name: "show_query",
+        description: "Put a query in the page's editor and, unless run is false, run it there, so the person watching sees it with the chosen output (table, cards, graph, map, time, Turtle, JSON-LD). Returns the result line and the text the page shows. To get rows as data, use run_sparql.",
+        inputSchema: obj({
+          query: { type: "string", maxLength: 20000 },
+          output: { type: "string", enum: ["table", "cards", "graph", "map", "tiles", "time", "ttl", "jsonld"], description: "Default: keep the current one." },
+          strategy: { type: "string", enum: ["whole", "progressive", "community"], description: "Whole index (default), progressive summary (counts and ASK from the pyramid), or split by community. In-memory graphs only." },
+          reason: { type: "boolean" },
+          all_graphs: { type: "boolean" },
+          run: { type: "boolean", description: "Default true." }
+        }, ["query"]),
+        execute: async (a) => {
+          a = a || {};
+          const q = String(a.query || "").trim();
+          if (!q) throw new Error("query is empty.");
+          closeSource();
+          setMode("sparql");
+          setEd("q", q);
+          state.selectedExample = -1; state.colLabels = null; state.colTypes = null;
+          renderExamples();
+          if (a.output) setView(a.output);
+          setStrategy(a.strategy || "whole");
+          if (typeof a.reason === "boolean" && $("owlReason")) $("owlReason").checked = a.reason;
+          if (typeof a.all_graphs === "boolean" && $("unionGraphs")) $("unionGraphs").checked = a.all_graphs;
+          updateHash();
+          if (a.run === false) return { ran: false, state: mcpState() };
+          runQuery();
+          const r = await mcpAfterRun(120000);
+          return { ran: true, finished: r.finished, summary: r.summary, shown: r.shown, link: location.href };
+        }
+      },
+      {
+        name: "select_example",
+        description: "Load one of the dataset's example queries into the editor, with its output view and column names, and run it unless run is false. Indexes come from list_examples.",
+        inputSchema: obj({ index: { type: "integer", minimum: 0 }, run: { type: "boolean", description: "Default true." } }, ["index"]),
+        execute: async (a) => {
+          const i = Number.isInteger(a && a.index) ? a.index : -1;
+          const ex = examplesForDataset()[i];
+          if (!ex) throw new Error("No example with that index for this dataset; list_examples gives the indexes.");
+          closeSource();
+          selectExample(i);
+          renderExamples();
+          if (a.run === false) return { ran: false, label: ex.label, query: mcpClip(ex.q, 4000) };
+          runQuery();
+          const r = await mcpAfterRun(120000);
+          return { ran: true, label: ex.label, finished: r.finished, summary: r.summary, shown: r.shown, link: location.href };
+        }
+      },
+      {
+        name: "open_tab",
+        description: "Switch the playground to one of its tabs: sparql, shacl (validate against shapes), reach (who is connected to what), coherence, provenance, schema, explore (browse a class as a table), semantic (search by meaning), build (make a .rete). Returns the text the tab shows.",
+        inputSchema: obj({ tab: { type: "string", enum: MCP_MODES } }, ["tab"]),
+        execute: async (a) => {
+          const m = String((a && a.tab) || "");
+          if (!MCP_MODES.includes(m)) throw new Error("Unknown tab. One of: " + MCP_MODES.join(", "));
+          closeSource();
+          setMode(m);
+          await mcpSleep(400);
+          return { mode: state.mode, shown: mcpPanelText() };
+        }
+      },
+      {
+        name: "run_tab",
+        description: "Press the Run button of the active tab (sparql, shacl, reach, coherence, provenance) with the settings it has, and return what it shows. For a query of your own use run_sparql or show_query; for a build use build_rete.",
+        inputSchema: obj(),
+        execute: async () => {
+          if (!MCP_RUN_MODES.includes(state.mode)) throw new Error("The " + state.mode + " tab has no Run. Tabs with one: " + MCP_RUN_MODES.join(", "));
+          runActiveMode();
+          const r = await mcpAfterRun(120000);
+          return { mode: state.mode, finished: r.finished, shown: r.shown };
+        }
+      },
+      {
+        name: "read_page", annotations: ro,
+        description: "The text the active tab shows right now (a result table, a schema, a validation report), cut to about 12 KB. Use it after a person changed something in the page.",
+        inputSchema: obj(),
+        execute: async () => ({ mode: state.mode, summary: state.mode === "sparql" ? (($("qmeta") || {}).textContent || "") : "", shown: mcpPanelText() })
+      },
+      {
+        name: "build_rete",
+        description: "Build a .rete file in the browser from RDF text and add it to the dataset list of this browser. Formats: nt, nq, ttl, trig, jsonld, rdfxml. Nothing is uploaded. Text in a literal must be escaped as the format asks (a line break is written as backslash n). By default the new graph is opened so it can be queried at once; download_rete saves the file.",
+        inputSchema: obj({
+          data: { type: "string", description: "The RDF text.", maxLength: 2000000 },
+          format: { type: "string", enum: MCP_BUILD_FORMATS, description: "Default ttl." },
+          title: { type: "string", description: "Title of the dataset; its key is made from it.", maxLength: 120 },
+          ontology: { type: "string", description: "Optional ontology triples in the same format, merged into the graph.", maxLength: 500000 },
+          description: { type: "string", maxLength: 2000 },
+          license: { type: "string", maxLength: 120 },
+          source: { type: "string", description: "Where the data comes from (a URL).", maxLength: 500 },
+          open: { type: "boolean", description: "Open the built graph in the console. Default true." }
+        }, ["data", "title"]),
+        execute: async (a) => {
+          a = a || {};
+          if (!String(a.data || "").trim()) throw new Error("data is empty.");
+          const key = sanitizeKey(a.title);
+          if (!key) throw new Error("title needs at least one letter or digit.");
+          if (keyIsReserved(key)) throw new Error("The key \"" + key + "\" belongs to a bundled dataset; choose another title.");
+          const fmt = MCP_BUILD_FORMATS.includes(a.format) ? a.format : "ttl";
+          // Parse first, so a mistake in the RDF comes back as the engine's own message.
+          try { buildFromSources(String(a.data), String(a.ontology || ""), fmt, ""); }
+          catch (e) { throw new Error("Build failed: " + firstLine(e)); }
+          closeSource();
+          setMode("build");
+          $("buildFormat").value = fmt;
+          setEd("buildText", String(a.data));
+          setEd("buildOntology", String(a.ontology || ""));
+          const put = (id, v) => {
+            const el = $(id);
+            if (!el) return;
+            el.value = v == null ? "" : String(v);
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+          put("cardKey", ""); put("cardTitle", a.title); put("cardDesc", a.description); put("cardLicense", a.license); put("cardSource", a.source);
+          const before = state.built;
+          state.built = null;
+          await runBuild();
+          if (!state.built) {
+            state.built = before;
+            setBuiltButtons(!!before);
+            throw new Error(mcpClip(($("buildOut") || {}).innerText || "Build failed.", 600));
+          }
+          const b = state.built, info = JSON.parse(W().info(b.bytes));
+          if (a.open !== false) { openBuilt(); await mcpWait(() => state.dataset === b.key && !!state.graph, 15000); }
+          return {
+            key: b.key, bytes: b.bytes.length, triples: info.quads, terms: info.terms, pyramidLevels: info.pyramidLevels,
+            opened: a.open !== false, note: "Kept in this browser. download_rete saves the file."
+          };
+        }
+      },
+      {
+        name: "download_rete",
+        description: "Save the .rete made by the last build_rete as a file, through the browser's own download. The person may be asked where to save it.",
+        inputSchema: obj(),
+        execute: async () => {
+          if (!state.built) throw new Error("Nothing was built in this session yet. Call build_rete first.");
+          downloadBuilt();
+          return { file: state.built.key + ".rete", bytes: state.built.bytes.length };
+        }
+      }
+    ];
+  }
+  function wireWebMcp() {
+    let ctx = null;
+    try { ctx = document.modelContext || null; } catch (_e) { /* none */ }
+    if (!ctx) { try { ctx = navigator.modelContext || null; } catch (_e) { /* none */ } }
+    const tools = mcpTools();
+    // The same tools by name for page scripts and tests, whether or not the
+    // browser has WebMCP.
+    const byName = {};
+    tools.forEach((t) => { byName[t.name] = t; });
+    window.retePlaygroundTools = {
+      list: () => tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, readOnly: !!(t.annotations && t.annotations.readOnlyHint) })),
+      call: (name, args) => (byName[name] ? byName[name].execute(args || {}) : Promise.reject(new Error("no tool named " + name)))
+    };
+    const announce = (detail) => {
+      window.reteWebMCP = detail;
+      try { document.dispatchEvent(new CustomEvent("rete:webmcp", { detail })); } catch (_e) { /* ignore */ }
+    };
+    if (!ctx || (typeof ctx.registerTool !== "function" && typeof ctx.provideContext !== "function")) {
+      announce({ supported: false, tools: [] });
+      return;
+    }
+    const names = [];
+    if (typeof ctx.registerTool === "function") {
+      const ac = typeof AbortController === "function" ? new AbortController() : null;
+      tools.forEach((t) => {
+        try { ctx.registerTool(t, ac ? { signal: ac.signal } : undefined); names.push(t.name); }
+        catch (e) { console.debug("[rete webmcp] registerTool failed for", t.name, e && e.message); }
+      });
+      window.addEventListener("pagehide", () => {
+        try {
+          if (ac) ac.abort();
+          else if (typeof ctx.unregisterTool === "function") names.forEach((n) => ctx.unregisterTool(n));
+        } catch (_e) { /* ignore */ }
+      }, { once: true });
+    } else {
+      try { ctx.provideContext({ tools }); tools.forEach((t) => names.push(t.name)); }
+      catch (e) { console.debug("[rete webmcp] provideContext failed", e && e.message); }
+    }
+    announce({ supported: true, tools: names });
+  }
+
+  boot().then(() => {
+    try { wireWebMcp(); } catch (e) { console.debug("[rete webmcp] off", e && e.message); }
+  }).catch((e) => {
     setStatus("boot failed");
     showError("out", String(e && e.stack ? e.stack : e));
   });
