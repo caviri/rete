@@ -1,4 +1,5 @@
-"""Bearer-token gate in front of every route except ``/health``.
+"""Bearer-token gate in front of every route except ``/health`` and the home
+page shell (``landing.SHELL_PATHS``: the HTML, CSS and JS at ``/`` and ``/home/``).
 
 Pure ASGI, so it covers the mounted MCP app and streaming responses alike.
 
@@ -18,7 +19,12 @@ import json
 from typing import Iterable, List
 from urllib.parse import parse_qsl, urlencode
 
-OPEN_PATHS = ("/health",)
+from .landing import SHELL_PATHS
+
+# /health, and the home page's static shell (no data in it): a browser cannot
+# send a header when it navigates, so the page itself must load without one
+# and then sends the token with every /api call.
+OPEN_PATHS = ("/health",) + SHELL_PATHS
 
 
 class TokenAuth:
@@ -37,7 +43,7 @@ class TokenAuth:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not self.tokens:
             return await self.app(scope, receive, send)
-        if scope["method"] == "OPTIONS" or scope["path"] in OPEN_PATHS:
+        if scope["method"] == "OPTIONS" or (scope["path"] in OPEN_PATHS and scope["method"] in ("GET", "HEAD")):
             return await self.app(scope, receive, send)
 
         candidate = None

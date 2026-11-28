@@ -328,6 +328,7 @@ class Handle:
     source: str
     reader: Optional[DiskCachedRangeReader]
     lock: threading.Lock = field(default_factory=threading.Lock)
+    lane: str = "quick"
     opened_at: float = field(default_factory=time.time)
     queries: int = 0
 
@@ -379,22 +380,27 @@ class Service:
 
     # -- handles ---------------------------------------------------------
 
-    def handle(self, source: str) -> Handle:
+    def handle(self, source: str, lane: str = "quick") -> Handle:
+        """The open graph for ``source``. Long work (MCP tasks) uses lane
+        ``"long"``: a second handle of the same file with its own lock, so a
+        query that runs for minutes never blocks a quick call on the dataset."""
+        key = source if lane == "quick" else f"{source}#{lane}"
         with self._handles_lock:
-            if source in self._handles:
-                self._handles.move_to_end(source)
-                return self._handles[source]
-            opening = self._opening.setdefault(source, threading.Lock())
+            if key in self._handles:
+                self._handles.move_to_end(key)
+                return self._handles[key]
+            opening = self._opening.setdefault(key, threading.Lock())
         # Single flight: one open per source, the others wait for it.
         with opening:
             with self._handles_lock:
-                if source in self._handles:
-                    self._handles.move_to_end(source)
-                    return self._handles[source]
+                if key in self._handles:
+                    self._handles.move_to_end(key)
+                    return self._handles[key]
             handle = self._open(source)
+            handle.lane = lane
             with self._handles_lock:
-                self._handles[source] = handle
-                self._opening.pop(source, None)
+                self._handles[key] = handle
+                self._opening.pop(key, None)
                 while len(self._handles) > self.settings.max_handles:
                     self._handles.popitem(last=False)
                 return handle
@@ -414,9 +420,17 @@ class Service:
         log.info("opened %s in %.2fs", source, time.time() - started)
         return Handle(graph=graph, source=source, reader=reader)
 
+    def _limit(self, lane: str) -> float:
+        """The time limit of a lane: quick calls, or long work (a task)."""
+        return self.settings.task_timeout_s if lane == "long" else self.settings.query_timeout_s
+
     def _locked(self, handle: Handle):
         """The handle's lock, or Busy when it does not free up in time."""
-        if not handle.lock.acquire(timeout=self.settings.query_timeout_s):
+        wait = self._limit(handle.lane)
+        if not handle.lock.acquire(timeout=wait):
+            if handle.lane == "long":
+                raise Busy(f"{handle.source} has been busy with another long query for {wait:.0f}s; "
+                           "retry when it has finished")
             raise Busy(f"{handle.source} is busy with another query; retry shortly")
         return _Release(handle.lock)
 
@@ -457,7 +471,8 @@ class Service:
 
     def run_query(self, dataset: Optional[str], url: Optional[str], query: str,
                   reason: bool = False, row_cap: Optional[int] = None,
-                  quoted_triple_syntax: str = "rdf12", shape: str = "both") -> Dict[str, Any]:
+                  quoted_triple_syntax: str = "rdf12", shape: str = "both",
+                  lane: str = "quick") -> Dict[str, Any]:
         """Run SPARQL and return a transport-ready document.
 
         SELECT → W3C SPARQL-JSON (``head``/``results``) plus ``table``, the
@@ -474,8 +489,10 @@ class Service:
             raise RequestError(f"unknown quoted_triple_syntax {quoted_triple_syntax!r} "
                                "(expected 'rdf12' or 'rdf-star')")
         source, entry = self.resolve(dataset, url)
-        cap = min(row_cap or self.settings.row_cap, self.settings.row_cap)
-        handle = self.handle(source)
+        ceiling = self.settings.task_row_cap if lane == "long" else self.settings.row_cap
+        cap = min(row_cap or ceiling, ceiling)
+        limit = self._limit(lane)
+        handle = self.handle(source, lane)
         with self._locked(handle):
             started = time.time()
             try:
@@ -485,8 +502,8 @@ class Service:
             elapsed = time.time() - started
             handle.queries += 1
             stats = self.stats(handle)
-        if elapsed > self.settings.query_timeout_s:
-            raise QueryTimeout(f"query took {elapsed:.1f}s (limit {self.settings.query_timeout_s:.0f}s); "
+        if elapsed > limit:
+            raise QueryTimeout(f"query took {elapsed:.1f}s (limit {limit:.0f}s); "
                                "narrow it or add a LIMIT")
         doc: Dict[str, Any] = {
             "dataset": entry.get("key"),
@@ -588,9 +605,10 @@ class Service:
         return embedded or entry.get("examples") or []
 
     def shacl_validate(self, dataset: Optional[str], url: Optional[str], shapes: str,
-                       graph: Optional[str] = None, format: str = "json") -> Dict[str, Any]:
+                       graph: Optional[str] = None, format: str = "json",
+                       lane: str = "quick") -> Dict[str, Any]:
         source, entry = self.resolve(dataset, url)
-        handle = self.handle(source)
+        handle = self.handle(source, lane)
         with self._locked(handle):
             started = time.time()
             try:
@@ -599,6 +617,8 @@ class Service:
                 raise RequestError(str(e)) from None
             elapsed = time.time() - started
             stats = self.stats(handle)
+        if lane == "long" and elapsed > self._limit(lane):
+            raise QueryTimeout(f"validation took {elapsed:.1f}s (limit {self._limit(lane):.0f}s)")
         return {"dataset": entry.get("key"), "elapsed_seconds": round(elapsed, 3),
                 "report": out, "stats": stats}
 

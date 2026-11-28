@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Papers</title>
+<meta name="description" content="Seven papers and the people who wrote them, read live from one .rete file.">
+<!-- Link previews read this HTML as served; they never run the script below.
+     Put real values here at build time (see build-static.mjs). -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Papers">
+<meta property="og:description" content="Seven papers and the people who wrote them.">
+<meta property="og:image" content="https://example.org/og/papers.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { color-scheme: light dark; --ink: #1d1d1f; --paper: #fff; --line: #d8d8dc; --accent: #0b6bcb; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #ececf0; --paper: #17171a; --line: #34343a; --accent: #6db3ff; } }
+  body { margin: 0; padding: 24px 16px; background: var(--paper); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 42rem; margin: 0 auto; }
+  input { width: 100%; box-sizing: border-box; padding: 10px; font: inherit; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 6px; }
+  li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  small, #status { color: color-mix(in srgb, var(--ink) 60%, transparent); }
+  ul { list-style: none; padding: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Papers</h1>
+  <p id="about"></p>
+  <input id="q" type="search" placeholder="Search titles" aria-label="Search titles" autocomplete="off">
+  <p id="status" role="status">Opening the graph...</p>
+  <ul id="results"></ul>
+</main>
+
+<script type="module">
+// ---- 1. Change these ------------------------------------------------------
+const RETE_URL = new URL("papers.rete", location.href).href;   // any URL that serves Range + CORS
+const ENGINE = "https://cdn.jsdelivr.net/npm/rete-graph@0.7.8/dist/rete-graph.min.js";
+const PREFIXES = "PREFIX ex: <https://example.org/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n";
+const LIST = (text) => `${PREFIXES}
+  SELECT ?paper ?title ?year WHERE {
+    ?paper a ex:Paper ; rdfs:label ?title ; ex:year ?year .
+    FILTER(CONTAINS(LCASE(?title), LCASE(${JSON.stringify(text)})))
+  } ORDER BY ?year LIMIT 25`;
+
+// ---- 2. The engine runs in a worker (browsers allow its range reads only there) ----
+const workerSource = `
+  importScripts(${JSON.stringify(ENGINE)});
+  let graph = null;
+  onmessage = async ({ data: { id, op, args } }) => {
+    try {
+      let result;
+      if (op === "open") { graph = await rete.open(args.url); result = true; }
+      else if (op === "card") result = graph.card();
+      else if (op === "stats") result = graph.stats();
+      else if (op === "query") {
+        // Terms become plain strings before they cross the thread boundary.
+        result = graph.query(args.query).map((row) =>
+          Object.fromEntries(Object.entries(row).map(([k, t]) => [k, t.value])));
+      } else throw new Error("unknown op " + op);
+      postMessage({ id, ok: true, result });
+    } catch (e) { postMessage({ id, ok: false, error: String((e && e.message) || e) }); }
+  };`;
+const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" })));
+const waiting = new Map();
+let next = 1;
+worker.onmessage = ({ data: { id, ok, result, error } }) => {
+  const p = waiting.get(id); waiting.delete(id);
+  if (p) ok ? p.resolve(result) : p.reject(new Error(error));
+};
+const call = (op, args) => new Promise((resolve, reject) => {
+  const id = next++; waiting.set(id, { resolve, reject }); worker.postMessage({ id, op, args });
+});
+
+// ---- 3. Page ---------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const setStatus = (text) => { $("status").textContent = text; };
+
+function render(rows) {
+  const ul = $("results");
+  ul.replaceChildren(...rows.map((r) => {
+    const li = document.createElement("li");
+    const a = document.createElement("a");       // text only, never markup: the data is untrusted
+    a.textContent = r.title; a.href = r.paper;
+    const small = document.createElement("small");
+    small.textContent = ` (${r.year})`;
+    li.append(a, small);
+    return li;
+  }));
+  // Structured data for crawlers that run scripts. Agents can read it too.
+  let ld = $("jsonld");
+  if (!ld) { ld = document.createElement("script"); ld.id = "jsonld"; ld.type = "application/ld+json"; document.head.append(ld); }
+  ld.textContent = JSON.stringify({
+    "@context": "https://schema.org", "@type": "ItemList",
+    itemListElement: rows.map((r, i) => ({ "@type": "ListItem", position: i + 1,
+      item: { "@type": "ScholarlyArticle", "@id": r.paper, name: r.title, datePublished: r.year } })),
+  });
+}
+
+async function search(text) {
+  const rows = await call("query", { query: LIST(text) });
+  render(rows);
+  const s = await call("stats");
+  setStatus(`${rows.length} shown. Read ${s.bytes.toLocaleString()} of ${s.fileLength.toLocaleString()} bytes in ${s.requests} requests.`);
+  return rows;
+}
+
+// ---- 4. WebMCP: the same actions for an agent in the browser ----------------
+// document.modelContext (spec) or navigator.modelContext (older previews). Without
+// either, the tools stay callable as window.pageTools.call(name, input).
+const tools = [
+  { name: "search_papers", description: "Search paper titles. Returns up to 25 papers with title, year and IRI.",
+    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    annotations: { readOnlyHint: true },
+    execute: async ({ text }) => ({ papers: await search(String(text)) }) },
+  { name: "run_sparql", description: "Run a read-only SPARQL SELECT or ASK against this page's graph. Add a LIMIT.",
+    inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
+    execute: async ({ query }) => {
+      if (!/^\s*(PREFIX[^\n]*\n\s*)*(SELECT|ASK)\b/i.test(query)) throw new Error("Only SELECT and ASK.");
+      return { rows: (await call("query", { query })).slice(0, 200) };
+    } },
+];
+async function register() {
+  const ctx = document.modelContext || navigator.modelContext;
+  if (ctx && ctx.registerTool) for (const t of tools) await ctx.registerTool(t);
+  window.pageTools = { tools: tools.map((t) => t.name), call: (name, input) => tools.find((t) => t.name === name).execute(input || {}) };
+}
+
+// ---- 5. Start: card first, then data --------------------------------------
+try {
+  await call("open", { url: RETE_URL });
+  const card = await call("card");                // two small range reads
+  if (card && card.title) $("title").textContent = card.title;
+  if (card && card.description) $("about").textContent = card.description;
+  await search("");
+  let timer;
+  $("q").addEventListener("input", (e) => { clearTimeout(timer); timer = setTimeout(() => search(e.target.value).catch((x) => setStatus(x.message)), 250); });
+} catch (e) {
+  setStatus("Could not read the graph: " + e.message);
+}
+await register();
+</script>
+</body>
+</html>

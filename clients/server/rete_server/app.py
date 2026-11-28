@@ -3,8 +3,10 @@
 ``create_app(settings)`` builds it; ``uvicorn --factory rete_server.app:create_app``
 runs it with settings from the environment. The routes:
 
-* ``/``            what this server is and how to connect (HTML)
+* ``/``            the home page shell (HTML, CSS, JS): open, no data in it
+* ``/api/uploads`` a dropped or curl'ed file becomes a dataset
 * ``/health``      liveness, the one route a token never gates
+* ``/api/results/…`` a stored (big) query answer, as json, csv, tsv, srj or nt
 * ``/api/…``       REST (``/docs`` documents it)
 * ``/sparql/…``    one SPARQL 1.1 Protocol endpoint per dataset
 * ``/mcp``         MCP over streamable HTTP
@@ -19,20 +21,22 @@ from pathlib import Path
 from typing import Optional
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 
 from . import __version__, state
 from .api import author_router, router as api_router
 from .auth import TokenAuth
 from .catalog import Catalog
 from .engine import Service
-from .landing import landing_html
+from .landing import router as home_router
 from .mcp import build_mcp
+from .results import router as results_router
 from .settings import Settings
 from .sparql import router as sparql_router
+from .uploads import router as uploads_router
 
 log = logging.getLogger("rete_server")
 
@@ -47,7 +51,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # A tool answer is one JSON document, never a stream, so it goes back as
     # plain JSON rather than a one-event SSE stream: measured 33-49% more MCP
     # calls per second and a quarter less CPU per call (bench/).
-    mcp_app = build_mcp(settings.author).http_app(
+    mcp_app = build_mcp(settings.author, settings).http_app(
         path="/mcp", stateless_http=True, json_response=True, host_origin_protection=False)
 
     @asynccontextmanager
@@ -67,11 +71,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                   docs_url="/docs", redoc_url=None,
                   description="SPARQL, SHACL and MCP over .rete graph files.")
 
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def landing(request: Request):
-        base = settings.public_url or str(request.base_url).rstrip("/")
-        return HTMLResponse(landing_html(base, __version__, catalog.entries(), bool(settings.tokens),
-                                         settings.author, bool(settings.ask_model)))
+    # The home page: a static shell, the only thing besides /health a token does not gate.
+    app.include_router(home_router)
 
     @app.get("/health")
     def health():
@@ -79,6 +80,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"ok": True, "version": __version__, "datasets": len(catalog.keys())}
 
     app.include_router(api_router)
+    app.include_router(results_router)
+    app.include_router(uploads_router)
     app.include_router(sparql_router)
     if settings.author:
         app.include_router(author_router)

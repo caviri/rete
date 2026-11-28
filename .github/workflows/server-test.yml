@@ -75,7 +75,7 @@ jobs:
         run: |
           docker run --rm --user 0 --entrypoint sh \
             -v "$PWD/clients/server:/src" -w /src -e PYTHONPATH=/src \
-            -v "$PWD:/repo:ro" -e RETE_REPO=/repo rete-server-test -c '
+            -v "$PWD:/repo:ro" -e RETE_REPO=/repo -e RETE_ENGINE_FROM_SOURCE=1 rete-server-test -c '
             set -e
             pip install --quiet --no-cache-dir --root-user-action=ignore pytest pyoxigraph
             python -c "import rete_graph; print(\"rete-graph\", rete_graph.__version__, \"engine\", rete_graph.__engine_version__)"
