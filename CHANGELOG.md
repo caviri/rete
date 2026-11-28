@@ -5,6 +5,20 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **The FZK-Haus page is a house you can operate.** On top of the IFC model
+  there is a second graph with a designed services layer: wiring, water,
+  drainage, heating, cooling, ventilation, network, structure down to the
+  foundations, the inputs of a thermal model, and states with rules. Labels
+  are in English, Spanish and German. The page is now a dashboard: menus,
+  side panels, an inspector, a SPARQL console, a clustered graph of the whole
+  data, SHACL validation with 19 example shapes, scenarios (trip a breaker,
+  close the water main, remove a bearing wall), a thermal day, and logs. The
+  viewport has four views, sections, walk and fly modes, doors and windows
+  that open, the sun at the site's real orientation, and a reset. 56 WebMCP
+  tools. The data is on R2. See [its guide](docs/building-guide.md).
+
 ## [0.7.9] - 2026-11-28
 
 0.7.9 writes and reads the same formats as 0.7.0 (writes 0x08, reads 0x05 to 0x08).
