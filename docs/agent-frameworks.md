@@ -177,8 +177,8 @@ The ELI IRI is not in the prompt: the agent took it from `dataset_schema`,
 where `eli:LegalResource` is the largest class with exactly 40,937 instances.
 
 Want structured output instead of prose? Add `output_type=` with a Pydantic
-model — the pattern the Space's own
-[`rete_ask.py`](https://github.com/caviri/rete/blob/main/clients/relay/rete_ask.py)
+model — the pattern rete-server's own
+[`ask.py`](https://github.com/caviri/rete/blob/main/clients/server/rete_server/ask.py)
 uses to return `{answer, sparql, table}`.
 
 ## LangChain

@@ -10,7 +10,7 @@ emulation.
 | Image | What it is | Size | Built from |
 | --- | --- | --- | --- |
 | `ghcr.io/caviri/rete-dev` | The full toolchain: Rust 1.92 + the pinned asyncify nightly, wasm-pack, the cargo release tools, node, python3 + uv, binaryen, chromium, plus the scholar export driver's own tools — `pigz`, `time`, and a pinned `oxigraph` binary lifted out of `oxigraph/oxigraph` so the independent N-Quads parse check can run *inside* the container. Everything the repo builds datasets and playground artifacts with. | ~5 GB | `.devcontainer/Dockerfile` |
-| `ghcr.io/caviri/rete-relay` | The gateway: HTTP Range + CORS over a data directory, the `/api` SPARQL plane, and the `/mcp` MCP server. The same image the live Hugging Face Space runs. | ~400 MB | `clients/relay/Dockerfile` |
+| `ghcr.io/caviri/rete-server` | The web app: REST under `/api`, a SPARQL 1.1 Protocol endpoint per dataset, the MCP server at `/mcp`, optional bearer-token auth. The image the Hugging Face Space runs. | ~590 MB | `clients/server/Dockerfile` |
 | `ghcr.io/caviri/rete-cli` | Just the `rete` binary on distroless. | ~30 MB | `docker/Dockerfile.cli` |
 
 Tags: `latest` (newest stable release), `1.2.3` / `1.2` (release tags —
@@ -52,54 +52,51 @@ docker run --rm -v "$PWD:/work" -w /work \
 `<project>_cargo-target` volumes are not shared and are not removed with the
 worktree: `scripts/docker_gc.sh --apply` collects the orphans.
 
-## Running the relay — `rete-relay`
+## Running the server — `rete-server`
 
-Put one or more `.rete` files in a directory and mount it at `/data`:
+By default it answers for the published catalog; mount a folder of your own
+`.rete` files at `/data` to serve those too (as `local/<path>`):
 
 ```sh
-docker run --rm -p 7860:7860 -v "$PWD/data:/data" ghcr.io/caviri/rete-relay:latest
+docker run --rm -p 7860:7860 -e RETE_TOKEN=change-me \
+  -v "$PWD/data:/data:ro" ghcr.io/caviri/rete-server:latest
 ```
 
 | Endpoint | What it serves |
 | --- | --- |
-| `GET /` | Landing page (themed by the baked-in `branding.json`) |
-| `GET /<file>.rete` | The file itself, with `Accept-Ranges`/`206` and CORS — this is what browser clients read |
-| `POST /api/…` | SPARQL query plane over the catalog |
+| `GET /` | What the server is and how to connect |
+| `/api/…` | REST: datasets, card, schema, examples, search, query, SHACL, status |
 | `/sparql/<key or .rete URL>` | SPARQL 1.1 Protocol endpoint |
-| `POST /mcp` | MCP server, streamable HTTP |
+| `/mcp` | MCP server, streamable HTTP |
 | `GET /docs` | OpenAPI browser |
-| `GET /health` | Liveness + resolved data dir |
+| `GET /health` | Liveness; the one route a token never covers |
 
+With a token set, every other route needs `Authorization: Bearer <token>`.
 Point an MCP client at `http://localhost:7860/mcp`. For Claude Code:
 
 ```sh
-claude mcp add --transport http rete http://localhost:7860/mcp
+claude mcp add --transport http rete http://localhost:7860/mcp \
+  --header "Authorization: Bearer change-me"
 ```
 
-Tunables are environment variables — the defaults are tuned for a FUSE-mounted
-bucket on a 2 vCPU Space, and a local disk can afford more:
+Everything is configured by `RETE_*` variables (`RETE_TOKEN_FILE` reads a
+Docker secret, `RETE_CACHE_DIR=/cache` on a volume keeps fetched blocks across
+restarts, `RETE_WARM` opens datasets at startup); the full list, and a compose
+example, are in [`clients/server/README.md`](../clients/server/README.md).
+`/api/ask` (natural-language questions) only answers when `RETE_ASK_MODEL` and
+that provider's API key are set; every other endpoint works without one.
 
-```sh
-docker run --rm -p 7860:7860 -v "$PWD/data:/data" \
-  -e WEB_CONCURRENCY=4 -e FUSE_CONCURRENCY=64 -e CACHE_MB=1024 \
-  ghcr.io/caviri/rete-relay:latest
-```
-
-`rete_ask.py` (the natural-language query tool) only activates when an
-`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is present in the environment; every
-other endpoint works without one.
-
-The published relay image carries the `rete-graph` wheel its release built
-from the tagged commit, never one fetched from PyPI: `docker-publish.yml`
-builds the two Linux wheels in the same run and passes them as the `wheels`
-build context, and the build fails unless the image ends up with that version.
-A plain `docker build clients/relay` (and the Hugging Face Space) has no
-wheelhouse and installs the engine from PyPI instead. To build on an
-unreleased engine, hand it a wheel built from `clients/python`:
+The published image carries the `rete-graph` wheel its release built from the
+tagged commit, never one fetched from PyPI: `docker-publish.yml` builds the
+two Linux wheels in the same run and passes them as the `wheels` build
+context, and the build fails unless the image ends up with that version. A
+plain `docker build clients/server` has no wheelhouse and installs the engine
+from PyPI instead. To build on an unreleased engine, hand it a wheel built
+from `clients/python`:
 
 ```sh
 docker build --build-context wheels=clients/python/dist \
-  --build-arg RETE_GRAPH_VERSION=X.Y.Z -t rete-relay clients/relay
+  --build-arg RETE_GRAPH_VERSION=X.Y.Z -t rete-server clients/server
 ```
 
 ## One-shot CLI — `rete-cli`
@@ -143,9 +140,9 @@ with `docker buildx imagetools create`.
 
 | Event | What happens |
 | --- | --- |
-| Push a `v*` tag | All three images build and publish. The tag must match `[workspace.package] version` in `Cargo.toml` — the same check `scripts/package_release.sh` makes — and every channel's version (`scripts/sync_versions.py --check-tag`), or the run fails before building anything. `rete-relay` is built on the Linux `rete-graph` wheels the same run compiles. |
-| Pull request touching `.devcontainer/Dockerfile*`, `clients/relay/**`, `docker/**`, the docker workflows or `python-wheels.yml` | `rete-relay` (on a wheel built from the PR's commit) and `rete-cli` are built for amd64 only and thrown away. Nothing is pushed. |
-| Manual run | Publishes `all`, or just `dev` / `relay` / `cli`. With `dry-run` set, builds the same images for both architectures and pushes nothing. |
+| Push a `v*` tag | All three images build and publish. The tag must match `[workspace.package] version` in `Cargo.toml` — the same check `scripts/package_release.sh` makes — and every channel's version (`scripts/sync_versions.py --check-tag`), or the run fails before building anything. `rete-server` is built on the Linux `rete-graph` wheels the same run compiles. |
+| Pull request touching `.devcontainer/Dockerfile*`, `clients/server/**`, `docker/**`, the docker workflows or `python-wheels.yml` | `rete-server` (on a wheel built from the PR's commit) and `rete-cli` are built for amd64 only and thrown away. Nothing is pushed. |
+| Manual run | Publishes `all`, or just `dev` / `server` / `cli`. With `dry-run` set, builds the same images for both architectures and pushes nothing. |
 | Ordinary push to `main` | Nothing. Images follow releases, not commits. |
 
 Native runners are the point. `rete-dev` installs about eight cargo tools from
@@ -153,7 +150,7 @@ source; the same build under QEMU emulation takes hours and flirts with the
 six-hour job ceiling.
 
 To publish by hand: Actions → *Publish container images* → *Run workflow*, and
-pick `all`, `dev`, `relay` or `cli`.
+pick `all`, `dev`, `server` or `cli`.
 
 ### Build context
 

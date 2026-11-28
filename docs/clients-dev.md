@@ -89,7 +89,7 @@ Merging to main can never publish; releasing is always the deliberate tag.
 
 The four native wheels are built by the reusable `python-wheels.yml`, which
 `release.yml` (the Blender add-on's bundled wheels), `docker-publish.yml` (the
-relay image's engine) and `relay-test.yml` call too. So every artifact that
+server image's engine) and `server-test.yml` call too. So every artifact that
 carries the engine is built from the commit being released or tested, and none
 of them installs `rete-graph` from PyPI while it is built.
 

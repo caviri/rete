@@ -11,11 +11,11 @@ name: Release
 #   desktop-release.yml        File Explorer installers, into the same release
 #   python-client-publish.yml  PyPI (native + Pyodide wheels, sdist)
 #   js-client-publish.yml      npm
-#   docker-publish.yml         ghcr.io rete-relay, rete-cli, rete-dev
+#   docker-publish.yml         ghcr.io rete-server, rete-cli, rete-dev
 #
 # Every one of them first checks the tag against every channel's version
 # (`scripts/sync_versions.py --check-tag`), so a mis-stamped tag stops them
-# all. None waits for another: the Blender add-on here and the relay image in
+# all. None waits for another: the Blender add-on here and the server image in
 # docker-publish.yml bundle rete-graph wheels built in their own run from the
 # tagged commit, never downloaded from PyPI. docs/release.md has the procedure.
 on:

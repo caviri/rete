@@ -171,13 +171,13 @@ function loadCorpus() {
     (j.example_queries || []).forEach((q, i) => { add(`${f}.q[${i}].label`, q.label); add(`${f}.q[${i}].tip`, q.tip); });
   }
 
-  const relay = "clients/relay/catalog.json";
-  if (fs.existsSync(path.join(ROOT, relay))) {
-    const j = JSON.parse(read(relay));
+  const served = "clients/server/rete_server/catalog.json";
+  if (fs.existsSync(path.join(ROOT, served))) {
+    const j = JSON.parse(read(served));
     const walk = (n, t) => {
       if (Array.isArray(n)) return n.forEach((v, i) => walk(v, `${t}[${i}]`));
       if (n && typeof n === "object") for (const [k, v] of Object.entries(n)) {
-        if (typeof v === "string" && /^(label|description|tip|blurb|license|title|reason)$/.test(k)) add(`relay${t}.${k}`, v);
+        if (typeof v === "string" && /^(label|description|tip|blurb|license|title|reason)$/.test(k)) add(`server-catalog${t}.${k}`, v);
         else walk(v, `${t}.${k}`);
       }
     };

@@ -647,8 +647,8 @@ by hand, is now a release asset (<a href="#the-pyodide-fallback-wheel">why</a>).
 </ol>
 <p>Until 0.3.6 the clients released from their own <code>py-v*</code> and <code>js-v*</code> tags, and
 the <code>v*</code> tag had to wait for PyPI and for a second "raise the PyPI floors" PR,
-because the relay image and the Blender add-on installed <code>rete-graph</code> from
-PyPI while they were built. Both are now built from wheels compiled in the
+because the relay image (now rete-server) and the Blender add-on installed
+<code>rete-graph</code> from PyPI while they were built. Both are now built from wheels compiled in the
 same run, so nothing in a release waits for a registry and no tag order
 exists. The old <code>py-v*</code>/<code>js-v*</code> tags stay in the repository as history; they
 trigger nothing.</p>
@@ -670,7 +670,7 @@ that happened to match.</p>
 <tr><td><code>release.yml</code> / <code>protected crates.io publishing</code></td><td>runs in the <code>crates-io</code> environment (<code>v*</code> tags only, no reviewer), re-runs the <code>cargo audit</code>/<code>cargo deny</code> gate, publishes through trusted publishing, and attaches the receipt</td></tr>
 <tr><td><code>python-client-publish.yml</code></td><td>tests the binding, builds the four native wheels (<code>python-wheels.yml</code>), the two Pyodide wheels and the sdist, then publishes them to PyPI in the <code>pypi</code> environment (<code>v*</code> tags only); its <code>Pyodide wheels into the GitHub release</code> job waits (up to 20 min) for the draft, like the File Explorer builders, and uploads the two Pyodide wheels plus the legacy-tagged copy for Pyodide 0.29</td></tr>
 <tr><td><code>js-client-publish.yml</code></td><td>builds the wasm engine, tests and packs <code>rete-graph</code>, runs <code>npm publish --dry-run</code>, then publishes that tarball with provenance in the <code>npm</code> environment (<code>v*</code> tags only)</td></tr>
-<tr><td><code>docker-publish.yml</code></td><td>builds <code>rete-relay</code> (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), <code>rete-cli</code> and <code>rete-dev</code> for amd64 and arm64, and pushes them to ghcr.io as <code>X.Y.Z</code>, <code>X.Y</code> and <code>latest</code></td></tr>
+<tr><td><code>docker-publish.yml</code></td><td>builds <code>rete-server</code> (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), <code>rete-cli</code> and <code>rete-dev</code> for amd64 and arm64, and pushes them to ghcr.io as <code>X.Y.Z</code>, <code>X.Y</code> and <code>latest</code></td></tr>
 </tbody></table>
 <p>None of them waits for another, except the File Explorer builders and the
 Pyodide wheel upload, which wait for the draft. PyPI, npm, crates.io and GHCR
@@ -860,15 +860,15 @@ that setting.</p>
 names the version:</p>
 <table><thead><tr><th>what</th><th>note</th></tr></thead><tbody>
 <tr><td>the workspace and the exact <code>rete-core</code> pins the publishable crates carry</td><td></td></tr>
-<tr><td>every client manifest: Python, npm, R, Java</td><td></td></tr>
-<tr><td>the PyPI floors: <code>clients/relay/requirements.txt</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td>a release builds the relay image and the Blender add-on from the wheels of its own run, so a floor may name a version PyPI does not serve yet; only a plain local <code>docker build</code> or the HF Space resolves it from PyPI, after the release</td></tr>
+<tr><td>every client manifest: Python, npm, R, Java, and <code>rete-server</code> (<code>clients/server/pyproject.toml</code>)</td><td></td></tr>
+<tr><td>the PyPI floors: <code>rete-graph&gt;=</code> in <code>clients/server/pyproject.toml</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td>a release builds the server image and the Blender add-on from the wheels of its own run, so a floor may name a version PyPI does not serve yet; only a local <code>docker build</code> (or <code>pip install ./clients/server</code>) resolves it from PyPI, after the release</td></tr>
 <tr><td>the Binder pin in <code>binder/requirements.txt</code></td><td>mybinder.org resolves it from PyPI at launch, so a Binder launch from <code>main</code> fails between the merge and the tag's PyPI upload (about half an hour); nothing in CI reads it</td></tr>
 </tbody></table>
 <p>Up to 0.3.6 the floors and the Binder pin waited for a second PR
-(<code>--set-published</code>, now removed), because the relay and Blender builds
+(<code>--set-published</code>, now removed), because the relay (now rete-server) and Blender builds
 installed <code>rete-graph</code> from PyPI and failed on a floor PyPI could not satisfy.
-CI no longer depends on PyPI for them either: <code>relay-test.yml</code> and
-<code>docker-publish.yml</code>'s PR check build the relay image on a wheel compiled from
+CI no longer depends on PyPI for them either: <code>server-test.yml</code> and
+<code>docker-publish.yml</code>'s PR check build the server image on a wheel compiled from
 the PR's own commit.</p>
 <p>Also note the engine version is compiled into the wasm (<code>rete_core::VERSION</code>),
 so a bump changes the shipped browser binaries: rerun <code>scripts/build_wasm.sh</code>

@@ -5,10 +5,10 @@ name: Python wheels (reusable)
 #
 #   python-client-publish.yml  all four platforms, uploaded to PyPI
 #   release.yml                all four, bundled into the Blender add-on
-#   docker-publish.yml         the two Linux ones, installed into rete-relay
-#   relay-test.yml             Linux x86-64, installed into the image it tests
+#   docker-publish.yml         the two Linux ones, installed into rete-server
+#   server-test.yml            Linux x86-64, installed into the image it tests
 #
-# Before a `v*` tag released everything, the relay image and the Blender
+# Before a `v*` tag released everything, the relay image (now rete-server) and the Blender
 # add-on downloaded these wheels from PyPI at build time, so the release tag
 # could only be pushed after a separate PyPI tag had published them and a
 # second PR had raised the PyPI floors. Building them here, from the commit

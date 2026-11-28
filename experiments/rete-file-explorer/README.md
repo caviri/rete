@@ -31,7 +31,7 @@ window** — anywhere, at any time.
 from its card (`js/procgen.js`, the plaza's: classes as discs sized by their
 instances, linked as the card's `class_links` say). **Catalogs** are JSON lists of
 `.rete` links; paste one's link to subscribe. `js/library.js` reads rete's own
-shape (`clients/relay/catalog.json`, subscribed by default), the plaza's
+shape (`clients/server/rete_server/catalog.json`, subscribed by default), the plaza's
 (`docs/plaza/plaza.json`, relative links), a list of entries or a list of URLs,
 and keeps everything in `localStorage`. A catalog card's picture needs that
 file's card: two range requests, made only once the card scrolls into view.

@@ -3,7 +3,7 @@
 //
 // A catalog is a JSON file anyone can publish next to their graphs: a list of
 // .rete files with a name, a line about each, a size. The explorer reads the
-// shape rete's own catalog has (clients/relay/catalog.json: { datasets: [...] }),
+// shape rete's own catalog has (clients/server/rete_server/catalog.json: { datasets: [...] }),
 // the plaza's (docs/plaza/plaza.json), a bare list of entries, or a bare list
 // of URLs — so subscribing to a catalog is pasting its link.
 //
@@ -15,9 +15,9 @@ const KEY = "rete-explorer.v1";
 const MAX_FILES = 40;
 const MAX_CARDS = 400;
 
-/** rete's own catalog: every published graph. Its JSON is regenerated with the catalog (scripts/export_space_catalog.py). */
+/** rete's own catalog: every published graph. Its JSON is regenerated with the catalog (scripts/export_catalog.py). */
 export const DEFAULT_CATALOG = {
-  url: "https://raw.githubusercontent.com/caviri/rete/main/clients/relay/catalog.json",
+  url: "https://raw.githubusercontent.com/caviri/rete/main/clients/server/rete_server/catalog.json",
   name: "rete catalog",
 };
 

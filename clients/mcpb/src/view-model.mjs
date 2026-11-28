@@ -6,6 +6,9 @@
 //
 // Term tokens (N-Triples-shaped strings, as the engine emits them) are read
 // with a parser the host passes in: `parse(token)` → { kind, value, lang }.
+//
+// rete-server has a Python port of it (clients/server/rete_server/views.py),
+// for the same page: change them together.
 
 import "../../chrome/lib/hints.js"; // Retelens query hints (# view: map, # column ?v: Label — note): globalThis.RetelensHints
 

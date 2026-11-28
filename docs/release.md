@@ -33,8 +33,8 @@ all its assets, the container images, and the File Explorer installers.
 
 Until 0.3.6 the clients released from their own `py-v*` and `js-v*` tags, and
 the `v*` tag had to wait for PyPI and for a second "raise the PyPI floors" PR,
-because the relay image and the Blender add-on installed `rete-graph` from
-PyPI while they were built. Both are now built from wheels compiled in the
+because the relay image (now rete-server) and the Blender add-on installed
+`rete-graph` from PyPI while they were built. Both are now built from wheels compiled in the
 same run, so nothing in a release waits for a registry and no tag order
 exists. The old `py-v*`/`js-v*` tags stay in the repository as history; they
 trigger nothing.
@@ -60,7 +60,7 @@ that happened to match.
 | `release.yml` / `protected crates.io publishing` | runs in the `crates-io` environment (`v*` tags only, no reviewer), re-runs the `cargo audit`/`cargo deny` gate, publishes through trusted publishing, and attaches the receipt |
 | `python-client-publish.yml` | tests the binding, builds the four native wheels (`python-wheels.yml`), the two Pyodide wheels and the sdist, then publishes them to PyPI in the `pypi` environment (`v*` tags only); its `Pyodide wheels into the GitHub release` job waits (up to 20 min) for the draft, like the File Explorer builders, and uploads the two Pyodide wheels plus the legacy-tagged copy for Pyodide 0.29 |
 | `js-client-publish.yml` | builds the wasm engine, tests and packs `rete-graph`, runs `npm publish --dry-run`, then publishes that tarball with provenance in the `npm` environment (`v*` tags only) |
-| `docker-publish.yml` | builds `rete-relay` (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), `rete-cli` and `rete-dev` for amd64 and arm64, and pushes them to ghcr.io as `X.Y.Z`, `X.Y` and `latest` |
+| `docker-publish.yml` | builds `rete-server` (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), `rete-cli` and `rete-dev` for amd64 and arm64, and pushes them to ghcr.io as `X.Y.Z`, `X.Y` and `latest` |
 
 None of them waits for another, except the File Explorer builders and the
 Pyodide wheel upload, which wait for the draft. PyPI, npm, crates.io and GHCR
@@ -281,15 +281,15 @@ names the version:
 | what | note |
 |---|---|
 | the workspace and the exact `rete-core` pins the publishable crates carry | |
-| every client manifest: Python, npm, R, Java | |
-| the PyPI floors: `clients/relay/requirements.txt`, `clients/blender/{build.sh,Dockerfile}` | a release builds the relay image and the Blender add-on from the wheels of its own run, so a floor may name a version PyPI does not serve yet; only a plain local `docker build` or the HF Space resolves it from PyPI, after the release |
+| every client manifest: Python, npm, R, Java, and `rete-server` (`clients/server/pyproject.toml`) | |
+| the PyPI floors: `rete-graph>=` in `clients/server/pyproject.toml`, `clients/blender/{build.sh,Dockerfile}` | a release builds the server image and the Blender add-on from the wheels of its own run, so a floor may name a version PyPI does not serve yet; only a local `docker build` (or `pip install ./clients/server`) resolves it from PyPI, after the release |
 | the Binder pin in `binder/requirements.txt` | mybinder.org resolves it from PyPI at launch, so a Binder launch from `main` fails between the merge and the tag's PyPI upload (about half an hour); nothing in CI reads it |
 
 Up to 0.3.6 the floors and the Binder pin waited for a second PR
-(`--set-published`, now removed), because the relay and Blender builds
+(`--set-published`, now removed), because the relay (now rete-server) and Blender builds
 installed `rete-graph` from PyPI and failed on a floor PyPI could not satisfy.
-CI no longer depends on PyPI for them either: `relay-test.yml` and
-`docker-publish.yml`'s PR check build the relay image on a wheel compiled from
+CI no longer depends on PyPI for them either: `server-test.yml` and
+`docker-publish.yml`'s PR check build the server image on a wheel compiled from
 the PR's own commit.
 
 Also note the engine version is compiled into the wasm (`rete_core::VERSION`),
