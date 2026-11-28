@@ -117,7 +117,7 @@ A new API of the rendering side goes on `app` (feature-detect it with `has`) and
 `tests/gate/checks/check_building*.mjs` (five files, run one at a time in the Playwright image; see the header of each): `check_building.mjs` (the house, the
 tools, the sun, doors, walk), `check_building_systems.mjs` (services, scenarios, thermal), `check_building_graph.mjs` (the graph view on its harness page),
 `check_building_viewport.mjs` (the rendering API), `check_building_dashboard.mjs` (the shell, with `ONLY="menus,logs"` to run some sections). Expectations that depend on
-the data (counts, labels, ids) are read from the data at run time; `FZK_SYSTEMS_DIR` routes the two R2 files to a local folder.
+the data (counts, labels, ids) are read from the data at run time; the gate (`tests/gate/run.mjs`) runs the first four, the dashboard check is run by hand because it is too slow for a CI runner; `FZK_SYSTEMS_DIR` routes the two R2 files to a local folder.
 
 ## app object
 

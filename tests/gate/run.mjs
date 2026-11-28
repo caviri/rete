@@ -469,7 +469,8 @@ const G2 = [
   ["check_building_systems", "FZK-Haus services: layers, switches and lights, tripped breakers equal the scenario and the SPARQL answer, traces, the thermal day", 300000, true],
   ["check_building_graph", "FZK-Haus graph view: the whole graph as clusters, drill-down, selection both ways", 300000, true],
   ["check_building_viewport", "FZK-Haus viewport: four views, sections, fly and walk, trench, structure, state variables, reset", 300000, true],
-  ["check_building_dashboard", "FZK-Haus dashboard: menus, panels, console, SHACL validation, logs, WebMCP tools, 390/820/1400 px", 900000, true],
+  // check_building_dashboard is not listed: it takes five minutes on a desktop and more than fifteen on a CI runner.
+  // Run it by hand after a change to docs/building/ (see docs/building/README.md).
   ["check_load_modal","Load pre-modal: drop/URL/examples routes; URL route end to end; phone width", 150000, false],
   ["check_default_graph_hint", "empty-default-graph explainer (resident + carded remote); absent on ordinary files", 180000, false],
   ["check_card_examples", "the file's OWN card queries populate the examples panel (off-catalog + local + catalog supplement; deduped; zero-row kept)", 240000, false],

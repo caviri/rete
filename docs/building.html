@@ -520,7 +520,7 @@ try { const u = JSON.parse(localStorage.getItem('reteBuilding.ui.v1') || '{}'); 
     <div class="rz" id="rzInsp" role="separator" aria-orientation="vertical" aria-label="Resize the inspector" tabindex="0"></div>
     <aside id="inspector" aria-label="Inspector" hidden>
       <div class="sheet-grip" aria-hidden="true"></div>
-      <div class="pane-head"><h2>Inspector</h2><span style="display:flex;gap:2px"><button class="ibtn" type="button" id="insClear" aria-label="Clear the selection"></button><button class="ibtn" type="button" data-close-insp aria-label="Collapse the inspector"></button></span></div>
+      <div class="pane-head"><h2 id="insTitle">Inspector</h2><span style="display:flex;gap:2px"><button class="ibtn" type="button" id="insClear" aria-label="Clear the selection"></button><button class="ibtn" type="button" data-close-insp aria-label="Collapse the inspector"></button></span></div>
       <div class="pane-body"><div id="info"><div class="pad"><div class="empty">Nothing selected. Click something in the 3D view, or search with Ctrl+K.</div></div></div></div>
     </aside>
   </div>

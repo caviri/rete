@@ -121,4 +121,4 @@ nothing is registered. The same calls are on `window.reteBuildingTools`.
 
 Open [`fzk-haus`](playground.html#dataset=fzk-haus&load=lazy) to query the
 house graph with no rendering in the way. The module layout of the page is in
-[`building/README.md`](building/README.md).
+[`docs/building/README.md`](https://github.com/caviri/rete/blob/main/docs/building/README.md).
